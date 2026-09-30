@@ -79,6 +79,10 @@ enum Feature {
   // notification records, which are not storage entries, instead of rejecting
   // the write request
   FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 7;
+  // Reject an invalid sequential put, e.g. with fewer deltas than its
+  // sequence has parts, with the INVALID_ARGUMENT status instead of rejecting
+  // the whole write request
+  FEATURE_SEQUENCE_KEY_VALIDATION = 8;
 }
 
 message GetInfoRequest {

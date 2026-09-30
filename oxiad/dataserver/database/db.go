@@ -912,8 +912,9 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	var err error
 	var newKey string
 	if len(putReq.GetSequenceKeyDelta()) > 0 {
-		newKey, err = generateUniqueKeyFromSequences(batch, putReq, d)
-		putReq.Key = newKey
+		if newKey, err = generateUniqueKeyFromSequences(batch, putReq, d); err == nil {
+			putReq.Key = newKey
+		}
 	} else if !internal {
 		se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)
 	}
@@ -922,6 +923,12 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	case errors.Is(err, ErrBadVersionId):
 		return &proto.PutResponse{
 			Status: proto.Status_UNEXPECTED_VERSION_ID,
+		}, nil
+	case isInvalidSequentialPut(err) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
+		// Only this put fails, instead of the whole write request with its
+		// other operations
+		return &proto.PutResponse{
+			Status: proto.Status_INVALID_ARGUMENT,
 		}, nil
 	case err != nil:
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")

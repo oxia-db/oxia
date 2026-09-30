@@ -63,6 +63,42 @@ func TestStandaloneSecondaryIndexNameValidation(t *testing.T) {
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
 }
 
+func TestStandaloneSequenceKeyValidation(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	leader, err := standaloneServer.shardsDirector.GetLeader(0)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return leader.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+	}, 10*time.Second, 10*time.Millisecond)
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+	client := proto.NewOxiaClientClient(conn)
+
+	_, err = client.Write(t.Context(), &proto.WriteRequest{
+		Shard: pb.Int64(0),
+		Puts:  []*proto.PutRequest{{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1, 1}}},
+	})
+	require.NoError(t, err)
+
+	// The sequence has two parts: a put with a single delta is invalid
+	response, err := client.Write(t.Context(), &proto.WriteRequest{
+		Shard: pb.Int64(0),
+		Puts: []*proto.PutRequest{
+			{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
+			{Key: "b", Value: []byte("b")},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, response.GetPuts(), 2)
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
+	assert.Equal(t, proto.Status_OK, response.GetPuts()[1].GetStatus())
+}
+
 func TestStandaloneRejectsSameWalAndDataDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	config := NewTestConfig(t.TempDir())

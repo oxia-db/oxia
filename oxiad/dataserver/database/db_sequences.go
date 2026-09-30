@@ -109,3 +109,14 @@ func findCurrentLastKeyInSequence(wb kvstore.WriteBatch, req *proto.PutRequest,
 	}
 	return parts, nil
 }
+
+// isInvalidSequentialPut reports whether err rejects a sequential put for the
+// request itself or for the keys already in its sequence. Unlike a storage
+// failure, every replica rejects the put the same way.
+func isInvalidSequentialPut(err error) bool {
+	return errors.Is(err, ErrMissingPartitionKey) ||
+		errors.Is(err, ErrMissingSequenceDeltas) ||
+		errors.Is(err, ErrSequenceDeltaIsZero) ||
+		errors.Is(err, ErrSequenceOverflow) ||
+		errors.Is(err, ErrInvalidSequenceKey)
+}
