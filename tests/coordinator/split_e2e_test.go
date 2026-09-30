@@ -1176,6 +1176,69 @@ func TestCoordinator_KeySorting(t *testing.T) {
 	}
 }
 
+// A range scan without a partition key goes to every shard, and the client
+// merges the records of the shards in the key sorting of the namespace, which
+// the coordinator sends through the data servers with the shard assignments.
+func TestCoordinator_MultiShardKeySorting(t *testing.T) {
+	keys := []string{"b", "a/y/z", "ab/y", "a0", "a/x"}
+	for _, test := range []struct {
+		keySorting string
+		expected   []string
+	}{
+		// Natural sorting compares the bytes: '/' sorts before '0'
+		{"natural", []string{"a/x", "a/y/z", "a0", "ab/y", "b"}},
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte
+		{"hierarchical", []string{"a0", "b", "ab/y", "a/x", "a/y/z"}},
+	} {
+		t.Run(test.keySorting, func(t *testing.T) {
+			s1, sa1 := newServer(t)
+			defer s1.Close()
+
+			metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+			configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+			_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+				Value: newClusterConfig([]*proto.Namespace{{
+					Name:              constant.DefaultNamespace,
+					ReplicationFactor: 1,
+					InitialShardCount: 4,
+					KeySorting:        test.keySorting,
+				}}, []*proto.DataServerIdentity{sa1}),
+				Version: metadatacommon.NotExists,
+			})
+			require.NoError(t, err)
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+			defer coordinatorInstance.Close()
+
+			require.Eventually(t, func() bool {
+				shards := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces[constant.DefaultNamespace].Shards
+				for _, shard := range shards {
+					if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+						return false
+					}
+				}
+				return len(shards) == 4
+			}, 10*time.Second, 10*time.Millisecond)
+
+			client, err := oxia.NewSyncClient(sa1.Public, oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "", "") {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, test.expected, scanned)
+		})
+	}
+}
+
 // --- Split Failure E2E Tests ---
 
 // waitForSplitPhase waits until the parent shard's split metadata reaches the

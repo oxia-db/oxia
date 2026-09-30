@@ -470,6 +470,16 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		return err
 	}
 
+	orphanedEphemerals, err := lc.sessionManager.Initialize()
+	if err != nil {
+		lc.log.Error(
+			"Failed to initialize session manager",
+			slog.Any("error", err),
+			slog.Int64("term", term),
+		)
+		return err
+	}
+
 	// A feature already enabled in the database must be supported by the
 	// whole new ensemble: a member that doesn't implement it would apply the
 	// following entries with different semantics and silently diverge.
@@ -510,6 +520,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 			return err
 		}
 	}
+	lc.proposeOrphanedEphemeralsDeleteLocked(ctx, orphanedEphemerals)
 	return nil
 }
 
@@ -822,15 +833,6 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 			lc.checksumGauge.Record(int64(*resp.Checksum))
 			lc.walChecksumGauge.Record(int64(entryCrc))
 		}
-	}
-
-	if err = lc.sessionManager.Initialize(); err != nil {
-		lc.log.Error(
-			"Failed to initialize session manager",
-			slog.Any("error", err),
-			slog.Int64("term", term),
-		)
-		return err
 	}
 	return nil
 }
@@ -1152,6 +1154,47 @@ func (lc *leaderController) proposeFeaturesEnableLocked(ctx context.Context, fea
 			},
 		})
 	}, deferPropose)
+}
+
+// orphanedEphemeralsBatchSize caps how many ephemeral records of sessions that
+// are gone get deleted in a single write.
+const orphanedEphemeralsBatchSize = 1000
+
+// proposeOrphanedEphemeralsDeleteLocked deletes the ephemeral records whose
+// session is gone, read by the session manager on the new leader. The caller
+// must have held the leader write lock since they were read: the deletes are
+// appended ahead of every write of the term, so they apply on the state they
+// were read from, and need no version check. They are a cleanup, so a failure
+// doesn't fail the election: the next leader finds the records again.
+func (lc *leaderController) proposeOrphanedEphemeralsDeleteLocked(ctx context.Context, deletes []*proto.DeleteRequest) {
+	if len(deletes) == 0 {
+		return
+	}
+	term := lc.term.Load()
+	lc.log.Info(
+		"Deleting the ephemeral records of sessions that are gone",
+		slog.Int64("term", term),
+		slog.Int("count", len(deletes)),
+	)
+	onError := func(err error) {
+		lc.log.Warn(
+			"Failed to delete the ephemeral records of sessions that are gone",
+			slog.Int64("term", term),
+			slog.Any("error", err),
+		)
+	}
+	for start := 0; start < len(deletes); start += orphanedEphemeralsBatchSize {
+		request := &proto.WriteRequest{
+			Shard:   &lc.shardId,
+			Deletes: deletes[start:min(start+orphanedEphemeralsBatchSize, len(deletes))],
+		}
+		if err := lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+			return statemachine.NewWriteProposal(offset, request)
+		}, concurrent.NewOnce(func(statemachine.ApplyResponse) {}, onError)); err != nil {
+			onError(err)
+			return
+		}
+	}
 }
 
 func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
