@@ -400,3 +400,41 @@ func TestMultiShardDeleteRangeCallback(t *testing.T) {
 		})
 	}
 }
+
+// Keys are proto3 strings, which must be valid UTF-8. The server doesn't check
+// it, so the client doesn't send a write of a key, or a range bound, that isn't.
+func TestWriteKeysMustBeValidUTF8(t *testing.T) {
+	client, batchers := newWriteTestClient(&staticShardManager{shards: []int64{0, 1}})
+
+	// Stored on "__oxia/term" with the natural key sorting, and on "a//" with
+	// the hierarchical one. The results are there as soon as the calls return:
+	// nothing was sent.
+	for _, key := range []string{"\xff\xffoxia/term", "a\xff/"} {
+		for _, putCh := range []<-chan PutResult{
+			client.Put(key, []byte("v")),
+			client.Put(key, []byte("v"), PartitionKey("pk"), SequenceKeysDeltas(1)),
+		} {
+			require.Len(t, putCh, 1, key)
+			assert.ErrorIs(t, (<-putCh).Err, ErrInvalidOptions, key)
+		}
+		for _, errCh := range []<-chan error{
+			client.Delete(key),
+			client.DeleteRange(key, "z"),
+			client.DeleteRange("", key),
+			client.DeleteRange(key, "z", PartitionKey("pk")),
+		} {
+			require.Len(t, errCh, 1, key)
+			assert.ErrorIs(t, <-errCh, ErrInvalidOptions, key)
+		}
+	}
+	assert.Empty(t, batchers)
+
+	// A valid UTF-8 key is sent, whatever its characters
+	client.Put("ключ/日本", []byte("v"))
+	client.Delete("ключ/日本")
+	client.DeleteRange("ключ", "ключ/日本")
+	require.Contains(t, batchers, int64(0))
+	assert.Len(t, batchers[0].calls, 3)
+	require.Contains(t, batchers, int64(1))
+	assert.Len(t, batchers[1].calls, 1)
+}

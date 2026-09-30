@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -231,6 +232,17 @@ func (c *clientImpl) Close() error {
 	return err
 }
 
+// validateKey checks that a key, or a key range bound, that a write sends is
+// valid UTF-8, as proto3 requires for strings. The server doesn't check it, and
+// its key encoders store a key that isn't on another key: e.g. with the natural
+// key sorting, "\xff\xffoxia/term" is stored on the internal key "__oxia/term".
+func validateKey(key string) error {
+	if !utf8.ValidString(key) {
+		return errors.Wrapf(ErrInvalidOptions, "key %q is not valid UTF-8", key)
+	}
+	return nil
+}
+
 func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan PutResult {
 	ch := make(chan PutResult, 1)
 
@@ -243,6 +255,10 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 		close(ch)
 	}
 
+	if err := validateKey(key); err != nil {
+		callback(nil, err)
+		return ch
+	}
 	opts, err := newPutOptions(options)
 	if err != nil {
 		callback(nil, err)
@@ -285,6 +301,10 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 		}
 		close(ch)
 	}
+	if err := validateKey(key); err != nil {
+		callback(nil, err)
+		return ch
+	}
 	opts := newDeleteOptions(options)
 	shardId := c.getShardForKey(key, opts)
 	c.writeBatchManager.Add(shardId, model.DeleteCall{
@@ -298,6 +318,13 @@ func (c *clientImpl) Delete(key string, options ...DeleteOption) <-chan error {
 
 func (c *clientImpl) DeleteRange(minKeyInclusive string, maxKeyExclusive string, options ...DeleteRangeOption) <-chan error {
 	ch := make(chan error, 1)
+	for _, bound := range []string{minKeyInclusive, maxKeyExclusive} {
+		if err := validateKey(bound); err != nil {
+			ch <- err
+			close(ch)
+			return ch
+		}
+	}
 	opts := newDeleteRangeOptions(options)
 	if opts.partitionKey != nil {
 		shardId := c.getShardForKey("", opts)
