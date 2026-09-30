@@ -298,7 +298,10 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 	// key for "/", or for a key ending in "//", would end in "//", which the
 	// hierarchical sorting does not count as a level.
 	searchKey := indexPrefix + req.Key + secondaryIdxSeparator
-	it, err := db.KeyIterator(true)
+	// The iterator only visits the entries of the index. With the hierarchical
+	// key sorting, they are not contiguous: they are grouped by level, and other
+	// internal keys, like the entries of other indexes, sort between the groups.
+	it, err := db.KeyPrefixIterator(indexPrefix)
 	if err != nil {
 		return "", "", err
 	}
@@ -313,8 +316,7 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 
 		// A failed read is left to the check after the walk: seeking again
 		// would clear the error
-		if req.ComparisonType == proto.KeyComparisonType_FLOOR && it.Error() == nil &&
-			(!it.Valid() || !strings.HasPrefix(it.Key(), indexPrefix)) {
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR && it.Error() == nil && !it.Valid() {
 			// There is no entry of this index at or after the search key: the
 			// floor candidate, if any, is the last index entry before it.
 			it.SeekLT(searchKey)
@@ -323,12 +325,6 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 
 	for it.Valid() {
 		itKey := it.Key()
-		if !strings.HasPrefix(itKey, indexPrefix) {
-			// We stepped out of the region of the requested index: entries of
-			// other indexes (or other keyspaces) must not be considered.
-			break
-		}
-
 		primaryKey, secondaryKey, err = database.ParseSecondaryIndexKey(itKey)
 		if err != nil && !errors.Is(err, database.ErrInvalidSecondaryIndexKey) {
 			return "", "", err

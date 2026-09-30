@@ -23,6 +23,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -303,6 +305,133 @@ func TestPebbleCompareKeys(t *testing.T) {
 			assert.NoError(t, factory.Close())
 		})
 	}
+}
+
+// The hierarchical sorting keeps the keys with a prefix in one range per level,
+// with other keys between the ranges: here, the entries of the neighbouring
+// indexes and other internal keys. However it is positioned and moved, the
+// iterator has to return the keys with the prefix, and only them, in the order
+// of the store.
+func TestPebbleKeyPrefixIterator(t *testing.T) {
+	keys := []string{"a", "b/c", "/a", "/a/b", "//",
+		"__oxia/term", "__oxia/session/0001", "__oxia/session/0001/k", "__oxia/notifications/0001"}
+	for _, index := range []string{"a", "b", "c"} {
+		secondaryKeys := []string{"", "x", "/", "x/y", "x/y/z", "x/y/z/w", "x/y/z/w/v"}
+		if index == "b" {
+			// Levels where only the neighbouring indexes have entries
+			secondaryKeys = []string{"", "x", "/", "x/y", "x/y/z/w/v"}
+		}
+		for _, secondaryKey := range secondaryKeys {
+			keys = append(keys, "__oxia/idx/"+index+"/"+secondaryKey+"\x01p")
+		}
+	}
+	probes := append([]string{"", "zzz", "__oxia/idx/b/", "__oxia/idx/b/x/y/y\x01", "__oxia/idx/b/x/y/z/w/v/u\x01"}, keys...)
+
+	for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(sorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, sorting)
+			assert.NoError(t, err)
+
+			putAll(t, kv, keys...)
+			all := scanAllKeys(t, kv, ShowInternalKeys)
+
+			for _, prefix := range []string{"__oxia/idx/b/", "__oxia/idx/", "__oxia/idx/missing/", "/", "/a/"} {
+				var expected []string
+				for _, key := range all {
+					if strings.HasPrefix(key, prefix) {
+						expected = append(expected, key)
+					}
+				}
+
+				it, err := kv.KeyPrefixIterator(prefix)
+				assert.NoError(t, err)
+
+				var found []string
+				for it.SeekGE(prefix); it.Valid(); it.Next() {
+					found = append(found, it.Key())
+				}
+				assert.Equal(t, expected, found, prefix)
+
+				for _, probe := range probes {
+					// The position of the first key with the prefix at or after the probe
+					n := sort.Search(len(expected), func(i int) bool { return kv.CompareKeys(expected[i], probe) >= 0 })
+
+					it.SeekGE(probe)
+					assertIteratorAt(t, it, expected, n, "%q SeekGE %q", prefix, probe)
+					it.Prev()
+					assertIteratorAt(t, it, expected, n-1, "%q SeekGE %q, Prev", prefix, probe)
+
+					it.SeekLT(probe)
+					assertIteratorAt(t, it, expected, n-1, "%q SeekLT %q", prefix, probe)
+					it.Next()
+					assertIteratorAt(t, it, expected, n, "%q SeekLT %q, Next", prefix, probe)
+				}
+
+				assert.NoError(t, it.Close())
+			}
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+func assertIteratorAt(t *testing.T, it KeyIterator, keys []string, i int, msgAndArgs ...any) {
+	t.Helper()
+	if i < 0 || i >= len(keys) {
+		assert.False(t, it.Valid(), msgAndArgs...)
+		return
+	}
+	if assert.True(t, it.Valid(), msgAndArgs...) {
+		assert.Equal(t, keys[i], it.Key(), msgAndArgs...)
+	}
+}
+
+// Between two ranges of the keys with a prefix, the iterator must seek over
+// the other keys, however many they are, and over the levels without keys.
+func TestPebbleKeyPrefixIteratorSeeksOverOtherKeys(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+	assert.NoError(t, err)
+
+	// The prefix has a key at the levels 3 and 53. In between, 1000 keys sort
+	// after it at level 3, and 1000 before it at level 53.
+	deep := strings.Repeat("x/", 50)
+	first, last := "__oxia/idx/b/k", "__oxia/idx/b/"+deep+"k"
+	keys := []string{first, last}
+	for i := range 1000 {
+		keys = append(keys, fmt.Sprintf("__oxia/idx/c/%04d", i), fmt.Sprintf("__oxia/idx/a/%s%04d", deep, i))
+	}
+	putAll(t, kv, keys...)
+
+	it, err := kv.KeyPrefixIterator("__oxia/idx/b/")
+	assert.NoError(t, err)
+	pi := it.(*PebblePrefixIterator).pi
+
+	// One step onto the keys after the range at level 3, one seek that lands on
+	// the keys before the range at level 53, and one seek over them
+	assert.True(t, it.SeekGE(first))
+	before := pi.Stats()
+	assert.True(t, it.Next())
+	assert.Equal(t, last, it.Key())
+	after := pi.Stats()
+	assert.Equal(t, 1, after.ForwardStepCount[pebble.InterfaceCall]-before.ForwardStepCount[pebble.InterfaceCall])
+	assert.Equal(t, 2, after.ForwardSeekCount[pebble.InterfaceCall]-before.ForwardSeekCount[pebble.InterfaceCall])
+
+	// And the same way back
+	before = pi.Stats()
+	assert.True(t, it.Prev())
+	assert.Equal(t, first, it.Key())
+	after = pi.Stats()
+	assert.Equal(t, 1, after.ReverseStepCount[pebble.InterfaceCall]-before.ReverseStepCount[pebble.InterfaceCall])
+	assert.Equal(t, 2, after.ReverseSeekCount[pebble.InterfaceCall]-before.ReverseSeekCount[pebble.InterfaceCall])
+
+	assert.NoError(t, it.Close())
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
 }
 
 func TestPebbbleGetWithinBatch(t *testing.T) {
