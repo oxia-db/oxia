@@ -1484,9 +1484,9 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 	}}}, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, ErrSequenceOverflow)
 
-	// With FEATURE_SEQUENCE_KEY_VALIDATION, the first value can't reach the max:
-	// the last key of a sequence is looked up below "<prefix>-<max>", so the next
-	// put would restart the sequence below it. A later value can.
+	// With FEATURE_SEQUENCE_KEY_VALIDATION, a value can't reach the max either:
+	// the last key of a sequence is looked up below "<prefix>-<max>", so with the
+	// first value at the max, the next put would restart the sequence below it.
 	db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
 	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 		{Key: "d", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{5}},
@@ -1496,7 +1496,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("d-%020d", 5), resp.GetPuts()[0].GetKey())
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, resp.GetPuts()[1].Status)
-	assert.Equal(t, fmt.Sprintf("e-%020d-%020d", 1, maxSequence), resp.GetPuts()[2].GetKey())
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, resp.GetPuts()[2].Status)
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())

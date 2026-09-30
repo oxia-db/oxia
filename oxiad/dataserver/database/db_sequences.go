@@ -79,12 +79,13 @@ func generateUniqueKeyFromSequences(batch kvstore.WriteBatch, req *proto.PutRequ
 			// earlier entry, so reject the delta instead of overflowing.
 			return "", ErrSequenceOverflow
 		}
-		if idx == 0 && delta == maxSequence-lastValue &&
+		if delta == maxSequence-lastValue &&
 			features.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION) {
-			// The last key of a sequence is looked up below "<prefix>-<max>":
-			// with the first value at the max, the next put wouldn't find it
-			// and would restart the sequence below it. Without the feature, the
-			// replicas accept it, like the versions before it.
+			// A value can't reach the max either: the last key of a sequence
+			// is looked up below "<prefix>-<max>", so with the first value at
+			// the max, the next put wouldn't find it and would restart the
+			// sequence below it. Without the feature, the replicas accept it,
+			// like the versions before it.
 			return "", ErrSequenceOverflow
 		}
 		newKey = fmt.Sprintf("%s-%020d", newKey, lastValue+delta)
