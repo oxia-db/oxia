@@ -121,7 +121,7 @@ type PerNodeChannels struct {
 		error
 	}
 
-	freezeShardRequests  chan *proto.FreezeShardRequest
+	FreezeShardRequests  chan *proto.FreezeShardRequest
 	freezeShardResponses chan struct {
 		*proto.FreezeShardResponse
 		error
@@ -465,7 +465,7 @@ func newPerNodeChannels() *PerNodeChannels {
 			*proto.RemoveObserverResponse
 			error
 		}, 100),
-		freezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
+		FreezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
 		freezeShardResponses: make(chan struct {
 			*proto.FreezeShardResponse
 			error
@@ -484,7 +484,8 @@ func (m *PerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 
 // SetEnabledFeatures sets the features enabled in this node's database: like
 // a leader, it then refuses to lead a term whose negotiated features don't
-// cover them.
+// cover them, and rejects the followers whose reported features don't cover
+// them.
 func (m *PerNodeChannels) SetEnabledFeatures(features []proto.Feature) {
 	m.enabledFeatures = features
 }
@@ -715,8 +716,13 @@ func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 		r.Unlock()
 		return nil, s.err
 	}
+	enabledFeatures := s.enabledFeatures
 
 	r.Unlock()
+
+	if req.FollowerFeatures != nil && len(feature.Missing(enabledFeatures, req.FollowerFeatures.GetSupported())) > 0 {
+		return nil, constant.ErrUnsupportedFeatures
+	}
 
 	select {
 	case response := <-s.addFollowerResponses:
@@ -755,7 +761,7 @@ func (r *RpcProvider) FreezeShard(_ context.Context, node *proto.DataServerIdent
 	r.Lock()
 
 	s := r.getNode(node)
-	s.freezeShardRequests <- req
+	s.FreezeShardRequests <- req
 
 	if s.err != nil {
 		r.Unlock()

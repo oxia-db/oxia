@@ -894,6 +894,13 @@ func unionFeatures(a []proto.Feature, b []proto.Feature) []proto.Feature {
 	return slices.Compact(union)
 }
 
+// NegotiateFeatures returns the features that all the given data servers
+// support, as a leader election negotiates them for its ensemble: a data
+// server whose features are not known counts as supporting none.
+func NegotiateFeatures(dataServers []*proto.DataServerIdentity, supplier DataServerSupportedFeaturesSupplier) []proto.Feature {
+	return negotiate(supplier(dataServers), len(dataServers))
+}
+
 func negotiate(nodeFeatures map[string][]proto.Feature, candidates int) []proto.Feature {
 	if candidates == 0 || len(nodeFeatures) == 0 {
 		return nil

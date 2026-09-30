@@ -404,9 +404,15 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 	}
 	childLeader := childMeta.Leader
 
-	// The child leader applies the parent's replicated entries, so the parent
-	// leader must be able to validate it supports the shard's features.
-	childLeaderFeatures := sc.supportedFeaturesSupplier([]*proto.DataServerIdentity{childLeader})[childLeader.GetNameOrDefault()]
+	// The child inherits the features enabled on the parent. Past the point of
+	// no return, every member that takes part in its clean term must support
+	// them: the child stays without a leader otherwise, and the split can
+	// neither complete nor abort (see reelectChild). Report the features that
+	// the whole child ensemble supports, a member whose features are not known
+	// yet counting as supporting none, so that the parent leader refuses the
+	// child if they don't cover the features enabled on the parent: before the
+	// parent is frozen, the split can still be aborted.
+	childFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
 
 	_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
 		Namespace:    sc.namespace,
@@ -423,7 +429,7 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 			MinHashInclusive: childMeta.GetInt32HashRange().GetMin(),
 			MaxHashInclusive: childMeta.GetInt32HashRange().GetMax(),
 		},
-		FollowerFeatures: &proto.FollowerFeatures{Supported: childLeaderFeatures},
+		FollowerFeatures: &proto.FollowerFeatures{Supported: childFeatures},
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to add child %d as observer on parent", childId)

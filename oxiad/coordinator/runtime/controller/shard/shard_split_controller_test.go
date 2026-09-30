@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -382,6 +383,20 @@ func drainNewTermRequests(node *mockutils.PerNodeChannels) []*proto.NewTermReque
 	for {
 		select {
 		case r := <-node.NewTermRequests:
+			reqs = append(reqs, r)
+		default:
+			return reqs
+		}
+	}
+}
+
+// drainFreezeShardRequests returns all FreezeShard requests buffered for a
+// node, like drainNewTermRequests.
+func drainFreezeShardRequests(node *mockutils.PerNodeChannels) []*proto.FreezeShardRequest {
+	var reqs []*proto.FreezeShardRequest
+	for {
+		select {
+		case r := <-node.FreezeShardRequests:
 			reqs = append(reqs, r)
 		default:
 			return reqs
@@ -1272,6 +1287,90 @@ func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("Split did not complete in time")
 	}
+}
+
+// supportedFeaturesExcept reports every data server as supporting the
+// features of this binary, except for one data server that doesn't support
+// the given feature.
+func supportedFeaturesExcept(dataServer *proto.DataServerIdentity, unsupported proto.Feature) DataServerSupportedFeaturesSupplier {
+	return func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+		features := make(map[string][]proto.Feature, len(dataServers))
+		for _, server := range dataServers {
+			supported := feature.SupportedFeatures()
+			if server.GetNameOrDefault() == dataServer.GetNameOrDefault() {
+				supported = slices.DeleteFunc(supported, func(f proto.Feature) bool { return f == unsupported })
+			}
+			features[server.GetNameOrDefault()] = supported
+		}
+		return features
+	}
+}
+
+// A child inherits the features enabled on the parent, and its clean term
+// must pin them once the split has passed its point of no return: the child
+// leader refuses to lead otherwise, and the split can then neither complete
+// nor abort, leaving the child's key range unavailable. A child whose ensemble
+// has a member that doesn't support one of those features must stop the split
+// before the parent is frozen or fenced, so that the split is aborted.
+func TestSplitController_ChildEnsembleWithoutParentFeature(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
+
+	// Every feature is enabled on the parent, and rs3, a follower of the
+	// right child, doesn't support ordered writes, e.g. during a rolling
+	// upgrade
+	rpcMock.GetNode(ps1).SetEnabledFeatures(feature.SupportedFeatures())
+	supplier := supportedFeaturesExcept(rs3, proto.Feature_FEATURE_ORDERED_WRITES)
+
+	queueBootstrapResponses(rpcMock)
+	// Every Bootstrap attempt adds the left child as an observer again
+	for range 20 {
+		rpcMock.GetNode(ps1).AddFollowerResponse(nil)
+	}
+	queueCatchUpResponses(rpcMock)
+	// The abort removes the child observers from the parent leader
+	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:                 constant.DefaultNamespace,
+		ParentShardId:             0,
+		Metadata:                  metadata,
+		RpcProvider:               rpcMock,
+		EventListener:             listener,
+		SupportedFeaturesSupplier: supplier,
+		SplitTimeout:              2 * time.Second,
+	})
+	defer sc.Close()
+
+	select {
+	case <-listener.aborts:
+	case <-listener.completions:
+		t.Fatal("Split should have been aborted")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Split was not aborted in time")
+	}
+
+	// The parent was never frozen, nor fenced: only the abort lifted a freeze
+	for _, r := range drainFreezeShardRequests(rpcMock.GetNode(ps1)) {
+		assert.False(t, r.Frozen, "the parent was frozen")
+	}
+	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
+		assert.Empty(t, drainNewTermRequests(rpcMock.GetNode(node)), "NewTerm requests to %s", node.GetPublic())
+	}
+
+	// The parent leader checked the features that each child's ensemble
+	// supports: all of them for the left child, the ones of rs3 for the right
+	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5, feature.SupportedFeatures())
+	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5,
+		supplier([]*proto.DataServerIdentity{rs3})[rs3.GetNameOrDefault()])
+
+	// The parent is back without the split, and the children are gone
+	shards := loadTestStatus(t, metadata).Namespaces[constant.DefaultNamespace].GetShards()
+	assert.Nil(t, shards[0].GetSplit())
+	assert.Equal(t, proto.ShardStatusSteadyState, shards[0].GetStatusOrDefault())
+	assert.EqualValues(t, 5, shards[0].GetTerm())
+	assert.NotContains(t, shards, int64(1))
+	assert.NotContains(t, shards, int64(2))
 }
 
 // TestSplitController_DetachChildrenIsAllOrNothing verifies that the children
