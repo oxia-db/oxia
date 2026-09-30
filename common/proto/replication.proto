@@ -72,7 +72,7 @@ enum Feature {
   FEATURE_SEQUENCE_LAST_KEY_SEPARATOR = 5;
   // When a session ends, delete all its ephemeral records with the natural
   // key sorting too
-  FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 8;
+  FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 6;
 }
 
 message GetInfoRequest {
