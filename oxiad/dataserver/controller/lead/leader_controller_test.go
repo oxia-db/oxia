@@ -1149,6 +1149,74 @@ func TestLeaderController_EntryVisibilityAfterBecomingLeader(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A write request that can't be applied has no effect: the leader answers the
+// client with the error, and applies the entry. A replica that applies the
+// entry when it becomes leader must move past it too.
+func TestLeaderController_RejectedWrite(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	sequentialPut := func(deltas ...uint64) *proto.WriteRequest {
+		return &proto.WriteRequest{Shard: &shard, Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("s"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: deltas,
+		}}}
+	}
+
+	// The wal of a follower that has yet to apply any entry
+	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+	require.NoError(t, err)
+	for offset, request := range []*proto.WriteRequest{
+		sequentialPut(1, 1),
+		// Fewer deltas than the parts of the sequence
+		sequentialPut(1),
+		{Shard: &shard, Puts: []*proto.PutRequest{{Key: "b", Value: []byte("b")}}},
+	} {
+		value, err := pb.Marshal(wrapInLogEntryValue(request))
+		require.NoError(t, err)
+		require.NoError(t, walObject.Append(&proto.LogEntry{Term: 1, Offset: int64(offset), Value: value}))
+	}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              2,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+		Shard: &shard,
+		Gets: []*proto.GetRequest{{Key: "b", IncludeValue: true}, {
+			Key:            "s-",
+			ComparisonType: proto.KeyComparisonType_HIGHER,
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, results[0].Status)
+	assert.Equal(t, []byte("b"), results[0].Value)
+	assert.Equal(t, "s-00000000000000000001-00000000000000000001", results[1].GetKey())
+
+	_, err = lc.WriteBlock(context.Background(), sequentialPut(1))
+	assert.ErrorIs(t, err, database.ErrWriteRejected)
+	assert.ErrorIs(t, err, database.ErrMissingSequenceDeltas)
+	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, commitOffset)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_Notifications(t *testing.T) {
 	var shard int64 = 1
 
@@ -1293,6 +1361,49 @@ func TestLeaderController_NotificationsCloseLeader(t *testing.T) {
 
 	assert.True(t, adaptor.IsCompleted())
 
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// NewTerm sets whether the db has notifications enabled while the dispatch of
+// an active subscription, which doesn't hold the leader lock, reads it. The
+// test fails under -race if the two accesses aren't synchronized.
+func TestLeaderController_NotificationsNewTerm(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
+
+	// The dispatch reads the next notifications right after confirming the
+	// subscription
+	<-adaptor.Ch()
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	assert.False(t, adaptor.IsCompleted())
+
+	cancel()
+	assert.Eventually(t, func() bool {
+		return adaptor.IsCompleted()
+	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }

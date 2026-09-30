@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
@@ -43,14 +42,14 @@ func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature
 	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
 }
 
-func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
+func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry, features feature.Checker) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value, features); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value)
+	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value, features)
 }
 
 func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *database.Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error) {
@@ -64,24 +63,14 @@ func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *data
 	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se)
 }
 
-func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string) error {
+func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string, features feature.Checker) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key, features); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key)
-}
-
-func (wrapperUpdateCallback) OnDeleteRange(batch kvstore.WriteBatch, notifications *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
-	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive); err != nil {
-		return err
-	}
-
-	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive)
+	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key, features)
 }
 
 var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUpdateCallback{}
@@ -115,7 +104,7 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *databa
 	return proto.Status_OK, writeSecondaryIndexes(batch, request.Key, request.SecondaryIndexes)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string) error {
+func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string, _ feature.Checker) error {
 	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -127,40 +116,8 @@ func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *dat
 	return deleteSecondaryIndexes(batch, key, se)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry, _ feature.Checker) error {
 	return deleteSecondaryIndexes(batch, key, value)
-}
-
-func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch kvstore.WriteBatch, _ *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
-	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
-	if err != nil {
-		return err
-	}
-
-	for ; it.Valid(); it.Next() {
-		value, err := it.Value()
-		if err != nil {
-			return errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to delete range")
-		}
-		se := proto.StorageEntryFromVTPool()
-
-		err = database.Deserialize(value, se)
-		if err == nil {
-			err = deleteSecondaryIndexes(batch, it.Key(), se)
-		}
-
-		se.ReturnToVTPool()
-
-		if err != nil {
-			return errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to delete range")
-		}
-	}
-
-	if err := it.Close(); err != nil {
-		return errors.Wrap(err, "oxia db: failed to delete range")
-	}
-
-	return err
 }
 
 const secondaryIdxSeparator = "\x01"
@@ -244,6 +201,10 @@ func (*secondaryIndexListIterator) SeekLT(string) bool {
 
 func (it *secondaryIndexListIterator) Next() bool {
 	return it.it.Next()
+}
+
+func (it *secondaryIndexListIterator) Error() error {
+	return it.it.Error()
 }
 
 func (it *secondaryIndexListIterator) Close() error {
@@ -346,7 +307,9 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
 
-		if req.ComparisonType == proto.KeyComparisonType_FLOOR &&
+		// A failed read is left to the check after the walk: seeking again
+		// would clear the error
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR && it.Error() == nil &&
 			(!it.Valid() || !strings.HasPrefix(it.Key(), indexPrefix)) {
 			// There is no entry of this index at or after the search key: the
 			// floor candidate, if any, is the last index entry before it.
@@ -407,6 +370,11 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		default:
 			return "", "", errors.Errorf("unsupported comparison type: %v", req.ComparisonType)
 		}
+	}
+
+	// The walk also stops when a read fails
+	if err = it.Error(); err != nil {
+		return "", "", errors.Wrap(err, "failed to read the secondary index")
 	}
 
 	// The walk ran out of entries of the requested index without finding a match

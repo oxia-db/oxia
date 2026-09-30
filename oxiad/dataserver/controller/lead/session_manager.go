@@ -85,6 +85,8 @@ type SessionManager interface {
 	KeepAlive(sessionId int64) error
 	CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
 	Initialize() error
+
+	stop()
 }
 
 var _ SessionManager = (*sessionManager)(nil)
@@ -190,7 +192,7 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 		return nil, errors.Wrap(err, "could not marshal session metadata")
 	}
 	var sessionId SessionId
-	resp, err := sm.leaderController.writeBlock(sm.ctx, func(offset int64) *proto.WriteRequest {
+	resp, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(offset int64) *proto.WriteRequest {
 		sessionId = SessionId(offset)
 		return &proto.WriteRequest{
 			Shard: &request.Shard,
@@ -243,9 +245,11 @@ func (sm *sessionManager) deleteSessions(ids []SessionId) error {
 	for i, id := range ids {
 		deletes[i] = &proto.DeleteRequest{Key: SessionKey(id)}
 	}
-	_, err := sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
-		Shard:   &sm.shardId,
-		Deletes: deletes,
+	_, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(int64) *proto.WriteRequest {
+		return &proto.WriteRequest{
+			Shard:   &sm.shardId,
+			Deletes: deletes,
+		}
 	})
 	return err
 }
@@ -369,13 +373,10 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 	return result, nil
 }
 
+// Close stops the session manager and waits for its expiry scheduler to exit.
+// It must not be called while holding the leader lock, see stop.
 func (sm *sessionManager) Close() error {
-	sm.Lock()
-	sm.cancel()
-	for id := range sm.sessions {
-		sm.removeSession(id)
-	}
-	sm.Unlock()
+	sm.stop()
 
 	// Wait for the expiry scheduler outside the manager lock: it acquires
 	// the lock to finish an in-flight expiry cycle — waiting under the lock
@@ -383,6 +384,23 @@ func (sm *sessionManager) Close() error {
 	sm.latch.Wait()
 
 	return nil
+}
+
+// stop cancels the session manager and drops its sessions, without waiting for
+// the expiry scheduler. The leader controller stops the manager while holding
+// the leader lock, and waits for the scheduler with Close only once the lock
+// is released: the scheduler takes the leader lock to propose the deletion of
+// the sessions it expired, so waiting for it under the lock would deadlock.
+// Once stopped, the writes of the manager are rejected under the leader lock
+// (see writeBlock), so none of them can be appended afterwards, not even once
+// a later term makes this node leader again.
+func (sm *sessionManager) stop() {
+	sm.Lock()
+	sm.cancel()
+	for id := range sm.sessions {
+		sm.removeSession(id)
+	}
+	sm.Unlock()
 }
 
 type sessionManagerUpdateOperationCallbackS struct{}
@@ -443,7 +461,7 @@ func deleteShadow(batch kvstore.WriteBatch, _ *database.Notifications, key strin
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string, features feature.Checker) error {
 	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -452,10 +470,10 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBat
 		return err
 	}
 	defer se.ReturnToVTPool()
-	return s.OnDeleteWithEntry(batch, notification, key, se)
+	return s.OnDeleteWithEntry(batch, notification, key, se, features)
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry) error {
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry, features feature.Checker) error {
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
@@ -484,48 +502,35 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 			return err
 		}
 		if unescapedEphemeralKey != "" {
-			// delete the ephemeral key
-			if err := batch.Delete(unescapedEphemeralKey); err != nil {
+			if err := deleteEphemeralKey(batch, notification, unescapedEphemeralKey, features); err != nil {
 				return err
 			}
-			// add ephemeral key to notification
-			if notification != nil {
-				notification.Deleted(unescapedEphemeralKey)
-			}
 		}
+	}
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to list the ephemeral keys of the session")
 	}
 	return nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDeleteRange(batch kvstore.WriteBatch, notification *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
-	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
-	if err != nil {
+// deleteEphemeralKey deletes an ephemeral key of a session that ends.
+func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notifications, key string,
+	features feature.Checker) error {
+	if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
+		// delete the ephemeral key secondary indexes: they are listed
+		// in its entry, so this has to happen before the key goes
+		if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, key, features); err != nil {
+			return err
+		}
+	}
+	// delete the ephemeral key
+	if err := batch.Delete(key); err != nil {
 		return err
 	}
-	defer func() {
-		if err = it.Close(); err != nil {
-			slog.Warn("Failed to close the iterator when deleting the range.", slog.Any("error", err))
-		}
-	}()
-
-	// introduce the processor here for better defer resource release
-	iteratorProcessor := func(batch kvstore.WriteBatch, it kvstore.KeyValueIterator) error {
-		value, err := it.Value()
-		if err != nil {
-			return err
-		}
-		se := proto.StorageEntryFromVTPool()
-		defer se.ReturnToVTPool()
-		if err = database.Deserialize(value, se); err != nil {
-			return err
-		}
-		return s.OnDeleteWithEntry(batch, notification, it.Key(), se)
-	}
-
-	for ; it.Valid(); it.Next() {
-		if err := iteratorProcessor(batch, it); err != nil {
-			return errors.Wrap(err, "oxia db: failed to delete range")
-		}
+	// add ephemeral key to notification
+	if notification != nil {
+		notification.Deleted(key)
 	}
 	return nil
 }

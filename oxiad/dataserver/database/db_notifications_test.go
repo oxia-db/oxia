@@ -30,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -586,7 +587,7 @@ type deleteCountingCallback struct {
 	deletes int
 }
 
-func (c *deleteCountingCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
+func (c *deleteCountingCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry, feature.Checker) error {
 	c.deletes++
 	return nil
 }

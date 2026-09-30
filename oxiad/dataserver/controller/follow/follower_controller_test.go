@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1368,6 +1369,100 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// closeFailingKVFactory makes the next database Close fail once failNextClose
+// is set. Like Pebble when it finds leaked iterators, it closes the database
+// all the same.
+type closeFailingKVFactory struct {
+	kvstore.Factory
+	failNextClose atomic.Bool
+}
+
+func (f *closeFailingKVFactory) NewKV(
+	namespace string,
+	shardId int64,
+	keySorting proto.KeySortingType,
+) (kvstore.KV, error) {
+	kv, err := f.Factory.NewKV(namespace, shardId, keySorting)
+	if err != nil {
+		return nil, err
+	}
+	return &closeFailingKV{KV: kv, factory: f}, nil
+}
+
+type closeFailingKV struct {
+	kvstore.KV
+	factory *closeFailingKVFactory
+}
+
+func (kv *closeFailingKV) Close() error {
+	err := kv.KV.Close()
+	if kv.factory.failNextClose.CompareAndSwap(true, false) {
+		return errors.New("leaked iterators")
+	}
+	return err
+}
+
+// A snapshot install that fails to close the old database must still leave the
+// follower with a database: the leader retries the snapshot, and NewTerm, Close
+// and the state applier use the database too.
+func TestFollower_HandleSnapshotWithFailingDatabaseClose(t *testing.T) {
+	var shardId int64
+	pebbleFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kvFactory := &closeFailingKVFactory{Factory: pebbleFactory}
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	snapshot := prepareTestDb(t, 1)
+	var chunks []*proto.SnapshotChunk
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		require.NoError(t, err)
+		chunks = append(chunks, &proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	installSnapshot := func() error {
+		snapshotStream := rpc.NewMockServerSendSnapshotStream()
+		for _, chunk := range chunks {
+			snapshotStream.AddChunk(chunk)
+		}
+		close(snapshotStream.Chunks)
+		return fc.InstallSnapshot(snapshotStream)
+	}
+
+	kvFactory.failNextClose.Store(true)
+	assert.ErrorContains(t, installSnapshot(), "failed to close Database")
+	assert.NotNil(t, fc.(*followerController).db, "the follower was left without a database")
+
+	// The leader retries the snapshot
+	require.NotPanics(t, func() { err = installSnapshot() })
+	require.NoError(t, err)
+	assert.Equal(t, proto.ServingStatus_FOLLOWER, fc.Status())
+	assert.EqualValues(t, 1, fc.Term())
+	assert.EqualValues(t, 99, fc.CommitOffset())
+	for i := 0; i < 100; i++ {
+		dbRes, err := fc.(*followerController).db.Get(&proto.GetRequest{
+			Key:          fmt.Sprintf("key-%d", i),
+			IncludeValue: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, proto.Status_OK, dbRes.Status)
+	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 // TestFollower_SplitHashRangeFiltering verifies that when a follower has a
 // split hash range set, only keys whose hash falls within the range are
 // applied to the database. Keys outside the range are filtered out both
@@ -1537,6 +1632,100 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A write request that can't be applied has no effect, like on the leader,
+// which answered the client with the error: the follower must apply its entry
+// and move on, instead of retrying it forever.
+func TestFollower_RejectedWrite(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		rejected *proto.WriteRequest
+	}{{
+		// Fewer deltas than the parts of the sequence
+		name: "missing-sequence-deltas",
+		rejected: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("1"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: []uint64{1},
+		}}},
+	}, {
+		// Without an end, the range reaches the notification records
+		name: "delete-range-without-end",
+		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+		}}},
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			// The database keeps the key sorting it was created with
+			db, err := database.NewDB(constant.DefaultNamespace, 0, kvFactory, proto.KeySortingType_NATURAL, time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, 0, walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+			require.NoError(t, err)
+			_, err = fc.Truncate(&proto.TruncateRequest{
+				Term:        1,
+				HeadEntryId: &proto.EntryId{Term: 1, Offset: wal.InvalidOffset},
+			})
+			require.NoError(t, err)
+
+			stream := rpc.NewMockServerReplicateStream()
+			go func() {
+				_ = fc.AppendEntries(stream)
+				stream.Cancel()
+			}()
+
+			stream.AddRequest(createWriteAppend(t, 1, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{{
+				Key:   "a",
+				Value: []byte("a"),
+			}, {
+				Key:              "s",
+				Value:            []byte("0"),
+				PartitionKey:     pb.String("s"),
+				SequenceKeyDelta: []uint64{1, 1},
+			}}}, wal.InvalidOffset))
+			stream.AddRequest(createWriteAppend(t, 1, 1, test.rejected, 0))
+			stream.AddRequest(createWriteAppend(t, 1, 2, &proto.WriteRequest{Puts: []*proto.PutRequest{{
+				Key:   "b",
+				Value: []byte("b"),
+			}}}, 2))
+			for range 3 {
+				stream.GetResponse()
+			}
+
+			assert.Eventually(t, func() bool {
+				return fc.CommitOffset() == 2
+			}, 10*time.Second, 10*time.Millisecond)
+
+			it, err := fc.(*followerController).db.List(&proto.ListRequest{})
+			require.NoError(t, err)
+			var keys []string
+			for ; it.Valid(); it.Next() {
+				keys = append(keys, it.Key())
+			}
+			assert.NoError(t, it.Close())
+			assert.Equal(t, []string{"a", "b", "s-00000000000000000001-00000000000000000001"}, keys)
+
+			// The entry was applied: after a restart, the follower doesn't go
+			// through it again
+			assert.NoError(t, fc.Close())
+			fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, 0, walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, fc.CommitOffset())
+
+			assert.NoError(t, fc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 func closeChanIsNotNil(fc FollowerController) func() bool {
 	return func() bool {
 		fci := fc.(*followerController)
@@ -1559,6 +1748,14 @@ func createAddRequest(t *testing.T, term int64, offset int64,
 			Value: []byte(v),
 		})
 	}
+
+	return createWriteAppend(t, term, offset, br, commitOffset)
+}
+
+func createWriteAppend(t *testing.T, term int64, offset int64,
+	br *proto.WriteRequest,
+	commitOffset int64) *proto.Append {
+	t.Helper()
 
 	entry, err := pb.Marshal(wrapInLogEntryValue(br))
 	assert.NoError(t, err)

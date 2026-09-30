@@ -179,6 +179,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 			FeaturesSupported: []proto.Feature{
 				proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 				proto.Feature_FEATURE_ORDERED_WRITES,
+				proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
 				proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
 			},
 		}); err != nil {
