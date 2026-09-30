@@ -404,13 +404,14 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 	}
 	childLeader := childMeta.Leader
 
-	// The child inherits the features enabled on the parent, and its clean
-	// term, past the point of no return, must pin them: the child leader
-	// refuses to lead otherwise, and the split can then neither complete nor
-	// abort. Report the features that the whole child ensemble supports,
-	// negotiated as reelectChild does, so that the parent leader refuses the
-	// child, before the parent is frozen, if they don't cover the features
-	// enabled on the parent.
+	// The child inherits the features enabled on the parent. Past the point of
+	// no return, every member that takes part in its clean term must support
+	// them: the child stays without a leader otherwise, and the split can
+	// neither complete nor abort (see reelectChild). Report the features that
+	// the whole child ensemble supports, a member whose features are not known
+	// yet counting as supporting none, so that the parent leader refuses the
+	// child if they don't cover the features enabled on the parent: before the
+	// parent is frozen, the split can still be aborted.
 	childFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
 
 	_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
