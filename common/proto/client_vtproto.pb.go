@@ -72,6 +72,7 @@ func (m *NamespaceShardsAssignment) CloneVT() *NamespaceShardsAssignment {
 	}
 	r := new(NamespaceShardsAssignment)
 	r.ShardKeyRouter = m.ShardKeyRouter
+	r.KeySorting = m.KeySorting
 	if rhs := m.Assignments; rhs != nil {
 		tmpContainer := make([]*ShardAssignment, len(rhs))
 		for k, v := range rhs {
@@ -946,6 +947,9 @@ func (this *NamespaceShardsAssignment) EqualVT(that *NamespaceShardsAssignment) 
 		}
 	}
 	if this.ShardKeyRouter != that.ShardKeyRouter {
+		return false
+	}
+	if this.KeySorting != that.KeySorting {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -2070,6 +2074,11 @@ func (m *NamespaceShardsAssignment) MarshalToSizedBufferVT(dAtA []byte) (int, er
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.KeySorting != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.KeySorting))
+		i--
+		dAtA[i] = 0x18
 	}
 	if m.ShardKeyRouter != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.ShardKeyRouter))
@@ -3862,6 +3871,9 @@ func (m *NamespaceShardsAssignment) SizeVT() (n int) {
 	if m.ShardKeyRouter != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.ShardKeyRouter))
 	}
+	if m.KeySorting != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.KeySorting))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4910,6 +4922,25 @@ func (m *NamespaceShardsAssignment) UnmarshalVT(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.ShardKeyRouter |= ShardKeyRouter(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
+			}
+			m.KeySorting = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeySorting |= KeySorting(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -9315,6 +9346,25 @@ func (m *NamespaceShardsAssignment) UnmarshalVTUnsafe(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.ShardKeyRouter |= ShardKeyRouter(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
+			}
+			m.KeySorting = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeySorting |= KeySorting(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

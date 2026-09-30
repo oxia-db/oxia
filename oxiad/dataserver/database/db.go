@@ -51,7 +51,14 @@ var (
 	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
 	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
 	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
+	ErrInvalidSequenceKey    = errors.New("oxia: sequential key operation found a key that is not part of the sequence")
+	ErrNotificationRecord    = errors.New("oxia: write request reaches a notification record")
 	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
+
+	// ErrWriteRejected marks a write request that ProcessWrite rejected
+	// because it can't be applied to the database: the request has no effect,
+	// and its log entry is applied.
+	ErrWriteRejected = errors.New("oxia: write request rejected")
 )
 
 const (
@@ -110,6 +117,9 @@ type DB interface {
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
 	KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error)
+
+	// CompareKeys compares two keys in the order the shard sorts them
+	CompareKeys(a, b string) int
 
 	ReadCommitOffset() (int64, error)
 
@@ -283,14 +293,22 @@ func now() uint64 {
 	return uint64(time.Now().UnixMilli())
 }
 
+// sequenceUpdate is the new last key of a sequence, for the waiters to be
+// notified once the batch that creates it is committed.
+type sequenceUpdate struct {
+	prefixKey string
+	key       string
+}
+
 func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	baseVersionId *atomic.Int64, commitOffset int64, timestamp uint64,
-	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, error) {
+	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, []sequenceUpdate, error) {
 	res := &proto.WriteResponse{}
 	var notifications *Notifications
 	if d.notificationsEnabled.Load() {
 		notifications = newNotifications(d.shardId, commitOffset, timestamp)
 	}
+	var sequenceUpdates []sequenceUpdate
 
 	d.putCounter.Add(len(b.Puts))
 	d.deleteCounter.Add(len(b.Deletes))
@@ -304,23 +322,28 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	for p < len(b.Puts) || dl < len(b.Deletes) || dr < len(b.DeleteRanges) {
 		switch nextWriteOp(b, p, dl, dr) {
 		case writeOpPut:
+			// A sequential put replaces the request key with the generated one
+			prefixKey := b.Puts[p].Key
 			pr, err := d.applyPut(batch, baseVersionId, notifications, b.Puts[p], timestamp, updateOperationCallback, false)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
+			}
+			if pr.Key != nil {
+				sequenceUpdates = append(sequenceUpdates, sequenceUpdate{prefixKey: prefixKey, key: *pr.Key})
 			}
 			res.Puts = append(res.Puts, pr)
 			p++
 		case writeOpDelete:
 			delRes, err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			res.Deletes = append(res.Deletes, delRes)
 			dl++
 		default: // writeOpDeleteRange
 			delRangeRes, err := d.applyDeleteRange(batch, notifications, b.DeleteRanges[dr], updateOperationCallback)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			res.DeleteRanges = append(res.DeleteRanges, delRangeRes)
 			dr++
@@ -329,7 +352,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 
 	d.writeOpsTotal.Add(uint64(len(b.Puts) + len(b.Deletes) + len(b.DeleteRanges)))
 
-	return notifications, res, nil
+	return notifications, res, sequenceUpdates, nil
 }
 
 type writeOp int
@@ -449,7 +472,11 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	batch := d.kv.NewWriteBatch()
 	defer batch.Close()
 
-	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
+	notifications, res, sequenceUpdates, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp,
+		updateOperationCallback)
+	if isRejectedWrite(err) {
+		return nil, d.rejectWrite(err, commitOffset, timestamp)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +518,73 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
 	}
 
+	// Only once committed: the waiters must never see a key that doesn't
+	// exist, e.g. because the request failed after the sequential put
+	for _, update := range sequenceUpdates {
+		d.sequenceWaiterTracker.SequenceUpdated(update.prefixKey, update.key)
+	}
+
 	return res, nil
+}
+
+// isRejectedWrite reports whether err rejects a write request for its content,
+// or for the database state it applies to, rather than for a storage failure:
+// retrying the request can't succeed, and every replica applying it to the
+// same state rejects it the same way.
+func isRejectedWrite(err error) bool {
+	return errors.Is(err, ErrMissingPartitionKey) ||
+		errors.Is(err, ErrMissingSequenceDeltas) ||
+		errors.Is(err, ErrSequenceDeltaIsZero) ||
+		errors.Is(err, ErrSequenceOverflow) ||
+		errors.Is(err, ErrInvalidSequenceKey) ||
+		// E.g. a DeleteRange without an end, with the natural key sorting.
+		// Each replica trims the notification records on its own: the
+		// request is only rejected where some are left.
+		errors.Is(err, ErrNotificationRecord)
+}
+
+// deserializeFailure returns the failure to deserialize the value of key,
+// err, along with closeErr, the failure to release the read. It rejects the
+// request when key is a notification record, which is not a storage entry,
+// and the read was released: any other value that fails to deserialize is
+// damaged, and a read that fails to be released is a storage failure.
+func deserializeFailure(key string, err error, closeErr error) error {
+	switch {
+	case closeErr != nil:
+		return multierr.Append(err, closeErr)
+	case strings.HasPrefix(key, notificationsPrefix+"/"):
+		return fmt.Errorf("%w: %w", ErrNotificationRecord, err)
+	default:
+		return err
+	}
+}
+
+// rejectWrite records the write request at commitOffset as applied, with no
+// effect. The leader answers the client with the error and moves on: failing
+// the log entry instead would leave the followers retrying it forever, and no
+// other replica could become leader.
+//
+// Only the commit offset is written, and the checksum is left as it is: the
+// data, the notifications and the checksum stay the same as on a replica that
+// dropped the request without recording it, like the leaders of the previous
+// versions.
+func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) error {
+	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
+	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
+		return err
+	}
+
+	d.log.Warn(
+		"Rejected write request, it has no effect",
+		slog.Int64("offset", commitOffset),
+		slog.Any("error", cause),
+	)
+	return fmt.Errorf("%w: %w", ErrWriteRejected, cause)
 }
 
 func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
@@ -636,6 +729,10 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 
 func (d *db) KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error) {
 	return d.kv.KeyIterator(kvstore.IteratorOpts{IncludeInternalKeys: includeInternalKeys})
+}
+
+func (d *db) CompareKeys(a, b string) int {
+	return d.kv.CompareKeys(a, b)
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
@@ -815,10 +912,8 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	var err error
 	var newKey string
 	if len(putReq.GetSequenceKeyDelta()) > 0 {
-		prefixKey := putReq.Key
 		newKey, err = generateUniqueKeyFromSequences(batch, putReq)
 		putReq.Key = newKey
-		d.sequenceWaiterTracker.SequenceUpdated(prefixKey, newKey)
 	} else if !internal {
 		se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)
 	}
@@ -985,7 +1080,8 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		se := proto.StorageEntryFromVTPool()
 		if err = Deserialize(value, se); err != nil {
 			se.ReturnToVTPool()
-			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to deserialize value on delete range")
+			return nil, errors.Wrap(deserializeFailure(key, err, it.Close()),
+				"oxia db: failed to deserialize value on delete range")
 		}
 		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se, d); err != nil {
 			se.ReturnToVTPool()
@@ -1076,10 +1172,11 @@ func GetStorageEntryMetadata(batch kvstore.WriteBatch, key string) (*proto.Stora
 
 	se := proto.StorageEntryFromVTPool()
 
-	if err = multierr.Append(
-		DeserializeMetadata(value, se),
-		closer.Close(),
-	); err != nil {
+	if err = DeserializeMetadata(value, se); err != nil {
+		se.ReturnToVTPool()
+		return nil, deserializeFailure(key, err, closer.Close())
+	}
+	if err = closer.Close(); err != nil {
 		se.ReturnToVTPool()
 		return nil, err
 	}

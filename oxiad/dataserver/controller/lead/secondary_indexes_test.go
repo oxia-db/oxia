@@ -506,6 +506,89 @@ func TestSecondaryIndices_GetBoundedToRequestedIndex(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+func TestSecondaryIndices_GetFollowsKeySorting(t *testing.T) {
+	var shard int64 = 1
+
+	// Every record is indexed by its own key, so a get through the index has to
+	// return the same record as the same get on the primary keys, in either key
+	// sorting. The keys mix '/' with the bytes right below and above it, and "/"
+	// right after the '/' that ends the index prefix makes a "//".
+	keys := []string{"a.c", "a0", "b/x", "a/y/z", "/"}
+	queries := []string{"/", "a", "a.c", "a/", "a/y/y", "a/y/z", "a/z", "a0", "b", "b/x", "b/y", "c/d/e/f"}
+	comparisons := []proto.KeyComparisonType{
+		proto.KeyComparisonType_FLOOR,
+		proto.KeyComparisonType_LOWER,
+		proto.KeyComparisonType_CEILING,
+		proto.KeyComparisonType_HIGHER,
+	}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory,
+				&proto.NewTermOptions{KeySorting: keySorting})
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+			})
+
+			var puts []*proto.PutRequest
+			for _, key := range keys {
+				puts = append(puts, &proto.PutRequest{
+					Key:              key,
+					Value:            []byte(key),
+					SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: key}},
+				})
+			}
+			_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			assert.NoError(t, err)
+
+			for _, key := range keys {
+				resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+					Shard: &shard,
+					Gets: []*proto.GetRequest{{
+						Key:                key,
+						ComparisonType:     proto.KeyComparisonType_EQUAL,
+						SecondaryIndexName: pb.String("idx"),
+					}},
+				})
+				assert.NoError(t, err)
+				assert.Equal(t, 1, len(resps))
+				assert.Equal(t, proto.Status_OK, resps[0].Status, "EQUAL %q", key)
+				assert.Equal(t, key, resps[0].GetKey(), "EQUAL %q", key)
+			}
+
+			for _, comparison := range comparisons {
+				for _, query := range queries {
+					resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+						Shard: &shard,
+						Gets: []*proto.GetRequest{
+							{Key: query, ComparisonType: comparison},
+							{Key: query, ComparisonType: comparison, SecondaryIndexName: pb.String("idx")},
+						},
+					})
+					assert.NoError(t, err)
+					assert.Equal(t, 2, len(resps))
+
+					primary, index := resps[0], resps[1]
+					assert.Equal(t, primary.Status, index.Status, "%v %q", comparison, query)
+					assert.Equal(t, primary.GetKey(), index.GetKey(), "%v %q", comparison, query)
+					assert.Equal(t, primary.GetKey(), index.GetSecondaryIndexKey(), "%v %q", comparison, query)
+				}
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	var shard int64 = 1
 

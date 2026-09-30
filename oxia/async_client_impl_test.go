@@ -47,6 +47,7 @@ type staticShardManager struct {
 	shards     []int64
 	leader     string
 	successors map[int64][]int64
+	keySorting proto.KeySorting
 	closed     bool
 }
 
@@ -73,6 +74,8 @@ func (s *staticShardManager) GetSuccessor(shardId int64, _ string) (int64, bool)
 	return 0, false
 }
 func (*staticShardManager) Changed() <-chan struct{} { return nil }
+
+func (s *staticShardManager) KeySorting() proto.KeySorting { return s.keySorting }
 
 func newGetTestClient(shards ...int64) (*clientImpl, *capturingGetBatcher) {
 	b := &capturingGetBatcher{calls: make(chan model.GetCall, len(shards))}
@@ -141,7 +144,7 @@ func TestGetCallbackDoesNotBlockWhenMultiShardResultIsAbandoned(t *testing.T) {
 // the counter sentinel negative, defeating the response-already-sent guard).
 func TestMultiShardGetCallback_ErrorsAfterFirstAreDiscarded(t *testing.T) {
 	ch := make(chan GetResult, 1)
-	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, 3, ch)
+	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, keyOrder{}, 3, ch)
 
 	callback(nil, errors.New("shard-0 failed"))
 	result := <-ch
@@ -159,7 +162,7 @@ func TestMultiShardGetCallback_ErrorsAfterFirstAreDiscarded(t *testing.T) {
 
 func TestMultiShardGetCallback_AllShardsRespond(t *testing.T) {
 	ch := make(chan GetResult, 1)
-	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, 3, ch)
+	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, keyOrder{}, 3, ch)
 
 	for i := 0; i < 3; i++ {
 		callback(&proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil)
@@ -169,6 +172,42 @@ func TestMultiShardGetCallback_AllShardsRespond(t *testing.T) {
 	assert.ErrorIs(t, result.Err, ErrKeyNotFound)
 	_, open := <-ch
 	assert.False(t, open)
+}
+
+// A get with an index goes to every shard, and the client picks one of their
+// answers by comparing the secondary keys in the key sorting of the namespace.
+func TestMultiShardIndexGetKeySorting(t *testing.T) {
+	responses := []*proto.GetResponse{
+		{Status: proto.Status_OK, Version: &proto.Version{}, Key: new("p1"), SecondaryIndexKey: new("a0")},
+		{Status: proto.Status_OK, Version: &proto.Version{}, Key: new("p2"), SecondaryIndexKey: new("a/y/z")},
+	}
+	for _, test := range []struct {
+		keySorting proto.KeySorting
+		comparison GetOption
+		expected   string
+	}{
+		// Natural sorting: "a/y/z" < "a0"
+		{proto.KeySorting_KEY_SORTING_NATURAL, ComparisonFloor(), "p1"},
+		{proto.KeySorting_KEY_SORTING_NATURAL, ComparisonCeiling(), "p2"},
+		// Hierarchical sorting: "a0" < "a/y/z"
+		{proto.KeySorting_KEY_SORTING_HIERARCHICAL, ComparisonFloor(), "p2"},
+		{proto.KeySorting_KEY_SORTING_HIERARCHICAL, ComparisonCeiling(), "p1"},
+		// The key sorting is not known: "a0" < "a/y/z" in the old order
+		{proto.KeySorting_KEY_SORTING_UNKNOWN, ComparisonFloor(), "p2"},
+		{proto.KeySorting_KEY_SORTING_UNKNOWN, ComparisonCeiling(), "p1"},
+	} {
+		client, batcher := newGetTestClient(1, 2)
+		client.shardManager.(*staticShardManager).keySorting = test.keySorting
+		resultCh := client.Get("b", test.comparison, UseIndex("idx"))
+		for _, response := range responses {
+			call := <-batcher.calls
+			call.Callback(response, nil)
+		}
+
+		result := <-resultCh
+		require.NoError(t, result.Err)
+		assert.Equal(t, test.expected, result.Key, test.keySorting)
+	}
 }
 
 type capturingWriteBatcher struct {
