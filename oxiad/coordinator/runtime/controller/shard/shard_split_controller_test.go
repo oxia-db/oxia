@@ -1359,12 +1359,10 @@ func TestSplitController_ChildEnsembleWithoutParentFeature(t *testing.T) {
 	}
 
 	// The parent leader checked the features that each child's ensemble
-	// supports
+	// supports: all of them for the left child, the ones of rs3 for the right
 	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5, feature.SupportedFeatures())
-	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5, []proto.Feature{
-		proto.Feature_FEATURE_DB_CHECKSUM,
-		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
-	})
+	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5,
+		supplier([]*proto.DataServerIdentity{rs3})[rs3.GetNameOrDefault()])
 
 	// The parent is back without the split, and the children are gone
 	shards := loadTestStatus(t, metadata).Namespaces[constant.DefaultNamespace].GetShards()
