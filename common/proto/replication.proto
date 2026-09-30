@@ -70,6 +70,9 @@ enum Feature {
   // Continue the sequence of a sequential put on a prefix only from a key
   // that starts with "<prefix>-", not from any key that starts with the prefix
   FEATURE_SEQUENCE_LAST_KEY_SEPARATOR = 5;
+  // When a session ends, delete all its ephemeral records with the natural
+  // key sorting too
+  FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 6;
 }
 
 message GetInfoRequest {

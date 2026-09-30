@@ -87,11 +87,19 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 }
 
 type testFeatureChecker struct {
-	secondaryIndexNameValidation bool
+	secondaryIndexNameValidation   bool
+	ephemeralCleanupNaturalSorting bool
 }
 
 func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
-	return f.secondaryIndexNameValidation && candidate == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+	switch candidate {
+	case proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION:
+		return f.secondaryIndexNameValidation
+	case proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING:
+		return f.ephemeralCleanupNaturalSorting
+	default:
+		return false
+	}
 }
 
 var _ feature.Checker = testFeatureChecker{}
