@@ -53,8 +53,9 @@ func (*TLSOptions) Validate() error {
 }
 
 var (
-	ErrInvalidTLSCertFile = errors.New("tls cert file path can not be empty")
-	ErrInvalidTLSKeyFile  = errors.New("tls key file path can not be empty")
+	ErrInvalidTLSCertFile         = errors.New("tls cert file path can not be empty")
+	ErrInvalidTLSKeyFile          = errors.New("tls key file path can not be empty")
+	ErrClientAuthWithoutTrustedCa = errors.New("tls client auth requires a trusted ca file")
 )
 
 func (tls *TLSOptions) IsEnabled() bool {
@@ -162,6 +163,12 @@ func (tls *TLSOptions) TryIntoClientTLSConf() (*libtls.Config, error) {
 func (tls *TLSOptions) TryIntoServerTLSConf() (*libtls.Config, error) {
 	if !tls.IsEnabled() {
 		return nil, nil //nolint:nilnil
+	}
+	if tls.ClientAuth && tls.TrustedCaFile == "" {
+		// With no ClientCAs, crypto/tls verifies the client certificates
+		// against the system roots, so any certificate issued by a public CA
+		// would be accepted
+		return nil, ErrClientAuthWithoutTrustedCa
 	}
 	tlsConf, err := tls.makeCommonConfig()
 	if err != nil {
