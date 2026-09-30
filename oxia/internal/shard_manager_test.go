@@ -15,14 +15,21 @@
 package internal
 
 import (
+	"context"
 	"log/slog"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/concurrent"
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
 )
 
 func TestOverlap(t *testing.T) {
@@ -138,4 +145,207 @@ func TestShardManagerChanged(t *testing.T) {
 		assert.Fail(t, "the shard map has changed")
 	}
 	assert.NotEqual(t, changed, s.Changed())
+}
+
+// Sends the shard assignments a number of times, then fails with err.
+type failingAssignmentsStream struct {
+	grpc.ClientStream
+	namespace   string
+	assignments int
+	err         error
+}
+
+func (s *failingAssignmentsStream) Recv() (*proto.ShardAssignments, error) {
+	if s.assignments == 0 {
+		return nil, s.err
+	}
+	s.assignments--
+	return &proto.ShardAssignments{Namespaces: map[string]*proto.NamespaceShardsAssignment{
+		s.namespace: {Assignments: []*proto.ShardAssignment{{
+			ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{}},
+		}}},
+	}}, nil
+}
+
+type failingAssignmentsRpcProvider struct {
+	RpcProvider
+	assignments int
+	err         error
+}
+
+func (p *failingAssignmentsRpcProvider) GetShardAssignments(_ context.Context, _ string,
+	request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return &failingAssignmentsStream{namespace: request.Namespace, assignments: p.assignments, err: p.err}, nil
+}
+
+// Signals the warnings, such as the one logged before retrying to receive the
+// shard assignments.
+type warningsHandler struct {
+	slog.Handler
+	warnings chan struct{}
+}
+
+func (h *warningsHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level == slog.LevelWarn {
+		select {
+		case h.warnings <- struct{}{}:
+		default:
+		}
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+// Closing the shard manager interrupts the wait before it retries to receive
+// the assignments. It must stop without reporting a failure: once assignments
+// were received, reporting it blocks forever.
+func TestShardManagerCloseWhileWaitingToRetry(t *testing.T) {
+	logs := &warningsHandler{Handler: slog.Default().Handler(), warnings: make(chan struct{}, 1)}
+	s := &shardManagerImpl{
+		rpcProvider: &failingAssignmentsRpcProvider{assignments: 1, err: status.Error(codes.Unavailable, "connection reset")},
+		namespace:   "default",
+		shards:      make(map[int64]Shard),
+		successors:  make(map[int64][]Shard),
+		changed:     make(chan struct{}),
+		updatedWg:   concurrent.NewWaitGroup(1),
+		logger:      slog.New(logs),
+	}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		s.receiveWithRecovery()
+		close(stopped)
+	}()
+
+	select {
+	case <-logs.warnings:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the failed stream was not retried")
+	}
+
+	assert.NoError(t, s.Close())
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the shard manager kept receiving the assignments after it was closed")
+	}
+}
+
+// Sends one set of assignments, then waits for the shard manager to close.
+type singleAssignmentsStream struct {
+	grpc.ClientStream
+	ctx         context.Context
+	assignments *proto.ShardAssignments
+}
+
+func (s *singleAssignmentsStream) Recv() (*proto.ShardAssignments, error) {
+	if assignments := s.assignments; assignments != nil {
+		s.assignments = nil
+		return assignments, nil
+	}
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+type singleAssignmentsRpcProvider struct {
+	RpcProvider
+	keySorting proto.KeySorting
+}
+
+func (p *singleAssignmentsRpcProvider) GetShardAssignments(ctx context.Context, _ string,
+	request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	return &singleAssignmentsStream{ctx: ctx, assignments: &proto.ShardAssignments{
+		Namespaces: map[string]*proto.NamespaceShardsAssignment{
+			request.Namespace: {
+				Assignments: []*proto.ShardAssignment{{
+					ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{}},
+				}},
+				KeySorting: p.keySorting,
+			},
+		},
+	}}, nil
+}
+
+// The shard manager reports the key sorting of the namespace that the server
+// sends with the assignments, or none when an older server does not send it.
+func TestShardManagerKeySorting(t *testing.T) {
+	for _, keySorting := range []proto.KeySorting{
+		proto.KeySorting_KEY_SORTING_UNKNOWN,
+		proto.KeySorting_KEY_SORTING_NATURAL,
+		proto.KeySorting_KEY_SORTING_HIERARCHICAL,
+	} {
+		provider := &singleAssignmentsRpcProvider{keySorting: keySorting}
+		sm, err := NewShardManager(NewShardStrategy(), provider, "localhost:6648", "default", 10*time.Second, nil)
+		require.NoError(t, err)
+		assert.Equal(t, keySorting, sm.KeySorting())
+		assert.NoError(t, sm.Close())
+	}
+}
+
+// Waits for the shard manager to cancel the request of the assignments.
+type pendingAssignmentsRpcProvider struct {
+	RpcProvider
+	canceled chan struct{}
+}
+
+func (p *pendingAssignmentsRpcProvider) GetShardAssignments(ctx context.Context, _ string,
+	_ *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	<-ctx.Done()
+	close(p.canceled)
+	return nil, ctx.Err()
+}
+
+// A shard manager that does not receive the initial assignments in time fails
+// to start, and must stop requesting them.
+func TestNewShardManagerStopsReceivingOnTimeout(t *testing.T) {
+	provider := &pendingAssignmentsRpcProvider{canceled: make(chan struct{})}
+	_, err := NewShardManager(NewShardStrategy(), provider, "localhost:6648", "default", 100*time.Millisecond, nil)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+
+	select {
+	case <-provider.canceled:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the shard manager kept requesting the assignments after it failed to start")
+	}
+}
+
+// The errors that fail the creation of the shard manager are retried once it
+// has received the initial assignments.
+func TestShardManagerRetriesPermanentErrorsAfterStart(t *testing.T) {
+	for name, err := range map[string]error{
+		"unauthenticated":     status.Error(codes.Unauthenticated, "token expired"),
+		"namespace-not-found": constant.ErrNamespaceNotFound,
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := &warningsHandler{Handler: slog.Default().Handler(), warnings: make(chan struct{}, 1)}
+			s := &shardManagerImpl{
+				// The initial assignments and an update, then the error
+				rpcProvider: &failingAssignmentsRpcProvider{assignments: 2, err: err},
+				namespace:   "default",
+				shards:      make(map[int64]Shard),
+				successors:  make(map[int64][]Shard),
+				changed:     make(chan struct{}),
+				updatedWg:   concurrent.NewWaitGroup(1),
+				logger:      slog.New(logs),
+			}
+			s.ctx, s.cancel = context.WithCancel(context.Background())
+			stopped := make(chan struct{})
+			go func() {
+				s.receiveWithRecovery()
+				close(stopped)
+			}()
+
+			select {
+			case <-logs.warnings:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "the error was not retried")
+			}
+
+			assert.NoError(t, s.Close())
+			select {
+			case <-stopped:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "the shard manager kept receiving the assignments after it was closed")
+			}
+		})
+	}
 }

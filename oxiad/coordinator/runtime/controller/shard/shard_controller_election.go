@@ -58,6 +58,11 @@ var (
 	// that it can pin a different feature set than the one it fenced the
 	// ensemble with.
 	ErrFeaturesRenegotiation = errors.New("the term features must be negotiated again")
+
+	// ErrTermFeaturesNotReported is returned when the leader of the shard
+	// doesn't report the features pinned by its term, because it runs a
+	// binary that predates the report.
+	ErrTermFeaturesNotReported = errors.New("the leader doesn't report the features pinned by its term")
 )
 
 type Election struct {
@@ -881,18 +886,6 @@ func (e *Election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 		return fmt.Errorf("%w: the ensemble now supports features %v", ErrFeaturesRenegotiation, added)
 	}
 	return nil
-}
-
-// unpinnedFeatures returns the features that the whole ensemble supports, as
-// far as the members' features are known now, but that the term of the
-// elected leader does not pin.
-func (e *Election) unpinnedFeatures() []proto.Feature {
-	if e.mutableShardMetadata.GetLeader() == nil {
-		// No leader was elected
-		return nil
-	}
-	ensemble := e.mutableShardMetadata.Ensemble
-	return feature.Missing(negotiate(e.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble)), e.pinnedFeatures)
 }
 
 func unionFeatures(a []proto.Feature, b []proto.Feature) []proto.Feature {

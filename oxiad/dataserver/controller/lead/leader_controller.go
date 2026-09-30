@@ -22,7 +22,9 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -123,10 +125,14 @@ type leaderController struct {
 	// truncate the followers.
 	leaderElectionHeadEntryId *proto.EntryId
 
-	// The database commit offset at the time the controller was created. It's
-	// the commit offset reported to the WAL while there is no quorum ack
-	// tracker, starting from the WAL recovery.
-	dbCommitOffset int64
+	// The database commit offset: the last entry applied to the database. It's
+	// the commit offset reported to the WAL, starting from the WAL recovery.
+	dbCommitOffset atomic.Int64
+
+	// Done when the node stops leading the term, before the quorum ack tracker
+	// is closed: the leader doesn't apply the committed entries it has left.
+	termCtx    context.Context
+	termCancel context.CancelFunc
 
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -218,9 +224,11 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 	// Open the WAL after the database: the WAL recovery only discards the
 	// corrupted entries above the database commit offset, as never committed,
 	// and fails on the ones below it
-	if lc.dbCommitOffset, err = lc.db.ReadCommitOffset(); err != nil {
+	dbCommitOffset, err := lc.db.ReadCommitOffset()
+	if err != nil {
 		return nil, multierr.Append(err, lc.Close())
 	}
+	lc.dbCommitOffset.Store(dbCommitOffset)
 
 	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
 		return nil, multierr.Append(err, lc.Close())
@@ -292,8 +300,24 @@ func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
 // regarding reconfigurations.
 func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	lc.Lock()
-	defer lc.Unlock()
+	res, err := lc.newTerm(req)
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
+	// newTerm stopped the session manager: wait for its expiry scheduler only
+	// once the leader lock is released, see sessionManager.stop.
+	if err = sessionManager.Close(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// newTerm must be called while holding the leader lock. On success, it leaves
+// the session manager stopped.
+func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	if lc.closed {
 		return nil, constant.ErrResourceUnavailable
 	}
@@ -340,6 +364,9 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	lc.commitOffsetGauge.Unregister()
 
 	if lc.quorumAckTracker != nil {
+		// Closing the tracker waits for the callback that is running, which
+		// can be retrying an entry that failed to apply
+		lc.termCancel()
 		if err := lc.quorumAckTracker.Close(); err != nil {
 			return nil, err
 		}
@@ -369,10 +396,7 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		return nil, err
 	}
 
-	err = lc.sessionManager.Close()
-	if err != nil {
-		return nil, err
-	}
+	lc.sessionManager.stop()
 
 	lc.log.Info(
 		"Leader successfully initialized in new term",
@@ -425,6 +449,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	// followers seeded from the same snapshot drop them as duplicates.
 	headOffset := max(lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
 	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), headOffset, leaderCommitOffset)
+	lc.termCtx, lc.termCancel = context.WithCancel(lc.ctx)
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
 
 	for follower, followerHeadEntryId := range req.FollowerMaps {
@@ -442,6 +467,16 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	}
 
 	if err = lc.applyAllEntriesIntoDB(); err != nil {
+		return err
+	}
+
+	orphanedEphemerals, err := lc.sessionManager.Initialize()
+	if err != nil {
+		lc.log.Error(
+			"Failed to initialize session manager",
+			slog.Any("error", err),
+			slog.Int64("term", term),
+		)
 		return err
 	}
 
@@ -485,6 +520,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 			return err
 		}
 	}
+	lc.proposeOrphanedEphemeralsDeleteLocked(ctx, orphanedEphemerals)
 	return nil
 }
 
@@ -792,19 +828,11 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
+		lc.dbCommitOffset.Store(entry.Offset)
 		if resp.Checksum != nil {
 			lc.checksumGauge.Record(int64(*resp.Checksum))
 			lc.walChecksumGauge.Record(int64(entryCrc))
 		}
-	}
-
-	if err = lc.sessionManager.Initialize(); err != nil {
-		lc.log.Error(
-			"Failed to initialize session manager",
-			slog.Any("error", err),
-			slog.Int64("term", term),
-		)
-		return err
 	}
 	return nil
 }
@@ -1059,7 +1087,7 @@ func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, onNext
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	return lc.writeBlock(ctx, func(_ int64) *proto.WriteRequest { return request })
+	return lc.writeBlock(ctx, nil, func(_ int64) *proto.WriteRequest { return request })
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
@@ -1069,16 +1097,35 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
 }
 
-func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
+// writeBlock proposes the write built by requestSupplier and waits for its
+// result. If closed is done by the time the leader lock is held, the write is
+// rejected without being appended; a nil closed is never done. The session
+// manager passes its own done channel: it is stopped while holding the leader
+// lock, so none of its writes can be appended once it is stopped.
+func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
+	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
 	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
 		res <- &entity.TWithError[*proto.WriteResponse]{Err: nil, T: response.WriteResponse}
 	}, func(err error) {
 		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
 	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
-		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
-	}, deferPropose)
+
+	lc.Lock()
+	var err error
+	select {
+	case <-closed:
+		err = constant.ErrNodeIsNotLeader
+	default:
+		err = lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+			return statemachine.NewWriteProposal(offset, requestSupplier(offset))
+		}, deferPropose)
+	}
+	lc.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
 	response := <-res
 	return response.T, response.Err
 }
@@ -1107,6 +1154,47 @@ func (lc *leaderController) proposeFeaturesEnableLocked(ctx context.Context, fea
 			},
 		})
 	}, deferPropose)
+}
+
+// orphanedEphemeralsBatchSize caps how many ephemeral records of sessions that
+// are gone get deleted in a single write.
+const orphanedEphemeralsBatchSize = 1000
+
+// proposeOrphanedEphemeralsDeleteLocked deletes the ephemeral records whose
+// session is gone, read by the session manager on the new leader. The caller
+// must have held the leader write lock since they were read: the deletes are
+// appended ahead of every write of the term, so they apply on the state they
+// were read from, and need no version check. They are a cleanup, so a failure
+// doesn't fail the election: the next leader finds the records again.
+func (lc *leaderController) proposeOrphanedEphemeralsDeleteLocked(ctx context.Context, deletes []*proto.DeleteRequest) {
+	if len(deletes) == 0 {
+		return
+	}
+	term := lc.term.Load()
+	lc.log.Info(
+		"Deleting the ephemeral records of sessions that are gone",
+		slog.Int64("term", term),
+		slog.Int("count", len(deletes)),
+	)
+	onError := func(err error) {
+		lc.log.Warn(
+			"Failed to delete the ephemeral records of sessions that are gone",
+			slog.Int64("term", term),
+			slog.Any("error", err),
+		)
+	}
+	for start := 0; start < len(deletes); start += orphanedEphemeralsBatchSize {
+		request := &proto.WriteRequest{
+			Shard:   &lc.shardId,
+			Deletes: deletes[start:min(start+orphanedEphemeralsBatchSize, len(deletes))],
+		}
+		if err := lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+			return statemachine.NewWriteProposal(offset, request)
+		}, concurrent.NewOnce(func(statemachine.ApplyResponse) {}, onError)); err != nil {
+			onError(err)
+			return
+		}
+	}
 }
 
 func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
@@ -1151,6 +1239,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	newOffset := lc.quorumAckTracker.NextOffset()
 	walLog := lc.wal
 	tracker := lc.quorumAckTracker
+	termCtx := lc.termCtx
 	term := lc.term.Load()
 	proposal := proposalSupplier(newOffset)
 
@@ -1189,7 +1278,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
-				response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+				response, err := lc.applyCommitted(termCtx, walLog, proposal)
 				if err != nil {
 					lc.waitGroup.Done()
 					cb.OnCompleteError(err)
@@ -1209,6 +1298,89 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	}
 	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
 	return nil
+}
+
+// applyCommitted applies a committed entry to the database while the node leads
+// the term. A failure that doesn't reject the request, like a storage error, is
+// retried until the entry is applied, as on the followers: moving on would
+// apply the next entries without it, and move the commit offset of the
+// database past it, so the database would miss it for good. The entries left
+// when the term ends are applied from the wal, by the next leader, and by this
+// node as a follower.
+func (lc *leaderController) applyCommitted(ctx context.Context, w wal.Wal, proposal statemachine.Proposal) (statemachine.ApplyResponse, error) {
+	if ctx.Err() != nil {
+		// An earlier entry could have failed to apply, and must come first
+		return statemachine.ApplyResponse{}, errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: the term ended before applying the entry %d", proposal.GetOffset())
+	}
+
+	response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+	if !isApplied(err) {
+		response, err = lc.retryApply(ctx, w, proposal.GetOffset(), err)
+	}
+	if isApplied(err) {
+		lc.dbCommitOffset.Store(proposal.GetOffset())
+	}
+	return response, err
+}
+
+// isApplied reports whether the apply of an entry returning err is complete: a
+// rejected request has no effect, but its entry is applied.
+func isApplied(err error) bool {
+	return err == nil || errors.Is(err, database.ErrWriteRejected)
+}
+
+// retryApply applies again the entry at offset, which failed to apply with
+// cause, until it's applied or rejected, or the term ends.
+func (lc *leaderController) retryApply(ctx context.Context, w wal.Wal, offset int64, cause error) (statemachine.ApplyResponse, error) {
+	var response statemachine.ApplyResponse
+	err := cause
+	bo := time2.NewBackOff(ctx)
+	// backoff.Retry does it before use: the intervals are 0 until then
+	bo.Reset()
+	for !isApplied(err) {
+		retryAfter := bo.NextBackOff()
+		if retryAfter == backoff.Stop {
+			return statemachine.ApplyResponse{}, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err),
+				"oxia: the term ended before applying the entry %d", offset)
+		}
+		lc.log.Error(
+			"Failed to apply a committed entry, retrying",
+			slog.Int64("term", lc.term.Load()),
+			slog.Int64("offset", offset),
+			slog.Any("error", err),
+			slog.Duration("retry-after", retryAfter),
+		)
+		select {
+		case <-ctx.Done():
+		case <-time.After(retryAfter):
+			// The failed apply can have modified the request, like the key of
+			// a sequential put: apply the entry as it was appended to the wal
+			response, err = lc.applyFromWal(w, offset)
+		}
+	}
+	return response, err
+}
+
+func (lc *leaderController) applyFromWal(w wal.Wal, offset int64) (statemachine.ApplyResponse, error) {
+	r, err := w.NewReader(offset - 1)
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	defer r.Close()
+
+	if !r.HasNext() {
+		return statemachine.ApplyResponse{}, errors.Wrapf(wal.ErrEntryNotFound, "offset %d", offset)
+	}
+	entry, _, _, err := r.ReadNext()
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	proposal, err := statemachine.NewProposalFromLogEntry(entry)
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	return proposal.Apply(lc.db, WrapperUpdateOperationCallback)
 }
 
 //nolint:revive
@@ -1309,8 +1481,13 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 
 func (lc *leaderController) Close() error {
 	lc.Lock()
-	defer lc.Unlock()
-	return lc.close()
+	err := lc.close()
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+
+	// close stopped the session manager: wait for its expiry scheduler only
+	// once the leader lock is released, see sessionManager.stop.
+	return multierr.Append(err, sessionManager.Close())
 }
 
 func (lc *leaderController) close() error {
@@ -1342,7 +1519,7 @@ func (lc *leaderController) close() error {
 	}
 	lc.followerAckOffsetGauges = map[string]metric.Gauge{}
 
-	err = lc.sessionManager.Close()
+	lc.sessionManager.stop()
 
 	if lc.wal != nil {
 		err = multierr.Append(err, lc.wal.Close())
@@ -1374,14 +1551,14 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
 
+// CommitOffset is the offset of the last entry applied to the database, rather
+// than the commit offset of the quorum: the WAL trimming must keep the entries
+// after it, which get applied from the WAL when their apply fails, or once the
+// term ends.
 func (lc *leaderController) CommitOffset() int64 {
 	// WAL trimming can call back into this provider while leader close holds the
 	// leader lock and waits for WAL close. Do not take the leader lock here.
-	qat := lc.quorumAckTracker
-	if qat != nil {
-		return qat.CommitOffset()
-	}
-	return lc.dbCommitOffset
+	return lc.dbCommitOffset.Load()
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
@@ -1408,12 +1585,24 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 		HeadOffset:   headOffset,
 		CommitOffset: commitOffset,
 		ShardStats:   shardStats,
+		TermFeatures: &proto.TermFeatures{Features: lc.termOptions.Features},
 	}, nil
 }
 
 func (lc *leaderController) DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	lc.Lock()
-	defer lc.Unlock()
+	res, err := lc.deleteShard(request)
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+
+	// deleteShard leaves the controller closed, and so the session manager
+	// stopped: wait for its expiry scheduler only once the leader lock is
+	// released, see sessionManager.stop.
+	return res, multierr.Append(err, sessionManager.Close())
+}
+
+// deleteShard must be called while holding the leader lock.
+func (lc *leaderController) deleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	if lc.closed {
 		return nil, constant.ErrResourceUnavailable
 	}

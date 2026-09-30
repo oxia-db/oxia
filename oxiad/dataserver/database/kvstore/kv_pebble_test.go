@@ -17,17 +17,26 @@ package kvstore
 import (
 	"bytes"
 	"cmp"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
+	"unsafe"
 
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
 )
 
@@ -272,6 +281,159 @@ func TestPebbleRangeScanWithSlashOrder(t *testing.T) {
 	assert.NoError(t, it.Close())
 }
 
+func TestPebbleCompareKeys(t *testing.T) {
+	keys := []string{"/", "a", "a.c", "a/", "a/y/z", "a0", "b/x", "__oxia/term", "__oxia/idx/i/a\x01a"}
+
+	for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(sorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, sorting)
+			assert.NoError(t, err)
+
+			// The keys have to compare in the order the store returns them
+			putAll(t, kv, keys...)
+			sorted := scanAllKeys(t, kv, ShowInternalKeys)
+			assert.Equal(t, len(keys), len(sorted))
+			for i, a := range sorted {
+				for j, b := range sorted {
+					assert.Equal(t, cmp.Compare(i, j), kv.CompareKeys(a, b), "%q %q", a, b)
+				}
+			}
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// The hierarchical sorting keeps the keys with a prefix in one range per level,
+// with other keys between the ranges: here, the entries of the neighbouring
+// indexes and other internal keys. However it is positioned and moved, the
+// iterator has to return the keys with the prefix, and only them, in the order
+// of the store.
+func TestPebbleKeyPrefixIterator(t *testing.T) {
+	keys := []string{"a", "b/c", "/a", "/a/b", "//",
+		"__oxia/term", "__oxia/session/0001", "__oxia/session/0001/k", "__oxia/notifications/0001"}
+	for _, index := range []string{"a", "b", "c"} {
+		secondaryKeys := []string{"", "x", "/", "x/y", "x/y/z", "x/y/z/w", "x/y/z/w/v"}
+		if index == "b" {
+			// Levels where only the neighbouring indexes have entries
+			secondaryKeys = []string{"", "x", "/", "x/y", "x/y/z/w/v"}
+		}
+		for _, secondaryKey := range secondaryKeys {
+			keys = append(keys, "__oxia/idx/"+index+"/"+secondaryKey+"\x01p")
+		}
+	}
+	probes := append([]string{"", "zzz", "__oxia/idx/b/", "__oxia/idx/b/x/y/y\x01", "__oxia/idx/b/x/y/z/w/v/u\x01"}, keys...)
+
+	for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(sorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, sorting)
+			assert.NoError(t, err)
+
+			putAll(t, kv, keys...)
+			all := scanAllKeys(t, kv, ShowInternalKeys)
+
+			for _, prefix := range []string{"__oxia/idx/b/", "__oxia/idx/", "__oxia/idx/missing/", "/", "/a/"} {
+				var expected []string
+				for _, key := range all {
+					if strings.HasPrefix(key, prefix) {
+						expected = append(expected, key)
+					}
+				}
+
+				it, err := kv.KeyPrefixIterator(prefix)
+				assert.NoError(t, err)
+
+				var found []string
+				for it.SeekGE(prefix); it.Valid(); it.Next() {
+					found = append(found, it.Key())
+				}
+				assert.Equal(t, expected, found, prefix)
+
+				for _, probe := range probes {
+					// The position of the first key with the prefix at or after the probe
+					n := sort.Search(len(expected), func(i int) bool { return kv.CompareKeys(expected[i], probe) >= 0 })
+
+					it.SeekGE(probe)
+					assertIteratorAt(t, it, expected, n, "%q SeekGE %q", prefix, probe)
+					it.Prev()
+					assertIteratorAt(t, it, expected, n-1, "%q SeekGE %q, Prev", prefix, probe)
+
+					it.SeekLT(probe)
+					assertIteratorAt(t, it, expected, n-1, "%q SeekLT %q", prefix, probe)
+					it.Next()
+					assertIteratorAt(t, it, expected, n, "%q SeekLT %q, Next", prefix, probe)
+				}
+
+				assert.NoError(t, it.Close())
+			}
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+func assertIteratorAt(t *testing.T, it KeyIterator, keys []string, i int, msgAndArgs ...any) {
+	t.Helper()
+	if i < 0 || i >= len(keys) {
+		assert.False(t, it.Valid(), msgAndArgs...)
+		return
+	}
+	if assert.True(t, it.Valid(), msgAndArgs...) {
+		assert.Equal(t, keys[i], it.Key(), msgAndArgs...)
+	}
+}
+
+// Between two ranges of the keys with a prefix, the iterator must seek over
+// the other keys, however many they are, and over the levels without keys.
+func TestPebbleKeyPrefixIteratorSeeksOverOtherKeys(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+	assert.NoError(t, err)
+
+	// The prefix has a key at the levels 3 and 53. In between, 1000 keys sort
+	// after it at level 3, and 1000 before it at level 53.
+	deep := strings.Repeat("x/", 50)
+	first, last := "__oxia/idx/b/k", "__oxia/idx/b/"+deep+"k"
+	keys := []string{first, last}
+	for i := range 1000 {
+		keys = append(keys, fmt.Sprintf("__oxia/idx/c/%04d", i), fmt.Sprintf("__oxia/idx/a/%s%04d", deep, i))
+	}
+	putAll(t, kv, keys...)
+
+	it, err := kv.KeyPrefixIterator("__oxia/idx/b/")
+	assert.NoError(t, err)
+	pi := it.(*PebblePrefixIterator).pi
+
+	// One step onto the keys after the range at level 3, one seek that lands on
+	// the keys before the range at level 53, and one seek over them
+	assert.True(t, it.SeekGE(first))
+	before := pi.Stats()
+	assert.True(t, it.Next())
+	assert.Equal(t, last, it.Key())
+	after := pi.Stats()
+	assert.Equal(t, 1, after.ForwardStepCount[pebble.InterfaceCall]-before.ForwardStepCount[pebble.InterfaceCall])
+	assert.Equal(t, 2, after.ForwardSeekCount[pebble.InterfaceCall]-before.ForwardSeekCount[pebble.InterfaceCall])
+
+	// And the same way back
+	before = pi.Stats()
+	assert.True(t, it.Prev())
+	assert.Equal(t, first, it.Key())
+	after = pi.Stats()
+	assert.Equal(t, 1, after.ReverseStepCount[pebble.InterfaceCall]-before.ReverseStepCount[pebble.InterfaceCall])
+	assert.Equal(t, 2, after.ReverseSeekCount[pebble.InterfaceCall]-before.ReverseSeekCount[pebble.InterfaceCall])
+
+	assert.NoError(t, it.Close())
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestPebbbleGetWithinBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -470,6 +632,54 @@ func TestPebbbleRangeScanInBatch(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A batch scan of an inverted range is empty, and an upper bound encoded to an
+// empty key leaves the range open, whatever the data pointer of the "".
+func TestPebbleBatchRangeScanBounds(t *testing.T) {
+	// The "" of a decoded request has no data pointer, while a "" literal may
+	// have one, e.g. in a composite literal the compiler lays out statically
+	emptyWithoutData := unsafe.String(nil, 0)
+	require.Nil(t, unsafe.StringData(emptyWithoutData))
+	emptyWithData := unsafe.String(new(byte), 0)
+	require.NotNil(t, unsafe.StringData(emptyWithData))
+
+	for _, test := range []struct {
+		name         string
+		keySorting   proto.KeySortingType
+		lower, upper string
+		expected     []string
+	}{
+		{"natural inverted", proto.KeySortingType_NATURAL, "c", "a", nil},
+		{"hierarchical inverted", proto.KeySortingType_HIERARCHICAL, "c", "a", nil},
+		// "/a/b" has more separators, so it sorts after "/b"
+		{"hierarchical inverted levels", proto.KeySortingType_HIERARCHICAL, "/a/b", "/b", nil},
+		{"natural empty end", proto.KeySortingType_NATURAL, "b", emptyWithoutData, []string{"b", "c"}},
+		{"natural empty end with data", proto.KeySortingType_NATURAL, "b", emptyWithData, []string{"b", "c"}},
+		// The empty key sorts first with the hierarchical encoder
+		{"hierarchical empty end", proto.KeySortingType_HIERARCHICAL, "b", emptyWithoutData, nil},
+		{"hierarchical empty end with data", proto.KeySortingType_HIERARCHICAL, "b", emptyWithData, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, test.keySorting)
+			require.NoError(t, err)
+
+			wb := kv.NewWriteBatch()
+			for _, key := range []string{"a", "b", "c", "/a/b", "/b"} {
+				require.NoError(t, wb.Put(key, []byte(key)))
+			}
+
+			it, err := wb.KeyRangeScan(test.lower, test.upper)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, toList(it))
+
+			assert.NoError(t, wb.Close())
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
 func TestPebbbleDeleteRangeInBatch(t *testing.T) {
 	keys := []string{
 		"/a/a/a/zzzzzz",
@@ -658,7 +868,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 		assert.NoError(t, loader.AddChunk(f.Name(), f.Index(), f.TotalCount(), f.Content()))
 	}
 
-	loader.Complete()
+	assert.NoError(t, loader.Complete())
 	assert.NoError(t, loader.Close())
 	assert.NoError(t, snapshot.Close())
 
@@ -684,6 +894,92 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 
 	assert.NoError(t, kv2.Close())
 	assert.NoError(t, factory2.Close())
+}
+
+// The leader never sends the snapshot again once the follower acked it, so the
+// installed database must survive a machine crash, which loses whatever was not
+// synced to disk.
+func TestPebbleSnapshotLoader_SurvivesMachineCrash(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The follower opens the installed database before acking the snapshot
+		openBeforeCrash bool
+	}{
+		{"crash-after-install", false},
+		{"crash-after-open", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+			require.NoError(t, err)
+
+			wb := kv.NewWriteBatch()
+			for i := 0; i < 100; i++ {
+				require.NoError(t, wb.Put(fmt.Sprintf("key-%d", i), []byte(fmt.Sprintf("value-%d", i))))
+			}
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+
+			snapshot, err := kv.Snapshot()
+			require.NoError(t, err)
+
+			fs := vfs.NewCrashableMem()
+			pf := &PebbleFactory{dataDir: "/data"}
+			dbPath := pf.getKVPath(constant.DefaultNamespace, 1)
+			openDB := func(fs vfs.FS) (*pebble.DB, error) {
+				return pebble.Open(dbPath, &pebble.Options{
+					FS:                 fs,
+					DisableWAL:         true,
+					Logger:             &pebbleLogger{slog.Default()},
+					FormatMajorVersion: pebble.FormatVirtualSSTables,
+				})
+			}
+
+			// The follower already has a database, which the snapshot replaces
+			db, err := openDB(fs)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			loader, err := newPebbleSnapshotLoader(pf, fs, constant.DefaultNamespace, 1)
+			require.NoError(t, err)
+			for ; snapshot.Valid(); snapshot.Next() {
+				chunk, err := snapshot.Chunk()
+				require.NoError(t, err)
+				require.NoError(t, loader.AddChunk(chunk.Name(), chunk.Index(), chunk.TotalCount(), chunk.Content()))
+			}
+			require.NoError(t, loader.Complete())
+			require.NoError(t, loader.Close())
+			require.NoError(t, snapshot.Close())
+			require.NoError(t, kv.Close())
+			require.NoError(t, factory.Close())
+
+			if test.openBeforeCrash {
+				db, err = openDB(fs)
+				require.NoError(t, err)
+				defer db.Close()
+			}
+
+			crashed := fs.CrashClone(vfs.CrashCloneCfg{})
+
+			db, err = openDB(crashed)
+			require.NoError(t, err)
+			defer db.Close()
+			for i := 0; i < 100; i++ {
+				value, closer, err := db.Get(compare.EncoderNatural.Encode(fmt.Sprintf("key-%d", i)))
+				require.NoError(t, err)
+				assert.Equal(t, fmt.Sprintf("value-%d", i), string(value))
+				require.NoError(t, closer.Close())
+			}
+
+			marker, err := crashed.Open(filepath.Join(dbPath, markerFileName))
+			require.NoError(t, err)
+			defer marker.Close()
+			encoding, err := io.ReadAll(marker)
+			require.NoError(t, err)
+			assert.Equal(t, compare.EncoderNatural.Name(), string(encoding))
+		})
+	}
 }
 
 func TestPebbleSnapshotLoader_RejectsPathTraversal(t *testing.T) {
@@ -1090,6 +1386,93 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// Nothing sorts below the empty key: its floor is "" itself when it exists, and
+// its lower is never found.
+func TestPebbleGetEmptyKey(t *testing.T) {
+	const notFound = "<not found>"
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, keySorting)
+			require.NoError(t, err)
+
+			lookup := func(comparison ComparisonType) string {
+				key, err := getKey(t, kv, "", comparison, NoInternalKeys)
+				if errors.Is(err, ErrKeyNotFound) {
+					return notFound
+				}
+				assert.NoError(t, err)
+				return key
+			}
+
+			putAll(t, kv, "a", "b", "c")
+			assert.Equal(t, notFound, lookup(ComparisonFloor))
+			assert.Equal(t, notFound, lookup(ComparisonLower))
+			assert.Equal(t, "a", lookup(ComparisonCeiling))
+			assert.Equal(t, "a", lookup(ComparisonHigher))
+
+			putAll(t, kv, "")
+			assert.Equal(t, "", lookup(ComparisonFloor))
+			assert.Equal(t, notFound, lookup(ComparisonLower))
+			assert.Equal(t, "", lookup(ComparisonCeiling))
+			assert.Equal(t, "a", lookup(ComparisonHigher))
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// The natural encoder encodes "" to an empty slice, which is nil when the "" has
+// no data pointer, as when it is decoded from a request, and may not be nil
+// otherwise. The lookups must take both for the empty key.
+func TestPebbleGetEmptyEncodedKey(t *testing.T) {
+	const notFound = "<not found>"
+
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	p := kv.(*Pebble)
+
+	lookups := map[ComparisonType]func([]byte, IteratorOpts) (string, []byte, io.Closer, error){
+		ComparisonFloor:   p.getFloor,
+		ComparisonLower:   p.getLower,
+		ComparisonCeiling: p.getCeiling,
+		ComparisonHigher:  p.getHigher,
+	}
+	lookup := func(key []byte, comparison ComparisonType) string {
+		found, _, closer, err := lookups[comparison](key, NoInternalKeys)
+		if errors.Is(err, pebble.ErrNotFound) {
+			return notFound
+		}
+		require.NoError(t, err)
+		assert.NoError(t, closer.Close())
+		return found
+	}
+
+	putAll(t, kv, "a", "b", "c")
+	for _, key := range [][]byte{nil, {}} {
+		assert.Equal(t, notFound, lookup(key, ComparisonFloor))
+		assert.Equal(t, notFound, lookup(key, ComparisonLower))
+		assert.Equal(t, "a", lookup(key, ComparisonCeiling))
+		assert.Equal(t, "a", lookup(key, ComparisonHigher))
+	}
+
+	putAll(t, kv, "")
+	for _, key := range [][]byte{nil, {}} {
+		assert.Equal(t, "", lookup(key, ComparisonFloor))
+		assert.Equal(t, notFound, lookup(key, ComparisonLower))
+		assert.Equal(t, "", lookup(key, ComparisonCeiling))
+		assert.Equal(t, "a", lookup(key, ComparisonHigher))
+	}
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestPebbleFindLowerInBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -1127,6 +1510,64 @@ func TestPebbleFindLowerInBatch(t *testing.T) {
 
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
+}
+
+func TestPebbleGetAndFindLowerReadFailure(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer factory.Close()
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	defer kv.Close()
+
+	// "b" goes into an sstable that stays readable, "c" and "d" into one made
+	// unreadable below. They don't overlap, so they are in the same level, and a
+	// lookup only opens the second one when it reaches its keys.
+	for _, keys := range [][]string{{"b"}, {"c", "d"}} {
+		wb := kv.NewWriteBatch()
+		for _, key := range keys {
+			require.NoError(t, wb.Put(key, []byte(key)))
+		}
+		require.NoError(t, wb.Commit())
+		require.NoError(t, wb.Close())
+		require.NoError(t, kv.Flush())
+	}
+
+	// Make the second sstable unreadable, so that reading it fails with an I/O
+	// error. Pebble doesn't open a table it just flushed: the reads below are the
+	// first to open it. A corrupted block wouldn't do: Pebble reports corruptions
+	// through the logger's Fatalf, which exits the process.
+	ssts, err := filepath.Glob(filepath.Join(kv.(*Pebble).dbPath, "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 2)
+	require.NoError(t, os.Chmod(ssts[1], 0))
+	t.Cleanup(func() { _ = os.Chmod(ssts[1], 0600) })
+	if f, err := os.Open(ssts[1]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	for _, c := range []struct {
+		comparisonType ComparisonType
+		key            string
+	}{
+		// "e" is past both sstables: the exact lookup of FLOOR reads neither
+		{ComparisonFloor, "e"},
+		{ComparisonCeiling, "c"},
+		{ComparisonLower, "e"},
+		{ComparisonHigher, "c"},
+		// Lands on "b" in the readable sstable, then fails to step to "c"
+		{ComparisonHigher, "b"},
+	} {
+		_, _, _, err := kv.Get(c.key, c.comparisonType, NoInternalKeys)
+		assert.ErrorIs(t, err, os.ErrPermission, "comparison type %d, key %q", c.comparisonType, c.key)
+	}
+
+	wb := kv.NewWriteBatch()
+	defer wb.Close()
+	_, err = wb.FindLower("e")
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.NotErrorIs(t, err, ErrKeyNotFound)
 }
 
 func toList(it KeyIterator) []string {
@@ -1272,99 +1713,21 @@ func TestPebbleRejectsInvalidNamespace(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
-// A namespace can be named "snapshots", and its shards must survive a restart
-// like any other namespace's.
-func TestPebbleSnapshotsNamespaceSurvivesRestart(t *testing.T) {
-	options := NewFactoryOptionsForTest(t)
-
-	factory, err := NewPebbleKVFactory(options)
-	require.NoError(t, err)
-	kv, err := factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
-	require.NoError(t, err)
-
-	wb := kv.NewWriteBatch()
-	require.NoError(t, wb.Put("a", []byte("0")))
-	require.NoError(t, wb.Commit())
-	require.NoError(t, wb.Close())
-	require.NoError(t, kv.Close())
-	require.NoError(t, factory.Close())
-
-	// A data server restart creates a new factory on the same data dir
-	factory, err = NewPebbleKVFactory(options)
-	require.NoError(t, err)
-	kv, err = factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
-	require.NoError(t, err)
-
-	key, res, closer, err := kv.Get("a", ComparisonEqual, NoInternalKeys)
-	require.NoError(t, err)
-	assert.Equal(t, "a", key)
-	assert.Equal(t, "0", string(res))
-	assert.NoError(t, closer.Close())
-
-	assert.NoError(t, kv.Close())
-	assert.NoError(t, factory.Close())
-}
-
-// At startup, the snapshots left over by the previous run are removed, but not
-// the shards of a namespace named "snapshots", which live in the same dir.
+// The snapshots left behind by a previous run are removed at startup. The
+// "snapshots" name is reserved, so the whole directory can go.
 func TestPebbleCleanupSnapshots(t *testing.T) {
 	options := NewFactoryOptionsForTest(t)
-	snapshotsDir := filepath.Join(options.DataDir, "snapshots")
 
+	snapshotsDir := filepath.Join(options.DataDir, validation.KeywordNamespaceSnapshots)
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshotsDir, "shard-1", "snapshot-1"), 0o755))
+
+	// A data server restart creates a new factory on the same data dir
 	factory, err := NewPebbleKVFactory(options)
 	require.NoError(t, err)
-	kv, err := factory.NewKV(constant.DefaultNamespace, 2, proto.KeySortingType_NATURAL)
-	require.NoError(t, err)
-	// Never closed, as after a crash
-	_, err = kv.Snapshot()
-	require.NoError(t, err)
-	require.NoError(t, kv.Close())
-	require.NoError(t, factory.Close())
 
-	// With only snapshots in it, the dir goes away entirely
-	factory, err = NewPebbleKVFactory(options)
-	require.NoError(t, err)
-	assert.NoDirExists(t, snapshotsDir)
+	_, err = os.Stat(snapshotsDir)
+	assert.True(t, os.IsNotExist(err), "the leftover snapshot should have been removed")
 
-	nsKV, err := factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
-	require.NoError(t, err)
-	wb := nsKV.NewWriteBatch()
-	require.NoError(t, wb.Put("a", []byte("0")))
-	require.NoError(t, wb.Commit())
-	require.NoError(t, wb.Close())
-
-	// The snapshots of the namespace's shard are created in the shard dir
-	nsSnapshot, err := nsKV.Snapshot()
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(snapshotsDir, "shard-1"), filepath.Dir(nsSnapshot.BasePath()))
-
-	// A segment of the shard's WAL, when the WAL shares the data dir
-	walSegment := filepath.Join(snapshotsDir, "shard-1", "0.txnx")
-	require.NoError(t, os.WriteFile(walSegment, []byte("wal"), 0600))
-
-	kv, err = factory.NewKV(constant.DefaultNamespace, 2, proto.KeySortingType_NATURAL)
-	require.NoError(t, err)
-	_, err = kv.Snapshot()
-	require.NoError(t, err)
-	require.NoError(t, kv.Close())
-	require.NoError(t, nsKV.Close())
-	require.NoError(t, factory.Close())
-
-	factory, err = NewPebbleKVFactory(options)
-	require.NoError(t, err)
-	assert.NoDirExists(t, nsSnapshot.BasePath())
-	assert.NoDirExists(t, filepath.Join(snapshotsDir, "shard-2"))
-	assert.FileExists(t, walSegment)
-
-	nsKV, err = factory.NewKV("snapshots", 1, proto.KeySortingType_NATURAL)
-	require.NoError(t, err)
-	key, res, closer, err := nsKV.Get("a", ComparisonEqual, NoInternalKeys)
-	require.NoError(t, err)
-	assert.Equal(t, "a", key)
-	assert.Equal(t, "0", string(res))
-	assert.NoError(t, closer.Close())
-
-	assert.NoError(t, nsKV.Close())
 	assert.NoError(t, factory.Close())
 }
 

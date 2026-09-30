@@ -52,6 +52,10 @@ type ShardManager interface {
 
 	// Changed returns a channel that is closed when the shard map changes.
 	Changed() <-chan struct{}
+
+	// KeySorting returns the order of the keys in the shards of the namespace,
+	// or KEY_SORTING_UNKNOWN when the server does not report it.
+	KeySorting() proto.KeySorting
 }
 
 // ShardsReplacedListener is invoked with the shards removed from the shard map
@@ -70,7 +74,9 @@ type shardManagerImpl struct {
 	namespace        string
 	shards           map[int64]Shard
 	successors       map[int64][]Shard
+	keySorting       proto.KeySorting
 	changed          chan struct{}
+	initialized      bool
 	onShardsReplaced ShardsReplacedListener
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -99,6 +105,7 @@ func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider, servi
 	sm.ctx, sm.cancel = context.WithCancel(context.Background())
 
 	if err := sm.start(); err != nil {
+		_ = sm.Close()
 		return nil, errors.Wrap(err, "oxia: failed to retrieve the initial list of shard assignments")
 	}
 
@@ -204,6 +211,12 @@ func (s *shardManagerImpl) Changed() <-chan struct{} {
 	return s.changed
 }
 
+func (s *shardManagerImpl) KeySorting() proto.KeySorting {
+	s.RLock()
+	defer s.RUnlock()
+	return s.keySorting
+}
+
 func (s *shardManagerImpl) isClosed() bool {
 	return s.ctx.Err() != nil
 }
@@ -221,7 +234,11 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 				return nil
 			}
 
-			if errors.Is(err, constant.ErrNamespaceNotFound) || status.Code(err) == codes.Unauthenticated {
+			// These errors fail NewShardManager right away. Once the initial
+			// assignments are received, there is no caller to report them to,
+			// and they are retried like the others: they can be transient, e.g.
+			// until the authentication token is renewed.
+			if !s.initialized && (errors.Is(err, constant.ErrNamespaceNotFound) || status.Code(err) == codes.Unauthenticated) {
 				return backoff.Permanent(err)
 			}
 			return err
@@ -237,7 +254,10 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 			}
 		},
 	)
-	if err != nil {
+	// Closing the shard manager also interrupts the wait before a retry, which
+	// is not a failure. The retries only return the context error once the
+	// context is canceled, so this check cannot miss a Close that stopped them.
+	if err != nil && !s.isClosed() {
 		s.logger.Error(
 			"Failed receiving shard assignments",
 			slog.Any("error", err),
@@ -269,6 +289,9 @@ func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 		for i, assignment := range assignments.Assignments {
 			shards[i] = toShard(assignment)
 		}
+		s.Lock()
+		s.keySorting = assignments.KeySorting
+		s.Unlock()
 		s.update(shards)
 		backOff.Reset()
 	}
@@ -302,6 +325,7 @@ func (s *shardManagerImpl) update(updates []Shard) {
 	}
 	close(s.changed)
 	s.changed = make(chan struct{})
+	s.initialized = true
 	s.updatedWg.Done()
 }
 

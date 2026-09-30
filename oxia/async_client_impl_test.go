@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	commonbatch "github.com/oxia-db/oxia/oxia/batch"
+	"github.com/oxia-db/oxia/oxia/internal"
 	"github.com/oxia-db/oxia/oxia/internal/batch"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -46,9 +47,15 @@ type staticShardManager struct {
 	shards     []int64
 	leader     string
 	successors map[int64][]int64
+	keySorting proto.KeySorting
+	closed     bool
 }
 
-func (*staticShardManager) Close() error       { return nil }
+func (s *staticShardManager) Close() error {
+	s.closed = true
+	return nil
+}
+
 func (s *staticShardManager) Get(string) int64 { return s.shards[0] }
 func (s *staticShardManager) GetAll() []int64  { return s.shards }
 func (s *staticShardManager) Leader(int64) string {
@@ -67,6 +74,8 @@ func (s *staticShardManager) GetSuccessor(shardId int64, _ string) (int64, bool)
 	return 0, false
 }
 func (*staticShardManager) Changed() <-chan struct{} { return nil }
+
+func (s *staticShardManager) KeySorting() proto.KeySorting { return s.keySorting }
 
 func newGetTestClient(shards ...int64) (*clientImpl, *capturingGetBatcher) {
 	b := &capturingGetBatcher{calls: make(chan model.GetCall, len(shards))}
@@ -135,7 +144,7 @@ func TestGetCallbackDoesNotBlockWhenMultiShardResultIsAbandoned(t *testing.T) {
 // the counter sentinel negative, defeating the response-already-sent guard).
 func TestMultiShardGetCallback_ErrorsAfterFirstAreDiscarded(t *testing.T) {
 	ch := make(chan GetResult, 1)
-	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, 3, ch)
+	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, keyOrder{}, 3, ch)
 
 	callback(nil, errors.New("shard-0 failed"))
 	result := <-ch
@@ -153,7 +162,7 @@ func TestMultiShardGetCallback_ErrorsAfterFirstAreDiscarded(t *testing.T) {
 
 func TestMultiShardGetCallback_AllShardsRespond(t *testing.T) {
 	ch := make(chan GetResult, 1)
-	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, 3, ch)
+	callback := multiShardGetCallback("key-a", proto.KeyComparisonType_FLOOR, keyOrder{}, 3, ch)
 
 	for i := 0; i < 3; i++ {
 		callback(&proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil)
@@ -163,6 +172,42 @@ func TestMultiShardGetCallback_AllShardsRespond(t *testing.T) {
 	assert.ErrorIs(t, result.Err, ErrKeyNotFound)
 	_, open := <-ch
 	assert.False(t, open)
+}
+
+// A get with an index goes to every shard, and the client picks one of their
+// answers by comparing the secondary keys in the key sorting of the namespace.
+func TestMultiShardIndexGetKeySorting(t *testing.T) {
+	responses := []*proto.GetResponse{
+		{Status: proto.Status_OK, Version: &proto.Version{}, Key: new("p1"), SecondaryIndexKey: new("a0")},
+		{Status: proto.Status_OK, Version: &proto.Version{}, Key: new("p2"), SecondaryIndexKey: new("a/y/z")},
+	}
+	for _, test := range []struct {
+		keySorting proto.KeySorting
+		comparison GetOption
+		expected   string
+	}{
+		// Natural sorting: "a/y/z" < "a0"
+		{proto.KeySorting_KEY_SORTING_NATURAL, ComparisonFloor(), "p1"},
+		{proto.KeySorting_KEY_SORTING_NATURAL, ComparisonCeiling(), "p2"},
+		// Hierarchical sorting: "a0" < "a/y/z"
+		{proto.KeySorting_KEY_SORTING_HIERARCHICAL, ComparisonFloor(), "p2"},
+		{proto.KeySorting_KEY_SORTING_HIERARCHICAL, ComparisonCeiling(), "p1"},
+		// The key sorting is not known: "a0" < "a/y/z" in the old order
+		{proto.KeySorting_KEY_SORTING_UNKNOWN, ComparisonFloor(), "p2"},
+		{proto.KeySorting_KEY_SORTING_UNKNOWN, ComparisonCeiling(), "p1"},
+	} {
+		client, batcher := newGetTestClient(1, 2)
+		client.shardManager.(*staticShardManager).keySorting = test.keySorting
+		resultCh := client.Get("b", test.comparison, UseIndex("idx"))
+		for _, response := range responses {
+			call := <-batcher.calls
+			call.Callback(response, nil)
+		}
+
+		result := <-resultCh
+		require.NoError(t, result.Err)
+		assert.Equal(t, test.expected, result.Key, test.keySorting)
+	}
 }
 
 type capturingWriteBatcher struct {
@@ -300,6 +345,26 @@ func TestRerouteDeleteRangeWithoutSuccessors(t *testing.T) {
 	assert.ErrorIs(t, results[0], constant.ErrShardNotFound)
 }
 
+// The shard manager receives the shard assignments in the background, until it
+// is closed.
+func TestCloseClosesShardManager(t *testing.T) {
+	shardManager := &staticShardManager{}
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &clientImpl{
+		shardManager:      shardManager,
+		writeBatchManager: batch.NewWriteManager(ctx, nil, nil),
+		readBatchManager:  batch.NewManager(ctx, nil),
+		sessions:          &sessions{},
+		rpcProvider: internal.NewRpcProvider(ctx, "default", nil, nil, "localhost:6648",
+			func() internal.ShardManager { return shardManager }),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	assert.NoError(t, client.Close())
+	assert.True(t, shardManager.closed)
+}
+
 func TestMultiShardDeleteRangeCallback(t *testing.T) {
 	failure := errors.New("failure")
 	notFound := &proto.DeleteRangeResponse{Status: proto.Status_KEY_NOT_FOUND}
@@ -334,4 +399,42 @@ func TestMultiShardDeleteRangeCallback(t *testing.T) {
 			assert.Equal(t, []error{test.expectedErr}, errs)
 		})
 	}
+}
+
+// Keys are proto3 strings, which must be valid UTF-8. The server doesn't check
+// it, so the client doesn't send a write of a key, or a range bound, that isn't.
+func TestWriteKeysMustBeValidUTF8(t *testing.T) {
+	client, batchers := newWriteTestClient(&staticShardManager{shards: []int64{0, 1}})
+
+	// Stored on "__oxia/term" with the natural key sorting, and on "a//" with
+	// the hierarchical one. The results are there as soon as the calls return:
+	// nothing was sent.
+	for _, key := range []string{"\xff\xffoxia/term", "a\xff/"} {
+		for _, putCh := range []<-chan PutResult{
+			client.Put(key, []byte("v")),
+			client.Put(key, []byte("v"), PartitionKey("pk"), SequenceKeysDeltas(1)),
+		} {
+			require.Len(t, putCh, 1, key)
+			assert.ErrorIs(t, (<-putCh).Err, ErrInvalidOptions, key)
+		}
+		for _, errCh := range []<-chan error{
+			client.Delete(key),
+			client.DeleteRange(key, "z"),
+			client.DeleteRange("", key),
+			client.DeleteRange(key, "z", PartitionKey("pk")),
+		} {
+			require.Len(t, errCh, 1, key)
+			assert.ErrorIs(t, <-errCh, ErrInvalidOptions, key)
+		}
+	}
+	assert.Empty(t, batchers)
+
+	// A valid UTF-8 key is sent, whatever its characters
+	client.Put("ключ/日本", []byte("v"))
+	client.Delete("ключ/日本")
+	client.DeleteRange("ключ", "ключ/日本")
+	require.Contains(t, batchers, int64(0))
+	assert.Len(t, batchers[0].calls, 3)
+	require.Contains(t, batchers, int64(1))
+	assert.Len(t, batchers[1].calls, 1)
 }

@@ -55,6 +55,12 @@ type WriteBatch interface {
 	KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error)
 	RangeScan(lowerBound, upperBound string) (KeyValueIterator, error)
 
+	// RangeOverlaps reports whether the range [lowerBound, upperBound), with
+	// the bounds read as RangeScan reads them, overlaps the region of the
+	// internal keys, and the regular keys outside of it. The answer depends
+	// only on the bounds, not on the keys stored.
+	RangeOverlaps(lowerBound, upperBound string) (internalKeys, regularKeys bool)
+
 	// Count is the number of transactions that are currently in the batch
 	Count() int
 
@@ -76,6 +82,11 @@ type KeyIterator interface {
 
 	SeekGE(key string) bool
 	SeekLT(key string) bool
+
+	// Error returns the error of a failed read. The iterator becomes invalid
+	// both at the end of the range and when a read fails, so a scan must check
+	// Error before taking what it read as the complete range.
+	Error() error
 }
 
 type ReverseKeyIterator interface {
@@ -114,8 +125,8 @@ type SnapshotLoader interface {
 
 	AddChunk(fileName string, chunkIndex int32, chunkCount int32, content []byte) error
 
-	// Complete signals that the snapshot is now complete
-	Complete()
+	// Complete signals that the snapshot is now complete, and makes it durable
+	Complete() error
 }
 
 type ComparisonType proto.KeyComparisonType
@@ -137,9 +148,16 @@ type KV interface {
 
 	KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error)
 	KeyRangeScanReverse(lowerBound, upperBound string, opts IteratorOpts) (ReverseKeyIterator, error)
-	KeyIterator(opts IteratorOpts) (KeyIterator, error)
+
+	// KeyPrefixIterator returns an iterator over the keys that start with
+	// prefix, internal keys included, to position with SeekGE or SeekLT
+	KeyPrefixIterator(prefix string) (KeyIterator, error)
 
 	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
+
+	// CompareKeys compares two keys in the order the store sorts them, which
+	// depends on the key sorting
+	CompareKeys(a, b string) int
 
 	Snapshot() (Snapshot, error)
 
