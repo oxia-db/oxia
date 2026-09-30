@@ -530,6 +530,7 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 func (c *runtime) computeNewAssignments() {
 	config := c.metadata.GetConfig().UnsafeBorrow()
 	status := c.metadata.ListNamespaceStatus()
+	namespaces := c.metadata.ListNamespace()
 	assignments := &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
 		AllowedAuthorities: mergedAuthorities(status, config.GetServers(), config.GetAllowExtraAuthorities()),
@@ -537,9 +538,11 @@ func (c *runtime) computeNewAssignments() {
 	// Update the leader for the shards on all the namespaces
 	for name, borrowedNs := range status {
 		ns := borrowedNs.UnsafeBorrow()
+		keySorting, _ := namespaces[name].UnsafeBorrow().GetKeySortingType()
 		nsAssignments := &proto.NamespaceShardsAssignment{
 			Assignments:    make([]*proto.ShardAssignment, 0),
 			ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			KeySorting:     keySorting.ToKeySorting(),
 		}
 
 		for shard, a := range ns.Shards {

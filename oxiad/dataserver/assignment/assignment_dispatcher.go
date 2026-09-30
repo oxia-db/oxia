@@ -317,13 +317,14 @@ func NewShardAssignmentDispatcher(healthServer oxiadcommonrpc.HealthServer) Shar
 	return s
 }
 
-func NewStandaloneShardAssignmentDispatcher(numShards uint32) ShardAssignmentsDispatcher {
+func NewStandaloneShardAssignmentDispatcher(numShards uint32, keySorting proto.KeySortingType) ShardAssignmentsDispatcher {
 	assignmentDispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(context.Background())).(*shardAssignmentDispatcher) //nolint:revive
 	assignmentDispatcher.standalone = true
 	res := &proto.ShardAssignments{
 		Namespaces: map[string]*proto.NamespaceShardsAssignment{
 			constant.DefaultNamespace: {
 				ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+				KeySorting:     keySorting.ToKeySorting(),
 				Assignments:    generateStandaloneShards(numShards),
 			},
 		},

@@ -40,6 +40,7 @@ import (
 	"github.com/oxia-db/oxia/common/cache"
 
 	"github.com/oxia-db/oxia/common/compare"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/validation"
 )
@@ -434,7 +435,7 @@ func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string
 	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
 	if !it.First() || !skipper.forward(it) {
-		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+		return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 	}
 
 	returnedKey = p.keyEncoder.Decode(it.Key())
@@ -443,6 +444,14 @@ func (p *Pebble) getCeiling(key []byte, itOpts IteratorOpts) (returnedKey string
 }
 
 func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
+	if len(key) == 0 {
+		// Nothing sorts below the empty key. It can't be the upper bound either:
+		// Pebble takes a nil bound as no bound, and the natural encoder returns
+		// nil for a "" with no data pointer. Pebble also copies an empty bound
+		// to nil when the buffer it copies the bounds into is not allocated yet.
+		return "", nil, nil, pebble.ErrNotFound
+	}
+
 	it, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, nil, key))
 	if err != nil {
 		return "", nil, nil, err
@@ -452,7 +461,7 @@ func (p *Pebble) getLower(key []byte, itOpts IteratorOpts) (returnedKey string, 
 	// Backwards, the internal region is just as costly to step through: a floor
 	// probe above it would walk the whole backlog in reverse.
 	if !it.Last() || !skipper.backward(it) {
-		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+		return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 	}
 
 	returnedKey = p.keyEncoder.Decode(it.Key())
@@ -468,20 +477,30 @@ func (p *Pebble) getHigher(key []byte, itOpts IteratorOpts) (returnedKey string,
 	skipper := newInternalRegionSkipper(p.keyEncoder, itOpts)
 
 	if !it.First() || !skipper.forward(it) {
-		return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+		return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 	}
 
 	// The lower bound is inclusive, so the iterator may be positioned exactly on
 	// the key. We are looking for a strict `x > y`, so step over it.
 	if bytes.Equal(it.Key(), key) {
 		if !it.Next() || !skipper.forward(it) {
-			return "", nil, nil, multierr.Combine(it.Close(), pebble.ErrNotFound)
+			return "", nil, nil, closeNotFound(it, pebble.ErrNotFound)
 		}
 	}
 
 	returnedKey = p.keyEncoder.Decode(it.Key())
 	value, err = it.ValueAndErr()
 	return returnedKey, value, it, err
+}
+
+// closeNotFound closes an iterator that found no entry. The iterator is also
+// invalid when a read failed: that error is returned then, rather than
+// notFound, which would pass the failed read off as a missing key.
+func closeNotFound(it *pebble.Iterator, notFound error) error {
+	if err := it.Close(); err != nil {
+		return err
+	}
+	return notFound
 }
 
 func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
@@ -601,9 +620,27 @@ func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, 
 	return b.RangeScan(lowerBound, upperBound)
 }
 
+// scanBounds returns the iterator bounds of RangeScan, which RangeOverlaps
+// must read the same way.
+func (b *PebbleBatch) scanBounds(lowerBound, upperBound string) (lb, ub []byte) {
+	lb = b.p.keyEncoder.Encode(lowerBound)
+	ub = b.p.keyEncoder.Encode(upperBound)
+	if len(ub) == 0 {
+		// Only the natural encoder encodes a key to an empty slice, for "". It
+		// returns nil for the "" of a decoded request, which leaves the range
+		// open: keep it open for any "", whatever its data pointer.
+		ub = nil
+	} else if bytes.Compare(lb, ub) > 0 {
+		// An inverted range is empty. Bound it as such: the seek below would
+		// clamp to the upper bound, under the lower one, which Pebble asserts
+		// against in its invariants builds.
+		ub = lb
+	}
+	return lb, ub
+}
+
 func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
-	lb := b.p.keyEncoder.Encode(lowerBound)
-	ub := b.p.keyEncoder.Encode(upperBound)
+	lb, ub := b.scanBounds(lowerBound, upperBound)
 	pbit, err := b.b.NewIter(&pebble.IterOptions{
 		LowerBound: lb,
 		UpperBound: ub,
@@ -613,6 +650,24 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 	}
 	pbit.SeekGE(lb)
 	return &PebbleIterator{b.p, pbit, internalRegionSkipper{}}, nil
+}
+
+func (b *PebbleBatch) RangeOverlaps(lowerBound, upperBound string) (internalKeys, regularKeys bool) {
+	// As for the iterator, a nil upper bound is unbounded
+	lb, ub := b.scanBounds(lowerBound, upperBound)
+	if ub != nil && bytes.Compare(lb, ub) >= 0 {
+		// The range is empty
+		return false, false
+	}
+	// Every internal key sorts at or after their prefix, with either encoder,
+	// while the region of the hierarchical one starts lower: a range that ends
+	// at the prefix covers no internal key. The regular keys sort before the
+	// internal ones and, with the natural encoder, after them too.
+	start := b.p.keyEncoder.Encode(constant.InternalKeyPrefix)
+	_, end := b.p.keyEncoder.InternalKeyRange()
+	internalKeys = (ub == nil || bytes.Compare(start, ub) < 0) && (end == nil || bytes.Compare(lb, end) < 0)
+	regularKeys = bytes.Compare(lb, start) < 0 || (end != nil && (ub == nil || bytes.Compare(end, ub) < 0))
+	return internalKeys, regularKeys
 }
 
 func (b *PebbleBatch) Close() error {
@@ -676,7 +731,7 @@ func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
 	}
 
 	if !it.Last() {
-		return "", multierr.Combine(it.Close(), ErrKeyNotFound)
+		return "", closeNotFound(it, ErrKeyNotFound)
 	}
 
 	lowerKey = b.p.keyEncoder.Decode(it.Key())
@@ -737,6 +792,10 @@ func (p *PebbleIterator) SeekGE(key string) bool {
 
 func (p *PebbleIterator) SeekLT(key string) bool {
 	return p.pi.SeekLT(p.p.keyEncoder.Encode(key)) && p.skipper.backward(p.pi)
+}
+
+func (p *PebbleIterator) Error() error {
+	return p.pi.Error()
 }
 
 func (p *PebbleIterator) Value() ([]byte, error) {
@@ -819,6 +878,10 @@ func (p *PebblePrefixIterator) SeekGE(key string) bool {
 func (p *PebblePrefixIterator) SeekLT(key string) bool {
 	p.pi.SeekLT(p.p.keyEncoder.Encode(key))
 	return p.backward()
+}
+
+func (p *PebblePrefixIterator) Error() error {
+	return p.pi.Error()
 }
 
 // forward moves the iterator from a key between two ranges to the start of
@@ -963,6 +1026,12 @@ func syncDir(fs vfs.FS, path string) error {
 // pruned outright with an upper bound, and otherwise internalRegionSkipper
 // jumps over it with a single seek.
 func newIterOptions(enc compare.Encoder, itOpts IteratorOpts, lowerBound, upperBound []byte) *pebble.IterOptions {
+	if len(lowerBound) == 0 {
+		// Nothing sorts below the empty key, so as a lower bound it is no bound.
+		// Pass it as nil: Pebble's seek to an empty key panics in its invariants
+		// builds, which the race detector enables.
+		lowerBound = nil
+	}
 	opts := &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound}
 	if itOpts.IncludeInternalKeys {
 		return opts

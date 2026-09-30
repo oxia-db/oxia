@@ -53,6 +53,21 @@ func ShadowKey(sessionId SessionId, key string) string {
 	return fmt.Sprintf("%s/%016x/%s", sessionKeyPrefix, sessionId, url.PathEscape(key))
 }
 
+// shadowKeysRange returns the range of the shadow keys of a session,
+// "<session key>/<escaped key>".
+func shadowKeysRange(sessionKey string, features feature.Checker) (start string, end string) {
+	start = sessionKey + "/"
+	if !features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING) {
+		// With the natural key sorting, this range only holds the shadow keys
+		// whose escaped key starts with a byte below '/'
+		return start, sessionKey + "//"
+	}
+	// An escaped key is printable ASCII: with the natural key sorting it sorts
+	// before 0xff. With the hierarchical sorting, which encodes the separators
+	// as 0xff, this end is encoded exactly like "<session key>//"
+	return start, sessionKey + "/\xff"
+}
+
 func KeyToId(key string) (SessionId, error) {
 	var id int64
 	items, err := fmt.Sscanf(key, sessionKeyFormat, &id)
@@ -84,7 +99,11 @@ type SessionManager interface {
 	CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
 	KeepAlive(sessionId int64) error
 	CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
-	Initialize() error
+	// Initialize restores the sessions on a new leader. It returns the deletes
+	// of the ephemeral records whose session is gone, for the leader to propose
+	Initialize() ([]*proto.DeleteRequest, error)
+
+	stop()
 }
 
 var _ SessionManager = (*sessionManager)(nil)
@@ -190,7 +209,7 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 		return nil, errors.Wrap(err, "could not marshal session metadata")
 	}
 	var sessionId SessionId
-	resp, err := sm.leaderController.writeBlock(sm.ctx, func(offset int64) *proto.WriteRequest {
+	resp, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(offset int64) *proto.WriteRequest {
 		sessionId = SessionId(offset)
 		return &proto.WriteRequest{
 			Shard: &request.Shard,
@@ -243,9 +262,11 @@ func (sm *sessionManager) deleteSessions(ids []SessionId) error {
 	for i, id := range ids {
 		deletes[i] = &proto.DeleteRequest{Key: SessionKey(id)}
 	}
-	_, err := sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
-		Shard:   &sm.shardId,
-		Deletes: deletes,
+	_, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(int64) *proto.WriteRequest {
+		return &proto.WriteRequest{
+			Shard:   &sm.shardId,
+			Deletes: deletes,
+		}
 	})
 	return err
 }
@@ -296,41 +317,54 @@ func (sm *sessionManager) CloseSession(request *proto.CloseSessionRequest) (*pro
 	return &proto.CloseSessionResponse{}, nil
 }
 
-func (sm *sessionManager) Initialize() error {
+func (sm *sessionManager) Initialize() ([]*proto.DeleteRequest, error) {
 	sm.Lock()
 	defer sm.Unlock()
-	sessions, err := sm.readSessions()
+	sessions, orphanedEphemerals, err := sm.readSessions()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for sessionId, sessionMetadata := range sessions {
 		startSession(sessionId, sessionMetadata, sm)
 	}
-	return nil
+	return orphanedEphemerals, nil
 }
 
-func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, error) {
+func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, []*proto.DeleteRequest, error) {
 	keys, err := sm.leaderController.ListBlock(context.Background(), &proto.ListRequest{
-		Shard:               &sm.shardId,
-		StartInclusive:      sessionKeyPrefix + "/",
-		EndExclusive:        sessionKeyPrefix + "//",
+		Shard:          &sm.shardId,
+		StartInclusive: sessionKeyPrefix + "/",
+		// Not "__oxia/session//": with the natural key sorting, '/' sorts
+		// before the hex digits of the session ids
+		EndExclusive:        sessionKeyPrefix + "/~",
 		IncludeInternalKeys: true,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	sm.log.Info("All sessions", slog.Int("count", len(keys)))
+	// With the natural key sorting, the shadow keys of the ephemeral records,
+	// "__oxia/session/<id>/<key>", are in the range too
+	var sessionKeys, shadowKeys []string
+	for _, key := range keys {
+		if IsSessionKey(key) {
+			sessionKeys = append(sessionKeys, key)
+		} else {
+			shadowKeys = append(shadowKeys, key)
+		}
+	}
+
+	sm.log.Info("All sessions", slog.Int("count", len(sessionKeys)))
 
 	result := map[SessionId]*proto.SessionMetadata{}
 
-	for _, key := range keys {
+	for _, key := range sessionKeys {
 		metaEntry, err := sm.leaderController.db.Get(&proto.GetRequest{
 			Key:          key,
 			IncludeValue: true,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if metaEntry.Status != proto.Status_OK {
@@ -366,16 +400,61 @@ func (sm *sessionManager) readSessions() (map[SessionId]*proto.SessionMetadata, 
 		result[sessionId] = &metadata
 	}
 
-	return result, nil
+	orphanedEphemerals, err := sm.readOrphanedEphemerals(sessionKeys, shadowKeys)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, orphanedEphemerals, nil
 }
 
-func (sm *sessionManager) Close() error {
-	sm.Lock()
-	sm.cancel()
-	for id := range sm.sessions {
-		sm.removeSession(id)
+// readOrphanedEphemerals returns the deletes of the ephemeral records whose
+// session is gone. Before FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING, a session
+// end left most of its records behind on a natural-sorted shard, and nothing
+// else deletes them. They are found through their shadow keys, which only the
+// natural sorting places among the session keys: with the hierarchical
+// sorting, a session end always deleted all of them.
+func (sm *sessionManager) readOrphanedEphemerals(sessionKeys []string, shadowKeys []string) ([]*proto.DeleteRequest, error) {
+	sessions := make(map[string]struct{}, len(sessionKeys))
+	for _, key := range sessionKeys {
+		sessions[key] = struct{}{}
 	}
-	sm.Unlock()
+
+	var deletes []*proto.DeleteRequest
+	for _, shadowKey := range shadowKeys {
+		// "<session key>/<escaped key>"
+		if len(shadowKey) <= sessionKeyLength || shadowKey[sessionKeyLength] != '/' {
+			continue
+		}
+		sessionKey := shadowKey[:sessionKeyLength]
+		if _, found := sessions[sessionKey]; found {
+			continue
+		}
+		sessionId, err := KeyToId(sessionKey)
+		if err != nil {
+			continue
+		}
+		key, err := url.PathUnescape(shadowKey[sessionKeyLength+1:])
+		if err != nil || key == "" {
+			continue
+		}
+
+		entry, err := sm.leaderController.db.Get(&proto.GetRequest{Key: key})
+		if err != nil {
+			return nil, err
+		}
+		// Only delete the record if it exists and belongs to the session
+		if entry.Status != proto.Status_OK || entry.Version.SessionId == nil || *entry.Version.SessionId != int64(sessionId) {
+			continue
+		}
+		deletes = append(deletes, &proto.DeleteRequest{Key: key})
+	}
+	return deletes, nil
+}
+
+// Close stops the session manager and waits for its expiry scheduler to exit.
+// It must not be called while holding the leader lock, see stop.
+func (sm *sessionManager) Close() error {
+	sm.stop()
 
 	// Wait for the expiry scheduler outside the manager lock: it acquires
 	// the lock to finish an in-flight expiry cycle — waiting under the lock
@@ -383,6 +462,23 @@ func (sm *sessionManager) Close() error {
 	sm.latch.Wait()
 
 	return nil
+}
+
+// stop cancels the session manager and drops its sessions, without waiting for
+// the expiry scheduler. The leader controller stops the manager while holding
+// the leader lock, and waits for the scheduler with Close only once the lock
+// is released: the scheduler takes the leader lock to propose the deletion of
+// the sessions it expired, so waiting for it under the lock would deadlock.
+// Once stopped, the writes of the manager are rejected under the leader lock
+// (see writeBlock), so none of them can be appended afterwards, not even once
+// a later term makes this node leader again.
+func (sm *sessionManager) stop() {
+	sm.Lock()
+	sm.cancel()
+	for id := range sm.sessions {
+		sm.removeSession(id)
+	}
+	sm.Unlock()
 }
 
 type sessionManagerUpdateOperationCallbackS struct{}
@@ -443,7 +539,7 @@ func deleteShadow(batch kvstore.WriteBatch, _ *database.Notifications, key strin
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string) error {
+func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string, features feature.Checker) error {
 	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -452,10 +548,10 @@ func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBat
 		return err
 	}
 	defer se.ReturnToVTPool()
-	return s.OnDeleteWithEntry(batch, notification, key, se)
+	return s.OnDeleteWithEntry(batch, notification, key, se, features)
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry) error {
+func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry, features feature.Checker) error {
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
 	}
@@ -464,7 +560,8 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 	}
 	sessionKey := key
 	// Read "index"
-	it, err := batch.KeyRangeScan(sessionKey+"/", sessionKey+"//")
+	start, end := shadowKeysRange(sessionKey, features)
+	it, err := batch.KeyRangeScan(start, end)
 	if err != nil {
 		return err
 	}
@@ -484,15 +581,35 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 			return err
 		}
 		if unescapedEphemeralKey != "" {
-			// delete the ephemeral key
-			if err := batch.Delete(unescapedEphemeralKey); err != nil {
+			if err := deleteEphemeralKey(batch, notification, unescapedEphemeralKey, features); err != nil {
 				return err
 			}
-			// add ephemeral key to notification
-			if notification != nil {
-				notification.Deleted(unescapedEphemeralKey)
-			}
 		}
+	}
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to list the ephemeral keys of the session")
+	}
+	return nil
+}
+
+// deleteEphemeralKey deletes an ephemeral key of a session that ends.
+func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notifications, key string,
+	features feature.Checker) error {
+	if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
+		// delete the ephemeral key secondary indexes: they are listed
+		// in its entry, so this has to happen before the key goes
+		if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, key, features); err != nil {
+			return err
+		}
+	}
+	// delete the ephemeral key
+	if err := batch.Delete(key); err != nil {
+		return err
+	}
+	// add ephemeral key to notification
+	if notification != nil {
+		notification.Deleted(key)
 	}
 	return nil
 }

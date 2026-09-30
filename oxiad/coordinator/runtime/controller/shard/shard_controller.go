@@ -25,8 +25,10 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
+	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
@@ -99,13 +101,17 @@ type controller struct {
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
 
-	// The features of a data server are discovered only once, so unlike the
-	// other notifications they must not be dropped when the event loop is
-	// busy: the data servers are collected until the loop handles them, and
-	// featuresDiscoveredOp wakes it up.
+	// The features of a data server are reported only when they change, so
+	// unlike the other notifications they must not be dropped when the event
+	// loop is busy: the data servers are collected until the loop handles
+	// them, and featuresDiscoveredOp wakes it up.
 	discoveredDataServersMu sync.Mutex
 	discoveredDataServers   map[string]*proto.DataServerIdentity
 	featuresDiscoveredOp    chan any
+	// termFeaturesCheckPending is set from the discovery of the features of
+	// an ensemble member until checkTermFeatures completes. It is owned by
+	// the event loop.
+	termFeaturesCheckPending bool
 
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
@@ -358,48 +364,99 @@ func (s *controller) handleDataServerFailure(failedDataServer *proto.DataServerI
 	}
 }
 
-// handleFeaturesDiscovered starts a new election when the current term was
-// negotiated without the features of ensemble members, because they had not
-// completed their first handshake yet (e.g. their NewTerm reached them before
-// the handshake), and the whole ensemble supports more features than the term
-// pinned now that they are known. Otherwise, a new shard would run without
-// them until its next election.
+// handleFeaturesDiscovered checks the features pinned by the current term
+// when the features of ensemble members are discovered (see
+// checkTermFeatures). The features of the other data servers don't change the
+// ones that the ensemble supports.
 func (s *controller) handleFeaturesDiscovered() {
 	s.discoveredDataServersMu.Lock()
 	discovered := s.discoveredDataServers
 	s.discoveredDataServers = make(map[string]*proto.DataServerIdentity)
 	s.discoveredDataServersMu.Unlock()
 
-	if s.currentElection == nil {
-		// The current term was not negotiated by this coordinator
-		return
-	}
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling discovered features: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
+	if slices.ContainsFunc(shardMeta.Ensemble, func(member *proto.DataServerIdentity) bool {
+		_, found := discovered[member.GetNameOrDefault()]
+		return found
+	}) {
+		s.termFeaturesCheckPending = true
+	}
+	s.checkTermFeatures(shardMeta)
+}
+
+// checkTermFeatures starts a new election when the whole ensemble supports
+// features that the current term doesn't pin, or the shard would run without
+// them until its next election. A term pins the features of the members as
+// far as they were known when it was negotiated, and they can change
+// afterward: e.g. in a rolling upgrade, the leader restarts last, and the
+// election that replaces it negotiates the features of its previous binary;
+// or the first handshake of a member with this coordinator completes after
+// the election. The periodic tasks retry the check while it can't complete,
+// e.g. during a split of the shard.
+func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
+	if !s.termFeaturesCheckPending {
+		return
+	}
 	if shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState || shardMeta.Split != nil {
 		return
 	}
-	members := make([]*proto.DataServerIdentity, 0, len(shardMeta.Ensemble))
-	for _, member := range shardMeta.Ensemble {
-		if dataServer, found := discovered[member.GetNameOrDefault()]; found {
-			members = append(members, dataServer)
-		}
-	}
-	if len(members) == 0 {
+	ensemble := shardMeta.Ensemble
+	supported := negotiate(s.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble))
+	if len(supported) == 0 {
+		// e.g. the features of a member are not known yet
+		s.termFeaturesCheckPending = false
 		return
 	}
-	features := s.currentElection.unpinnedFeatures()
+	pinned, err := s.termFeatures(shardMeta)
+	switch {
+	case errors.Is(err, ErrTermFeaturesNotReported):
+		// The leader runs an older binary: the election that replaces it when
+		// it restarts with a newer one negotiates the features again
+		s.termFeaturesCheckPending = false
+		return
+	case err != nil:
+		s.logger.Warn(
+			"Failed to read the features pinned by the term, retrying later",
+			slog.Any("leader", shardMeta.Leader),
+			slog.Any("error", err),
+		)
+		return
+	}
+	s.termFeaturesCheckPending = false
+	features := featurepkg.Missing(supported, pinned)
 	if len(features) == 0 {
 		return
 	}
 	s.logger.Info(
 		"Starting a new election to pin the features supported by the ensemble",
-		slog.Any("data-servers", members),
+		slog.Int64("term", shardMeta.Term),
+		slog.Any("pinned-features", pinned),
 		slog.Any("features", features),
 	)
 	s.onElectLeader(nil)
+}
+
+// termFeatures returns the features pinned by the current term of the shard.
+// They are known if the controller elected the leader of the term; otherwise,
+// e.g. after a restart of the coordinator, the leader reports them.
+func (s *controller) termFeatures(shardMeta *proto.ShardMetadata) ([]proto.Feature, error) {
+	if e := s.currentElection; e != nil && e.mutableShardMetadata.GetLeader() != nil &&
+		e.mutableShardMetadata.GetTerm() == shardMeta.GetTerm() {
+		return e.pinnedFeatures, nil
+	}
+	status, err := s.rpc.GetStatus(s.ctx, shardMeta.Leader, &proto.GetStatusRequest{Shard: s.shard})
+	switch {
+	case err != nil:
+		return nil, err
+	case status.GetTerm() != shardMeta.GetTerm() || status.GetStatus() != proto.ServingStatus_LEADER:
+		return nil, fmt.Errorf("the leader is in term %d with status %s", status.GetTerm(), status.GetStatus())
+	case status.GetTermFeatures() == nil:
+		return nil, ErrTermFeaturesNotReported
+	}
+	return status.GetTermFeatures().GetFeatures(), nil
 }
 
 func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) bool {
@@ -775,6 +832,8 @@ func (s *controller) handlePeriodicTasks() {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
 		}
 	}
+
+	s.checkTermFeatures(shardMeta)
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from
