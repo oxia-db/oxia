@@ -1998,6 +1998,47 @@ func TestLeaderController_GetStatus(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// The leader reports the features pinned by its term, so that a coordinator
+// that didn't negotiate them, e.g. after a restart, can tell whether the
+// ensemble supports more.
+func TestLeaderController_GetStatusReportsTermFeatures(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	// Term 1 pins no feature
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1, Options: &proto.NewTermOptions{EnableNotifications: true}})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 1, ReplicationFactor: 1})
+	assert.NoError(t, err)
+
+	res, err := lc.GetStatus(&proto.GetStatusRequest{Shard: shard})
+	assert.NoError(t, err)
+	assert.NotNil(t, res.TermFeatures)
+	assert.Empty(t, res.TermFeatures.GetFeatures())
+
+	// Term 2 pins the checksum feature
+	checksum := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2, Options: &proto.NewTermOptions{EnableNotifications: true, Features: checksum}})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 1, FeaturesSupported: checksum})
+	assert.NoError(t, err)
+
+	res, err = lc.GetStatus(&proto.GetStatusRequest{Shard: shard})
+	assert.NoError(t, err)
+	assert.EqualValues(t, 2, res.Term)
+	assert.Equal(t, checksum, res.TermFeatures.GetFeatures())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_Write(t *testing.T) {
 	var shard int64 = 1
 

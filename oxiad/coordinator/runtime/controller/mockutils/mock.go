@@ -371,6 +371,24 @@ func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStat
 	}, nil}
 }
 
+// GetStatusResponseWithTermFeatures enqueues a GetStatus response that also
+// reports the features pinned by the node's term, as a leader does.
+//
+//nolint:revive
+func (m *PerNodeChannels) GetStatusResponseWithTermFeatures(term int64, status proto.ServingStatus,
+	headOffset int64, commitOffset int64, termFeatures []proto.Feature) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{&proto.GetStatusResponse{
+		Term:         term,
+		Status:       status,
+		HeadOffset:   headOffset,
+		CommitOffset: commitOffset,
+		TermFeatures: &proto.TermFeatures{Features: termFeatures},
+	}, nil}
+}
+
 func (m *PerNodeChannels) EnqueueGetStatusError(err error) {
 	m.getStatusResponses <- struct {
 		*proto.GetStatusResponse
