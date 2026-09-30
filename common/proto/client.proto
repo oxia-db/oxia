@@ -145,6 +145,11 @@ message NamespaceShardsAssignment {
   // Indicates the mechanism by which the keys are assigned to the individual
   // shards.
   ShardKeyRouter shard_key_router = 2;
+
+  // The order of the keys in every shard of the namespace. Clients merge the
+  // results of a read sent to several shards (e.g. a floor get or a range scan
+  // without a partition key) in this order. Older servers leave it unset.
+  KeySorting key_sorting = 3;
 }
 
 /**
@@ -167,6 +172,21 @@ enum ShardKeyRouter {
   UNKNOWN = 0;
 
   XXHASH3 = 1;
+}
+
+/**
+ * The order of the keys in the shards of a namespace. See
+ * https://oxia-db.github.io/docs/features/oxia-key-sorting
+ */
+enum KeySorting {
+  KEY_SORTING_UNKNOWN = 0;
+
+  // The keys are sorted by their bytes
+  KEY_SORTING_NATURAL = 1;
+
+  // The keys with fewer '/' sort first. The keys with the same number of '/'
+  // are sorted by their bytes, with '/' sorting after any other byte
+  KEY_SORTING_HIERARCHICAL = 2;
 }
 
 /**

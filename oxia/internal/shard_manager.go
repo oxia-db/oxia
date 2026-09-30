@@ -52,6 +52,10 @@ type ShardManager interface {
 
 	// Changed returns a channel that is closed when the shard map changes.
 	Changed() <-chan struct{}
+
+	// KeySorting returns the order of the keys in the shards of the namespace,
+	// or KEY_SORTING_UNKNOWN when the server does not report it.
+	KeySorting() proto.KeySorting
 }
 
 // ShardsReplacedListener is invoked with the shards removed from the shard map
@@ -70,6 +74,7 @@ type shardManagerImpl struct {
 	namespace        string
 	shards           map[int64]Shard
 	successors       map[int64][]Shard
+	keySorting       proto.KeySorting
 	changed          chan struct{}
 	initialized      bool
 	onShardsReplaced ShardsReplacedListener
@@ -206,6 +211,12 @@ func (s *shardManagerImpl) Changed() <-chan struct{} {
 	return s.changed
 }
 
+func (s *shardManagerImpl) KeySorting() proto.KeySorting {
+	s.RLock()
+	defer s.RUnlock()
+	return s.keySorting
+}
+
 func (s *shardManagerImpl) isClosed() bool {
 	return s.ctx.Err() != nil
 }
@@ -278,6 +289,9 @@ func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 		for i, assignment := range assignments.Assignments {
 			shards[i] = toShard(assignment)
 		}
+		s.Lock()
+		s.keySorting = assignments.KeySorting
+		s.Unlock()
 		s.update(shards)
 		backOff.Reset()
 	}
