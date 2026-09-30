@@ -725,6 +725,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
 		proto.Feature_FEATURE_ORDERED_WRITES,
 		proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
+		proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
 		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
@@ -1482,6 +1483,58 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+func TestDB_SequenceTailSharedPrefix(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		for _, test := range []struct {
+			enabled bool
+			keys    []string
+		}{
+			// Without the feature, the puts continue the sequences from the plain
+			// keys, like on the versions that take them as their last keys, so
+			// that the replicas apply the same keys. "users" can't continue from
+			// "users+eu-west": its put is rejected.
+			{false, []string{"orders-00000000000000002026", "orders-00000000000000002027", ""}},
+			{true, []string{"orders-00000000000000000001", "orders-00000000000000000002",
+				"users-00000000000000000001"}},
+		} {
+			t.Run(fmt.Sprintf("%v/enabled=%v", keySorting, test.enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 0, time.SystemClock)
+				require.NoError(t, err)
+				if test.enabled {
+					db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR)
+				}
+
+				// Plain keys made of the prefix of an empty sequence, then a byte
+				// that sorts before "-": they are the last keys below the sequence
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+					{Key: "orders+archive-2025"},
+					{Key: "users+eu-west"},
+				}}, 0, 0, NoOpCallback)
+				require.NoError(t, err)
+
+				var keys []string
+				for _, prefix := range []string{"orders", "orders", "users"} {
+					res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: prefix, PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
+					}}, 0, 0, NoOpCallback)
+					if err != nil {
+						assert.ErrorIs(t, err, ErrInvalidSequenceKey)
+						keys = append(keys, "")
+					} else {
+						keys = append(keys, res.Puts[0].GetKey())
+					}
+				}
+				assert.Equal(t, test.keys, keys)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
 }
 
 func rangeScanIteratorToSlice(it RangeScanIterator, err error) []string {
