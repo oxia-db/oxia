@@ -1424,20 +1424,20 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
 
-	// A delta that lands exactly on the max sequence value is still fine.
-	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+	// A delta that lands exactly on the max sequence value overflows too: the
+	// last key of a sequence is looked up below "<prefix>-<max>", so the next
+	// put would restart the sequence below it.
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "a",
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence},
 	}}}, 0, 0, NoOpCallback)
-	assert.NoError(t, err)
-	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
-	assert.Equal(t, fmt.Sprintf("a-%020d", maxSequence), resp.GetPuts()[0].GetKey())
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
 
 	// Seed a small sequence, then a huge delta that would wrap uint64 back onto
 	// an earlier key must be rejected instead of silently overwriting it.
-	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "b",
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
@@ -1454,7 +1454,15 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 	}}}, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, ErrSequenceOverflow)
 
-	// The rejected put left the tail untouched: a normal delta keeps advancing
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "b",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{maxSequence - 5},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	// The rejected puts left the tail untouched: a normal delta keeps advancing
 	// from 5, so no earlier entry was clobbered.
 	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "b",
@@ -1480,6 +1488,14 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1, maxSequence},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "c",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1, maxSequence - 4},
 	}}}, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, ErrSequenceOverflow)
 
