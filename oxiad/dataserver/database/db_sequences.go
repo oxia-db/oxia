@@ -47,7 +47,13 @@ func generateUniqueKeyFromSequences(batch kvstore.WriteBatch, req *proto.PutRequ
 	}
 
 	newKey := req.Key
-	for idx, delta := range req.SequenceKeyDelta {
+	for idx := range max(len(req.SequenceKeyDelta), len(parts)) {
+		// A part of the sequence without a delta keeps its value
+		var delta uint64
+		if idx < len(req.SequenceKeyDelta) {
+			delta = req.SequenceKeyDelta[idx]
+		}
+
 		if idx == 0 && delta == 0 {
 			// The first delta in the list must be strictly > 0
 			// Otherwise there would be possibility of reordering of keys
@@ -102,9 +108,11 @@ func findCurrentLastKeyInSequence(wb kvstore.WriteBatch, req *proto.PutRequest,
 	}
 
 	parts := strings.Split(lastKeyInSequence, "-")[1:]
-	if len(parts) > len(req.SequenceKeyDelta) {
+	if len(parts) > len(req.SequenceKeyDelta) &&
+		!features.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION) {
 		// The request has less sequence key deltas than there are already
-		// available in the sequence
+		// available in the sequence. With the feature, the missing deltas
+		// are 0 instead: every replica must generate the same keys.
 		return nil, ErrMissingSequenceDeltas
 	}
 	return parts, nil
@@ -115,7 +123,6 @@ func findCurrentLastKeyInSequence(wb kvstore.WriteBatch, req *proto.PutRequest,
 // failure, every replica rejects the put the same way.
 func isInvalidSequentialPut(err error) bool {
 	return errors.Is(err, ErrMissingPartitionKey) ||
-		errors.Is(err, ErrMissingSequenceDeltas) ||
 		errors.Is(err, ErrSequenceDeltaIsZero) ||
 		errors.Is(err, ErrSequenceOverflow) ||
 		errors.Is(err, ErrInvalidSequenceKey)

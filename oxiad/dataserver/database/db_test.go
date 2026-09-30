@@ -1548,8 +1548,6 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 		{"missing partition key", &proto.PutRequest{Key: "a", SequenceKeyDelta: []uint64{1}}, ErrMissingPartitionKey},
 		{"first delta is zero", &proto.PutRequest{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{0}},
 			ErrSequenceDeltaIsZero},
-		{"missing deltas", &proto.PutRequest{Key: "two", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
-			ErrMissingSequenceDeltas},
 		{"overflow", &proto.PutRequest{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{2}},
 			ErrSequenceOverflow},
 		{"not a sequence key", &proto.PutRequest{Key: "plain", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
@@ -1561,10 +1559,9 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 			assert.NoError(t, err)
 
-			// A sequence with two parts, one close to the max value, and a key
-			// with the prefix of a sequence that is not part of it
+			// A sequence close to the max value, and a key with the prefix of a
+			// sequence that is not part of it
 			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
-				{Key: "two", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1, 1}},
 				{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{maxSequence - 1}},
 				{Key: "plain-"},
 			}}, 0, 0, NoOpCallback)
@@ -1610,6 +1607,50 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 			assert.NoError(t, factory.Close())
 		})
 	}
+}
+
+// With FEATURE_SEQUENCE_KEY_VALIDATION, a part of the sequence without a delta
+// in the put keeps its value.
+func TestDB_SequenceKeyMissingDeltas(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	put := func(offset int64, deltas ...uint64) (string, error) {
+		res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("0"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: deltas,
+		}}}, offset, 0, NoOpCallback)
+		if err != nil {
+			return "", err
+		}
+		assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
+		return res.Puts[0].GetKey(), nil
+	}
+
+	key, err := put(0, 1, 2, 3)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 1, 2, 3), key)
+
+	// Without the feature, the whole write request is rejected
+	_, err = put(1, 1)
+	assert.ErrorIs(t, err, ErrWriteRejected)
+	assert.ErrorIs(t, err, ErrMissingSequenceDeltas)
+
+	db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+	key, err = put(2, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 2, 2, 3), key)
+
+	key, err = put(3, 5, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 7, 3, 3), key)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
 }
 
 func rangeScanIteratorToSlice(it RangeScanIterator, err error) []string {

@@ -15,6 +15,7 @@
 package control
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -33,10 +34,10 @@ import (
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-// A sequential put can be invalid for the content of the shard, e.g. when a key
-// of the same prefix has more sequences than the put has deltas. Every replica
-// must apply the entry the same way: a follower that fails to apply it stops
-// advancing, and could never take over from the leader.
+// A sequential put depends on the keys already in its sequence: it can have
+// fewer deltas than the sequence has parts, or its delta can overflow the
+// sequence. Every replica must apply it the same way: a follower that fails to
+// apply an entry stops advancing, and could never take over from the leader.
 func TestSequenceKeyValidation_InvalidPutDoesNotBlockFailover(t *testing.T) {
 	s1, sa1 := mock.NewServer(t, "s1")
 	s2, sa2 := mock.NewServer(t, "s2")
@@ -81,8 +82,16 @@ func TestSequenceKeyValidation_InvalidPutDoesNotBlockFailover(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "a-00000000000000000001-00000000000000000001", key)
 
-	// The sequence has two parts: a put with a single delta is invalid
-	_, _, err = client.Put(t.Context(), "a", []byte("1"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(1))
+	// The sequence has two parts: the missing delta of the second one is 0
+	key, _, err = client.Put(t.Context(), "a", []byte("1"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(1))
+	require.NoError(t, err)
+	assert.Equal(t, "a-00000000000000000002-00000000000000000001", key)
+
+	// A delta that overflows the sequence is invalid
+	_, _, err = client.Put(t.Context(), "big", []byte("0"), oxia.PartitionKey("x"),
+		oxia.SequenceKeysDeltas(math.MaxUint64-1))
+	require.NoError(t, err)
+	_, _, err = client.Put(t.Context(), "big", []byte("1"), oxia.PartitionKey("x"), oxia.SequenceKeysDeltas(2))
 	assert.ErrorIs(t, err, oxia.ErrInvalidOptions)
 
 	// Commit offsets are piggybacked on the replication messages: after one more

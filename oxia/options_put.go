@@ -101,7 +101,8 @@ func (s *sequenceKeysDeltas) applyPut(opts *putOptions) {
 // assigned by the server, based on the prefix record key and
 // appending one or more sequences.
 // The sequence numbers will be atomically added based on the deltas.
-// Deltas must be >= 0 and the first one strictly > 0.
+// Deltas must be >= 0 and the first one strictly > 0. If the sequence already
+// has more numbers than deltas, the missing deltas are 0.
 // SequenceKeysDeltas also requires that a [PartitionKey] option is
 // provided.
 func SequenceKeysDeltas(delta ...uint64) PutOption {

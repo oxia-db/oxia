@@ -85,18 +85,22 @@ func TestStandaloneSequenceKeyValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The sequence has two parts: a put with a single delta is invalid
+	// The sequence has two parts: the missing delta of the second one is 0. A
+	// sequential put without a partition key is invalid.
 	response, err := client.Write(t.Context(), &proto.WriteRequest{
 		Shard: pb.Int64(0),
 		Puts: []*proto.PutRequest{
 			{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
-			{Key: "b", Value: []byte("b")},
+			{Key: "b", SequenceKeyDelta: []uint64{1}},
+			{Key: "c", Value: []byte("c")},
 		},
 	})
 	require.NoError(t, err)
-	require.Len(t, response.GetPuts(), 2)
-	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
-	assert.Equal(t, proto.Status_OK, response.GetPuts()[1].GetStatus())
+	require.Len(t, response.GetPuts(), 3)
+	assert.Equal(t, proto.Status_OK, response.GetPuts()[0].GetStatus())
+	assert.Equal(t, "a-00000000000000000002-00000000000000000001", response.GetPuts()[0].GetKey())
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[1].GetStatus())
+	assert.Equal(t, proto.Status_OK, response.GetPuts()[2].GetStatus())
 }
 
 func TestStandaloneRejectsSameWalAndDataDir(t *testing.T) {

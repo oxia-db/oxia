@@ -289,7 +289,9 @@ message PutRequest {
   optional string partition_key = 6;
 
   // If one or more sequence key are specified. The key will get added suffixes
-  // based on adding the delta to the current highest key with the same prefix
+  // based on adding the delta to the current highest key with the same prefix.
+  // When the highest key has more suffixes than the deltas, the missing deltas
+  // are 0 on the shards with FEATURE_SEQUENCE_KEY_VALIDATION.
   repeated uint64 sequence_key_delta = 7;
 
   repeated SecondaryIndex secondary_indexes = 8;
