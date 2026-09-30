@@ -53,7 +53,7 @@ const (
 	// INVALID_ARGUMENT status. One over the internal keys deletes the
 	// notification records, which are not storage entries, instead of rejecting
 	// the write request
-	Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS Feature = 5
+	Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS Feature = 6
 )
 
 // Enum value maps for Feature.
@@ -64,7 +64,7 @@ var (
 		2: "FEATURE_SECONDARY_INDEX_NAME_VALIDATION",
 		3: "FEATURE_ORDERED_WRITES",
 		4: "FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP",
-		5: "FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS",
+		6: "FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS",
 	}
 	Feature_value = map[string]int32{
 		"FEATURE_UNKNOWN":                           0,
@@ -72,7 +72,7 @@ var (
 		"FEATURE_SECONDARY_INDEX_NAME_VALIDATION":   2,
 		"FEATURE_ORDERED_WRITES":                    3,
 		"FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP": 4,
-		"FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS": 5,
+		"FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS": 6,
 	}
 )
 
@@ -2093,7 +2093,7 @@ const file_replication_proto_rawDesc = "" +
 	"'FEATURE_SECONDARY_INDEX_NAME_VALIDATION\x10\x02\x12\x1a\n" +
 	"\x16FEATURE_ORDERED_WRITES\x10\x03\x12-\n" +
 	")FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP\x10\x04\x12-\n" +
-	")FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS\x10\x05*\x8e\x01\n" +
+	")FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS\x10\x06*\x8e\x01\n" +
 	"\x0fHandshakeStatus\x12\x1c\n" +
 	"\x18HANDSHAKE_STATUS_UNKNOWN\x10\x00\x12\x1a\n" +
 	"\x16HANDSHAKE_STATUS_BOUND\x10\x01\x12\"\n" +

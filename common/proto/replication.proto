@@ -72,7 +72,7 @@ enum Feature {
   // INVALID_ARGUMENT status. One over the internal keys deletes the
   // notification records, which are not storage entries, instead of rejecting
   // the write request
-  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 5;
+  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 6;
 }
 
 message GetInfoRequest {
