@@ -1498,6 +1498,78 @@ func TestLeaderController_RetriesFailedApplyFromWal(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A committed entry that keeps failing to apply stays in the wal past the
+// retention, even with the next entries committed: the leader applies it from
+// the wal once the storage recovers.
+func TestLeaderController_RetriesFailedApplyPastWalRetention(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	clock := &time2.MockedClock{}
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{
+		BaseWalDir:           t.TempDir(),
+		SegmentSize:          128 * 1024,
+		Clock:                clock,
+		TrimmerCheckInterval: 10 * time.Millisecond,
+	})
+	failures := &atomic.Int64{}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, failingReadKVFactory{Factory: kvFactory, key: "c", failures: failures}, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 1, ReplicationFactor: 1})
+	require.NoError(t, err)
+
+	put := func(key string) chan error {
+		res := make(chan error, 1)
+		lc.Write(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte(key)}},
+		}, concurrent.NewOnce(func(*proto.WriteResponse) { res <- nil }, func(err error) { res <- err }))
+		return res
+	}
+	require.NoError(t, <-put("a"))
+	require.NoError(t, <-put("b"))
+
+	// The put of c, at offset 2, keeps failing to apply, and holds back the put
+	// of d, committed after it
+	failures.Store(math.MaxInt64)
+	c := put("c")
+	d := put("d")
+	tracker := lc.(*leaderController).quorumAckTracker
+	require.Eventually(t, func() bool { return tracker.CommitOffset() == 3 }, 10*time.Second, time.Millisecond)
+
+	// Hours later, every entry is past the retention: the trimming stops at the
+	// last entry applied, b, and keeps c
+	clock.Set(time.Now().Add(2 * time.Hour).UnixMilli())
+	walObject := lc.(*leaderController).wal
+	require.Eventually(t, func() bool { return walObject.FirstOffset() > 0 }, 10*time.Second, time.Millisecond)
+	assert.EqualValues(t, 1, walObject.FirstOffset())
+
+	// The storage recovers
+	failures.Store(0)
+	require.Eventually(t, func() bool { return len(c) > 0 && len(d) > 0 }, 10*time.Second, 10*time.Millisecond)
+	assert.NoError(t, <-c)
+	assert.NoError(t, <-d)
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+		Shard: &shard,
+		Gets:  []*proto.GetRequest{{Key: "c", IncludeValue: true}, {Key: "d", IncludeValue: true}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("c"), results[0].Value)
+	assert.Equal(t, []byte("d"), results[1].Value)
+
+	// Then the trimming moves on
+	assert.Eventually(t, func() bool { return walObject.FirstOffset() == 3 }, 10*time.Second, time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_Notifications(t *testing.T) {
 	var shard int64 = 1
 
