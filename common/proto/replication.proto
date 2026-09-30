@@ -80,9 +80,8 @@ enum Feature {
   // the write request
   FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 7;
   // Sequential puts: a part of the sequence without a delta keeps its value,
-  // a value that reaches the max overflows the sequence, and an invalid put,
-  // e.g. overflowing the sequence, gets the INVALID_ARGUMENT status instead
-  // of rejecting the whole write request
+  // and an invalid put, e.g. overflowing the sequence, gets the
+  // INVALID_ARGUMENT status instead of rejecting the whole write request
   FEATURE_SEQUENCE_KEY_VALIDATION = 8;
 }
 

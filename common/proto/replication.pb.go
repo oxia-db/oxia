@@ -61,9 +61,8 @@ const (
 	// the write request
 	Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS Feature = 7
 	// Sequential puts: a part of the sequence without a delta keeps its value,
-	// a value that reaches the max overflows the sequence, and an invalid put,
-	// e.g. overflowing the sequence, gets the INVALID_ARGUMENT status instead
-	// of rejecting the whole write request
+	// and an invalid put, e.g. overflowing the sequence, gets the
+	// INVALID_ARGUMENT status instead of rejecting the whole write request
 	Feature_FEATURE_SEQUENCE_KEY_VALIDATION Feature = 8
 )
 

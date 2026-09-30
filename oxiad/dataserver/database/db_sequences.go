@@ -73,19 +73,11 @@ func generateUniqueKeyFromSequences(batch kvstore.WriteBatch, req *proto.PutRequ
 			lastValue = 0
 		}
 
-		if delta > maxSequence-lastValue {
-			// The cumulative value would wrap past uint64: the generated key
+		if delta >= maxSequence-lastValue {
+			// Past the max, the cumulative value would wrap: the generated key
 			// would sort below the current tail and could collide with an
-			// earlier entry, so reject the delta instead of overflowing.
-			return "", ErrSequenceOverflow
-		}
-		if delta == maxSequence-lastValue &&
-			features.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION) {
-			// A value can't reach the max either: the last key of a sequence
-			// is looked up below "<prefix>-<max>", so with the first value at
-			// the max, the next put wouldn't find it and would restart the
-			// sequence below it. Without the feature, the replicas accept it,
-			// like the versions before it.
+			// earlier entry. At the max, the next put wouldn't find the key,
+			// since the last key is looked up below "<prefix>-<max>".
 			return "", ErrSequenceOverflow
 		}
 		newKey = fmt.Sprintf("%s-%020d", newKey, lastValue+delta)
