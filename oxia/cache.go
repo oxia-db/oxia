@@ -229,6 +229,12 @@ func (c *cacheImpl[Value]) handleNotification(n *Notification) {
 	c.RLock()
 	defer c.RUnlock()
 
+	if n.Type == KeyRangeRangeDeleted {
+		// Ristretto can't list the cached keys between the bounds of the range,
+		// so drop all the cached records
+		c.valueCache.Clear()
+		return
+	}
 	c.valueCache.Del(n.Key)
 }
 
