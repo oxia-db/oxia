@@ -1067,7 +1067,11 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	}
 
 	if notifications != nil {
-		// The notification keeps the end of the request, even when it is empty
+		// The notification keeps the end of the request, even when it is
+		// empty: the clients read that as all the records from the start on,
+		// which is what the range deletes. The end of the scan, "__oxia/",
+		// would read as a different range: the clients don't sort the internal
+		// keys after all the others.
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
 

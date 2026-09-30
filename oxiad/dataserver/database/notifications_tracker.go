@@ -115,6 +115,9 @@ func (n *Notifications) Deleted(key string) {
 }
 
 func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
+	// With FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS, a range covers either
+	// internal keys or regular ones, and its start tells which: one that covers
+	// both is rejected before its notification
 	if strings.HasPrefix(keyStartInclusive, constant.InternalKeyPrefix) {
 		return
 	}

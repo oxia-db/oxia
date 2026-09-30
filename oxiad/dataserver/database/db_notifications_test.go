@@ -717,6 +717,153 @@ func TestDB_DeleteRangeWithoutEnd(t *testing.T) {
 	}
 }
 
+// The notifications are for the clients, which never see the internal keys: a
+// write request that creates, modifies or deletes internal keys records no
+// notification for them.
+func TestDB_NotificationsInternalKeys(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%v", keySorting, enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 1*time.Hour, time2.SystemClock)
+				require.NoError(t, err)
+				if enabled {
+					db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+				}
+
+				for offset, test := range []struct {
+					request          *proto.WriteRequest
+					notificationType proto.NotificationType
+				}{{
+					request: &proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: "a", Value: []byte("v")},
+						{Key: "__oxia/x", Value: []byte("v")},
+						{Key: "__oxia/y", Value: []byte("v")},
+					}},
+					notificationType: proto.NotificationType_KEY_CREATED,
+				}, {
+					request: &proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: "a", Value: []byte("v")},
+						{Key: "__oxia/x", Value: []byte("v")},
+					}},
+					notificationType: proto.NotificationType_KEY_MODIFIED,
+				}, {
+					request: &proto.WriteRequest{
+						Deletes:      []*proto.DeleteRequest{{Key: "a"}, {Key: "__oxia/x"}},
+						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "__oxia/y", EndExclusive: "__oxia/z"}},
+					},
+					notificationType: proto.NotificationType_KEY_DELETED,
+				}} {
+					_, err := db.ProcessWrite(test.request, int64(offset), now(), NoOpCallback)
+					require.NoError(t, err)
+
+					nb := readNotificationBatch(t, db.RawKV(), int64(offset))
+					require.NotNil(t, nb)
+					assert.Equal(t, []string{"a"}, notificationKeys(nb))
+					n, _ := findNotification(nb, "a")
+					assert.Equal(t, test.notificationType, n.GetType())
+				}
+
+				for _, key := range []string{"__oxia/x", "__oxia/y"} {
+					gr, err := db.Get(&proto.GetRequest{Key: key})
+					require.NoError(t, err)
+					assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
+				}
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+// A delete range from a regular key can reach the internal keys. Without the
+// feature, its notification then covers them, if the write request applies,
+// which depends on the notification records that the replica has not trimmed
+// yet: the request fails where its scan reads one, as they are not storage
+// entries. With the feature, such a range gets the INVALID_ARGUMENT status
+// before its notification, whatever the records. A range without an end then
+// stops before the internal keys, and its notification keeps the empty end,
+// which the clients read as all the records from the start on: what the range
+// deletes.
+func TestDB_NotificationsDeleteRangeInternalKeys(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		end        string
+		// Without the feature, the scan of the range reads the notification
+		// records
+		readsRecords bool
+		// With the feature, the range covers both regular and internal keys
+		mixed bool
+	}{
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "__oxia/zzz", false, true},
+		{"hierarchical/records", proto.KeySortingType_HIERARCHICAL, "__oxia/zzz/zzz", true, true},
+		{"hierarchical/no-end", proto.KeySortingType_HIERARCHICAL, "", false, false},
+		{"natural", proto.KeySortingType_NATURAL, "__oxia/m", false, true},
+		{"natural/records", proto.KeySortingType_NATURAL, "__oxia/zzz", true, true},
+		{"natural/no-end", proto.KeySortingType_NATURAL, "", true, false},
+	} {
+		for _, enabled := range []bool{false, true} {
+			for _, trimmed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/enabled=%v/trimmed=%v", test.name, enabled, trimmed), func(t *testing.T) {
+					factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+					require.NoError(t, err)
+					db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+					require.NoError(t, err)
+					if enabled {
+						db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+					}
+
+					// "b/c" is on the second level of the hierarchical sorting
+					_, err = db.ProcessWrite(&proto.WriteRequest{
+						Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b/c", Value: []byte("v")}},
+					}, 0, now(), NoOpCallback)
+					require.NoError(t, err)
+					if trimmed {
+						// As the trimmer of the replica does, outside of the log
+						wb := db.RawKV().NewWriteBatch()
+						require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey))
+						require.NoError(t, wb.Commit())
+						require.NoError(t, wb.Close())
+					}
+
+					res, err := db.ProcessWrite(&proto.WriteRequest{
+						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "a", EndExclusive: test.end}},
+					}, 1, now(), NoOpCallback)
+					nb := readNotificationBatch(t, db.RawKV(), 1)
+					switch {
+					case enabled && test.mixed:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
+						require.NotNil(t, nb)
+						assert.Empty(t, nb.Notifications)
+					case !enabled && test.readsRecords && !trimmed:
+						assert.ErrorIs(t, err, ErrNotificationRecord)
+						assert.Nil(t, nb)
+					default:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+						require.NotNil(t, nb)
+						assert.Equal(t, []string{"a"}, notificationKeys(nb))
+						n, _ := findNotification(nb, "a")
+						assert.Equal(t, proto.NotificationType_KEY_RANGE_DELETED, n.GetType())
+						assert.Equal(t, test.end, n.GetKeyRangeLast())
+					}
+					if enabled && !test.mixed {
+						// All the records from the start on
+						assert.Empty(t, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+					}
+
+					assert.NoError(t, db.Close())
+					assert.NoError(t, factory.Close())
+				})
+			}
+		}
+	}
+}
+
 // A subscriber catching up from an old offset must receive the backlog in
 // bounded chunks, not the entire retention window in one slice: the dispatch
 // loop in the leader controller resumes from the last delivered offset + 1.

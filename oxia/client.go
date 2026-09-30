@@ -311,6 +311,7 @@ type Notification struct {
 	VersionId int64
 
 	// In case of a KeyRangeRangeDeleted notification, this would represent
-	// the end (excluded) of the range of keys
+	// the end (excluded) of the range of keys. An empty KeyRangeEnd covers all
+	// the records from Key on.
 	KeyRangeEnd string
 }
