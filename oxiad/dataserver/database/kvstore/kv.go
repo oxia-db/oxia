@@ -146,6 +146,10 @@ type KV interface {
 
 	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
 
+	// CompareKeys compares two keys in the order the store sorts them, which
+	// depends on the key sorting
+	CompareKeys(a, b string) int
+
 	Snapshot() (Snapshot, error)
 
 	Flush() error

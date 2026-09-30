@@ -118,6 +118,9 @@ type DB interface {
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
 	KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error)
 
+	// CompareKeys compares two keys in the order the shard sorts them
+	CompareKeys(a, b string) int
+
 	ReadCommitOffset() (int64, error)
 
 	ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error)
@@ -726,6 +729,10 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 
 func (d *db) KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error) {
 	return d.kv.KeyIterator(kvstore.IteratorOpts{IncludeInternalKeys: includeInternalKeys})
+}
+
+func (d *db) CompareKeys(a, b string) int {
+	return d.kv.CompareKeys(a, b)
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
