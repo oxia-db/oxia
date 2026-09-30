@@ -204,6 +204,19 @@ type cacheImpl[Value any] struct {
 	serializeFunc   SerializeFunc
 	deserializeFunc DeserializeFunc
 	valueCache      *ristretto.Cache
+
+	// The keys that Get is loading from the server, with their evictions: a key
+	// evicted while it loads can have changed after the server read the record,
+	// and the load must not cache that record then.
+	loadsMutex sync.Mutex
+	loads      map[string]*keyLoads
+}
+
+// The loads of a key in flight, and the evictions of the key since the first one
+// started.
+type keyLoads struct {
+	count     int
+	evictions uint64
 }
 
 func newCacheImpl[Value any](client SyncClient, serializeFunc SerializeFunc, deserializeFunc DeserializeFunc) (*cacheImpl[Value], error) {
@@ -211,6 +224,7 @@ func newCacheImpl[Value any](client SyncClient, serializeFunc SerializeFunc, des
 		client:          client,
 		serializeFunc:   serializeFunc,
 		deserializeFunc: deserializeFunc,
+		loads:           map[string]*keyLoads{},
 	}
 
 	var err error
@@ -232,10 +246,33 @@ func (c *cacheImpl[Value]) handleNotification(n *Notification) {
 	if n.Type == KeyRangeRangeDeleted {
 		// Ristretto can't list the cached keys between the bounds of the range,
 		// so drop all the cached records
-		c.valueCache.Clear()
+		c.evictAll()
 		return
 	}
-	c.valueCache.Del(n.Key)
+	c.evict(n.Key)
+}
+
+// The eviction and the Set of a load that raced it are ordered by the loads
+// mutex: either the load sees the eviction and skips its Set, or ristretto
+// applies the Del after the Set, as both go through its buffer in order.
+func (c *cacheImpl[Value]) evict(key string) {
+	c.loadsMutex.Lock()
+	defer c.loadsMutex.Unlock()
+
+	if kl, ok := c.loads[key]; ok {
+		kl.evictions++
+	}
+	c.valueCache.Del(key)
+}
+
+func (c *cacheImpl[Value]) evictAll() {
+	c.loadsMutex.Lock()
+	defer c.loadsMutex.Unlock()
+
+	for _, kl := range c.loads {
+		kl.evictions++
+	}
+	c.valueCache.Clear()
 }
 
 func (c *cacheImpl[Value]) Put(ctx context.Context, key string, value Value, options ...PutOption) (string, Version, error) {
@@ -246,7 +283,7 @@ func (c *cacheImpl[Value]) Put(ctx context.Context, key string, value Value, opt
 
 	insertedKey, version, err := c.client.Put(ctx, key, data, options...)
 	if !errors.Is(err, ErrUnexpectedVersionId) {
-		c.valueCache.Del(key)
+		c.evict(key)
 	}
 
 	return insertedKey, version, err
@@ -254,7 +291,7 @@ func (c *cacheImpl[Value]) Put(ctx context.Context, key string, value Value, opt
 
 func (c *cacheImpl[Value]) Delete(ctx context.Context, key string, options ...DeleteOption) error {
 	err := c.client.Delete(ctx, key, options...)
-	c.valueCache.Del(key)
+	c.evict(key)
 	return err
 }
 
@@ -271,11 +308,25 @@ func (c *cacheImpl[Value]) Get(ctx context.Context, key string) (value Value, ve
 }
 
 func (c *cacheImpl[Value]) load(ctx context.Context, key string) (value Value, version Version, err error) {
+	kl, evictions := c.startLoad(key)
+	defer c.endLoad(key, kl)
+
+	// Cache the record only if the key was not evicted since the load started,
+	// as the eviction can be of a change applied after the server read it
+	set := func(cr cachedResult[Value], cost int64, ttl time.Duration) {
+		c.loadsMutex.Lock()
+		defer c.loadsMutex.Unlock()
+
+		if kl.evictions == evictions {
+			c.valueCache.SetWithTTL(key, cr, cost, ttl)
+		}
+	}
+
 	_, data, existingVersion, err := c.client.Get(ctx, key)
 	if errors.Is(err, ErrKeyNotFound) {
 		// Use valueVersion[Value] instead of cachedResult[Value] to avoid double-wrapping.
 		cr := empty[valueVersion[Value]]()
-		c.valueCache.Set(key, cr, 0)
+		set(cr, 0, 0)
 		return value, version, err
 	}
 
@@ -292,8 +343,32 @@ func (c *cacheImpl[Value]) load(ctx context.Context, key string) (value Value, v
 		version: existingVersion,
 	})
 
-	c.valueCache.SetWithTTL(key, cr, int64(len(data)), defaultCacheTTL)
+	set(cr, int64(len(data)), defaultCacheTTL)
 	return value, existingVersion, nil
+}
+
+// Registers a load of the key, and returns the evictions of the key so far.
+func (c *cacheImpl[Value]) startLoad(key string) (*keyLoads, uint64) {
+	c.loadsMutex.Lock()
+	defer c.loadsMutex.Unlock()
+
+	kl, ok := c.loads[key]
+	if !ok {
+		kl = &keyLoads{}
+		c.loads[key] = kl
+	}
+	kl.count++
+	return kl, kl.evictions
+}
+
+func (c *cacheImpl[Value]) endLoad(key string, kl *keyLoads) {
+	c.loadsMutex.Lock()
+	defer c.loadsMutex.Unlock()
+
+	kl.count--
+	if kl.count == 0 {
+		delete(c.loads, key)
+	}
 }
 
 func (c *cacheImpl[Value]) ReadModifyUpdate(ctx context.Context, key string, modifyFunc ModifyFunc[Value]) error {
