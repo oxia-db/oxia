@@ -644,61 +644,75 @@ func TestDB_DeleteRangeRegularAndInternalKeys(t *testing.T) {
 // request rejected at the first notification record; with the hierarchical
 // one, its end is the smallest key, and it deletes nothing.
 func TestDB_DeleteRangeWithoutEnd(t *testing.T) {
-	keys := []string{"a", "b", "c/d"}
 	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
-		for _, enabled := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/enabled=%v", keySorting, enabled), func(t *testing.T) {
-				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
-				require.NoError(t, err)
-				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 1*time.Hour, time2.SystemClock)
-				require.NoError(t, err)
-				if enabled {
-					db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
-				}
-
-				var puts []*proto.PutRequest
-				for _, key := range keys {
-					puts = append(puts, &proto.PutRequest{Key: key, Value: []byte("v")})
-				}
-				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: puts}, 0, now(), NoOpCallback)
-				require.NoError(t, err)
-
-				res, err := db.ProcessWrite(&proto.WriteRequest{
-					DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "b"}},
-				}, 1, now(), NoOpCallback)
-				expectedKeys := keys
-				switch {
-				case enabled:
+		// Up to DeleteRangeThreshold keys, the range is deleted key by key, and
+		// with a range deletion past it
+		for _, count := range []int{2, DeleteRangeThreshold + 1} {
+			for _, enabled := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/keys=%d/enabled=%v", keySorting, count, enabled), func(t *testing.T) {
+					factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 					require.NoError(t, err)
-					assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
-					expectedKeys = []string{"a"}
-				case keySorting == proto.KeySortingType_NATURAL:
-					assert.ErrorIs(t, err, ErrNotificationRecord)
-				default:
+					db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 1*time.Hour, time2.SystemClock)
 					require.NoError(t, err)
-					assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
-				}
-
-				for _, key := range keys {
-					gr, err := db.Get(&proto.GetRequest{Key: key})
-					require.NoError(t, err)
-					if slices.Contains(expectedKeys, key) {
-						assert.Equal(t, proto.Status_OK, gr.Status, key)
-					} else {
-						assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
+					require.NoError(t, db.UpdateTerm(1, TermOptions{NotificationsEnabled: true}))
+					if enabled {
+						db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
 					}
-				}
 
-				// The internal keys are left: the notification records, and the
-				// commit offset, at the offset of the delete range
-				assert.EqualValues(t, 0, firstNotification(t, db))
-				commitOffset, err := db.ReadCommitOffset()
-				require.NoError(t, err)
-				assert.EqualValues(t, 1, commitOffset)
+					// A key before the range, and the keys in it, up to a key with
+					// a "/", which the hierarchical sorting places after them
+					keys := []string{"a"}
+					for i := range count {
+						keys = append(keys, fmt.Sprintf("b%04d", i))
+					}
+					keys = append(keys, "c/d")
+					var puts []*proto.PutRequest
+					for _, key := range keys {
+						puts = append(puts, &proto.PutRequest{Key: key, Value: []byte("v")})
+					}
+					_, err = db.ProcessWrite(&proto.WriteRequest{Puts: puts}, 0, now(), NoOpCallback)
+					require.NoError(t, err)
 
-				assert.NoError(t, db.Close())
-				assert.NoError(t, factory.Close())
-			})
+					res, err := db.ProcessWrite(&proto.WriteRequest{
+						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "b"}},
+					}, 1, now(), NoOpCallback)
+					expectedKeys := keys
+					switch {
+					case enabled:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+						expectedKeys = []string{"a"}
+					case keySorting == proto.KeySortingType_NATURAL:
+						assert.ErrorIs(t, err, ErrNotificationRecord)
+					default:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+					}
+
+					for _, key := range keys {
+						gr, err := db.Get(&proto.GetRequest{Key: key})
+						require.NoError(t, err)
+						if slices.Contains(expectedKeys, key) {
+							assert.Equal(t, proto.Status_OK, gr.Status, key)
+						} else {
+							assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
+						}
+					}
+
+					// The internal keys are left: the term, the notification
+					// records, and the commit offset, at the delete range
+					term, _, err := db.ReadTerm()
+					require.NoError(t, err)
+					assert.EqualValues(t, 1, term)
+					assert.EqualValues(t, 0, firstNotification(t, db))
+					commitOffset, err := db.ReadCommitOffset()
+					require.NoError(t, err)
+					assert.EqualValues(t, 1, commitOffset)
+
+					assert.NoError(t, db.Close())
+					assert.NoError(t, factory.Close())
+				})
+			}
 		}
 	}
 }
