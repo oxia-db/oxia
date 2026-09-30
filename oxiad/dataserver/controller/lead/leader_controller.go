@@ -1243,11 +1243,13 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	term := lc.term.Load()
 	proposal := proposalSupplier(newOffset)
 
-	lc.log.Debug("Appending proposal to WAL",
-		slog.Int64("term", term),
-		slog.Int64("offset", newOffset),
-		slog.Uint64("timestamp", proposal.GetTimestamp()),
-	)
+	if lc.log.Enabled(ctx, slog.LevelDebug) {
+		lc.log.Debug("Appending proposal to WAL",
+			slog.Int64("term", term),
+			slog.Int64("offset", newOffset),
+			slog.Uint64("timestamp", proposal.GetTimestamp()),
+		)
+	}
 
 	entryValue := proto.LogEntryValueFromVTPool()
 	defer entryValue.ReturnToVTPool()
@@ -1456,11 +1458,13 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 							cb.OnComplete(err)
 							return
 						}
-						lc.log.Debug(
-							"Got a new list of notification batches",
-							slog.Int64("term", lc.term.Load()),
-							slog.Int("list-size", len(notifications)),
-						)
+						if lc.log.Enabled(ctx, slog.LevelDebug) {
+							lc.log.Debug(
+								"Got a new list of notification batches",
+								slog.Int64("term", lc.term.Load()),
+								slog.Int("list-size", len(notifications)),
+							)
+						}
 						if len(notifications) > 0 {
 							for idx := range notifications {
 								notification := notifications[idx]

@@ -462,10 +462,12 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 			return err
 		}
 
-		fc.log.Debug(
-			"Reading entry",
-			slog.Int64("offset", entry.Offset),
-		)
+		if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
+			fc.log.Debug(
+				"Reading entry",
+				slog.Int64("offset", entry.Offset),
+			)
+		}
 
 		if entry.Offset > maxInclusive {
 			// We read up to the max point
@@ -509,12 +511,14 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 }
 
 func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
-	fc.log.Debug(
-		"Apply committed entries",
-		slog.Int64("min-exclusive", fc.commitOffset.Load()),
-		slog.Int64("max-inclusive", maxInclusive),
-		slog.Int64("head-offset", fc.wal.LastOffset()),
-	)
+	if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
+		fc.log.Debug(
+			"Apply committed entries",
+			slog.Int64("min-exclusive", fc.commitOffset.Load()),
+			slog.Int64("max-inclusive", maxInclusive),
+			slog.Int64("head-offset", fc.wal.LastOffset()),
+		)
+	}
 	if maxInclusive <= fc.commitOffset.Load() {
 		return nil
 	}

@@ -1016,11 +1016,13 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		ClientIdentity:     se.ClientIdentity,
 	}
 
-	d.log.Debug(
-		"Applied put operation",
-		slog.String("key", putReq.Key),
-		slog.Any("version", version),
-	)
+	if d.log.Enabled(context.Background(), slog.LevelDebug) {
+		d.log.Debug(
+			"Applied put operation",
+			slog.String("key", putReq.Key),
+			slog.Any("version", version),
+		)
+	}
 
 	pr := &proto.PutResponse{Version: version}
 	if newKey != "" {
@@ -1056,10 +1058,12 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 			notifications.Deleted(delReq.Key)
 		}
 
-		d.log.Debug(
-			"Applied delete operation",
-			slog.String("key", delReq.Key),
-		)
+		if d.log.Enabled(context.Background(), slog.LevelDebug) {
+			d.log.Debug(
+				"Applied delete operation",
+				slog.String("key", delReq.Key),
+			)
+		}
 		return &proto.DeleteResponse{Status: proto.Status_OK}, nil
 	}
 }
@@ -1137,11 +1141,13 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		return nil, errors.Wrap(err, "oxia db: failed to delete range")
 	}
 
-	d.log.Debug(
-		"Applied delete range operation",
-		slog.String("key-start", delReq.StartInclusive),
-		slog.String("key-end", endExclusive),
-	)
+	if d.log.Enabled(context.Background(), slog.LevelDebug) {
+		d.log.Debug(
+			"Applied delete range operation",
+			slog.String("key-start", delReq.StartInclusive),
+			slog.String("key-end", endExclusive),
+		)
+	}
 	return &proto.DeleteRangeResponse{Status: proto.Status_OK}, nil
 }
 
