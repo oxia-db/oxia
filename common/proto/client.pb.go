@@ -1442,7 +1442,11 @@ type DeleteRangeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The start of the range, inclusive
 	StartInclusive string `protobuf:"bytes,1,opt,name=start_inclusive,json=startInclusive,proto3" json:"start_inclusive,omitempty"`
-	// The end of the range, exclusive
+	// The end of the range, exclusive. On the shards with
+	// FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS, an empty end covers all the keys
+	// after the start, up to the internal keys, which are not deleted, and a
+	// range that covers both regular keys and internal keys gets the
+	// INVALID_ARGUMENT status.
 	EndExclusive string `protobuf:"bytes,2,opt,name=end_exclusive,json=endExclusive,proto3" json:"end_exclusive,omitempty"`
 	// The position of this request among all the requests of the
 	// WriteRequest, in the order the client issued them. See WriteRequest.

@@ -182,6 +182,7 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 				proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
 				proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
 				proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
+				proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
 			},
 		}); err != nil {
 			return err

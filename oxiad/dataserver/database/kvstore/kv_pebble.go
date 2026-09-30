@@ -40,6 +40,7 @@ import (
 	"github.com/oxia-db/oxia/common/cache"
 
 	"github.com/oxia-db/oxia/common/compare"
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/validation"
 )
@@ -617,9 +618,11 @@ func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, 
 	return b.RangeScan(lowerBound, upperBound)
 }
 
-func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
-	lb := b.p.keyEncoder.Encode(lowerBound)
-	ub := b.p.keyEncoder.Encode(upperBound)
+// scanBounds returns the iterator bounds of RangeScan, which RangeOverlaps
+// must read the same way.
+func (b *PebbleBatch) scanBounds(lowerBound, upperBound string) (lb, ub []byte) {
+	lb = b.p.keyEncoder.Encode(lowerBound)
+	ub = b.p.keyEncoder.Encode(upperBound)
 	if len(ub) == 0 {
 		// Only the natural encoder encodes a key to an empty slice, for "". It
 		// returns nil for the "" of a decoded request, which leaves the range
@@ -631,6 +634,11 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 		// against in its invariants builds.
 		ub = lb
 	}
+	return lb, ub
+}
+
+func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator, error) {
+	lb, ub := b.scanBounds(lowerBound, upperBound)
 	pbit, err := b.b.NewIter(&pebble.IterOptions{
 		LowerBound: lb,
 		UpperBound: ub,
@@ -640,6 +648,24 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 	}
 	pbit.SeekGE(lb)
 	return &PebbleIterator{b.p, pbit, internalRegionSkipper{}}, nil
+}
+
+func (b *PebbleBatch) RangeOverlaps(lowerBound, upperBound string) (internalKeys, regularKeys bool) {
+	// As for the iterator, a nil upper bound is unbounded
+	lb, ub := b.scanBounds(lowerBound, upperBound)
+	if ub != nil && bytes.Compare(lb, ub) >= 0 {
+		// The range is empty
+		return false, false
+	}
+	// Every internal key sorts at or after their prefix, with either encoder,
+	// while the region of the hierarchical one starts lower: a range that ends
+	// at the prefix covers no internal key. The regular keys sort before the
+	// internal ones and, with the natural encoder, after them too.
+	start := b.p.keyEncoder.Encode(constant.InternalKeyPrefix)
+	_, end := b.p.keyEncoder.InternalKeyRange()
+	internalKeys = (ub == nil || bytes.Compare(start, ub) < 0) && (end == nil || bytes.Compare(lb, end) < 0)
+	regularKeys = bytes.Compare(lb, start) < 0 || (end != nil && (ub == nil || bytes.Compare(end, ub) < 0))
+	return internalKeys, regularKeys
 }
 
 func (b *PebbleBatch) Close() error {

@@ -83,6 +83,9 @@ type AsyncClient interface {
 	// Note: Oxia uses a custom sorting order that treats `/` characters in special way.
 	// Refer to this documentation for the specifics:
 	// https://oxia-db.github.io/docs/features/oxia-key-sorting
+	// An empty maxKeyExclusive deletes all the records from minKeyInclusive on.
+	// A range that covers both records and Oxia's internal keys fails with
+	// [ErrInvalidOptions].
 	DeleteRange(minKeyInclusive string, maxKeyExclusive string, options ...DeleteRangeOption) <-chan error
 
 	// Get returns the value associated with the specified key.
@@ -152,6 +155,9 @@ type SyncClient interface {
 	// Note: Oxia uses a custom sorting order that treats `/` characters in special way.
 	// Refer to this documentation for the specifics:
 	// https://oxia-db.github.io/docs/features/oxia-key-sorting
+	// An empty maxKeyExclusive deletes all the records from minKeyInclusive on.
+	// A range that covers both records and Oxia's internal keys fails with
+	// [ErrInvalidOptions].
 	DeleteRange(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...DeleteRangeOption) error
 
 	// Get returns the value associated with the specified key.
@@ -305,6 +311,7 @@ type Notification struct {
 	VersionId int64
 
 	// In case of a KeyRangeRangeDeleted notification, this would represent
-	// the end (excluded) of the range of keys
+	// the end (excluded) of the range of keys. An empty KeyRangeEnd covers all
+	// the records from Key on.
 	KeyRangeEnd string
 }

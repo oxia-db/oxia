@@ -398,7 +398,11 @@ message GetResponse {
 message DeleteRangeRequest {
   // The start of the range, inclusive
   string start_inclusive = 1;
-  // The end of the range, exclusive
+  // The end of the range, exclusive. On the shards with
+  // FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS, an empty end covers all the keys
+  // after the start, up to the internal keys, which are not deleted, and a
+  // range that covers both regular keys and internal keys gets the
+  // INVALID_ARGUMENT status.
   string end_exclusive = 2;
 
   // The position of this request among all the requests of the

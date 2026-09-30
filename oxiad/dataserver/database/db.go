@@ -1057,19 +1057,45 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 const DeleteRangeThreshold = 100
 
 func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
+	// With the feature, a delete range covers either regular keys or internal
+	// keys. One that covers both, e.g. from a regular key to an internal one,
+	// gets the INVALID_ARGUMENT status, before the callbacks run and before its
+	// notification.
+	//
+	// In a range over the internal keys, the notification records are deleted
+	// without being read: they are not storage entries. Each replica trims them
+	// on its own schedule, so the ones in the range differ between replicas:
+	// the range is deleted with a range deletion, whatever its size, as
+	// deleting the records one by one would make the batch, and the DB
+	// checksum, differ between replicas.
+	endExclusive, internalKeys, regularKeys := d.deleteRangeEnd(batch, delReq)
+	if internalKeys && regularKeys {
+		return &proto.DeleteRangeResponse{Status: proto.Status_INVALID_ARGUMENT}, nil
+	}
+
 	if notifications != nil {
+		// The notification keeps the end of the request, even when it is
+		// empty: the clients read that as all the records from the start on,
+		// which is what the range deletes. The end of the scan, "__oxia/",
+		// would read as a different range: the clients don't sort the internal
+		// keys after all the others.
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
 
-	it, err := batch.RangeScan(delReq.StartInclusive, delReq.EndExclusive)
+	it, err := batch.RangeScan(delReq.StartInclusive, endExclusive)
 	if err != nil {
 		return nil, err
 	}
 	var validKeys []string
 	var validKeysNum = 0
 	for ; it.Valid(); it.Next() {
-		validKeysNum++
 		key := it.Key()
+		if internalKeys && strings.HasPrefix(key, notificationsPrefix+"/") {
+			// No session or secondary index entry to clean up: the range
+			// deletion below removes the record
+			continue
+		}
+		validKeysNum++
 		if validKeysNum <= DeleteRangeThreshold {
 			validKeys = append(validKeys, key)
 		}
@@ -1092,24 +1118,50 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	if err := it.Close(); err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to close iterator on delete range")
 	}
-	if validKeysNum > DeleteRangeThreshold {
-		if err := batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive); err != nil {
-			return nil, errors.Wrap(err, "oxia db: failed to delete range")
-		}
+	if internalKeys || validKeysNum > DeleteRangeThreshold {
+		err = batch.DeleteRange(delReq.StartInclusive, endExclusive)
 	} else {
-		for _, key := range validKeys {
-			if err := batch.Delete(key); err != nil {
-				return nil, errors.Wrap(err, "oxia db: failed to delete range")
-			}
-		}
+		err = deleteKeys(batch, validKeys)
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "oxia db: failed to delete range")
 	}
 
 	d.log.Debug(
 		"Applied delete range operation",
 		slog.String("key-start", delReq.StartInclusive),
-		slog.String("key-end", delReq.EndExclusive),
+		slog.String("key-end", endExclusive),
 	)
 	return &proto.DeleteRangeResponse{Status: proto.Status_OK}, nil
+}
+
+// deleteRangeEnd returns the end of the keys that a delete range covers, and
+// whether they include internal keys and regular keys, which it reports with
+// the feature only.
+func (d *db) deleteRangeEnd(batch kvstore.WriteBatch, delReq *proto.DeleteRangeRequest) (
+	endExclusive string, internalKeys, regularKeys bool) {
+	endExclusive = delReq.EndExclusive
+	if !d.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) {
+		return endExclusive, false, false
+	}
+	if endExclusive == "" {
+		// A range without an end stops before the internal keys, which sort at
+		// or after their prefix with either key encoder. Every regular key
+		// sorts before it, but for the natural keys that start with 0xff
+		// bytes, which are not valid UTF-8.
+		endExclusive = constant.InternalKeyPrefix
+	}
+	internalKeys, regularKeys = batch.RangeOverlaps(delReq.StartInclusive, endExclusive)
+	return endExclusive, internalKeys, regularKeys
+}
+
+func deleteKeys(batch kvstore.WriteBatch, keys []string) error {
+	for _, key := range keys {
+		if err := batch.Delete(key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, error) {
