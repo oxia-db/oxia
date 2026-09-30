@@ -70,12 +70,15 @@ enum Feature {
   // Continue the sequence of a sequential put on a prefix only from a key
   // that starts with "<prefix>-", not from any key that starts with the prefix
   FEATURE_SEQUENCE_LAST_KEY_SEPARATOR = 5;
+  // When a session ends, delete all its ephemeral records with the natural
+  // key sorting too
+  FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 6;
   // A delete range covers either regular keys or internal keys: one without an
   // end stops before the internal keys, and one that covers both gets the
   // INVALID_ARGUMENT status. One over the internal keys deletes the
   // notification records, which are not storage entries, instead of rejecting
   // the write request
-  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 6;
+  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 7;
 }
 
 message GetInfoRequest {
