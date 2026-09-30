@@ -148,8 +148,8 @@ func (m mockWriteBatch) RangeScan(_, _ string) (kvstore.KeyValueIterator, error)
 	return nil, kvstore.ErrKeyNotFound
 }
 
-func (m mockWriteBatch) OverlapsInternalKeys(_, _ string) bool {
-	return false
+func (m mockWriteBatch) RangeOverlaps(_, _ string) (internalKeys, regularKeys bool) {
+	return false, false
 }
 
 func (m mockWriteBatch) Commit() error {

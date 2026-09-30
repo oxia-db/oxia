@@ -1050,19 +1050,23 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 const DeleteRangeThreshold = 100
 
 func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
-	// With the feature, the notification records are deleted without being
-	// read: they are not storage entries. Each replica trims them on its own
-	// schedule, so the ones in the range differ between replicas. A range that
-	// reaches the internal keys is then deleted with a range deletion, whatever
-	// its size: deleting the records one by one would make the batch, and the
-	// DB checksum, differ between replicas.
-	reachesInternalKeys := d.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) &&
-		batch.OverlapsInternalKeys(delReq.StartInclusive, delReq.EndExclusive)
-	if reachesInternalKeys && delReq.EndExclusive == "" {
-		// The range deletion can't delete a range without an end: Pebble reads
-		// the missing end as the empty key, and deletes nothing. The callbacks
-		// run on the keys of the scan would still delete their secondary index
-		// entries and ephemeral records.
+	// With the feature, a delete range covers either regular keys or internal
+	// keys. One that covers both, e.g. from a regular key to an internal one, or
+	// without an end with the natural key sorting, where the internal keys sort
+	// after the regular ones, gets the INVALID_ARGUMENT status, before the
+	// callbacks run and before its notification.
+	//
+	// In a range over the internal keys, the notification records are deleted
+	// without being read: they are not storage entries. Each replica trims them
+	// on its own schedule, so the ones in the range differ between replicas:
+	// the range is deleted with a range deletion, whatever its size, as
+	// deleting the records one by one would make the batch, and the DB
+	// checksum, differ between replicas.
+	var internalKeys, regularKeys bool
+	if d.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) {
+		internalKeys, regularKeys = batch.RangeOverlaps(delReq.StartInclusive, delReq.EndExclusive)
+	}
+	if internalKeys && regularKeys {
 		return &proto.DeleteRangeResponse{Status: proto.Status_INVALID_ARGUMENT}, nil
 	}
 
@@ -1078,7 +1082,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	var validKeysNum = 0
 	for ; it.Valid(); it.Next() {
 		key := it.Key()
-		if reachesInternalKeys && strings.HasPrefix(key, notificationsPrefix+"/") {
+		if internalKeys && strings.HasPrefix(key, notificationsPrefix+"/") {
 			// No session or secondary index entry to clean up: the range
 			// deletion below removes the record
 			continue
@@ -1106,7 +1110,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	if err := it.Close(); err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to close iterator on delete range")
 	}
-	if reachesInternalKeys || validKeysNum > DeleteRangeThreshold {
+	if internalKeys || validKeysNum > DeleteRangeThreshold {
 		err = batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive)
 	} else {
 		err = deleteKeys(batch, validKeys)

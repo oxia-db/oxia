@@ -33,9 +33,10 @@ import (
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
-// The notification records are not storage entries: a delete range over them
-// used to fail its entry on every replica, and the followers retried it
-// forever. With the feature, the followers apply it and the entries after it.
+// The notification records are not storage entries: without the feature, a
+// delete range over them is rejected, on every replica where some are left.
+// With it, a purge of the records applies, on the followers too, along with
+// the entries after it.
 func TestDeleteRangeNotificationRecords(t *testing.T) {
 	s1, sa1 := mock.NewServer(t, "s1")
 	s2, sa2 := mock.NewServer(t, "s2")

@@ -614,8 +614,8 @@ func (b *PebbleBatch) KeyRangeScan(lowerBound, upperBound string) (KeyIterator, 
 	return b.RangeScan(lowerBound, upperBound)
 }
 
-// scanBounds returns the iterator bounds of RangeScan, which
-// OverlapsInternalKeys must read the same way.
+// scanBounds returns the iterator bounds of RangeScan, which RangeOverlaps
+// must read the same way.
 func (b *PebbleBatch) scanBounds(lowerBound, upperBound string) (lb, ub []byte) {
 	lb = b.p.keyEncoder.Encode(lowerBound)
 	ub = b.p.keyEncoder.Encode(upperBound)
@@ -646,19 +646,22 @@ func (b *PebbleBatch) RangeScan(lowerBound, upperBound string) (KeyValueIterator
 	return &PebbleIterator{b.p, pbit, internalRegionSkipper{}}, nil
 }
 
-func (b *PebbleBatch) OverlapsInternalKeys(lowerBound, upperBound string) bool {
+func (b *PebbleBatch) RangeOverlaps(lowerBound, upperBound string) (internalKeys, regularKeys bool) {
 	// As for the iterator, a nil upper bound is unbounded
 	lb, ub := b.scanBounds(lowerBound, upperBound)
 	if ub != nil && bytes.Compare(lb, ub) >= 0 {
 		// The range is empty
-		return false
+		return false, false
 	}
 	// Every internal key sorts at or after their prefix, with either encoder,
 	// while the region of the hierarchical one starts lower: a range that ends
-	// at the prefix covers no internal key
+	// at the prefix covers no internal key. The regular keys sort before the
+	// internal ones and, with the natural encoder, after them too.
 	start := b.p.keyEncoder.Encode(constant.InternalKeyPrefix)
 	_, end := b.p.keyEncoder.InternalKeyRange()
-	return (ub == nil || bytes.Compare(start, ub) < 0) && (end == nil || bytes.Compare(lb, end) < 0)
+	internalKeys = (ub == nil || bytes.Compare(start, ub) < 0) && (end == nil || bytes.Compare(lb, end) < 0)
+	regularKeys = bytes.Compare(lb, start) < 0 || (end != nil && (ub == nil || bytes.Compare(end, ub) < 0))
+	return internalKeys, regularKeys
 }
 
 func (b *PebbleBatch) Close() error {

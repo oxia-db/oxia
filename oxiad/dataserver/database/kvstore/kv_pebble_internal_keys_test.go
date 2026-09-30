@@ -169,34 +169,32 @@ func TestPebbleGetPastInternalRegionHierarchical(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
-// The overlap is decided from the bounds alone, read as the batch RangeScan
-// reads them.
-func TestPebbleBatchOverlapsInternalKeys(t *testing.T) {
-	// The end of a request that has none, as the replicas decode it: without a
-	// data pointer, which a "" literal in this table can have
-	var noEnd string
-
+// The kinds of keys a range can hold are decided from its bounds alone, read
+// as the batch RangeScan reads them.
+func TestPebbleBatchRangeOverlaps(t *testing.T) {
 	for _, test := range []struct {
-		lower, upper          string
-		natural, hierarchical bool
+		lower, upper string
+		// "internal", "regular", "both" or "none"
+		natural, hierarchical string
 	}{
-		{"a", "b", false, false},
-		{"a/b", "a/c", false, false},
-		{"b", "a", false, false},
-		{"a", "__oxia/zzz", true, true},
-		{"__oxia/zzz", "a", false, false},
+		{"a", "b", "regular", "regular"},
+		{"a/b", "a/c", "regular", "regular"},
+		{"b", "a", "none", "none"},
+		{"a", "__oxia/zzz", "both", "both"},
+		{"__oxia/zzz", "a", "none", "none"},
 		// Every internal key sorts at or after their prefix
-		{"a", "__oxia/", false, false},
-		{"a", "__oxia/a", true, true},
-		{"__oxia/notifications/", "__oxia/notifications//", true, true},
-		{"__oxia/notifications/", "__oxia/notifications/~", true, true},
-		// The hierarchical encoding reads an empty upper bound as the smallest
-		// key
-		{"a", noEnd, true, false},
+		{"a", "__oxia/", "regular", "regular"},
+		{"a", "__oxia/a", "both", "both"},
+		{"__oxia/notifications/", "__oxia/notifications//", "internal", "internal"},
+		{"__oxia/notifications/", "__oxia/notifications/~", "internal", "internal"},
+		// An empty end is unbounded with the natural encoding, and the smallest
+		// key with the hierarchical one
+		{"a", "", "both", "none"},
+		{"__oxia/notifications/", "", "both", "none"},
 		// Only the natural encoding can place regular keys around the internal
 		// region
-		{keyBeforeInternalRegion, keyAfterInternalRegion, true, false},
-		{keyAfterInternalRegion, keyAfterInternalRegion + "z", false, false},
+		{keyBeforeInternalRegion, keyAfterInternalRegion, "both", "regular"},
+		{keyAfterInternalRegion, keyAfterInternalRegion + "z", "regular", "regular"},
 	} {
 		for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
 			t.Run(fmt.Sprintf("%s/%q-%q", sorting, test.lower, test.upper), func(t *testing.T) {
@@ -210,13 +208,26 @@ func TestPebbleBatchOverlapsInternalKeys(t *testing.T) {
 					expected = test.hierarchical
 				}
 				wb := kv.NewWriteBatch()
-				assert.Equal(t, expected, wb.OverlapsInternalKeys(test.lower, test.upper))
+				assert.Equal(t, expected, keyKinds(wb.RangeOverlaps(test.lower, test.upper)))
 				assert.NoError(t, wb.Close())
 
 				assert.NoError(t, kv.Close())
 				assert.NoError(t, factory.Close())
 			})
 		}
+	}
+}
+
+func keyKinds(internalKeys, regularKeys bool) string {
+	switch {
+	case internalKeys && regularKeys:
+		return "both"
+	case internalKeys:
+		return "internal"
+	case regularKeys:
+		return "regular"
+	default:
+		return "none"
 	}
 }
 

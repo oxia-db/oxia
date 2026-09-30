@@ -455,20 +455,16 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 }
 
 // The notification records are not storage entries. Without the feature, a
-// delete range that covers them fails the whole entry, the same way on every
-// replica, which then retries it forever.
+// delete range that covers them rejects the whole write request, where some
+// are left. With it, a range over the internal keys deletes them.
 func TestDB_DeleteRangeNotificationRecords(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		keySorting proto.KeySortingType
 		start, end string
-		// Whether the range covers the user keys too
-		coversUserKeys bool
 	}{
-		// The encoded internal keys, "\xff\xffoxia/...", sort after the user keys
-		{"natural up to the internal keys", proto.KeySortingType_NATURAL, "a", "__oxia/zzz", true},
-		{"natural purge", proto.KeySortingType_NATURAL, "__oxia/notifications/", "__oxia/notifications/~", false},
-		{"hierarchical purge", proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//", false},
+		{"natural", proto.KeySortingType_NATURAL, "__oxia/notifications/", "__oxia/notifications/~"},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//"},
 	} {
 		for _, enabled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/enabled=%v", test.name, enabled), func(t *testing.T) {
@@ -492,28 +488,24 @@ func TestDB_DeleteRangeNotificationRecords(t *testing.T) {
 					DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
 				}, 3, now(), NoOpCallback)
 				if !enabled {
-					assert.ErrorContains(t, err, "failed to Deserialize storage entry")
+					assert.ErrorIs(t, err, ErrNotificationRecord)
+					assert.EqualValues(t, 0, firstNotification(t, db))
 				} else {
 					require.NoError(t, err)
 					assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
 
 					// Only the batch of the delete range itself is left
 					assert.EqualValues(t, 3, firstNotification(t, db))
-
-					for _, key := range userKeys {
-						gr, err := db.Get(&proto.GetRequest{Key: key})
-						require.NoError(t, err)
-						if test.coversUserKeys {
-							assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
-						} else {
-							assert.Equal(t, proto.Status_OK, gr.Status, key)
-						}
-					}
-
-					commitOffset, err := db.ReadCommitOffset()
-					require.NoError(t, err)
-					assert.EqualValues(t, 3, commitOffset)
 				}
+
+				for _, key := range userKeys {
+					gr, err := db.Get(&proto.GetRequest{Key: key})
+					require.NoError(t, err)
+					assert.Equal(t, proto.Status_OK, gr.Status, key)
+				}
+				commitOffset, err := db.ReadCommitOffset()
+				require.NoError(t, err)
+				assert.EqualValues(t, 3, commitOffset)
 
 				assert.NoError(t, db.Close())
 				assert.NoError(t, factory.Close())
@@ -530,7 +522,7 @@ func TestDB_DeleteRangeNotificationRecordsChecksum(t *testing.T) {
 		keySorting proto.KeySortingType
 		start, end string
 	}{
-		{proto.KeySortingType_NATURAL, "a", "__oxia/zzz"},
+		{proto.KeySortingType_NATURAL, "__oxia/notifications/", "__oxia/notifications/~"},
 		{proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//"},
 	} {
 		t.Run(test.keySorting.String(), func(t *testing.T) {
@@ -592,46 +584,59 @@ func (c *deleteCountingCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifica
 	return nil
 }
 
-// A range without an end reaches the internal keys with the natural key
-// sorting, but the range deletion can't delete it. It must be rejected before
-// the callbacks run: they would delete the secondary index entries and the
-// ephemeral records of keys that stay.
-func TestDB_DeleteRangeNotificationRecordsWithoutEnd(t *testing.T) {
-	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
-	require.NoError(t, err)
-	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
-	require.NoError(t, err)
-	db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+// A delete range that covers both regular keys and internal keys is rejected
+// before the callbacks run and before its notification: it would delete the
+// term, the enabled features and the other internal keys with the regular
+// ones.
+func TestDB_DeleteRangeRegularAndInternalKeys(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		// The internal keys sort after the regular ones with the natural sorting
+		{"natural", proto.KeySortingType_NATURAL, "a", "__oxia/zzz"},
+		{"natural without end", proto.KeySortingType_NATURAL, "a", ""},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "a", "__oxia/zzz"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
 
-	_, err = db.ProcessWrite(&proto.WriteRequest{
-		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b", Value: []byte("v")}},
-	}, 0, now(), NoOpCallback)
-	require.NoError(t, err)
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b", Value: []byte("v")}},
+			}, 0, now(), NoOpCallback)
+			require.NoError(t, err)
 
-	callback := &deleteCountingCallback{}
-	res, err := db.ProcessWrite(&proto.WriteRequest{
-		DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "a"}},
-	}, 1, now(), callback)
-	require.NoError(t, err)
-	assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
-	assert.Zero(t, callback.deletes)
+			callback := &deleteCountingCallback{}
+			res, err := db.ProcessWrite(&proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
+			}, 1, now(), callback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
+			assert.Zero(t, callback.deletes)
 
-	for _, key := range []string{"a", "b"} {
-		gr, err := db.Get(&proto.GetRequest{Key: key})
-		require.NoError(t, err)
-		assert.Equal(t, proto.Status_OK, gr.Status, key)
+			for _, key := range []string{"a", "b"} {
+				gr, err := db.Get(&proto.GetRequest{Key: key})
+				require.NoError(t, err)
+				assert.Equal(t, proto.Status_OK, gr.Status, key)
+			}
+
+			// No notification for the rejected range
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			notifications, err := db.ReadNextNotifications(ctx, 0)
+			require.NoError(t, err)
+			require.Len(t, notifications, 2)
+			assert.Empty(t, notifications[1].Notifications)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
 	}
-
-	// No notification for the rejected range
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	notifications, err := db.ReadNextNotifications(ctx, 1)
-	require.NoError(t, err)
-	require.Len(t, notifications, 1)
-	assert.Empty(t, notifications[0].Notifications)
-
-	assert.NoError(t, db.Close())
-	assert.NoError(t, factory.Close())
 }
 
 // A subscriber catching up from an old offset must receive the backlog in

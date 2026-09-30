@@ -48,9 +48,10 @@ const (
 	// Delete the secondary index entries of the ephemeral records deleted when
 	// their session ends
 	Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP Feature = 4
-	// A delete range deletes the notification records it covers, which are not
-	// storage entries, instead of failing the whole entry. One that reaches the
-	// internal keys without an end key gets the INVALID_ARGUMENT status
+	// A delete range covers either regular keys or internal keys: one that
+	// covers both gets the INVALID_ARGUMENT status. One over the internal keys
+	// deletes the notification records, which are not storage entries, instead
+	// of rejecting the write request
 	Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS Feature = 5
 )
 
