@@ -1424,7 +1424,8 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
 
-	// A delta that lands exactly on the max sequence value is still fine.
+	// Without FEATURE_SEQUENCE_KEY_VALIDATION, a delta that lands exactly on the
+	// max sequence value is still fine.
 	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "a",
 		Value:            []byte("0"),
@@ -1482,6 +1483,20 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		SequenceKeyDelta: []uint64{1, maxSequence},
 	}}}, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	// With FEATURE_SEQUENCE_KEY_VALIDATION, the first value can't reach the max:
+	// the last key of a sequence is looked up below "<prefix>-<max>", so the next
+	// put would restart the sequence below it. A later value can.
+	db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: "d", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{5}},
+		{Key: "d", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{maxSequence - 5}},
+		{Key: "e", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1, maxSequence}},
+	}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("d-%020d", 5), resp.GetPuts()[0].GetKey())
+	assert.Equal(t, proto.Status_INVALID_ARGUMENT, resp.GetPuts()[1].Status)
+	assert.Equal(t, fmt.Sprintf("e-%020d-%020d", 1, maxSequence), resp.GetPuts()[2].GetKey())
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
