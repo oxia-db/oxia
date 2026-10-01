@@ -598,6 +598,13 @@ type splitTestCluster struct {
 // be ready, and returns the cluster handle. Callers must call close() when done.
 func setupSplitCluster(t *testing.T) *splitTestCluster {
 	t.Helper()
+	return setupSplitClusterWithRpcProvider(t, rpc2.NewRpcProviderFactory(nil))
+}
+
+// setupSplitClusterWithRpcProvider is setupSplitCluster with the rpc providers
+// that the coordinator uses to reach the data servers.
+func setupSplitClusterWithRpcProvider(t *testing.T, rpcProvider rpc2.ProviderFactory) *splitTestCluster {
+	t.Helper()
 
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
@@ -625,7 +632,7 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc2.NewRpcProviderFactory(nil),
+		rpcProvider,
 	)
 
 	metadata := coordinatorInstance.Metadata()
@@ -648,6 +655,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 // to reach steady state with leaders and no split metadata.
 func (c *splitTestCluster) splitAndWait(t *testing.T) {
 	t.Helper()
+	c.initiateSplit(t)
+	c.waitForSplit(t)
+}
+
+// initiateSplit triggers a shard split on shard 0.
+func (c *splitTestCluster) initiateSplit(t *testing.T) {
+	t.Helper()
 
 	var err error
 	c.leftChild, c.rightChild, err = c.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
@@ -656,6 +670,12 @@ func (c *splitTestCluster) splitAndWait(t *testing.T) {
 		slog.Int64("left-child", c.leftChild),
 		slog.Int64("right-child", c.rightChild),
 	)
+}
+
+// waitForSplit waits for both children of the split to reach steady state with
+// leaders and no split metadata.
+func (c *splitTestCluster) waitForSplit(t *testing.T) {
+	t.Helper()
 
 	require.Eventually(t, func() bool {
 		status := mock.StatusSnapshot(t, c.metadata)
@@ -1035,6 +1055,121 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 
 	slog.Info("Ephemeral records test passed")
+}
+
+// TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp checks that a session
+// created on the parent while the children catch up from its log reaches both
+// children, like the sessions in the parent's snapshot. A child without it
+// rejects the ephemeral records of the session in its hash range, which the
+// parent acknowledged.
+func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
+	// The cutover freezes the parent once both children have loaded its
+	// snapshot and caught up with its log. Hold it there: what is written
+	// before it resumes reaches the children through the parent's log only.
+	reachedFreeze := make(chan struct{})
+	resumeFreeze := make(chan struct{})
+	holdFreeze := sync.OnceFunc(func() {
+		close(reachedFreeze)
+		<-resumeFreeze
+	})
+	c := setupSplitClusterWithRpcProvider(t, func(instanceID string) rpc2.Provider {
+		return &freezeHookRpcProvider{Provider: rpc2.NewRpcProvider(nil, instanceID), beforeFreeze: holdFreeze}
+	})
+	defer c.close(t)
+	resume := sync.OnceFunc(func() { close(resumeFreeze) })
+	defer resume()
+
+	ctx := context.Background()
+
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	_, _, err = client.Put(ctx, "seed", []byte("seed"))
+	require.NoError(t, err)
+
+	c.initiateSplit(t)
+	select {
+	case <-reachedFreeze:
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A record on each side of the split point: one of them is in the child
+	// that the session key doesn't hash to, whatever the session id
+	var leftKey, rightKey string
+	for i := 0; leftKey == "" || rightKey == ""; i++ {
+		key := fmt.Sprintf("catch-up-%d", i)
+		if h := hash.Xxh332(key); h < math.MaxUint32/4 {
+			leftKey = key
+		} else if h > math.MaxUint32/4*3 {
+			rightKey = key
+		}
+	}
+	keys := []string{leftKey, rightKey}
+
+	sessionClient, err := oxia.NewSyncClient(c.sa1.Public,
+		oxia.WithSessionTimeout(time.Minute),
+		oxia.WithIdentity("catch-up-client"),
+	)
+	require.NoError(t, err)
+	var sessionId int64
+	for _, key := range keys {
+		_, version, err := sessionClient.Put(ctx, key, []byte(key), oxia.Ephemeral())
+		require.NoError(t, err)
+		sessionId = version.SessionId
+	}
+
+	resume()
+	c.waitForSplit(t)
+
+	// Each child holds the session, and the records of the session in its hash
+	// range, with the shadow keys that delete them with the session
+	sessionKey := lead.SessionKey(lead.SessionId(sessionId))
+	for child, childMeta := range map[int64]*proto.ShardMetadata{c.leftChild: c.leftMeta, c.rightChild: c.rightMeta} {
+		childKeys := make(map[string]bool)
+		for _, key := range c.listShardKeys(t, child) {
+			childKeys[key] = true
+		}
+		assert.True(t, childKeys[sessionKey], "shard %d lacks session %d", child, sessionId)
+
+		hashRange := childMeta.Int32HashRange
+		for _, key := range keys {
+			h := hash.Xxh332(key)
+			inRange := h >= hashRange.Min && h <= hashRange.Max
+			assert.Equal(t, inRange, childKeys[key], "record %q in shard %d", key, child)
+			assert.Equal(t, inRange, childKeys[lead.ShadowKey(lead.SessionId(sessionId), key)],
+				"shadow key of %q in shard %d", key, child)
+		}
+	}
+
+	// The records that the parent acknowledged are readable from the children
+	client = c.reconnectClient(t, client, "seed")
+	for _, key := range keys {
+		_, value, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "acknowledged record %q missing after the split", key) {
+			assert.Equal(t, []byte(key), value)
+			assert.True(t, version.Ephemeral)
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+	assert.NoError(t, client.Close())
+
+	// Fails to close the session: it is on the parent, which no longer exists
+	_ = sessionClient.Close()
+}
+
+// freezeHookRpcProvider calls beforeFreeze before freezing a shard, as the
+// cutover of a split does with the parent.
+type freezeHookRpcProvider struct {
+	rpc2.Provider
+	beforeFreeze func()
+}
+
+func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen {
+		p.beforeFreeze()
+	}
+	return p.Provider.FreezeShard(ctx, node, req)
 }
 
 // ---- Secondary indexes test ----
