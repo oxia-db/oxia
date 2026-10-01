@@ -117,9 +117,10 @@ type quorumAckTracker struct {
 	headOffset   atomic.Int64
 	commitOffset atomic.Int64
 
-	// Keep track of the number of acks that each entry has received
+	// Keep track of the acks received by the entries that are not committed yet:
+	// pendingAcks[i] is the entry at commitOffset+1+i, up to the head offset.
 	// The bitset is used to handle duplicate acks from a single follower
-	tracker            map[int64]*BitSet
+	pendingAcks        []BitSet
 	cursorIdxGenerator int
 	closed             bool
 
@@ -155,7 +156,6 @@ func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffse
 		// We are using RF/2 (and not RF/2 + 1) because the leader is already storing 1 copy locally
 		requiredAcks:      replicationFactor / 2,
 		replicationFactor: replicationFactor,
-		tracker:           make(map[int64]*BitSet),
 		waitingRequests:   make([]waitingRequest, 0),
 	}
 
@@ -164,9 +164,7 @@ func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffse
 	q.commitOffset.Store(commitOffset)
 
 	// Add entries to track the entries we're not yet sure that are fully committed
-	for offset := commitOffset + 1; offset <= headOffset; offset++ {
-		q.tracker[offset] = &BitSet{}
-	}
+	q.pendingAcks = make([]BitSet, max(headOffset-commitOffset, 0))
 
 	q.progressCond = concurrent.NewConditionContext(q)
 	q.commitSignal = make(chan struct{}, 1)
@@ -232,7 +230,8 @@ func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
 		return
 	}
 
-	if headOffset <= q.headOffset.Load() {
+	previousHeadOffset := q.headOffset.Load()
+	if headOffset <= previousHeadOffset {
 		return
 	}
 
@@ -244,7 +243,9 @@ func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
 		q.notifyCommitOffsetAdvanced(headOffset)
 	} else {
 		q.progressCond.Broadcast()
-		q.tracker[headOffset] = &BitSet{}
+		for o := previousHeadOffset + 1; o <= headOffset; o++ {
+			q.pendingAcks = append(q.pendingAcks, BitSet{})
+		}
 	}
 }
 
@@ -379,9 +380,7 @@ func (q *quorumAckTracker) NewCursorAcker(ackOffset int64) (CursorAcker, error) 
 
 	// If the new cursor is already past the current quorum commit offset, we have
 	// to mark these entries as acked (by that cursor).
-	for offset := q.commitOffset.Load() + 1; offset <= ackOffset; offset++ {
-		qa.ack(offset)
-	}
+	qa.ackRange(q.commitOffset.Load()+1, ackOffset)
 
 	q.cursorIdxGenerator++
 	return qa, nil
@@ -423,31 +422,34 @@ func (c *cursorAcker) Ack(offset int64) {
 	}
 
 	// Entries at or below the commit offset have already reached the quorum
-	start := max(c.lastAckedOffset, q.commitOffset.Load()) + 1
-	for o := start; o <= offset; o++ {
-		c.ack(o)
-	}
+	c.ackRange(max(c.lastAckedOffset, q.commitOffset.Load())+1, offset)
 	if offset > c.lastAckedOffset {
 		c.lastAckedOffset = offset
 	}
 }
 
-func (c *cursorAcker) ack(offset int64) {
+// ackRange marks the entries in [from, to] as acked by this cursor, then
+// advances the commit offset once, to the highest entry that reached the
+// quorum, so that the waiters get woken up a single time.
+// Every cursor acks a contiguous range starting just after the commit offset,
+// so the entries that reached the quorum always form a prefix of pendingAcks.
+// It must be called while holding the tracker mutex, with `from` past the
+// commit offset and `to` at or below the head offset.
+func (c *cursorAcker) ackRange(from int64, to int64) {
 	q := c.quorumTracker
+	commitOffset := q.commitOffset.Load()
+	newCommitOffset := commitOffset
 
-	e, found := q.tracker[offset]
-	if !found {
-		// The entry has already previously reached the quorum.
-		// There's nothing more left to do here.
-		return
+	for o := from; o <= to; o++ {
+		e := &q.pendingAcks[o-commitOffset-1]
+		e.Set(c.cursorIdx)
+		if uint32(e.Count()) == q.requiredAcks {
+			newCommitOffset = o
+		}
 	}
 
-	// Mark that this follower has acked the entry
-	e.Set(c.cursorIdx)
-	if uint32(e.Count()) == q.requiredAcks {
-		delete(q.tracker, offset)
-
-		// Advance the commit offset
-		q.notifyCommitOffsetAdvanced(offset)
+	if newCommitOffset > commitOffset {
+		q.pendingAcks = q.pendingAcks[newCommitOffset-commitOffset:]
+		q.notifyCommitOffsetAdvanced(newCommitOffset)
 	}
 }
