@@ -275,30 +275,15 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.ErrorIs(t, err, expectedErr)
 }
 
-func storageEntry(t *testing.T, sessionId int64) []byte {
-	t.Helper()
-
-	entry := &proto.StorageEntry{
-		Value:                 nil,
-		VersionId:             0,
-		CreationTimestamp:     0,
-		ModificationTimestamp: 0,
-		SessionId:             &sessionId,
-	}
-	bytes, err := pb.Marshal(entry)
-	assert.NoError(t, err)
-	return bytes
-}
-
-func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
+func TestSessionUpdateOperationCallback_OnDeleteWithEntry(t *testing.T) {
 	sessionId := int64(12345)
 
 	writeBatch := mockWriteBatch{
-		"a/b/c": storageEntry(t, sessionId),
 		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
 	}
 
-	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c", testFeatureChecker{})
+	err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(writeBatch, nil, "a/b/c",
+		&proto.StorageEntry{SessionId: &sessionId}, testFeatureChecker{})
 	assert.NoError(t, err)
 	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
 	assert.False(t, found)
@@ -969,6 +954,54 @@ func TestSessionManager_CloseDeletesEphemeralRecords(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Deleting an ephemeral record deletes its shadow key and its secondary index
+// entries, which the record's entry lists. A shadow key left behind would make
+// the session end delete a later record at the same key.
+func TestSessionManager_DeleteEphemeralRecord(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+	})
+	assert.NoError(t, err)
+	sessionId := createResp.SessionId
+	secondaryIndex := &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "0"}
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: []*proto.PutRequest{{
+		Key:              "/a",
+		Value:            []byte("ephemeral"),
+		SessionId:        &sessionId,
+		SecondaryIndexes: []*proto.SecondaryIndex{secondaryIndex},
+	}}})
+	assert.NoError(t, err)
+	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
+	assert.True(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard:   &shardId,
+		Deletes: []*proto.DeleteRequest{{Key: "/a"}},
+	})
+	assert.NoError(t, err)
+	assert.False(t, keyExists(t, lc, "/a"))
+	assert.False(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
+	assert.False(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: []*proto.PutRequest{{
+		Key:   "/a",
+		Value: []byte("regular"),
+	}}})
+	assert.NoError(t, err)
+	_, err = sManager.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: sessionId})
+	assert.NoError(t, err)
+	assert.Equal(t, "regular", getData(t, lc, "/a"))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
 }
 
 // A new leader deletes the ephemeral records whose session is gone: before the

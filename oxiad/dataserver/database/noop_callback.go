@@ -34,8 +34,4 @@ func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutR
 	return proto.Status_OK, nil
 }
 
-func (*noopCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, _ string, _ feature.Checker) error {
-	return nil
-}
-
 var NoOpCallback UpdateOperationCallback = &noopCallback{}
