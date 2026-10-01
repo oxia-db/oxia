@@ -154,30 +154,78 @@ func writeSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, secondar
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func newSecondaryIndexListIterator(req *proto.ListRequest, db database.DB) (kvstore.KeyIterator, error) {
-	indexName := *req.SecondaryIndexName
-	it, err := db.List(&proto.ListRequest{
-		StartInclusive:      fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:        fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
-		IncludeInternalKeys: true,
-	})
+	return newSecondaryIndexIterator(db, *req.SecondaryIndexName, req.StartInclusive, req.EndExclusive)
+}
+
+// newSecondaryIndexIterator returns an iterator over the entries of an index
+// whose secondary key is in [start, end).
+func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*secondaryIndexListIterator, error) {
+	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
+	// The iterator only visits the entries of the index. With the hierarchical
+	// key sorting, they are not contiguous: they are grouped by level, and other
+	// internal keys sort between the groups, like the entries of other indexes
+	// and the session shadow keys. A range across levels would include them.
+	it, err := db.ListPrefix(indexPrefix)
 	if err != nil {
 		return nil, err
 	}
 
-	return &secondaryIndexListIterator{it: it}, nil
+	it.SeekGE(secondaryIndexRangeBound(indexPrefix, start))
+	listIt := &secondaryIndexListIterator{it: it, db: db, end: secondaryIndexRangeBound(indexPrefix, end)}
+	listIt.stopAtEnd()
+	return listIt, nil
+}
+
+// secondaryIndexRangeBound returns the key that bounds a range through an
+// index at a secondary key: the prefix of the index followed by the key. It
+// sorts among the entries of the index as the key sorts among the primary
+// keys, in either key sorting. Unlike the search key of a get, it does not end
+// in the separator, so that a key ending in "//" keeps the level that the
+// hierarchical sorting gives it, as in the range of the children of a key,
+// like ["/a/", "/a//").
+//
+// The entries of a secondary key ending in "//" are the exception: they end in
+// the separator and the escaped primary key, so the hierarchical sorting puts
+// them one level after the key, and a range can miss them or return them out
+// of order.
+func secondaryIndexRangeBound(indexPrefix, key string) string {
+	if key == "/" {
+		// The prefix ends in '/', so the bound would end in "//", unlike the
+		// key, and sort before all the secondary keys with a '/' with the
+		// hierarchical sorting. The zero byte keeps it in the level of "/": it
+		// makes the smallest string after the bound, so no entry sorts between
+		// the two with the natural sorting.
+		return indexPrefix + key + "\x00"
+	}
+	return indexPrefix + key
 }
 
 type secondaryIndexListIterator struct {
-	it kvstore.KeyIterator
+	it    kvstore.KeyIterator
+	db    database.DB
+	end   string
+	key   string
+	valid bool
 }
 
 func (it *secondaryIndexListIterator) Valid() bool {
-	return it.it.Valid()
+	return it.valid
+}
+
+// stopAtEnd ends the iteration on the first entry that is not below the end.
+// The entries come in the shard's key order, so the following ones are not
+// either.
+func (it *secondaryIndexListIterator) stopAtEnd() bool {
+	it.valid = it.it.Valid()
+	if it.valid {
+		it.key = it.it.Key()
+		it.valid = it.db.CompareKeys(it.key, it.end) < 0
+	}
+	return it.valid
 }
 
 func (it *secondaryIndexListIterator) Key() string {
-	idxKey := it.it.Key()
-	primaryKey, _, err := database.ParseSecondaryIndexKey(idxKey)
+	primaryKey, _, err := database.ParseSecondaryIndexKey(it.key)
 	if err != nil {
 		// This should never happen since we control the key format
 		panic(errors.Wrap(err, "Failed to parse secondary index key"))
@@ -199,7 +247,8 @@ func (*secondaryIndexListIterator) SeekLT(string) bool {
 }
 
 func (it *secondaryIndexListIterator) Next() bool {
-	return it.it.Next()
+	it.it.Next()
+	return it.stopAtEnd()
 }
 
 func (it *secondaryIndexListIterator) Error() error {
@@ -213,18 +262,12 @@ func (it *secondaryIndexListIterator) Close() error {
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db database.DB) (database.RangeScanIterator, error) {
-	indexName := *req.SecondaryIndexName
-	it, err := db.List(&proto.ListRequest{
-		StartInclusive:      fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:        fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
-		IncludeInternalKeys: true,
-	})
+	listIt, err := newSecondaryIndexIterator(db, *req.SecondaryIndexName, req.StartInclusive, req.EndExclusive)
 	if err != nil {
 		return nil, err
 	}
 
-	return &secondaryIndexRangeIterator{listIt: &secondaryIndexListIterator{it},
-		db: db}, nil
+	return &secondaryIndexRangeIterator{listIt: listIt, db: db}, nil
 }
 
 type secondaryIndexRangeIterator struct {
