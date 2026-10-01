@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,6 +37,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/rpc"
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -1494,7 +1496,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	fc.SetSplitHashRange(&proto.HashRange{
 		Min: 0,
 		Max: 0x7FFFFFFF, // 2147483647
-	})
+	}, 1)
 
 	// --- Phase 1: Snapshot installation with filtering ---
 	// Prepare a snapshot DB containing keys a..f
@@ -1630,6 +1632,271 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
+}
+
+// A split child acks the parent's snapshot once it has filtered it, and the
+// parent then only tails its log to the child: it doesn't send the snapshot
+// again. So the filtered snapshot must survive a crash of the child, although
+// the database runs without the Pebble WAL.
+func TestFollower_SplitSnapshotFilterSurvivesCrash(t *testing.T) {
+	var shardId int64
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+	walDir := t.TempDir()
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: walDir})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshot(t, fc, 1)
+
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+
+	// The child restarts from what was on disk when it crashed, as the parent
+	// reconnects to it
+	fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, crashedWalFactory, crashedKvFactory, nil)
+	require.NoError(t, err)
+	assert.EqualValues(t, 5, fc.CommitOffset())
+	assertSplitTestKeys(t, fc.(*followerController).db, map[string]string{
+		"a": "snapshot-a", "b": "snapshot-b", "c": "snapshot-c", "e": "snapshot-e",
+	})
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, crashedKvFactory.Close())
+	assert.NoError(t, crashedWalFactory.Close())
+}
+
+// The parent's entries that a split child applies stay in its database
+// memtable until the next flush. After a crash, the child applies them again
+// from its log, and not always as the follower of the parent that filters
+// them: e.g. the split re-elects the child at its end. They must still be
+// filtered.
+func TestFollower_SplitReplayAfterCrashKeepsFilter(t *testing.T) {
+	var shardId int64
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+	walDir := t.TempDir()
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: walDir})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshot(t, fc, 1)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+	stream.AddRequest(createAddRequest(t, 1, 6, map[string]string{"a": "wal-a", "d": "wal-d"}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 7, map[string]string{"f": "wal-f", "c": "wal-c"}, 7))
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 7
+	}, 10*time.Second, 10*time.Millisecond)
+	expected := map[string]string{"a": "wal-a", "b": "snapshot-b", "c": "wal-c", "e": "snapshot-e"}
+	assertSplitTestKeys(t, fc.(*followerController).db, expected)
+
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+
+	// The child restarts, and is elected leader in a new term, as at the end
+	// of the split
+	lc, err := lead.NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, nil,
+		crashedWalFactory, crashedKvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 2})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shardId,
+		Term:              2,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+	require.NoError(t, lc.Close())
+
+	db, err := database.NewDB(constant.DefaultNamespace, shardId, crashedKvFactory, proto.KeySortingType_UNKNOWN,
+		1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	assertSplitTestKeys(t, db, expected)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, crashedKvFactory.Close())
+	assert.NoError(t, crashedWalFactory.Close())
+}
+
+// A node that observed the parent for a split child can stay a follower of the
+// child in a later term, e.g. when the split elects the child on another node.
+// From then on, it gets the child's own entries and snapshots, which must not
+// be filtered: e.g. the child's session records hash anywhere in the hash
+// space. The split range only holds in the parent's term.
+func TestFollower_SplitHashRangeEndsAtNewTerm(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshot(t, fc, 1)
+
+	// A late stream of the parent, in the parent's term, doesn't set the range
+	// again either
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+	stream.AddRequest(createAddRequest(t, 2, 6, map[string]string{"a": "child-a", "d": "child-d"}, 6))
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 6
+	}, 10*time.Second, 10*time.Millisecond)
+	fci := fc.(*followerController)
+	assertSplitTestKeys(t, fci.db, map[string]string{
+		"a": "child-a", "b": "snapshot-b", "c": "snapshot-c", "d": "child-d", "e": "snapshot-e",
+	})
+
+	close(stream.Requests)
+	assert.Eventually(t, func() bool {
+		return !closeChanIsNotNil(fc)()
+	}, 10*time.Second, 10*time.Millisecond)
+	installSplitTestSnapshot(t, fc, 2)
+	assertSplitTestKeys(t, fci.db, map[string]string{
+		"a": "snapshot-a", "b": "snapshot-b", "c": "snapshot-c", "d": "snapshot-d", "e": "snapshot-e", "f": "snapshot-f",
+	})
+	assert.Nil(t, fci.db.SplitFilter())
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// splitTestHashRange is the lower half of the hash space: of the keys a..f, it
+// keeps a, b, c and e (see TestFollower_SplitHashRangeFiltering).
+var splitTestHashRange = &proto.HashRange{Min: 0, Max: 0x7FFFFFFF}
+
+// installSplitTestSnapshot installs, at the given term, the snapshot of a shard
+// holding the keys a..f, written at the offsets 0..5.
+func installSplitTestSnapshot(t *testing.T, fc FollowerController, term int64) {
+	t.Helper()
+
+	parentKvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	parentDb, err := database.NewDB(constant.DefaultNamespace, 0, parentKvFactory, proto.KeySortingType_HIERARCHICAL,
+		1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	for i, key := range []string{"a", "b", "c", "d", "e", "f"} {
+		_, err := parentDb.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{Key: key, Value: []byte("snapshot-" + key)}},
+		}, int64(i), 0, database.NoOpCallback)
+		require.NoError(t, err)
+	}
+	require.NoError(t, parentDb.UpdateTerm(term, database.TermOptions{}))
+	snapshot, err := parentDb.Snapshot()
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerSendSnapshotStream()
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		assert.NoError(t, fc.InstallSnapshot(stream))
+	})
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		require.NoError(t, err)
+		stream.AddChunk(&proto.SnapshotChunk{
+			Term:       term,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(stream.Chunks)
+	wg.Wait()
+
+	assert.NoError(t, snapshot.Close())
+	assert.NoError(t, parentDb.Close())
+	assert.NoError(t, parentKvFactory.Close())
+}
+
+// crashImage copies the data directories of a running shard, and returns the
+// factories to open the copies with: the copies hold what a crash of the node
+// would leave on disk. The database runs without the Pebble WAL, so they miss
+// the database writes that are still in the memtable.
+func crashImage(t *testing.T, kvDataDir string, walDir string) (kvstore.Factory, wal.Factory) {
+	t.Helper()
+
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	copyRunningDir(t, kvDataDir, kvOptions.DataDir)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+
+	crashedWalDir := t.TempDir()
+	copyRunningDir(t, walDir, crashedWalDir)
+	return kvFactory, wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: crashedWalDir})
+}
+
+// copyRunningDir copies the files in src to dst. Pebble deletes its obsolete
+// files in the background: a file that is gone by the time it is copied is
+// skipped, as a crash right after its deletion would leave it.
+func copyRunningDir(t *testing.T, src string, dst string) {
+	t.Helper()
+
+	require.NoError(t, filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, relPath), 0755)
+		}
+		content, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, relPath), content, 0644)
+	}))
+}
+
+// assertSplitTestKeys checks the keys a..f in the database of the child that
+// keeps splitTestHashRange: it has the expected values of the keys in range,
+// and none of the others.
+func assertSplitTestKeys(t *testing.T, db database.DB, expected map[string]string) {
+	t.Helper()
+
+	for _, key := range []string{"a", "b", "c", "d", "e", "f"} {
+		res, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		require.NoError(t, err)
+		if value, ok := expected[key]; ok {
+			assert.Equalf(t, proto.Status_OK, res.Status, "key %q", key)
+			assert.Equalf(t, value, string(res.Value), "key %q", key)
+		} else {
+			assert.Equalf(t, proto.Status_KEY_NOT_FOUND, res.Status,
+				"key %q is out of the hash range of the child, found %q", key, res.Value)
+		}
+	}
 }
 
 // A write request that can't be applied has no effect, like on the leader,

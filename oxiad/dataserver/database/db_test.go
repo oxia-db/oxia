@@ -1061,6 +1061,27 @@ func TestDb_UpdateTerm(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDb_SetSplitFilter(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.Nil(t, db.SplitFilter())
+
+	filter := &SplitFilter{MinHash: 100, MaxHash: 200, ParentTerm: 3}
+	assert.NoError(t, db.SetSplitFilter(filter))
+	assert.Equal(t, filter, db.SplitFilter())
+	assert.NoError(t, db.Close())
+
+	// Reopen and verify the filter is maintained
+	db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.Equal(t, filter, db.SplitFilter())
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDB_Delete(t *testing.T) {
 	offset := int64(13)
 

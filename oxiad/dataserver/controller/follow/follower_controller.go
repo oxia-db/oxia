@@ -89,7 +89,9 @@ type FollowerController interface {
 	// SetSplitHashRange marks this follower as a split child. After loading
 	// a snapshot, the database will be filtered to retain only keys within
 	// the given hash range. WAL entries will also be filtered at apply time.
-	SetSplitHashRange(hashRange *proto.HashRange)
+	// The range comes with a stream of the parent in the given term, and
+	// only holds in that term: a new term clears it.
+	SetSplitHashRange(hashRange *proto.HashRange, term int64)
 }
 
 type followerController struct {
@@ -129,7 +131,8 @@ type followerController struct {
 
 	// splitHashRange, when non-nil, indicates this follower is a child shard
 	// in a split. The snapshot will be filtered after loading, and WAL entries
-	// will be filtered at state machine apply time.
+	// will be filtered at state machine apply time. Set by the streams of the
+	// parent, and cleared by a new term.
 	splitHashRange *proto.HashRange
 }
 
@@ -367,6 +370,13 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		fc.logSynchronizer = nil
 	}
 
+	// The split range only holds in the parent's term. A node that still
+	// observes the parent gets it again with the next stream, while one that
+	// stays a follower of the child must apply the child's entries, and
+	// install its snapshots, as they are. The parent's entries it replays
+	// later are filtered with the split filter recorded in the database.
+	fc.splitHashRange = nil
+
 	dbOption := database.ToDbOption(newTermOptions)
 	fc.db.EnableNotifications(dbOption.NotificationsEnabled)
 	if err = fc.db.UpdateTerm(req.Term, dbOption); err != nil {
@@ -549,9 +559,14 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	return fc.processCommittedEntriesLoop(reader, snapshotGeneration, maxInclusive)
 }
 
-func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange) {
+func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange, term int64) {
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
+	// A stream of another term, e.g. a late one of a parent fenced since,
+	// doesn't set the range again: its entries are rejected as well
+	if current := fc.term.Load(); term != constant.I64NegativeOne && current != constant.I64NegativeOne && term != current {
+		return
+	}
 	fc.splitHashRange = hashRange
 }
 
@@ -662,6 +677,18 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		// FilterDBForSplit deletes the checksum key (it's invalid after
 		// filtering), so reset the in-memory cached checksum state.
 		db.ResetChecksum()
+		// Record the filter too, for the parent's entries that the child
+		// applies other than as the follower of the parent, e.g. when it
+		// replays them after a restart. Recording it flushes the database,
+		// which runs without the Pebble WAL: once acked, the filtered snapshot
+		// must survive a crash, as the parent doesn't send it again.
+		if err = db.SetSplitFilter(&database.SplitFilter{
+			MinHash:    fc.splitHashRange.GetMin(),
+			MaxHash:    fc.splitHashRange.GetMax(),
+			ParentTerm: rawTerm,
+		}); err != nil {
+			return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to record split filter")
+		}
 	}
 
 	if err = stream.SendAndClose(&proto.SnapshotResponse{
