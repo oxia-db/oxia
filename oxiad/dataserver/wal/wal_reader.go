@@ -80,9 +80,6 @@ func (r *reverseReader) Close() error {
 }
 
 func (r *forwardReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
-	timer := r.wal.readLatency.Timer()
-	defer timer.Done()
-
 	r.Lock()
 	defer r.Unlock()
 
