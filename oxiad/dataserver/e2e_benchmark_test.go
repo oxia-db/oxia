@@ -94,7 +94,8 @@ func newE2EBench(b *testing.B) *e2eBench {
 	b.Helper()
 	tmp := b.TempDir()
 
-	servers := make([]string, e2eBenchServers)
+	servers := make([]*Server, e2eBenchServers)
+	serverConfigs := make([]string, e2eBenchServers)
 	var serviceAddr string
 	for i := range servers {
 		options := option.NewDefaultOptions()
@@ -108,16 +109,17 @@ func newE2EBench(b *testing.B) *e2eBench {
 		server, err := New(context.Background(), commonwatch.New(options))
 		require.NoError(b, err)
 		b.Cleanup(func() { require.NoError(b, server.Close()) })
+		servers[i] = server
 
 		serviceAddr = fmt.Sprintf("localhost:%d", server.PublicPort())
-		servers[i] = fmt.Sprintf("  - name: s%d\n    public: %s\n    internal: localhost:%d\n",
+		serverConfigs[i] = fmt.Sprintf("  - name: s%d\n    public: %s\n    internal: localhost:%d\n",
 			i, serviceAddr, server.InternalPort())
 	}
 
 	coordinatorDir := tmp + "/coordinator"
 	require.NoError(b, os.MkdirAll(coordinatorDir, 0o755))
 	clusterConfig := fmt.Sprintf("namespaces:\n  - name: %s\n    initialShardCount: 1\n    replicationFactor: %d\n"+
-		"servers:\n%s", constant.DefaultNamespace, e2eBenchServers, strings.Join(servers, ""))
+		"servers:\n%s", constant.DefaultNamespace, e2eBenchServers, strings.Join(serverConfigs, ""))
 	require.NoError(b, os.WriteFile(filepath.Join(coordinatorDir, coordoption.DefaultFileConfigName),
 		[]byte(clusterConfig), 0o600))
 
@@ -149,7 +151,39 @@ func newE2EBench(b *testing.B) *e2eBench {
 	for _, ch := range loaded {
 		require.NoError(b, (<-ch).Err)
 	}
+	e.waitForFollowersApplied(b, servers)
 	return e
+}
+
+// waitForFollowersApplied waits until the followers have applied everything the
+// leader has: a put completes on the quorum's WAL ack, and the followers apply
+// it later, so without this the timed run would start while they're still
+// applying the loaded keys.
+func (e *e2eBench) waitForFollowersApplied(b *testing.B, servers []*Server) {
+	b.Helper()
+	const shard = int64(0)
+	var leaderOffset int64
+	var followers []*Server
+	for _, s := range servers {
+		if leader, err := s.shardsDirector.GetLeader(shard); err == nil {
+			leaderOffset = leader.CommitOffset()
+		} else {
+			followers = append(followers, s)
+		}
+	}
+	require.Len(b, followers, len(servers)-1)
+	// The followers learn the commit offset from the leader's next append: one
+	// more put carries it, leaving only that put to be applied.
+	require.NoError(b, e.put(e.keys[0])())
+	require.Eventually(b, func() bool {
+		for _, s := range followers {
+			follower, err := s.shardsDirector.GetFollower(shard)
+			if err != nil || follower.CommitOffset() < leaderOffset {
+				return false
+			}
+		}
+		return true
+	}, 30*time.Second, 10*time.Millisecond)
 }
 
 func (e *e2eBench) put(key string) func() error {
