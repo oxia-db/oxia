@@ -355,8 +355,8 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 
 	// Background writer: keep writing new keys for the entire duration of the
 	// split, recording only the writes the server acknowledged. Besides the
-	// records routed by their key, with a secondary index, it writes records
-	// under each partition key, and records of a sequence.
+	// records routed by their key, it writes records under each partition key,
+	// both with a secondary index, and records of a sequence.
 	writerClient, err := oxia.NewSyncClient(c.sa1.Public)
 	require.NoError(t, err)
 
@@ -382,7 +382,7 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 			value := []byte(fmt.Sprintf("live-value-%06d", i))
 			put(fmt.Sprintf("live-%06d", i), value, oxia.SecondaryIndex("live", fmt.Sprintf("%06d", i)))
 			for _, pk := range []string{leftPk, rightPk} {
-				put(fmt.Sprintf("%s/rec-%06d", pk, i), value, oxia.PartitionKey(pk))
+				put(fmt.Sprintf("%s/rec-%06d", pk, i), value, oxia.PartitionKey(pk), oxia.SecondaryIndex("pk", pk))
 				put(pk+"/seq", value, oxia.PartitionKey(pk), oxia.SequenceKeysDeltas(1))
 			}
 			time.Sleep(2 * time.Millisecond)
