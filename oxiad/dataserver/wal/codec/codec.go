@@ -58,7 +58,9 @@ type Codec interface {
 	// - startFileOffset: The file offset to start reading from.
 	//
 	// Returns:
-	// - payload: The actual data (payload) of the record.
+	// - payload: The actual data (payload) of the record, copied into a newly
+	//   allocated buffer owned by the caller. The WAL reader relies on this to
+	//   decode it zero-copy, so it must never alias buf.
 	// - previousCrc: The CRC value of the previous record (0 for V1 which has no CRC).
 	// - payloadCrc: The CRC value of the current payload (0 for V1 which has no CRC).
 	// - err: Error if any issues occur during reading or validation.

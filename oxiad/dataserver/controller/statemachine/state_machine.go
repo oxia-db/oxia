@@ -27,10 +27,10 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 
 	// UnmarshalVTUnsafe aliases every string/bytes field of the decoded tree
 	// into entry.Value instead of copying it. The lifetime contract:
-	//   - entry.Value is a private heap buffer: the WAL reader materializes
-	//     every LogEntry with a copying unmarshal (and the segment codec
-	//     itself copies records out of the mmap), so the buffer is never
-	//     mutated, recycled, or unmapped behind the aliases.
+	//   - entry.Value is a private heap buffer: the segment codec copies
+	//     every record out of the mmap, and the WAL reader aliases
+	//     entry.Value into that copy, so the buffer is never mutated,
+	//     recycled, or unmapped behind the aliases.
 	//   - Everything ProcessWrite/ProcessControlRequest persists is copied
 	//     (Pebble batch arena, sealed notifications) before returning, and
 	//     nothing retains the aliased strings past the call.
