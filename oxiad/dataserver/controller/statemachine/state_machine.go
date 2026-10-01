@@ -61,7 +61,10 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 		}, nil
 	case *proto.LogEntryValue_Requests:
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
-			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
+			// A rejected request has no effect, as on the leader, which answered
+			// the client with the error: the entry is applied all the same
+			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil &&
+				!errors.Is(err, database.ErrWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}
@@ -107,7 +110,8 @@ func ApplyLogEntryWithSplitFilter(
 				// Still call ProcessWrite with an empty request to advance commit offset.
 				filtered = &proto.WriteRequest{Shard: writeRequest.Shard}
 			}
-			if _, err := db.ProcessWrite(filtered, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
+			if _, err := db.ProcessWrite(filtered, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil &&
+				!errors.Is(err, database.ErrWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}

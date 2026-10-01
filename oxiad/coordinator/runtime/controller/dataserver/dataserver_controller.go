@@ -30,6 +30,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
@@ -539,6 +540,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	n.healthCheckBackoff.Reset()
 
 	// Bind the node before it can receive other internal traffic.
+	featuresChanged := false
 	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
 	err := backoff.RetryNotify(func() error {
 		handshake, err := n.rpc.Handshake(n.ctx, n.dataServer.GetIdentity(), &proto.HandshakeRequest{
@@ -549,7 +551,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		}
 		switch handshake.Status {
 		case proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND, proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND:
-			n.supportedFeatures.Store(handshake.FeaturesSupported)
+			featuresChanged = n.storeSupportedFeatures(handshake.FeaturesSupported)
 			return nil
 		case proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH:
 			return errors.New("data server instance id mismatch")
@@ -571,19 +573,26 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		n.statusLock.Unlock()
 		return
 	}
-	firstRunning := false
 	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
-		firstRunning = n.runningSince.IsZero()
 		n.runningSince = time.Now()
 		n.advanceStatusEpochLocked()
 	}
 	n.statusLock.Unlock()
 
-	if firstRunning {
-		// The features the node supports were not known before this handshake
+	if featuresChanged {
+		// The features the node supports were not known before this handshake:
+		// it is the first one, or the node restarted with another binary
 		n.FeaturesDiscovered(n.dataServer.GetIdentity())
 	}
+}
+
+// storeSupportedFeatures stores the features that the data server supports,
+// and reports whether they differ from the ones stored before.
+func (n *controller) storeSupportedFeatures(features []proto.Feature) bool {
+	known := n.SupportedFeatures()
+	n.supportedFeatures.Store(features)
+	return len(feature.Missing(features, known)) > 0 || len(feature.Missing(known, features)) > 0
 }
 
 func (n *controller) healthCheckHandler(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {

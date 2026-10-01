@@ -15,6 +15,8 @@
 package statemachine
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -105,5 +107,27 @@ func NewControlProposal(offset int64, request *proto.ControlRequest) Proposal {
 		offset:    offset,
 		request:   request,
 		timestamp: uint64(time.Now().UnixMilli()),
+	}
+}
+
+// NewProposalFromLogEntry rebuilds the proposal that a leader appended as the
+// log entry: a control request, or a single write request.
+func NewProposalFromLogEntry(entry *proto.LogEntry) (Proposal, error) {
+	logEntryValue := &proto.LogEntryValue{}
+	if err := logEntryValue.UnmarshalVT(entry.Value); err != nil {
+		return nil, err
+	}
+
+	switch value := logEntryValue.Value.(type) {
+	case *proto.LogEntryValue_ControlRequest:
+		return &ControlProposal{offset: entry.Offset, timestamp: entry.Timestamp, request: value.ControlRequest}, nil
+	case *proto.LogEntryValue_Requests:
+		writes := value.Requests.GetWrites()
+		if len(writes) != 1 {
+			return nil, fmt.Errorf("expected a single write request in the log entry, found %d", len(writes))
+		}
+		return &WriteProposal{offset: entry.Offset, timestamp: entry.Timestamp, request: writes[0]}, nil
+	default:
+		return nil, errors.New("unknown proposal type")
 	}
 }

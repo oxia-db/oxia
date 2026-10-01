@@ -14,35 +14,38 @@
 
 package oxia
 
-import "github.com/oxia-db/oxia/common/compare"
-
 type ResultAndChannel struct {
 	gr GetResult
-	ch chan GetResult
+	// The key of the result, in the form that the order of the heap compares
+	sortKey []byte
+	ch      chan GetResult
 }
 
-type ResultHeap []*ResultAndChannel
-
-func (h ResultHeap) Len() int {
-	return len(h)
+type ResultHeap struct {
+	results []*ResultAndChannel
+	order   keyOrder
 }
 
-func (h ResultHeap) Less(i, j int) bool {
-	return compare.CompareWithSlash([]byte(h[i].gr.Key), []byte(h[j].gr.Key)) < 0
+func (h *ResultHeap) Len() int {
+	return len(h.results)
 }
 
-func (h ResultHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
+func (h *ResultHeap) Less(i, j int) bool {
+	return h.order.compareSortKeys(h.results[i].sortKey, h.results[j].sortKey) < 0
+}
+
+func (h *ResultHeap) Swap(i, j int) {
+	h.results[i], h.results[j] = h.results[j], h.results[i]
 }
 
 func (h *ResultHeap) Push(x any) {
-	*h = append(*h, x.(*ResultAndChannel))
+	h.results = append(h.results, x.(*ResultAndChannel))
 }
 
 func (h *ResultHeap) Pop() any {
-	old := *h
+	old := h.results
 	n := len(old)
 	x := old[n-1]
-	*h = old[0 : n-1]
+	h.results = old[0 : n-1]
 	return x
 }

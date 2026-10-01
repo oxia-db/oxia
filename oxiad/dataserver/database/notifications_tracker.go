@@ -115,6 +115,9 @@ func (n *Notifications) Deleted(key string) {
 }
 
 func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
+	// With FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS, a range covers either
+	// internal keys or regular ones, and its start tells which: one that covers
+	// both is rejected before its notification
 	if strings.HasPrefix(keyStartInclusive, constant.InternalKeyPrefix) {
 		return
 	}
@@ -193,11 +196,13 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 	defer nt.Unlock()
 
 	for startOffset > nt.lastOffset.Load() && !nt.closed.Load() {
-		nt.log.Debug(
-			"Waiting for notification to be available",
-			slog.Int64("start-offset", startOffset),
-			slog.Int64("last-notification-offset", nt.lastOffset.Load()),
-		)
+		if nt.log.Enabled(ctx, slog.LevelDebug) {
+			nt.log.Debug(
+				"Waiting for notification to be available",
+				slog.Int64("start-offset", startOffset),
+				slog.Int64("last-notification-offset", nt.lastOffset.Load()),
+			)
+		}
 
 		if err := nt.cond.Wait(ctx); err != nil {
 			return err
@@ -265,6 +270,13 @@ func (nt *notificationsTracker) scanNotifications(startOffset int64) ([]*proto.N
 
 		totalSize += len(value)
 		totalCount += len(nb.Notifications)
+	}
+
+	// The iteration also stops when a read fails. Returning what was read
+	// until then could be an empty result, which ReadNextNotifications takes
+	// for trimmed batches and skips.
+	if err := it.Error(); err != nil {
+		return nil, errors.Wrap(err, "failed to read notification batches")
 	}
 
 	nt.readBatchCounter.Add(len(res))

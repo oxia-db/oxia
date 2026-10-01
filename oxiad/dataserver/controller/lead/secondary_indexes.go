@@ -20,9 +20,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
-	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
@@ -43,14 +41,14 @@ func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature
 	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
 }
 
-func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
+func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry, features feature.Checker) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value, features); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value)
+	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value, features)
 }
 
 func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *database.Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error) {
@@ -64,24 +62,14 @@ func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *data
 	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se)
 }
 
-func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string) error {
+func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string, features feature.Checker) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key, features); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key)
-}
-
-func (wrapperUpdateCallback) OnDeleteRange(batch kvstore.WriteBatch, notifications *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
-	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive); err != nil {
-		return err
-	}
-
-	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteRange(batch, notifications, keyStartInclusive, keyEndExclusive)
+	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key, features)
 }
 
 var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUpdateCallback{}
@@ -115,7 +103,7 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *databa
 	return proto.Status_OK, writeSecondaryIndexes(batch, request.Key, request.SecondaryIndexes)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string) error {
+func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string, _ feature.Checker) error {
 	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -127,40 +115,8 @@ func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *dat
 	return deleteSecondaryIndexes(batch, key, se)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry, _ feature.Checker) error {
 	return deleteSecondaryIndexes(batch, key, value)
-}
-
-func (secondaryIndexesUpdateCallbackS) OnDeleteRange(batch kvstore.WriteBatch, _ *database.Notifications, keyStartInclusive string, keyEndExclusive string) error {
-	it, err := batch.RangeScan(keyStartInclusive, keyEndExclusive)
-	if err != nil {
-		return err
-	}
-
-	for ; it.Valid(); it.Next() {
-		value, err := it.Value()
-		if err != nil {
-			return errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to delete range")
-		}
-		se := proto.StorageEntryFromVTPool()
-
-		err = database.Deserialize(value, se)
-		if err == nil {
-			err = deleteSecondaryIndexes(batch, it.Key(), se)
-		}
-
-		se.ReturnToVTPool()
-
-		if err != nil {
-			return errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to delete range")
-		}
-	}
-
-	if err := it.Close(); err != nil {
-		return errors.Wrap(err, "oxia db: failed to delete range")
-	}
-
-	return err
 }
 
 const secondaryIdxSeparator = "\x01"
@@ -198,30 +154,78 @@ func writeSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, secondar
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func newSecondaryIndexListIterator(req *proto.ListRequest, db database.DB) (kvstore.KeyIterator, error) {
-	indexName := *req.SecondaryIndexName
-	it, err := db.List(&proto.ListRequest{
-		StartInclusive:      fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:        fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
-		IncludeInternalKeys: true,
-	})
+	return newSecondaryIndexIterator(db, *req.SecondaryIndexName, req.StartInclusive, req.EndExclusive)
+}
+
+// newSecondaryIndexIterator returns an iterator over the entries of an index
+// whose secondary key is in [start, end).
+func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*secondaryIndexListIterator, error) {
+	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
+	// The iterator only visits the entries of the index. With the hierarchical
+	// key sorting, they are not contiguous: they are grouped by level, and other
+	// internal keys sort between the groups, like the entries of other indexes
+	// and the session shadow keys. A range across levels would include them.
+	it, err := db.ListPrefix(indexPrefix)
 	if err != nil {
 		return nil, err
 	}
 
-	return &secondaryIndexListIterator{it: it}, nil
+	it.SeekGE(secondaryIndexRangeBound(indexPrefix, start))
+	listIt := &secondaryIndexListIterator{it: it, db: db, end: secondaryIndexRangeBound(indexPrefix, end)}
+	listIt.stopAtEnd()
+	return listIt, nil
+}
+
+// secondaryIndexRangeBound returns the key that bounds a range through an
+// index at a secondary key: the prefix of the index followed by the key. It
+// sorts among the entries of the index as the key sorts among the primary
+// keys, in either key sorting. Unlike the search key of a get, it does not end
+// in the separator, so that a key ending in "//" keeps the level that the
+// hierarchical sorting gives it, as in the range of the children of a key,
+// like ["/a/", "/a//").
+//
+// The entries of a secondary key ending in "//" are the exception: they end in
+// the separator and the escaped primary key, so the hierarchical sorting puts
+// them one level after the key, and a range can miss them or return them out
+// of order.
+func secondaryIndexRangeBound(indexPrefix, key string) string {
+	if key == "/" {
+		// The prefix ends in '/', so the bound would end in "//", unlike the
+		// key, and sort before all the secondary keys with a '/' with the
+		// hierarchical sorting. The zero byte keeps it in the level of "/": it
+		// makes the smallest string after the bound, so no entry sorts between
+		// the two with the natural sorting.
+		return indexPrefix + key + "\x00"
+	}
+	return indexPrefix + key
 }
 
 type secondaryIndexListIterator struct {
-	it kvstore.KeyIterator
+	it    kvstore.KeyIterator
+	db    database.DB
+	end   string
+	key   string
+	valid bool
 }
 
 func (it *secondaryIndexListIterator) Valid() bool {
-	return it.it.Valid()
+	return it.valid
+}
+
+// stopAtEnd ends the iteration on the first entry that is not below the end.
+// The entries come in the shard's key order, so the following ones are not
+// either.
+func (it *secondaryIndexListIterator) stopAtEnd() bool {
+	it.valid = it.it.Valid()
+	if it.valid {
+		it.key = it.it.Key()
+		it.valid = it.db.CompareKeys(it.key, it.end) < 0
+	}
+	return it.valid
 }
 
 func (it *secondaryIndexListIterator) Key() string {
-	idxKey := it.it.Key()
-	primaryKey, _, err := database.ParseSecondaryIndexKey(idxKey)
+	primaryKey, _, err := database.ParseSecondaryIndexKey(it.key)
 	if err != nil {
 		// This should never happen since we control the key format
 		panic(errors.Wrap(err, "Failed to parse secondary index key"))
@@ -243,7 +247,12 @@ func (*secondaryIndexListIterator) SeekLT(string) bool {
 }
 
 func (it *secondaryIndexListIterator) Next() bool {
-	return it.it.Next()
+	it.it.Next()
+	return it.stopAtEnd()
+}
+
+func (it *secondaryIndexListIterator) Error() error {
+	return it.it.Error()
 }
 
 func (it *secondaryIndexListIterator) Close() error {
@@ -253,18 +262,12 @@ func (it *secondaryIndexListIterator) Close() error {
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db database.DB) (database.RangeScanIterator, error) {
-	indexName := *req.SecondaryIndexName
-	it, err := db.List(&proto.ListRequest{
-		StartInclusive:      fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.StartInclusive),
-		EndExclusive:        fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, req.EndExclusive),
-		IncludeInternalKeys: true,
-	})
+	listIt, err := newSecondaryIndexIterator(db, *req.SecondaryIndexName, req.StartInclusive, req.EndExclusive)
 	if err != nil {
 		return nil, err
 	}
 
-	return &secondaryIndexRangeIterator{listIt: &secondaryIndexListIterator{it},
-		db: db}, nil
+	return &secondaryIndexRangeIterator{listIt: listIt, db: db}, nil
 }
 
 type secondaryIndexRangeIterator struct {
@@ -332,8 +335,16 @@ func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetRespons
 func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, secondaryKey string, err error) {
 	indexName := *req.SecondaryIndexName
 	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
-	searchKey := indexPrefix + req.Key
-	it, err := db.KeyIterator(true)
+	// Entries are stored as indexPrefix + secondary key + separator + escaped
+	// primary key. With the separator, the search key sorts right before the
+	// entries of the requested key in either key sorting. Without it, the search
+	// key for "/", or for a key ending in "//", would end in "//", which the
+	// hierarchical sorting does not count as a level.
+	searchKey := indexPrefix + req.Key + secondaryIdxSeparator
+	// The iterator only visits the entries of the index. With the hierarchical
+	// key sorting, they are not contiguous: they are grouped by level, and other
+	// internal keys, like the entries of other indexes, sort between the groups.
+	it, err := db.KeyPrefixIterator(indexPrefix)
 	if err != nil {
 		return "", "", err
 	}
@@ -346,8 +357,9 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
 
-		if req.ComparisonType == proto.KeyComparisonType_FLOOR &&
-			(!it.Valid() || !strings.HasPrefix(it.Key(), indexPrefix)) {
+		// A failed read is left to the check after the walk: seeking again
+		// would clear the error
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR && it.Error() == nil && !it.Valid() {
 			// There is no entry of this index at or after the search key: the
 			// floor candidate, if any, is the last index entry before it.
 			it.SeekLT(searchKey)
@@ -356,18 +368,14 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 
 	for it.Valid() {
 		itKey := it.Key()
-		if !strings.HasPrefix(itKey, indexPrefix) {
-			// We stepped out of the region of the requested index: entries of
-			// other indexes (or other keyspaces) must not be considered.
-			break
-		}
-
 		primaryKey, secondaryKey, err = database.ParseSecondaryIndexKey(itKey)
 		if err != nil && !errors.Is(err, database.ErrInvalidSecondaryIndexKey) {
 			return "", "", err
 		}
 
-		cmp := compare.CompareWithSlash([]byte(req.Key), []byte(secondaryKey))
+		// Compare in the order the iterator walks the entries, the shard's key
+		// order, with the entry cut down to the form of the search key
+		cmp := db.CompareKeys(searchKey, indexPrefix+secondaryKey+secondaryIdxSeparator)
 
 		switch req.ComparisonType {
 		case proto.KeyComparisonType_EQUAL:
@@ -407,6 +415,11 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		default:
 			return "", "", errors.Errorf("unsupported comparison type: %v", req.ComparisonType)
 		}
+	}
+
+	// The walk also stops when a read fails
+	if err = it.Error(); err != nil {
+		return "", "", errors.Wrap(err, "failed to read the secondary index")
 	}
 
 	// The walk ran out of entries of the requested index without finding a match

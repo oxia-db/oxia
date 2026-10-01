@@ -334,3 +334,59 @@ func TestCache_GetNotFoundThenPut(t *testing.T) {
 	assert.NoError(t, cache.Close())
 	assert.NoError(t, client.Close())
 }
+
+// TestCache_DeleteRange verifies that the notification of a range deletion made
+// by another client evicts all the cached records in the range, not only the
+// one at its start.
+func TestCache_DeleteRange(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+	defer standaloneServer.Close()
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
+	assert.NoError(t, err)
+
+	otherClient, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
+	assert.NoError(t, err)
+
+	ctx := context.Background()
+	values := map[string]testStruct{
+		"/a": {"a", 1},
+		"/b": {"b", 2},
+		"/c": {"c", 3},
+	}
+	for key, value := range values {
+		data, err := json.Marshal(value)
+		assert.NoError(t, err)
+		_, _, err = otherClient.Put(ctx, key, data)
+		assert.NoError(t, err)
+	}
+
+	// The cache only receives the notifications of the writes made after its
+	// creation, so the puts above can't evict the records it caches here
+	cache, err := oxia.NewCache[testStruct](client, json.Marshal, json.Unmarshal)
+	assert.NoError(t, err)
+
+	for key, value := range values {
+		cachedValue, _, err := cache.Get(ctx, key)
+		assert.NoError(t, err)
+		assert.Equal(t, value, cachedValue)
+	}
+
+	assert.NoError(t, otherClient.DeleteRange(ctx, "/a", "/c"))
+
+	for _, key := range []string{"/a", "/b"} {
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			value, _, err := cache.Get(ctx, key)
+			assert.ErrorIs(c, err, oxia.ErrKeyNotFound, "%s: %+v", key, value)
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+
+	value, _, err := cache.Get(ctx, "/c")
+	assert.NoError(t, err)
+	assert.Equal(t, values["/c"], value)
+
+	assert.NoError(t, cache.Close())
+	assert.NoError(t, client.Close())
+	assert.NoError(t, otherClient.Close())
+}

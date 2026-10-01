@@ -69,6 +69,7 @@ type AsyncClient interface {
 	// Returns a [Version] object that contains information about the newly updated record
 	// Returns [ErrorUnexpectedVersionId] if the expected version id does not match the
 	// current version id of the record
+	// Returns [ErrInvalidOptions] if the key is not valid UTF-8
 	Put(key string, value []byte, options ...PutOption) <-chan PutResult
 
 	// Delete removes the key and its associated value from the data store.
@@ -77,12 +78,16 @@ type AsyncClient interface {
 	// a specific existing version by passing the [ExpectedVersionId] option.
 	// Returns [ErrorUnexpectedVersionId] if the expected version id does not match the
 	// current version id of the record
+	// Returns [ErrInvalidOptions] if the key is not valid UTF-8
 	Delete(key string, options ...DeleteOption) <-chan error
 
 	// DeleteRange deletes any records with keys within the specified range.
 	// Note: Oxia uses a custom sorting order that treats `/` characters in special way.
 	// Refer to this documentation for the specifics:
 	// https://oxia-db.github.io/docs/features/oxia-key-sorting
+	// An empty maxKeyExclusive deletes all the records from minKeyInclusive on.
+	// A range that covers both records and Oxia's internal keys fails with
+	// [ErrInvalidOptions], and so does a range with a bound that is not valid UTF-8.
 	DeleteRange(minKeyInclusive string, maxKeyExclusive string, options ...DeleteRangeOption) <-chan error
 
 	// Get returns the value associated with the specified key.
@@ -138,6 +143,7 @@ type SyncClient interface {
 	// Returns a [Version] object that contains information about the newly updated record
 	// Returns [ErrorUnexpectedVersionId] if the expected version id does not match the
 	// current version id of the record
+	// Returns [ErrInvalidOptions] if the key is not valid UTF-8
 	Put(ctx context.Context, key string, value []byte, options ...PutOption) (insertedKey string, version Version, err error)
 
 	// Delete removes the key and its associated value from the data store.
@@ -146,12 +152,16 @@ type SyncClient interface {
 	// a specific existing version by passing the [ExpectedVersionId] option.
 	// Returns [ErrorUnexpectedVersionId] if the expected version id does not match the
 	// current version id of the record
+	// Returns [ErrInvalidOptions] if the key is not valid UTF-8
 	Delete(ctx context.Context, key string, options ...DeleteOption) error
 
 	// DeleteRange deletes any records with keys within the specified range.
 	// Note: Oxia uses a custom sorting order that treats `/` characters in special way.
 	// Refer to this documentation for the specifics:
 	// https://oxia-db.github.io/docs/features/oxia-key-sorting
+	// An empty maxKeyExclusive deletes all the records from minKeyInclusive on.
+	// A range that covers both records and Oxia's internal keys fails with
+	// [ErrInvalidOptions], and so does a range with a bound that is not valid UTF-8.
 	DeleteRange(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...DeleteRangeOption) error
 
 	// Get returns the value associated with the specified key.
@@ -305,6 +315,7 @@ type Notification struct {
 	VersionId int64
 
 	// In case of a KeyRangeRangeDeleted notification, this would represent
-	// the end (excluded) of the range of keys
+	// the end (excluded) of the range of keys. An empty KeyRangeEnd covers all
+	// the records from Key on.
 	KeyRangeEnd string
 }

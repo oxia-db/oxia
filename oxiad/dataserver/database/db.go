@@ -51,7 +51,14 @@ var (
 	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
 	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
 	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
+	ErrInvalidSequenceKey    = errors.New("oxia: sequential key operation found a key that is not part of the sequence")
+	ErrNotificationRecord    = errors.New("oxia: write request reaches a notification record")
 	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
+
+	// ErrWriteRejected marks a write request that ProcessWrite rejected
+	// because it can't be applied to the database: the request has no effect,
+	// and its log entry is applied.
+	ErrWriteRejected = errors.New("oxia: write request rejected")
 )
 
 const (
@@ -68,9 +75,8 @@ type UpdateOperationCallback interface {
 	// ValidatePut must not mutate the request or database state.
 	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
 	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
-	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string) error
-	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry) error
-	OnDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, keyStartInclusive string, keyEndExclusive string) error
+	OnDelete(batch kvstore.WriteBatch, notifications *Notifications, key string, features featurepkg.Checker) error
+	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry, features featurepkg.Checker) error
 }
 
 type RangeScanIterator interface {
@@ -111,7 +117,17 @@ type DB interface {
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
 	List(request *proto.ListRequest) (kvstore.KeyIterator, error)
 	RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, error)
-	KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error)
+
+	// KeyPrefixIterator returns an iterator over the keys that start with
+	// prefix, internal keys included, to position with SeekGE or SeekLT
+	KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error)
+
+	// ListPrefix returns the iterator of KeyPrefixIterator, and counts it as a
+	// list, like List
+	ListPrefix(prefix string) (kvstore.KeyIterator, error)
+
+	// CompareKeys compares two keys in the order the shard sorts them
+	CompareKeys(a, b string) int
 
 	ReadCommitOffset() (int64, error)
 
@@ -154,7 +170,6 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 	db := &db{
 		kv:                    kv,
 		shardId:               shardId,
-		notificationsEnabled:  true,
 		enabledFeatures:       sync.Map{},
 		sequenceWaiterTracker: NewSequencesWaitTracker(),
 		log: slog.With(
@@ -184,6 +199,7 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		rangeScanCounter: metric.NewCounter("oxia_server_db_range_scans",
 			"The total number of range-scan operations", "count", labels),
 	}
+	db.notificationsEnabled.Store(true)
 
 	// Close the kv on any failure from here on: a leaked store would keep
 	// the Pebble lock and fail every later open of the shard
@@ -227,7 +243,7 @@ type db struct {
 	committedChecksum     atomic.Pointer[crc.Checksum]
 	notificationsTracker  *notificationsTracker
 	log                   *slog.Logger
-	notificationsEnabled  bool
+	notificationsEnabled  atomic.Bool
 	enabledFeatures       sync.Map
 	splitFilter           atomic.Pointer[SplitFilter]
 	sequenceWaiterTracker SequenceWaiterTracker
@@ -257,7 +273,7 @@ func (d *db) RawKV() kvstore.KV {
 }
 
 func (d *db) EnableNotifications(enabled bool) {
-	d.notificationsEnabled = enabled
+	d.notificationsEnabled.Store(enabled)
 }
 func (d *db) ReadChecksum() crc.Checksum {
 	return *d.committedChecksum.Load()
@@ -296,14 +312,22 @@ func now() uint64 {
 	return uint64(time.Now().UnixMilli())
 }
 
+// sequenceUpdate is the new last key of a sequence, for the waiters to be
+// notified once the batch that creates it is committed.
+type sequenceUpdate struct {
+	prefixKey string
+	key       string
+}
+
 func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	baseVersionId *atomic.Int64, commitOffset int64, timestamp uint64,
-	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, error) {
+	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, []sequenceUpdate, error) {
 	res := &proto.WriteResponse{}
 	var notifications *Notifications
-	if d.notificationsEnabled {
+	if d.notificationsEnabled.Load() {
 		notifications = newNotifications(d.shardId, commitOffset, timestamp)
 	}
+	var sequenceUpdates []sequenceUpdate
 
 	d.putCounter.Add(len(b.Puts))
 	d.deleteCounter.Add(len(b.Deletes))
@@ -317,23 +341,28 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	for p < len(b.Puts) || dl < len(b.Deletes) || dr < len(b.DeleteRanges) {
 		switch nextWriteOp(b, p, dl, dr) {
 		case writeOpPut:
+			// A sequential put replaces the request key with the generated one
+			prefixKey := b.Puts[p].Key
 			pr, err := d.applyPut(batch, baseVersionId, notifications, b.Puts[p], timestamp, updateOperationCallback, false)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
+			}
+			if pr.Key != nil {
+				sequenceUpdates = append(sequenceUpdates, sequenceUpdate{prefixKey: prefixKey, key: *pr.Key})
 			}
 			res.Puts = append(res.Puts, pr)
 			p++
 		case writeOpDelete:
 			delRes, err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			res.Deletes = append(res.Deletes, delRes)
 			dl++
 		default: // writeOpDeleteRange
 			delRangeRes, err := d.applyDeleteRange(batch, notifications, b.DeleteRanges[dr], updateOperationCallback)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			res.DeleteRanges = append(res.DeleteRanges, delRangeRes)
 			dr++
@@ -342,7 +371,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 
 	d.writeOpsTotal.Add(uint64(len(b.Puts) + len(b.Deletes) + len(b.DeleteRanges)))
 
-	return notifications, res, nil
+	return notifications, res, sequenceUpdates, nil
 }
 
 type writeOp int
@@ -460,7 +489,13 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	baseVersionId.Store(d.committedVersionId.Load())
 
 	batch := d.kv.NewWriteBatch()
-	notifications, res, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp, updateOperationCallback)
+	defer batch.Close()
+
+	notifications, res, sequenceUpdates, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp,
+		updateOperationCallback)
+	if isRejectedWrite(err) {
+		return nil, d.rejectWrite(err, commitOffset, timestamp)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -502,11 +537,73 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
 	}
 
-	if err := batch.Close(); err != nil {
-		return nil, err
+	// Only once committed: the waiters must never see a key that doesn't
+	// exist, e.g. because the request failed after the sequential put
+	for _, update := range sequenceUpdates {
+		d.sequenceWaiterTracker.SequenceUpdated(update.prefixKey, update.key)
 	}
 
 	return res, nil
+}
+
+// isRejectedWrite reports whether err rejects a write request for its content,
+// or for the database state it applies to, rather than for a storage failure:
+// retrying the request can't succeed, and every replica applying it to the
+// same state rejects it the same way.
+func isRejectedWrite(err error) bool {
+	return errors.Is(err, ErrMissingPartitionKey) ||
+		errors.Is(err, ErrMissingSequenceDeltas) ||
+		errors.Is(err, ErrSequenceDeltaIsZero) ||
+		errors.Is(err, ErrSequenceOverflow) ||
+		errors.Is(err, ErrInvalidSequenceKey) ||
+		// E.g. a DeleteRange without an end, with the natural key sorting.
+		// Each replica trims the notification records on its own: the
+		// request is only rejected where some are left.
+		errors.Is(err, ErrNotificationRecord)
+}
+
+// deserializeFailure returns the failure to deserialize the value of key,
+// err, along with closeErr, the failure to release the read. It rejects the
+// request when key is a notification record, which is not a storage entry,
+// and the read was released: any other value that fails to deserialize is
+// damaged, and a read that fails to be released is a storage failure.
+func deserializeFailure(key string, err error, closeErr error) error {
+	switch {
+	case closeErr != nil:
+		return multierr.Append(err, closeErr)
+	case strings.HasPrefix(key, notificationsPrefix+"/"):
+		return fmt.Errorf("%w: %w", ErrNotificationRecord, err)
+	default:
+		return err
+	}
+}
+
+// rejectWrite records the write request at commitOffset as applied, with no
+// effect. The leader answers the client with the error and moves on: failing
+// the log entry instead would leave the followers retrying it forever, and no
+// other replica could become leader.
+//
+// Only the commit offset is written, and the checksum is left as it is: the
+// data, the notifications and the checksum stay the same as on a replica that
+// dropped the request without recording it, like the leaders of the previous
+// versions.
+func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) error {
+	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+
+	if err := d.addASCIILong(commitOffsetKey, commitOffset, batch, timestamp); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
+		return err
+	}
+
+	d.log.Warn(
+		"Rejected write request, it has no effect",
+		slog.Int64("offset", commitOffset),
+		slog.Any("error", cause),
+	)
+	return fmt.Errorf("%w: %w", ErrWriteRejected, cause)
 }
 
 func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
@@ -553,7 +650,10 @@ func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 		sw.och.WriteLast(it.Key())
 	}
 
-	_ = it.Close()
+	// The iterator is also invalid when the read failed: Close returns the error
+	if err := it.Close(); err != nil {
+		return nil, multierr.Append(errors.Wrap(err, "failed to read the last key of the sequence"), sw.Close())
+	}
 	return sw, nil
 }
 
@@ -646,8 +746,27 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 	}, nil
 }
 
-func (d *db) KeyIterator(includeInternalKeys bool) (kvstore.KeyIterator, error) {
-	return d.kv.KeyIterator(kvstore.IteratorOpts{IncludeInternalKeys: includeInternalKeys})
+func (d *db) KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error) {
+	return d.kv.KeyPrefixIterator(prefix)
+}
+
+func (d *db) ListPrefix(prefix string) (kvstore.KeyIterator, error) {
+	d.listCounter.Add(1)
+	d.readOpsTotal.Add(1)
+
+	it, err := d.kv.KeyPrefixIterator(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listIterator{
+		KeyIterator: it,
+		timer:       d.listLatencyHisto.Timer(),
+	}, nil
+}
+
+func (d *db) CompareKeys(a, b string) int {
+	return d.kv.CompareKeys(a, b)
 }
 
 func (d *db) ReadCommitOffset() (int64, error) {
@@ -703,6 +822,11 @@ func (d *db) recoverFeatureFlags() error {
 
 		it.Next()
 	}
+
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return errors.Wrap(err, "failed to read the feature flags")
+	}
 	return nil
 }
 
@@ -749,6 +873,7 @@ func (d *db) readASCIILongOrDefault(key string, defaultValue int64) (int64, erro
 
 func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
 
 	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
@@ -769,10 +894,6 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	}
 
 	if err := batch.Commit(); err != nil {
-		return err
-	}
-
-	if err := batch.Close(); err != nil {
 		return err
 	}
 
@@ -825,10 +946,9 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	var err error
 	var newKey string
 	if len(putReq.GetSequenceKeyDelta()) > 0 {
-		prefixKey := putReq.Key
-		newKey, err = generateUniqueKeyFromSequences(batch, putReq)
-		putReq.Key = newKey
-		d.sequenceWaiterTracker.SequenceUpdated(prefixKey, newKey)
+		if newKey, err = generateUniqueKeyFromSequences(batch, putReq, d); err == nil {
+			putReq.Key = newKey
+		}
 	} else if !internal {
 		se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)
 	}
@@ -837,6 +957,12 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	case errors.Is(err, ErrBadVersionId):
 		return &proto.PutResponse{
 			Status: proto.Status_UNEXPECTED_VERSION_ID,
+		}, nil
+	case isInvalidSequentialPut(err) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
+		// Only this put fails, instead of the whole write request with its
+		// other operations
+		return &proto.PutResponse{
+			Status: proto.Status_INVALID_ARGUMENT,
 		}, nil
 	case err != nil:
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
@@ -921,11 +1047,13 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		ClientIdentity:     se.ClientIdentity,
 	}
 
-	d.log.Debug(
-		"Applied put operation",
-		slog.String("key", putReq.Key),
-		slog.Any("version", version),
-	)
+	if d.log.Enabled(context.Background(), slog.LevelDebug) {
+		d.log.Debug(
+			"Applied put operation",
+			slog.String("key", putReq.Key),
+			slog.Any("version", version),
+		)
+	}
 
 	pr := &proto.PutResponse{Version: version}
 	if newKey != "" {
@@ -948,7 +1076,7 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 	case se == nil:
 		return &proto.DeleteResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	default:
-		err = updateOperationCallback.OnDelete(batch, notifications, delReq.Key)
+		err = updateOperationCallback.OnDelete(batch, notifications, delReq.Key, d)
 		if err != nil {
 			return nil, err
 		}
@@ -961,10 +1089,12 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 			notifications.Deleted(delReq.Key)
 		}
 
-		d.log.Debug(
-			"Applied delete operation",
-			slog.String("key", delReq.Key),
-		)
+		if d.log.Enabled(context.Background(), slog.LevelDebug) {
+			d.log.Debug(
+				"Applied delete operation",
+				slog.String("key", delReq.Key),
+			)
+		}
 		return &proto.DeleteResponse{Status: proto.Status_OK}, nil
 	}
 }
@@ -972,19 +1102,45 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 const DeleteRangeThreshold = 100
 
 func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRangeRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteRangeResponse, error) {
+	// With the feature, a delete range covers either regular keys or internal
+	// keys. One that covers both, e.g. from a regular key to an internal one,
+	// gets the INVALID_ARGUMENT status, before the callbacks run and before its
+	// notification.
+	//
+	// In a range over the internal keys, the notification records are deleted
+	// without being read: they are not storage entries. Each replica trims them
+	// on its own schedule, so the ones in the range differ between replicas:
+	// the range is deleted with a range deletion, whatever its size, as
+	// deleting the records one by one would make the batch, and the DB
+	// checksum, differ between replicas.
+	endExclusive, internalKeys, regularKeys := d.deleteRangeEnd(batch, delReq)
+	if internalKeys && regularKeys {
+		return &proto.DeleteRangeResponse{Status: proto.Status_INVALID_ARGUMENT}, nil
+	}
+
 	if notifications != nil {
+		// The notification keeps the end of the request, even when it is
+		// empty: the clients read that as all the records from the start on,
+		// which is what the range deletes. The end of the scan, "__oxia/",
+		// would read as a different range: the clients don't sort the internal
+		// keys after all the others.
 		notifications.DeletedRange(delReq.StartInclusive, delReq.EndExclusive)
 	}
 
-	it, err := batch.RangeScan(delReq.StartInclusive, delReq.EndExclusive)
+	it, err := batch.RangeScan(delReq.StartInclusive, endExclusive)
 	if err != nil {
 		return nil, err
 	}
 	var validKeys []string
 	var validKeysNum = 0
 	for ; it.Valid(); it.Next() {
-		validKeysNum++
 		key := it.Key()
+		if internalKeys && strings.HasPrefix(key, notificationsPrefix+"/") {
+			// No session or secondary index entry to clean up: the range
+			// deletion below removes the record
+			continue
+		}
+		validKeysNum++
 		if validKeysNum <= DeleteRangeThreshold {
 			validKeys = append(validKeys, key)
 		}
@@ -995,9 +1151,10 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		se := proto.StorageEntryFromVTPool()
 		if err = Deserialize(value, se); err != nil {
 			se.ReturnToVTPool()
-			return nil, err
+			return nil, errors.Wrap(deserializeFailure(key, err, it.Close()),
+				"oxia db: failed to deserialize value on delete range")
 		}
-		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se); err != nil {
+		if err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, key, se, d); err != nil {
 			se.ReturnToVTPool()
 			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to callback on delete range")
 		}
@@ -1006,24 +1163,52 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 	if err := it.Close(); err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to close iterator on delete range")
 	}
-	if validKeysNum > DeleteRangeThreshold {
-		if err := batch.DeleteRange(delReq.StartInclusive, delReq.EndExclusive); err != nil {
-			return nil, errors.Wrap(err, "oxia db: failed to delete range")
-		}
+	if internalKeys || validKeysNum > DeleteRangeThreshold {
+		err = batch.DeleteRange(delReq.StartInclusive, endExclusive)
 	} else {
-		for _, key := range validKeys {
-			if err := batch.Delete(key); err != nil {
-				return nil, errors.Wrap(err, "oxia db: failed to delete range")
-			}
-		}
+		err = deleteKeys(batch, validKeys)
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "oxia db: failed to delete range")
 	}
 
-	d.log.Debug(
-		"Applied delete range operation",
-		slog.String("key-start", delReq.StartInclusive),
-		slog.String("key-end", delReq.EndExclusive),
-	)
+	if d.log.Enabled(context.Background(), slog.LevelDebug) {
+		d.log.Debug(
+			"Applied delete range operation",
+			slog.String("key-start", delReq.StartInclusive),
+			slog.String("key-end", endExclusive),
+		)
+	}
 	return &proto.DeleteRangeResponse{Status: proto.Status_OK}, nil
+}
+
+// deleteRangeEnd returns the end of the keys that a delete range covers, and
+// whether they include internal keys and regular keys, which it reports with
+// the feature only.
+func (d *db) deleteRangeEnd(batch kvstore.WriteBatch, delReq *proto.DeleteRangeRequest) (
+	endExclusive string, internalKeys, regularKeys bool) {
+	endExclusive = delReq.EndExclusive
+	if !d.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) {
+		return endExclusive, false, false
+	}
+	if endExclusive == "" {
+		// A range without an end stops before the internal keys, which sort at
+		// or after their prefix with either key encoder. Every regular key
+		// sorts before it, but for the natural keys that start with 0xff
+		// bytes, which are not valid UTF-8.
+		endExclusive = constant.InternalKeyPrefix
+	}
+	internalKeys, regularKeys = batch.RangeOverlaps(delReq.StartInclusive, endExclusive)
+	return endExclusive, internalKeys, regularKeys
+}
+
+func deleteKeys(batch kvstore.WriteBatch, keys []string) error {
+	for _, key := range keys {
+		if err := batch.Delete(key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, error) {
@@ -1086,10 +1271,11 @@ func GetStorageEntryMetadata(batch kvstore.WriteBatch, key string) (*proto.Stora
 
 	se := proto.StorageEntryFromVTPool()
 
-	if err = multierr.Append(
-		DeserializeMetadata(value, se),
-		closer.Close(),
-	); err != nil {
+	if err = DeserializeMetadata(value, se); err != nil {
+		se.ReturnToVTPool()
+		return nil, deserializeFailure(key, err, closer.Close())
+	}
+	if err = closer.Close(); err != nil {
 		se.ReturnToVTPool()
 		return nil, err
 	}
@@ -1151,7 +1337,7 @@ func Deserialize(value []byte, se *proto.StorageEntry) error {
 }
 
 func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
-	if !d.notificationsEnabled {
+	if !d.notificationsEnabled.Load() {
 		return nil, ErrNotificationsDisabled
 	}
 	return d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
