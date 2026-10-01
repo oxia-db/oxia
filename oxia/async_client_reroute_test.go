@@ -41,7 +41,24 @@ type splittableShardManager struct {
 	strategy         internal.ShardStrategy
 	shards           []internal.Shard
 	successors       map[int64][]internal.Shard
+	leader           string
+	changed          chan struct{}
 	onShardsReplaced internal.ShardsReplacedListener
+}
+
+// newSplittableShardManager returns a splittableShardManager with a single
+// shard, 0, on the whole hash range, led by the given leader.
+func newSplittableShardManager(leader string) *splittableShardManager {
+	return &splittableShardManager{
+		strategy: internal.NewShardStrategy(),
+		shards: []internal.Shard{
+			{Id: 0, HashRange: internal.HashRange{MinInclusive: 0, MaxInclusive: math.MaxUint32}},
+		},
+		successors:       map[int64][]internal.Shard{},
+		leader:           leader,
+		changed:          make(chan struct{}),
+		onShardsReplaced: func(map[int64][]int64) {},
+	}
 }
 
 func (*splittableShardManager) Close() error { return nil }
@@ -68,7 +85,7 @@ func (m *splittableShardManager) GetAll() []int64 {
 	return ids
 }
 
-func (*splittableShardManager) Leader(int64) string { return "" }
+func (m *splittableShardManager) Leader(int64) string { return m.leader }
 
 func (m *splittableShardManager) Exists(shardId int64) bool {
 	m.RLock()
@@ -103,7 +120,11 @@ func (m *splittableShardManager) GetSuccessor(shardId int64, key string) (int64,
 	return 0, false
 }
 
-func (*splittableShardManager) Changed() <-chan struct{} { return nil }
+func (m *splittableShardManager) Changed() <-chan struct{} {
+	m.RLock()
+	defer m.RUnlock()
+	return m.changed
+}
 
 func (*splittableShardManager) KeySorting() proto.KeySorting {
 	return proto.KeySorting_KEY_SORTING_UNKNOWN
@@ -126,6 +147,8 @@ func (m *splittableShardManager) split(parent int64, left int64, right int64) {
 		m.shards = append(append(m.shards[:i], m.shards[i+1:]...), children...)
 		m.successors[parent] = children
 		m.onShardsReplaced(map[int64][]int64{parent: {left, right}})
+		close(m.changed)
+		m.changed = make(chan struct{})
 		return
 	}
 }
@@ -189,11 +212,7 @@ func newRerouteTestClient(shardManager *splittableShardManager, executor interna
 // the post-split assignments goes to the child shard directly, and must still
 // be applied after the rerouted one.
 func TestRerouteKeepsWriteOrderAcrossSplit(t *testing.T) {
-	shardManager := &splittableShardManager{
-		strategy:   internal.NewShardStrategy(),
-		shards:     []internal.Shard{{Id: 0, HashRange: internal.HashRange{MinInclusive: 0, MaxInclusive: math.MaxUint32}}},
-		successors: map[int64][]internal.Shard{},
-	}
+	shardManager := newSplittableShardManager("")
 	executor := &splitExecutor{
 		shardManager: shardManager,
 		frozenShard:  0,

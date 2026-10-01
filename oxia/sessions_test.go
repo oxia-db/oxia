@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func TestSessions_FailedSessionStartDoesNotDeadlock(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		s.executeWithSessionId(1, func(sessionId int64, err error) {
+		s.executeWithSessionId(func() int64 { return 1 }, func(_ int64, sessionId int64, err error) {
 			assert.Error(t, err)
 			assert.EqualValues(t, -1, sessionId)
 		})
@@ -122,7 +123,7 @@ func TestSessions_KeepAliveRetryDelayDoesNotGrow(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	s := newSessions(ctx, shardManager, rpcProvider, options)
-	s.executeWithSessionId(0, func(_ int64, err error) {
+	s.executeWithSessionId(func() int64 { return 0 }, func(_ int64, _ int64, err error) {
 		assert.NoError(t, err)
 	})
 
@@ -144,4 +145,143 @@ func TestSessions_KeepAliveRetryDelayDoesNotGrow(t *testing.T) {
 		retryDelay := nextHeartbeat().Sub(failedAt) - 2*time.Second
 		assert.Less(t, retryDelay, 500*time.Millisecond, "retry delay after failure %d", failure)
 	}
+}
+
+type shardSession struct {
+	shard     int64
+	sessionId int64
+}
+
+// sessionRequestsServer records the session requests it receives. The id of a
+// session it creates is 10 + the shard id.
+type sessionRequestsServer struct {
+	proto.UnimplementedOxiaClientServer
+	heartbeats chan shardSession
+
+	sync.Mutex
+	created []int64
+	closed  []shardSession
+}
+
+func (s *sessionRequestsServer) CreateSession(_ context.Context,
+	req *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
+	s.Lock()
+	defer s.Unlock()
+	s.created = append(s.created, req.Shard)
+	return &proto.CreateSessionResponse{SessionId: 10 + req.Shard}, nil
+}
+
+func (s *sessionRequestsServer) KeepAlive(_ context.Context,
+	req *proto.SessionHeartbeat) (*proto.KeepAliveResponse, error) {
+	s.heartbeats <- shardSession{req.Shard, req.SessionId}
+	return &proto.KeepAliveResponse{}, nil
+}
+
+func (s *sessionRequestsServer) CloseSession(_ context.Context,
+	req *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
+	s.Lock()
+	defer s.Unlock()
+	s.closed = append(s.closed, shardSession{req.Shard, req.SessionId})
+	return &proto.CloseSessionResponse{}, nil
+}
+
+// unnotifiedShardManager doesn't notify the changes of its shard map.
+type unnotifiedShardManager struct {
+	*splittableShardManager
+}
+
+func (unnotifiedShardManager) Changed() <-chan struct{} { return nil }
+
+type followSplitTest struct {
+	name string
+	// The splits of shard 0 and its children, as {parent, left, right}
+	splits [][3]int64
+	// The shards that replaced shard 0 in the end
+	shards []int64
+	// Whether the client looks up the session of the last of them before the
+	// change of the shard map is notified
+	lookupFirst bool
+}
+
+// The shards that replace a split shard inherit its session, which owns the
+// ephemeral records they get from it. The client must keep the session alive
+// on them, use it for their new ephemeral records, and close it there.
+func TestSessions_FollowSplit(t *testing.T) {
+	for _, test := range []followSplitTest{
+		{name: "notified", splits: [][3]int64{{0, 1, 2}}, shards: []int64{1, 2}},
+		{name: "lookup-first", splits: [][3]int64{{0, 1, 2}}, shards: []int64{1, 2}, lookupFirst: true},
+		{name: "split-twice", splits: [][3]int64{{0, 1, 2}, {1, 3, 4}}, shards: []int64{2, 3, 4}, lookupFirst: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testSessionsFollowSplit(t, test)
+		})
+	}
+}
+
+func testSessionsFollowSplit(t *testing.T, test followSplitTest) {
+	t.Helper()
+	server := &sessionRequestsServer{heartbeats: make(chan shardSession, 100)}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcServer := grpc.NewServer()
+	proto.RegisterOxiaClientServer(grpcServer, server)
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	options, err := newClientOptions(listener.Addr().String())
+	require.NoError(t, err)
+	splittable := newSplittableShardManager(options.serviceAddress)
+	var shardManager internal.ShardManager = splittable
+	if test.lookupFirst {
+		shardManager = unnotifiedShardManager{splittable}
+	}
+	rpcProvider := internal.NewRpcProvider(t.Context(), options.namespace, nil, nil, options.serviceAddress,
+		func() internal.ShardManager { return shardManager })
+	defer func() {
+		assert.NoError(t, rpcProvider.Close())
+	}()
+
+	s := newSessions(t.Context(), shardManager, rpcProvider, options)
+	sessionOn := func(shardId int64) int64 {
+		var sessionId int64
+		s.executeWithSessionId(func() int64 { return shardId }, func(_ int64, id int64, err error) {
+			require.NoError(t, err)
+			sessionId = id
+		})
+		return sessionId
+	}
+	sessionId := sessionOn(0)
+
+	for _, split := range test.splits {
+		splittable.split(split[0], split[1], split[2])
+	}
+	if test.lookupFirst {
+		assert.Equal(t, sessionId, sessionOn(test.shards[len(test.shards)-1]))
+	}
+
+	missing := map[shardSession]bool{}
+	var inherited []shardSession
+	for _, shard := range test.shards {
+		missing[shardSession{shard, sessionId}] = true
+		inherited = append(inherited, shardSession{shard, sessionId})
+	}
+	timeout := time.After(10 * time.Second)
+	for len(missing) > 0 {
+		select {
+		case heartbeat := <-server.heartbeats:
+			delete(missing, heartbeat)
+		case <-timeout:
+			require.FailNow(t, "the session is not kept alive on the shards that replaced its shard",
+				"missing heartbeats: %v", missing)
+		}
+	}
+	for _, shard := range test.shards {
+		assert.Equal(t, sessionId, sessionOn(shard))
+	}
+
+	require.NoError(t, s.Close())
+	server.Lock()
+	defer server.Unlock()
+	assert.Equal(t, []int64{0}, server.created)
+	assert.ElementsMatch(t, inherited, server.closed)
 }
