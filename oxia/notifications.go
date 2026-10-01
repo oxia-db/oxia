@@ -233,11 +233,13 @@ func (snm *shardNotificationsManager) getNotifications() error {
 			return io.EOF
 		}
 
-		snm.log.Debug(
-			"Received batch notification",
-			slog.Int64("offset", nb.Offset),
-			slog.Int("count", len(nb.Notifications)),
-		)
+		if snm.log.Enabled(snm.ctx, slog.LevelDebug) {
+			snm.log.Debug(
+				"Received batch notification",
+				slog.Int64("offset", nb.Offset),
+				slog.Int("count", len(nb.Notifications)),
+			)
+		}
 
 		// The stream gets created even when the server rejects the subscription:
 		// the rejection is only reported by the first Recv(). The server confirms

@@ -31,6 +31,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -41,6 +42,8 @@ import (
 	coordrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/mockutils"
 
 	"github.com/oxia-db/oxia/common/concurrent"
@@ -2389,8 +2392,8 @@ func TestController_ElectionPinsFeaturesDiscoveredAfterElection(t *testing.T) {
 // Discovering the features of a member only starts a new election if the
 // whole ensemble then supports more features than the term pinned. The first
 // handshake of a data server outside of the ensemble doesn't either, even if
-// the ensemble supports more features by then: e.g. after a rolling upgrade,
-// the new features are only enabled by the next election.
+// the ensemble supports more features by then: the members report their own
+// features when they change.
 func TestController_FeaturesDiscoveredWithoutNewFeaturesKeepsTerm(t *testing.T) {
 	var shard int64 = 5
 	rpc := mockutils.NewRpcProvider()
@@ -2434,7 +2437,8 @@ func TestController_FeaturesDiscoveredWithoutNewFeaturesKeepsTerm(t *testing.T) 
 	sc.FeaturesDiscovered(s3)
 	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
 
-	// s3 is upgraded, then s4 completes its first handshake
+	// s3 is upgraded, and s4 completes its first handshake before s3's
+	// handshake reports its new features
 	supplier.set(s3, proto.Feature_FEATURE_DB_CHECKSUM)
 	supplier.set(s4, proto.Feature_FEATURE_DB_CHECKSUM)
 	sc.FeaturesDiscovered(s4)
@@ -2496,8 +2500,8 @@ func TestController_FeaturesDiscoveredAlreadyPinnedKeepsTerm(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
-// The features of a data server are discovered only once, so the shard
-// controller must not lose the notification while it is busy with an
+// The features of a data server are reported only when they change, so the
+// shard controller must not lose the notification while it is busy with an
 // election, however many data servers complete their first handshake in the
 // meantime (e.g. all of them at coordinator startup).
 func TestController_FeaturesDiscoveredDuringElectionAreNotDropped(t *testing.T) {
@@ -2559,6 +2563,331 @@ func TestController_FeaturesDiscoveredDuringElectionAreNotDropped(t *testing.T) 
 	assert.Eventually(t, func() bool {
 		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState &&
 			shardTerm(metadata, constant.DefaultNamespace, shard) == 3
+	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, sc.Close())
+}
+
+// dataServerEventsRelay relays the events of the data server controllers to
+// the shard controller, as the coordinator runtime does.
+type dataServerEventsRelay struct {
+	sync.RWMutex
+	listener controllerapi.DataServerEventListener
+}
+
+func (r *dataServerEventsRelay) set(listener controllerapi.DataServerEventListener) {
+	r.Lock()
+	defer r.Unlock()
+	r.listener = listener
+}
+
+func (r *dataServerEventsRelay) BecameUnavailable(dataServer *proto.DataServerIdentity) {
+	r.RLock()
+	defer r.RUnlock()
+	if r.listener != nil {
+		r.listener.BecameUnavailable(dataServer)
+	}
+}
+
+func (r *dataServerEventsRelay) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
+	r.RLock()
+	defer r.RUnlock()
+	if r.listener != nil {
+		r.listener.FeaturesDiscovered(dataServer)
+	}
+}
+
+// A rolling upgrade restarts the followers first and the leader last, with a
+// binary that supports a new feature. The restarts of the followers don't
+// replace the leader, and the election that replaces the leader runs while it
+// is down, with the features of its previous binary. Once the leader is back
+// and the whole ensemble supports the new feature, a new term must pin it.
+// The data server controllers report the features, as in the coordinator.
+func TestController_RollingUpgradePinsNewFeatures(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	ensemble := []*proto.DataServerIdentity{s1, s2, s3}
+
+	previous := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
+
+	relay := &dataServerEventsRelay{}
+	dataServers := make(map[string]dataservercontroller.Controller, len(ensemble))
+	for _, dataServer := range ensemble {
+		rpc.GetNode(dataServer).SetNodeFeatures(previous)
+		dataServers[dataServer.GetNameOrDefault()] = dataservercontroller.NewController(context.Background(),
+			&proto.DataServer{Identity: dataServer}, mockutils.NewShardAssignmentsProvider(), relay, rpc, "test-instance")
+	}
+	defer func() {
+		for _, dataServer := range dataServers {
+			assert.NoError(t, dataServer.Close())
+		}
+	}()
+	// The health watch of a data server controller discards a report as
+	// stale if its ping loop changed the status while the watch waited for
+	// it: the data server reports its health until the controller acts on it.
+	setHealth := func(dataServer *proto.DataServerIdentity, health grpc_health_v1.HealthCheckResponse_ServingStatus,
+		status dataservercontroller.Status) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			rpc.GetNode(dataServer).HealthClient.SetStatus(health)
+			return dataServers[dataServer.GetNameOrDefault()].Status() == status
+		}, 10*time.Second, 100*time.Millisecond)
+	}
+	for _, dataServer := range ensemble {
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, dataservercontroller.Running)
+	}
+	supply := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
+		features := make(map[string][]proto.Feature, len(servers))
+		for _, server := range servers {
+			features[server.GetNameOrDefault()] = dataServers[server.GetNameOrDefault()].SupportedFeatures()
+		}
+		return features
+	}
+	stop := func(dataServer *proto.DataServerIdentity) {
+		t.Helper()
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, dataservercontroller.NotRunning)
+	}
+	startUpgraded := func(dataServer *proto.DataServerIdentity) {
+		t.Helper()
+		rpc.GetNode(dataServer).SetNodeFeatures(upgraded)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, dataservercontroller.Running)
+	}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	steadyInTerm := func(term int64) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState &&
+				shardTerm(metadata, constant.DefaultNamespace, shard) == term
+		}, 10*time.Second, 100*time.Millisecond)
+	}
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: ensemble,
+	}, supply, rpc, DefaultPeriodicTasksInterval)
+	defer func() {
+		assert.NoError(t, sc.Close())
+	}()
+	relay.set(sc)
+
+	for _, dataServer := range ensemble {
+		rpc.GetNode(dataServer).ExpectNewTermRequestWithFeatures(t, shard, 2, previous)
+	}
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 2, 3, previous)
+	steadyInTerm(2)
+
+	// The followers restart first, while the leader runs the previous binary
+	stop(s2)
+	startUpgraded(s2)
+	stop(s3)
+	startUpgraded(s3)
+	rpc.GetNode(s2).ExpectNoMoreNewTermRequest(t)
+
+	// The leader restarts last: the election that replaces it can only
+	// negotiate the features of its previous binary
+	rpc.GetNode(s1).NewTermResponse(0, 0, errors.New("data server is down"))
+	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(2, -1, nil)
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+	stop(s1)
+
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 3, previous)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 3, previous)
+	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFeatures(t, shard, 3, 3, previous)
+	steadyInTerm(3)
+
+	// s1 is left without responses from now on, so the retries of the term 3
+	// fence can't rejoin it
+	rpc.GetNode(s2).NewTermResponse(3, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(3, -1, nil)
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+	startUpgraded(s1)
+
+	rpc.GetNode(s2).ExpectNewTermRequestWithFeatures(t, shard, 4, upgraded)
+	rpc.GetNode(s3).ExpectNewTermRequestWithFeatures(t, shard, 4, upgraded)
+	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFeatures(t, shard, 4, 3, upgraded)
+	steadyInTerm(4)
+}
+
+// newRestartedTestController creates the shard controller of a restarted
+// coordinator, which keeps the leader of a shard in steady state after
+// verifying the ensemble, without negotiating the features of its term.
+func newRestartedTestController(t *testing.T, metadata coordmetadata.Metadata, shard int64,
+	ensemble []*proto.DataServerIdentity, supplier *testFeaturesSupplier, rpc *mockutils.RpcProvider,
+	periodicTasksInterval time.Duration) Controller {
+	t.Helper()
+
+	for i, dataServer := range ensemble {
+		status := proto.ServingStatus_FOLLOWER
+		if i == 0 {
+			status = proto.ServingStatus_LEADER
+		}
+		rpc.GetNode(dataServer).GetStatusResponse(3, status, 10, 10)
+	}
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     3,
+		Leader:   ensemble[0],
+		Ensemble: ensemble,
+	}, supplier.supply, rpc, periodicTasksInterval)
+	for _, dataServer := range ensemble {
+		rpc.GetNode(dataServer).ExpectGetStatusRequest(t, shard)
+	}
+	return sc
+}
+
+// The features of the members can change while the coordinator is down, e.g.
+// in a rolling upgrade. The restarted coordinator keeps the leader of the
+// shard, whose term it didn't negotiate: once the first handshakes make the
+// features of the whole ensemble known, the leader reports the ones pinned by
+// its term, and a new term must pin the ones that the ensemble supports.
+func TestController_PinsFeaturesOfEnsembleUpgradedWhileCoordinatorDown(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	ensemble := []*proto.DataServerIdentity{s1, s2, s3}
+
+	previous := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
+
+	// The features are unknown until the first handshakes
+	supplier := newTestFeaturesSupplier()
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newRestartedTestController(t, metadata, shard, ensemble, supplier, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).GetStatusResponseWithTermFeatures(3, proto.ServingStatus_LEADER, 10, 10, previous)
+	rpc.GetNode(s1).NewTermResponse(3, 10, nil)
+	rpc.GetNode(s2).NewTermResponse(3, 9, nil)
+	rpc.GetNode(s3).NewTermResponse(3, 9, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	for _, dataServer := range ensemble {
+		supplier.set(dataServer, upgraded...)
+		sc.FeaturesDiscovered(dataServer)
+	}
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	for _, dataServer := range ensemble {
+		rpc.GetNode(dataServer).ExpectNewTermRequestWithFeatures(t, shard, 4, upgraded)
+	}
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 4, 3, upgraded)
+
+	assert.Eventually(t, func() bool {
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState &&
+			shardTerm(metadata, constant.DefaultNamespace, shard) == 4
+	}, 10*time.Second, 100*time.Millisecond)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+
+	assert.NoError(t, sc.Close())
+}
+
+// After a restart of the coordinator, the first handshakes of the members
+// don't start a new election when the term of the leader pins the features
+// that the ensemble supports already, or when the leader runs a binary that
+// predates the report of the features pinned by its term: the election that
+// replaces it when it restarts with a newer binary negotiates them.
+func TestController_FeaturesDiscoveredAfterRestartKeepsTerm(t *testing.T) {
+	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
+
+	for _, tt := range []struct {
+		name         string
+		leaderStatus func(leader *mockutils.PerNodeChannels)
+	}{{
+		name: "term pins the features",
+		leaderStatus: func(leader *mockutils.PerNodeChannels) {
+			leader.GetStatusResponseWithTermFeatures(3, proto.ServingStatus_LEADER, 10, 10, upgraded)
+		},
+	}, {
+		name: "leader predates the report",
+		leaderStatus: func(leader *mockutils.PerNodeChannels) {
+			leader.GetStatusResponse(3, proto.ServingStatus_LEADER, 10, 10)
+		},
+	}} {
+		t.Run(tt.name, func(t *testing.T) {
+			var shard int64 = 5
+			rpc := mockutils.NewRpcProvider()
+
+			s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+			s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+			s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+			ensemble := []*proto.DataServerIdentity{s1, s2, s3}
+
+			supplier := newTestFeaturesSupplier()
+			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+			sc := newRestartedTestController(t, metadata, shard, ensemble, supplier, rpc, DefaultPeriodicTasksInterval)
+
+			tt.leaderStatus(rpc.GetNode(s1))
+			for _, dataServer := range ensemble {
+				supplier.set(dataServer, upgraded...)
+				sc.FeaturesDiscovered(dataServer)
+			}
+
+			rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+			rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+			assert.EqualValues(t, 3, shardTerm(metadata, constant.DefaultNamespace, shard))
+
+			assert.NoError(t, sc.Close())
+		})
+	}
+}
+
+// The periodic tasks retry the check of the features pinned by the term when
+// it can't complete, e.g. because the leader couldn't report them for a
+// moment.
+func TestController_RetriesTermFeaturesCheck(t *testing.T) {
+	var shard int64 = 5
+	rpc := mockutils.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	ensemble := []*proto.DataServerIdentity{s1, s2, s3}
+
+	previous := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
+
+	supplier := newTestFeaturesSupplier()
+	supplier.set(s1, upgraded...)
+	supplier.set(s2, upgraded...)
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newRestartedTestController(t, metadata, shard, ensemble, supplier, rpc, 200*time.Millisecond)
+
+	rpc.GetNode(s1).EnqueueGetStatusError(errors.New("leader unreachable"))
+	rpc.GetNode(s1).GetStatusResponseWithTermFeatures(3, proto.ServingStatus_LEADER, 10, 10, previous)
+	rpc.GetNode(s1).NewTermResponse(3, 10, nil)
+	rpc.GetNode(s2).NewTermResponse(3, 9, nil)
+	rpc.GetNode(s3).NewTermResponse(3, 9, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	// The last member completes its first handshake
+	supplier.set(s3, upgraded...)
+	sc.FeaturesDiscovered(s3)
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	for _, dataServer := range ensemble {
+		rpc.GetNode(dataServer).ExpectNewTermRequestWithFeatures(t, shard, 4, upgraded)
+	}
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFeatures(t, shard, 4, 3, upgraded)
+
+	assert.Eventually(t, func() bool {
+		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState &&
+			shardTerm(metadata, constant.DefaultNamespace, shard) == 4
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assert.NoError(t, sc.Close())

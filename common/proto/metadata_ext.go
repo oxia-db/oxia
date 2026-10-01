@@ -151,6 +151,16 @@ func ParseKeySortingType(value string) (KeySortingType, error) {
 	}
 }
 
+// ToKeySorting returns the order of the keys in the shards of a namespace with
+// this key sorting, as the clients are told. The data servers keep the keys in
+// hierarchical order when the key sorting is not set.
+func (t KeySortingType) ToKeySorting() KeySorting {
+	if t == KeySortingType_NATURAL {
+		return KeySorting_KEY_SORTING_NATURAL
+	}
+	return KeySorting_KEY_SORTING_HIERARCHICAL
+}
+
 func ParseAntiAffinityMode(value string) string {
 	switch strings.ToLower(value) {
 	case AntiAffinityModeStrict:

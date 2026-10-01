@@ -52,7 +52,15 @@ func NewWalFactory(options *FactoryOptions) Factory {
 }
 
 func (f *walFactory) NewWal(namespace string, shard int64, commitOffsetProvider CommitOffsetProvider) (Wal, error) {
-	impl, err := newWal(namespace, shard, f.options, commitOffsetProvider, time2.SystemClock, DefaultCheckInterval)
+	clock := f.options.Clock
+	if clock == nil {
+		clock = time2.SystemClock
+	}
+	trimmerCheckInterval := f.options.TrimmerCheckInterval
+	if trimmerCheckInterval == 0 {
+		trimmerCheckInterval = DefaultCheckInterval
+	}
+	impl, err := newWal(namespace, shard, f.options, commitOffsetProvider, clock, trimmerCheckInterval)
 	return impl, err
 }
 

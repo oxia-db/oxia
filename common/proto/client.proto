@@ -145,6 +145,11 @@ message NamespaceShardsAssignment {
   // Indicates the mechanism by which the keys are assigned to the individual
   // shards.
   ShardKeyRouter shard_key_router = 2;
+
+  // The order of the keys in every shard of the namespace. Clients merge the
+  // results of a read sent to several shards (e.g. a floor get or a range scan
+  // without a partition key) in this order. Older servers leave it unset.
+  KeySorting key_sorting = 3;
 }
 
 /**
@@ -167,6 +172,21 @@ enum ShardKeyRouter {
   UNKNOWN = 0;
 
   XXHASH3 = 1;
+}
+
+/**
+ * The order of the keys in the shards of a namespace. See
+ * https://oxia-db.github.io/docs/features/oxia-key-sorting
+ */
+enum KeySorting {
+  KEY_SORTING_UNKNOWN = 0;
+
+  // The keys are sorted by their bytes
+  KEY_SORTING_NATURAL = 1;
+
+  // The keys with fewer '/' sort first. The keys with the same number of '/'
+  // are sorted by their bytes, with '/' sorting after any other byte
+  KEY_SORTING_HIERARCHICAL = 2;
 }
 
 /**
@@ -269,7 +289,9 @@ message PutRequest {
   optional string partition_key = 6;
 
   // If one or more sequence key are specified. The key will get added suffixes
-  // based on adding the delta to the current highest key with the same prefix
+  // based on adding the delta to the current highest key with the same prefix.
+  // When the highest key has more suffixes than the deltas, the missing deltas
+  // are 0 on the shards with FEATURE_SEQUENCE_KEY_VALIDATION.
   repeated uint64 sequence_key_delta = 7;
 
   repeated SecondaryIndex secondary_indexes = 8;
@@ -378,7 +400,11 @@ message GetResponse {
 message DeleteRangeRequest {
   // The start of the range, inclusive
   string start_inclusive = 1;
-  // The end of the range, exclusive
+  // The end of the range, exclusive. On the shards with
+  // FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS, an empty end covers all the keys
+  // after the start, up to the internal keys, which are not deleted, and a
+  // range that covers both regular keys and internal keys gets the
+  // INVALID_ARGUMENT status.
   string end_exclusive = 2;
 
   // The position of this request among all the requests of the

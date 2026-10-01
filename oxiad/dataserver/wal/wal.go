@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
+	time2 "github.com/oxia-db/oxia/common/time"
 )
 
 var (
@@ -40,6 +41,12 @@ type FactoryOptions struct {
 	Retention   time.Duration
 	SegmentSize int32
 	SyncData    bool
+
+	// The trimming checks the retention against Clock, every
+	// TrimmerCheckInterval: the system clock and DefaultCheckInterval when not
+	// set
+	Clock                time2.Clock
+	TrimmerCheckInterval time.Duration
 }
 
 var DefaultFactoryOptions = &FactoryOptions{

@@ -87,11 +87,19 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 }
 
 type testFeatureChecker struct {
-	secondaryIndexNameValidation bool
+	secondaryIndexNameValidation   bool
+	ephemeralCleanupNaturalSorting bool
 }
 
 func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
-	return f.secondaryIndexNameValidation && candidate == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+	switch candidate {
+	case proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION:
+		return f.secondaryIndexNameValidation
+	case proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING:
+		return f.ephemeralCleanupNaturalSorting
+	default:
+		return false
+	}
 }
 
 var _ feature.Checker = testFeatureChecker{}
@@ -769,6 +777,85 @@ func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
+}
+
+// The ephemeral records deleted when their session ends must take their
+// secondary index entries with them. Until the feature is enabled, the session
+// end must be applied as by the servers that don't support it, which leave the
+// entries behind: otherwise the replicas of a mixed ensemble would diverge.
+func TestSecondaryIndices_SessionEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		features         []proto.Feature
+		expectedMyIdx    []string
+		expectedOtherIdx []string
+	}{{
+		name:          "feature enabled",
+		features:      []proto.Feature{proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP},
+		expectedMyIdx: []string{"/persistent"},
+	}, {
+		name:             "feature disabled",
+		expectedMyIdx:    []string{"/ephemeral", "/persistent"},
+		expectedOtherIdx: []string{"/ephemeral"},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var shard int64 = 1
+
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+				FeaturesSupported: tc.features,
+			})
+			assert.NoError(t, err)
+			sm := lc.(*leaderController).sessionManager
+
+			createResp, err := sm.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 5000})
+			assert.NoError(t, err)
+			sessionId := createResp.SessionId
+
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+				Shard: &shard,
+				Puts: []*proto.PutRequest{
+					{Key: "/ephemeral", Value: []byte("0"), SessionId: &sessionId, SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "my-idx", SecondaryKey: "0"},
+						{IndexName: "other-idx", SecondaryKey: "0"},
+					}},
+					{Key: "/persistent", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "my-idx", SecondaryKey: "1"},
+					}},
+				},
+			})
+			assert.NoError(t, err)
+
+			_, err = sm.CloseSession(&proto.CloseSessionRequest{Shard: shard, SessionId: sessionId})
+			assert.NoError(t, err)
+			assert.Empty(t, getData(t, lc.(*leaderController), "/ephemeral"))
+
+			listIndex := func(indexName string) []string {
+				keys, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+					Shard:              &shard,
+					StartInclusive:     "",
+					EndExclusive:       "\xff",
+					SecondaryIndexName: pb.String(indexName),
+				})
+				assert.NoError(t, err)
+				return keys
+			}
+			assert.Equal(t, tc.expectedMyIdx, listIndex("my-idx"))
+			assert.Equal(t, tc.expectedOtherIdx, listIndex("other-idx"))
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
 }
 
 func TestDoSecondaryGet_UnsupportedComparisonType(t *testing.T) {

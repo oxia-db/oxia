@@ -25,9 +25,11 @@ import (
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
@@ -53,6 +55,11 @@ type SplitController struct {
 	// supportedFeaturesSupplier reports the features supported by each data
 	// server, used to negotiate the feature set of the children's clean terms.
 	supportedFeaturesSupplier DataServerSupportedFeaturesSupplier
+
+	// requiredFeatures are, for each child, the features that an earlier
+	// attempt to re-elect it found already enabled on it, which the next
+	// attempts must pin (see checkChildFeatures)
+	requiredFeatures map[int64][]proto.Feature
 
 	// ctx ends with Close or with the split timeout, which bounds the phases
 	// that can still be aborted. finalizeCtx only ends with Close: Finalize is
@@ -105,6 +112,7 @@ func NewSplitController(cfg SplitControllerConfig) *SplitController {
 		eventListener:             cfg.EventListener,
 		ensembleSelector:          cfg.EnsembleSelector,
 		supportedFeaturesSupplier: supportedFeaturesSupplier,
+		requiredFeatures:          make(map[int64][]proto.Feature),
 		logger: slog.With(
 			slog.String("component", "shard-split-controller"),
 			slog.String("namespace", cfg.Namespace),
@@ -344,7 +352,7 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 	}
 
 	childTerm := parentTerm
-	headEntries, err := sc.fenceEnsemble(sc.ctx, childId, childTerm, childMeta.Ensemble, namespaceTermOptions(sc.metadata, sc.namespace))
+	headEntries, _, err := sc.fenceEnsemble(sc.ctx, childId, childTerm, childMeta.Ensemble, namespaceTermOptions(sc.metadata, sc.namespace))
 	if err != nil {
 		return errors.Wrapf(err, "failed to fence child shard %d", childId)
 	}
@@ -396,9 +404,15 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 	}
 	childLeader := childMeta.Leader
 
-	// The child leader applies the parent's replicated entries, so the parent
-	// leader must be able to validate it supports the shard's features.
-	childLeaderFeatures := sc.supportedFeaturesSupplier([]*proto.DataServerIdentity{childLeader})[childLeader.GetNameOrDefault()]
+	// The child inherits the features enabled on the parent. Past the point of
+	// no return, every member that takes part in its clean term must support
+	// them: the child stays without a leader otherwise, and the split can
+	// neither complete nor abort (see reelectChild). Report the features that
+	// the whole child ensemble supports, a member whose features are not known
+	// yet counting as supporting none, so that the parent leader refuses the
+	// child if they don't cover the features enabled on the parent: before the
+	// parent is frozen, the split can still be aborted.
+	childFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
 
 	_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
 		Namespace:    sc.namespace,
@@ -415,7 +429,7 @@ func (sc *SplitController) addChildObserver(childId int64, parentLeader *proto.D
 			MinHashInclusive: childMeta.GetInt32HashRange().GetMin(),
 			MaxHashInclusive: childMeta.GetInt32HashRange().GetMax(),
 		},
-		FollowerFeatures: &proto.FollowerFeatures{Supported: childLeaderFeatures},
+		FollowerFeatures: &proto.FollowerFeatures{Supported: childFeatures},
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to add child %d as observer on parent", childId)
@@ -730,7 +744,7 @@ func (sc *SplitController) runFinalize() error {
 	// term, on a retry, succeeds as well.
 	// Parent is being torn down (Deleting) after this fence, so its term
 	// options are irrelevant — pass nil.
-	if _, err := sc.fenceEnsemble(sc.finalizeCtx, sc.parentShardId, parentMeta.Term, parentMeta.Ensemble, nil); err != nil {
+	if _, _, err := sc.fenceEnsemble(sc.finalizeCtx, sc.parentShardId, parentMeta.Term, parentMeta.Ensemble, nil); err != nil {
 		return errors.Wrap(err, "failed to fence parent")
 	}
 
@@ -988,21 +1002,23 @@ func (sc *SplitController) updateShardsMetaIf(
 }
 
 // fenceEnsemble sends NewTerm to all ensemble members and returns the
-// head entry IDs for nodes that responded successfully. options carries the
-// namespace's term settings (notifications + key sorting) so a freshly fenced
-// child inherits them; pass nil when fencing a shard that is being torn down
-// (e.g. the parent during Finalize), where the settings are irrelevant.
+// head entry IDs for nodes that responded successfully, and the union of the
+// features that they report as already enabled in their database. options
+// carries the namespace's term settings (notifications + key sorting) so a
+// freshly fenced child inherits them; pass nil when fencing a shard that is
+// being torn down (e.g. the parent during Finalize), where the settings are
+// irrelevant.
 func (sc *SplitController) fenceEnsemble(
 	ctx context.Context,
 	shardId int64,
 	term int64,
 	ensemble []*proto.DataServerIdentity,
 	options *proto.NewTermOptions,
-) (map[*proto.DataServerIdentity]*proto.EntryId, error) {
+) (map[*proto.DataServerIdentity]*proto.EntryId, []proto.Feature, error) {
 	type fenceResult struct {
-		server *proto.DataServerIdentity
-		entry  *proto.EntryId
-		err    error
+		server   *proto.DataServerIdentity
+		response *proto.NewTermResponse
+		err      error
 	}
 
 	ch := make(chan fenceResult, len(ensemble))
@@ -1017,11 +1033,7 @@ func (sc *SplitController) fenceEnsemble(
 				Term:      term,
 				Options:   options,
 			})
-			var entry *proto.EntryId
-			if res != nil {
-				entry = res.HeadEntryId
-			}
-			ch <- fenceResult{server: pinnedServer, entry: entry, err: err}
+			ch <- fenceResult{server: pinnedServer, response: res, err: err}
 		})
 	}
 
@@ -1031,6 +1043,7 @@ func (sc *SplitController) fenceEnsemble(
 	}()
 
 	results := make(map[*proto.DataServerIdentity]*proto.EntryId)
+	var enabledFeatures []proto.Feature
 	var lastErr error
 	for r := range ch {
 		if r.err != nil {
@@ -1042,17 +1055,18 @@ func (sc *SplitController) fenceEnsemble(
 			lastErr = r.err
 			continue
 		}
-		results[r.server] = r.entry
+		results[r.server] = r.response.GetHeadEntryId()
+		enabledFeatures = unionFeatures(enabledFeatures, r.response.GetFeaturesEnabled())
 	}
 
 	// Require majority
 	majority := len(ensemble)/2 + 1
 	if len(results) < majority {
-		return nil, errors.Wrapf(lastErr, "failed to reach quorum for NewTerm on shard %d (got %d/%d)",
+		return nil, nil, errors.Wrapf(lastErr, "failed to reach quorum for NewTerm on shard %d (got %d/%d)",
 			shardId, len(results), len(ensemble))
 	}
 
-	return results, nil
+	return results, enabledFeatures, nil
 }
 
 // pickLeader chooses the server with the highest term/offset from the
@@ -1161,8 +1175,12 @@ func (sc *SplitController) reelectChild(ctx context.Context, childId int64) erro
 
 	// The child database inherited the parent's enabled features through the
 	// snapshot, so the clean term must carry a negotiated feature set that
-	// covers them: the child leader refuses to lead otherwise.
-	negotiatedFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
+	// covers them: the child leader refuses to lead otherwise. The features
+	// that an earlier attempt found already enabled on the child are pinned
+	// as well (see checkChildFeatures).
+	negotiatedFeatures := unionFeatures(
+		negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble)),
+		sc.requiredFeatures[childId])
 
 	// Record the new term before fencing with it, so that every attempt uses
 	// a higher term: if an attempt fails after the leader started leading in
@@ -1177,8 +1195,11 @@ func (sc *SplitController) reelectChild(ctx context.Context, childId int64) erro
 
 	termOptions := namespaceTermOptions(sc.metadata, sc.namespace)
 	termOptions.Features = negotiatedFeatures
-	headEntries, err := sc.fenceEnsemble(ctx, childId, newTerm, childMeta.Ensemble, termOptions)
+	headEntries, enabledFeatures, err := sc.fenceEnsemble(ctx, childId, newTerm, childMeta.Ensemble, termOptions)
 	if err != nil {
+		return err
+	}
+	if err = sc.checkChildFeatures(childId, negotiatedFeatures, enabledFeatures, headEntries); err != nil {
 		return err
 	}
 
@@ -1211,5 +1232,40 @@ func (sc *SplitController) reelectChild(ctx context.Context, childId int64) erro
 		slog.Int64("term", newTerm),
 	)
 
+	return nil
+}
+
+// checkChildFeatures validates the features pinned by the clean term of a
+// child once its ensemble is fenced, as Election.checkNegotiatedFeatures does
+// for a leader election. A member counts as not supporting any feature until
+// it completes its handshake with this coordinator, e.g. while it is down
+// after a coordinator restart, so the features negotiated over the ensemble
+// can miss the ones already enabled on the child.
+func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.Feature, enabled []proto.Feature,
+	fenced map[*proto.DataServerIdentity]*proto.EntryId) error {
+	// The pinned features, and the ones already enabled on the child, must be
+	// supported by every member that takes part in the term: an old data
+	// server accepts a term that pins features it doesn't support, and would
+	// apply the child's entries with different semantics. The child stays
+	// without a leader until the offending nodes are replaced.
+	participants := make([]*proto.DataServerIdentity, 0, len(fenced))
+	for dataServer := range fenced {
+		participants = append(participants, dataServer)
+	}
+	supported := negotiate(sc.supportedFeaturesSupplier(participants), len(participants))
+	if missing := feature.Missing(unionFeatures(negotiated, enabled), supported); len(missing) > 0 {
+		return errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"the ensemble of child shard %d does not support features %v already enabled on it", childId, missing)
+	}
+
+	// The members that did not take part are checked when they join the term,
+	// and a feature enabled on the child can never be disabled again: pin the
+	// enabled features even if those members' support is unknown, instead of
+	// failing every attempt until they are back.
+	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
+		sc.requiredFeatures[childId] = unionFeatures(sc.requiredFeatures[childId], enabled)
+		return fmt.Errorf("%w: features %v are already enabled on child shard %d",
+			ErrFeaturesRenegotiation, missing, childId)
+	}
 	return nil
 }

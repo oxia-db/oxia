@@ -807,6 +807,18 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Written ephemeral keys", slog.Int("count", numEphemeral))
 
+	// Ephemeral records written with a partition key are placed by it,
+	// whatever the hash of their keys, and their session shadow keys, which
+	// delete them with the session, must follow them.
+	partitionKey := "pk-7"
+	var partitionedEphemeralKeys []string
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s/ephemeral-%06d", partitionKey, i)
+		_, _, err := ephemeralClient.Put(ctx, key, []byte(key), oxia.Ephemeral(), oxia.PartitionKey(partitionKey))
+		require.NoError(t, err)
+		partitionedEphemeralKeys = append(partitionedEphemeralKeys, key)
+	}
+
 	// Perform split
 	cluster.splitAndWait(t)
 
@@ -825,6 +837,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 		}
 		assert.Equal(t, []byte(expectedValue), value, "value mismatch for %s", key)
 		assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+	}
+	for _, key := range partitionedEphemeralKeys {
+		_, _, version, err := ephemeralClient.Get(ctx, key, oxia.PartitionKey(partitionKey))
+		if assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
+			assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+		}
 	}
 	slog.Info("Ephemeral keys verified after split")
 
@@ -892,6 +910,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 				return false // still exists
 			}
 		}
+		for _, key := range partitionedEphemeralKeys {
+			_, _, _, err := readerClient.Get(ctx, key, oxia.PartitionKey(partitionKey))
+			if err == nil {
+				return false // still exists
+			}
+		}
 		return true
 	}, 90*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
@@ -945,6 +969,20 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 		require.NoError(t, err)
 	}
 	slog.Info("Written records with secondary indexes", slog.Int("count", len(records)))
+
+	// Records written with a partition key are placed by it, whatever the
+	// hash of their keys, and their index entries must follow them.
+	partitionKey := "pk-7"
+	var partitionedKeys []string
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s/rec-%06d", partitionKey, i)
+		_, _, err := client.Put(ctx, key, []byte(key),
+			oxia.PartitionKey(partitionKey),
+			oxia.SecondaryIndex("pk", partitionKey),
+		)
+		require.NoError(t, err)
+		partitionedKeys = append(partitionedKeys, key)
+	}
 
 	// Verify secondary indexes work before split (baseline)
 	alphaKeysBefore, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category"))
@@ -1012,6 +1050,23 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 		assert.Equal(t, expectedVal, rangeScanResults[key],
 			"range scan value mismatch for %s", key)
 	}
+
+	// ---- Verify the index of the records written with a partition key ----
+	// Queried in the child that holds the partition, the index must have an
+	// entry for every record, and each entry must resolve to its record.
+	partitionIndexKeys, err := client.List(ctx, partitionKey, partitionKey+"\xff",
+		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, partitionedKeys, partitionIndexKeys)
+
+	var partitionScanKeys []string
+	for res := range client.RangeScan(ctx, partitionKey, partitionKey+"\xff",
+		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey)) {
+		require.NoError(t, res.Err)
+		assert.Equal(t, res.Key, string(res.Value))
+		partitionScanKeys = append(partitionScanKeys, res.Key)
+	}
+	assert.ElementsMatch(t, partitionedKeys, partitionScanKeys)
 
 	// ---- Verify new writes with secondary indexes after split ----
 	for i := 60; i < 70; i++ {
@@ -1117,6 +1172,69 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			assert.NoError(t, coordinatorInstance.Close())
 
 			assert.NoError(t, s1.Close())
+		})
+	}
+}
+
+// A range scan without a partition key goes to every shard, and the client
+// merges the records of the shards in the key sorting of the namespace, which
+// the coordinator sends through the data servers with the shard assignments.
+func TestCoordinator_MultiShardKeySorting(t *testing.T) {
+	keys := []string{"b", "a/y/z", "ab/y", "a0", "a/x"}
+	for _, test := range []struct {
+		keySorting string
+		expected   []string
+	}{
+		// Natural sorting compares the bytes: '/' sorts before '0'
+		{"natural", []string{"a/x", "a/y/z", "a0", "ab/y", "b"}},
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte
+		{"hierarchical", []string{"a0", "b", "ab/y", "a/x", "a/y/z"}},
+	} {
+		t.Run(test.keySorting, func(t *testing.T) {
+			s1, sa1 := newServer(t)
+			defer s1.Close()
+
+			metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+			configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+			_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+				Value: newClusterConfig([]*proto.Namespace{{
+					Name:              constant.DefaultNamespace,
+					ReplicationFactor: 1,
+					InitialShardCount: 4,
+					KeySorting:        test.keySorting,
+				}}, []*proto.DataServerIdentity{sa1}),
+				Version: metadatacommon.NotExists,
+			})
+			require.NoError(t, err)
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+			defer coordinatorInstance.Close()
+
+			require.Eventually(t, func() bool {
+				shards := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces[constant.DefaultNamespace].Shards
+				for _, shard := range shards {
+					if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+						return false
+					}
+				}
+				return len(shards) == 4
+			}, 10*time.Second, 10*time.Millisecond)
+
+			client, err := oxia.NewSyncClient(sa1.Public, oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "", "") {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, test.expected, scanned)
 		})
 	}
 }

@@ -17,6 +17,7 @@ package kvstore
 import (
 	"bytes"
 	"cmp"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/vfs"
@@ -628,6 +630,54 @@ func TestPebbbleRangeScanInBatch(t *testing.T) {
 
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
+}
+
+// A batch scan of an inverted range is empty, and an upper bound encoded to an
+// empty key leaves the range open, whatever the data pointer of the "".
+func TestPebbleBatchRangeScanBounds(t *testing.T) {
+	// The "" of a decoded request has no data pointer, while a "" literal may
+	// have one, e.g. in a composite literal the compiler lays out statically
+	emptyWithoutData := unsafe.String(nil, 0)
+	require.Nil(t, unsafe.StringData(emptyWithoutData))
+	emptyWithData := unsafe.String(new(byte), 0)
+	require.NotNil(t, unsafe.StringData(emptyWithData))
+
+	for _, test := range []struct {
+		name         string
+		keySorting   proto.KeySortingType
+		lower, upper string
+		expected     []string
+	}{
+		{"natural inverted", proto.KeySortingType_NATURAL, "c", "a", nil},
+		{"hierarchical inverted", proto.KeySortingType_HIERARCHICAL, "c", "a", nil},
+		// "/a/b" has more separators, so it sorts after "/b"
+		{"hierarchical inverted levels", proto.KeySortingType_HIERARCHICAL, "/a/b", "/b", nil},
+		{"natural empty end", proto.KeySortingType_NATURAL, "b", emptyWithoutData, []string{"b", "c"}},
+		{"natural empty end with data", proto.KeySortingType_NATURAL, "b", emptyWithData, []string{"b", "c"}},
+		// The empty key sorts first with the hierarchical encoder
+		{"hierarchical empty end", proto.KeySortingType_HIERARCHICAL, "b", emptyWithoutData, nil},
+		{"hierarchical empty end with data", proto.KeySortingType_HIERARCHICAL, "b", emptyWithData, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, test.keySorting)
+			require.NoError(t, err)
+
+			wb := kv.NewWriteBatch()
+			for _, key := range []string{"a", "b", "c", "/a/b", "/b"} {
+				require.NoError(t, wb.Put(key, []byte(key)))
+			}
+
+			it, err := wb.KeyRangeScan(test.lower, test.upper)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, toList(it))
+
+			assert.NoError(t, wb.Close())
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
 }
 
 func TestPebbbleDeleteRangeInBatch(t *testing.T) {
@@ -1336,6 +1386,93 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// Nothing sorts below the empty key: its floor is "" itself when it exists, and
+// its lower is never found.
+func TestPebbleGetEmptyKey(t *testing.T) {
+	const notFound = "<not found>"
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, keySorting)
+			require.NoError(t, err)
+
+			lookup := func(comparison ComparisonType) string {
+				key, err := getKey(t, kv, "", comparison, NoInternalKeys)
+				if errors.Is(err, ErrKeyNotFound) {
+					return notFound
+				}
+				assert.NoError(t, err)
+				return key
+			}
+
+			putAll(t, kv, "a", "b", "c")
+			assert.Equal(t, notFound, lookup(ComparisonFloor))
+			assert.Equal(t, notFound, lookup(ComparisonLower))
+			assert.Equal(t, "a", lookup(ComparisonCeiling))
+			assert.Equal(t, "a", lookup(ComparisonHigher))
+
+			putAll(t, kv, "")
+			assert.Equal(t, "", lookup(ComparisonFloor))
+			assert.Equal(t, notFound, lookup(ComparisonLower))
+			assert.Equal(t, "", lookup(ComparisonCeiling))
+			assert.Equal(t, "a", lookup(ComparisonHigher))
+
+			assert.NoError(t, kv.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// The natural encoder encodes "" to an empty slice, which is nil when the "" has
+// no data pointer, as when it is decoded from a request, and may not be nil
+// otherwise. The lookups must take both for the empty key.
+func TestPebbleGetEmptyEncodedKey(t *testing.T) {
+	const notFound = "<not found>"
+
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	p := kv.(*Pebble)
+
+	lookups := map[ComparisonType]func([]byte, IteratorOpts) (string, []byte, io.Closer, error){
+		ComparisonFloor:   p.getFloor,
+		ComparisonLower:   p.getLower,
+		ComparisonCeiling: p.getCeiling,
+		ComparisonHigher:  p.getHigher,
+	}
+	lookup := func(key []byte, comparison ComparisonType) string {
+		found, _, closer, err := lookups[comparison](key, NoInternalKeys)
+		if errors.Is(err, pebble.ErrNotFound) {
+			return notFound
+		}
+		require.NoError(t, err)
+		assert.NoError(t, closer.Close())
+		return found
+	}
+
+	putAll(t, kv, "a", "b", "c")
+	for _, key := range [][]byte{nil, {}} {
+		assert.Equal(t, notFound, lookup(key, ComparisonFloor))
+		assert.Equal(t, notFound, lookup(key, ComparisonLower))
+		assert.Equal(t, "a", lookup(key, ComparisonCeiling))
+		assert.Equal(t, "a", lookup(key, ComparisonHigher))
+	}
+
+	putAll(t, kv, "")
+	for _, key := range [][]byte{nil, {}} {
+		assert.Equal(t, "", lookup(key, ComparisonFloor))
+		assert.Equal(t, notFound, lookup(key, ComparisonLower))
+		assert.Equal(t, "", lookup(key, ComparisonCeiling))
+		assert.Equal(t, "a", lookup(key, ComparisonHigher))
+	}
+
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestPebbleFindLowerInBatch(t *testing.T) {
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -1373,6 +1510,64 @@ func TestPebbleFindLowerInBatch(t *testing.T) {
 
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
+}
+
+func TestPebbleGetAndFindLowerReadFailure(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer factory.Close()
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	defer kv.Close()
+
+	// "b" goes into an sstable that stays readable, "c" and "d" into one made
+	// unreadable below. They don't overlap, so they are in the same level, and a
+	// lookup only opens the second one when it reaches its keys.
+	for _, keys := range [][]string{{"b"}, {"c", "d"}} {
+		wb := kv.NewWriteBatch()
+		for _, key := range keys {
+			require.NoError(t, wb.Put(key, []byte(key)))
+		}
+		require.NoError(t, wb.Commit())
+		require.NoError(t, wb.Close())
+		require.NoError(t, kv.Flush())
+	}
+
+	// Make the second sstable unreadable, so that reading it fails with an I/O
+	// error. Pebble doesn't open a table it just flushed: the reads below are the
+	// first to open it. A corrupted block wouldn't do: Pebble reports corruptions
+	// through the logger's Fatalf, which exits the process.
+	ssts, err := filepath.Glob(filepath.Join(kv.(*Pebble).dbPath, "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 2)
+	require.NoError(t, os.Chmod(ssts[1], 0))
+	t.Cleanup(func() { _ = os.Chmod(ssts[1], 0600) })
+	if f, err := os.Open(ssts[1]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	for _, c := range []struct {
+		comparisonType ComparisonType
+		key            string
+	}{
+		// "e" is past both sstables: the exact lookup of FLOOR reads neither
+		{ComparisonFloor, "e"},
+		{ComparisonCeiling, "c"},
+		{ComparisonLower, "e"},
+		{ComparisonHigher, "c"},
+		// Lands on "b" in the readable sstable, then fails to step to "c"
+		{ComparisonHigher, "b"},
+	} {
+		_, _, _, err := kv.Get(c.key, c.comparisonType, NoInternalKeys)
+		assert.ErrorIs(t, err, os.ErrPermission, "comparison type %d, key %q", c.comparisonType, c.key)
+	}
+
+	wb := kv.NewWriteBatch()
+	defer wb.Close()
+	_, err = wb.FindLower("e")
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.NotErrorIs(t, err, ErrKeyNotFound)
 }
 
 func toList(it KeyIterator) []string {

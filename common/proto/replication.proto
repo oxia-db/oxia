@@ -64,6 +64,25 @@ enum Feature {
   FEATURE_SECONDARY_INDEX_NAME_VALIDATION = 2;
   // Apply the requests of a WriteRequest in op_index order
   FEATURE_ORDERED_WRITES = 3;
+  // Delete the secondary index entries of the ephemeral records deleted when
+  // their session ends
+  FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP = 4;
+  // Continue the sequence of a sequential put on a prefix only from a key
+  // that starts with "<prefix>-", not from any key that starts with the prefix
+  FEATURE_SEQUENCE_LAST_KEY_SEPARATOR = 5;
+  // When a session ends, delete all its ephemeral records with the natural
+  // key sorting too
+  FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 6;
+  // A delete range covers either regular keys or internal keys: one without an
+  // end stops before the internal keys, and one that covers both gets the
+  // INVALID_ARGUMENT status. One over the internal keys deletes the
+  // notification records, which are not storage entries, instead of rejecting
+  // the write request
+  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 7;
+  // Sequential puts: a part of the sequence without a delta keeps its value,
+  // and an invalid put, e.g. overflowing the sequence, gets the
+  // INVALID_ARGUMENT status instead of rejecting the whole write request
+  FEATURE_SEQUENCE_KEY_VALIDATION = 8;
 }
 
 message GetInfoRequest {
@@ -291,6 +310,15 @@ message GetStatusResponse {
   int64 commit_offset = 4;
 
   ShardStats shard_stats = 5;
+
+  // The features pinned by the term of the node. Only the leader reports
+  // them: absent on the followers, and on the data servers that predate the
+  // report.
+  TermFeatures term_features = 6;
+}
+
+message TermFeatures {
+  repeated Feature features = 1;
 }
 
 message ShardStats {

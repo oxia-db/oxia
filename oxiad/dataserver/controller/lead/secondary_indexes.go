@@ -41,14 +41,14 @@ func (wrapperUpdateCallback) ValidatePut(req *proto.PutRequest, features feature
 	return secondaryIndexesUpdateCallback.ValidatePut(req, features)
 }
 
-func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry) error {
+func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *database.Notifications, key string, value *proto.StorageEntry, features feature.Checker) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(batch, notifications, key, value, features); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value)
+	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value, features)
 }
 
 func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *database.Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error) {
@@ -62,14 +62,14 @@ func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *data
 	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se)
 }
 
-func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string) error {
+func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string, features feature.Checker) error {
 	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key); err != nil {
+	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key, features); err != nil {
 		return err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key)
+	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key, features)
 }
 
 var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUpdateCallback{}
@@ -103,7 +103,7 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *databa
 	return proto.Status_OK, writeSecondaryIndexes(batch, request.Key, request.SecondaryIndexes)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string) error {
+func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string, _ feature.Checker) error {
 	se, err := database.GetStorageEntryMetadata(batch, key)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
@@ -115,7 +115,7 @@ func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *dat
 	return deleteSecondaryIndexes(batch, key, se)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry) error {
+func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry, _ feature.Checker) error {
 	return deleteSecondaryIndexes(batch, key, value)
 }
 
@@ -246,6 +246,10 @@ func (it *secondaryIndexListIterator) Next() bool {
 	return it.stopAtEnd()
 }
 
+func (it *secondaryIndexListIterator) Error() error {
+	return it.it.Error()
+}
+
 func (it *secondaryIndexListIterator) Close() error {
 	return it.it.Close()
 }
@@ -348,7 +352,9 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
 
-		if req.ComparisonType == proto.KeyComparisonType_FLOOR && !it.Valid() {
+		// A failed read is left to the check after the walk: seeking again
+		// would clear the error
+		if req.ComparisonType == proto.KeyComparisonType_FLOOR && it.Error() == nil && !it.Valid() {
 			// There is no entry of this index at or after the search key: the
 			// floor candidate, if any, is the last index entry before it.
 			it.SeekLT(searchKey)
@@ -404,6 +410,11 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 		default:
 			return "", "", errors.Errorf("unsupported comparison type: %v", req.ComparisonType)
 		}
+	}
+
+	// The walk also stops when a read fails
+	if err = it.Error(); err != nil {
+		return "", "", errors.Wrap(err, "failed to read the secondary index")
 	}
 
 	// The walk ran out of entries of the requested index without finding a match

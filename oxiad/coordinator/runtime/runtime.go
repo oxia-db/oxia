@@ -29,6 +29,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
@@ -241,7 +242,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	status[name] = commonobject.Borrow(namespaceStatus)
 
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
-		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status)
+		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status, nil)
 		if err != nil {
 			c.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
 			continue
@@ -302,7 +303,12 @@ func (c *runtime) RecomputeAssignments() {
 func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
 	c.RLock()
 	defer c.RUnlock()
+	return c.findDataServerFeaturesLocked(dataServers)
+}
 
+// findDataServerFeaturesLocked is findDataServerFeatures, for the callers that
+// already hold the lock.
+func (c *runtime) findDataServerFeaturesLocked(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
 	features := make(map[string][]proto.Feature)
 	for _, dataServer := range dataServers {
 		dataServerID := dataServer.GetNameOrDefault()
@@ -347,11 +353,19 @@ func cloneNamespaceStatuses(namespaces map[string]commonobject.Borrowed[*proto.N
 
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
-func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Namespace, editingStatus map[string]commonobject.Borrowed[*proto.NamespaceStatus]) ([]*proto.DataServerIdentity, error) {
+// When eligible is set, only the data servers that it accepts can be selected.
+func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Namespace, editingStatus map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+	eligible func(dataServer *proto.DataServerIdentity) bool) ([]*proto.DataServerIdentity, error) {
 	dataServers := c.metadata.ListDataServer()
 	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
+	candidates := nodes
+	if eligible != nil {
+		candidates = nodes.Select(func(_ int, name string) bool {
+			return eligible(dataServers[name].UnsafeBorrow().GetIdentity())
+		})
+	}
 	ensembleContext := &ensemble.Context{
-		Candidates:         nodes,
+		Candidates:         candidates,
 		CandidatesMetadata: metadata,
 		AntiAffinities:     ns.GetAntiAffinities(),
 		Namespace:          namespace,
@@ -530,6 +544,7 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 func (c *runtime) computeNewAssignments() {
 	config := c.metadata.GetConfig().UnsafeBorrow()
 	status := c.metadata.ListNamespaceStatus()
+	namespaces := c.metadata.ListNamespace()
 	assignments := &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
 		AllowedAuthorities: mergedAuthorities(status, config.GetServers(), config.GetAllowExtraAuthorities()),
@@ -537,9 +552,11 @@ func (c *runtime) computeNewAssignments() {
 	// Update the leader for the shards on all the namespaces
 	for name, borrowedNs := range status {
 		ns := borrowedNs.UnsafeBorrow()
+		keySorting, _ := namespaces[name].UnsafeBorrow().GetKeySortingType()
 		nsAssignments := &proto.NamespaceShardsAssignment{
 			Assignments:    make([]*proto.ShardAssignment, 0),
 			ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+			KeySorting:     keySorting.ToKeySorting(),
 		}
 
 		for shard, a := range ns.Shards {
@@ -677,8 +694,17 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// After selecting the left child's ensemble, insert it into the cloned
 	// status so the right child's selection sees the updated load distribution
 	// and picks a different server.
+	// The children inherit the features enabled on the parent, and the split
+	// can't complete if the ensemble of a child doesn't support them (see
+	// SplitController.addChildObserver): select them among the data servers
+	// that support the features of the parent's ensemble.
+	parentFeatures := shardcontroller.NegotiateFeatures(parentMeta.Ensemble, c.findDataServerFeaturesLocked)
+	supportsParentFeatures := func(dataServer *proto.DataServerIdentity) bool {
+		supported := c.findDataServerFeaturesLocked([]*proto.DataServerIdentity{dataServer})[dataServer.GetNameOrDefault()]
+		return len(feature.Missing(parentFeatures, supported)) == 0
+	}
 	nsConfig := c.namespaceConfigForSplit(namespace)
-	leftEnsemble, err := c.selectNewEnsemble(namespace, leftChildId, nsConfig, status)
+	leftEnsemble, err := c.selectNewEnsemble(namespace, leftChildId, nsConfig, status, supportsParentFeatures)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for left child")
 	}
@@ -692,7 +718,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 			Max: sp,
 		},
 	}
-	rightEnsemble, err := c.selectNewEnsemble(namespace, rightChildId, nsConfig, status)
+	rightEnsemble, err := c.selectNewEnsemble(namespace, rightChildId, nsConfig, status, supportsParentFeatures)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for right child")
 	}
@@ -779,7 +805,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		RpcProvider:   c.rpc,
 		EventListener: c,
 		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
-			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), c.metadata.ListNamespaceStatus())
+			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), c.metadata.ListNamespaceStatus(), nil)
 		},
 		SupportedFeaturesSupplier: c.findDataServerFeatures,
 	})
@@ -906,7 +932,7 @@ func (c *runtime) restartInProgressSplits(clusterStatus map[string]commonobject.
 				RpcProvider:   c.rpc,
 				EventListener: c,
 				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
-					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), c.metadata.ListNamespaceStatus())
+					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), c.metadata.ListNamespaceStatus(), nil)
 				},
 				SupportedFeaturesSupplier: c.findDataServerFeatures,
 			})
