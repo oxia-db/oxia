@@ -1192,8 +1192,8 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
 	}
 	assert.NoError(t, client.Close())
 
-	// Fails to close the session: it is on the parent, which no longer exists
-	_ = sessionClient.Close()
+	// The client closes the session on both children
+	assert.NoError(t, sessionClient.Close())
 }
 
 // freezeHookRpcProvider calls beforeFreeze before freezing a shard, as the
