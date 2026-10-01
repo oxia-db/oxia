@@ -391,7 +391,7 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 
 	lc.followers = nil
 	lc.observers = nil
-	headEntryId, err := getLastEntryIdInWal(lc.wal)
+	headEntryId, err := HeadEntryId(lc.wal, lc.db)
 	if err != nil {
 		return nil, err
 	}
@@ -855,6 +855,14 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		slog.Any("leader-head-entry", lc.leaderElectionHeadEntryId),
 		slog.Any("follower-head-entry", followerHeadEntryId),
 	)
+	if followerHeadEntryId.Term == wal.InvalidTerm {
+		// There is nothing to truncate in the empty wal of the follower. If it
+		// was seeded from a snapshot, it reports the snapshot's commit offset,
+		// but the wal of the leader doesn't necessarily continue from there:
+		// the follower starts over, like one without any data
+		return constant2.InvalidEntryId, nil
+	}
+
 	if followerHeadEntryId.Term == lc.leaderElectionHeadEntryId.Term &&
 		followerHeadEntryId.Offset <= lc.leaderElectionHeadEntryId.Offset {
 		// No need for truncation
@@ -1562,6 +1570,29 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 		return nil, err
 	}
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
+}
+
+// HeadEntryId returns the head entry that a node reports when it gets fenced
+// with a new term: the leader election picks the node with the highest one, by
+// term and then by offset. It's the last entry of the wal, except for a node
+// seeded from a snapshot, whose wal is empty while its database holds the
+// entries up to the snapshot's commit offset. The term of those entries is not
+// known: the node reports the offset with an invalid term, which ranks it above
+// the nodes that hold fewer entries, or none, and below every node with entries
+// in its wal.
+func HeadEntryId(walObject wal.Wal, db database.DB) (*proto.EntryId, error) {
+	headEntryId, err := getLastEntryIdInWal(walObject)
+	if err != nil || headEntryId.Offset != wal.InvalidOffset {
+		return headEntryId, err
+	}
+	commitOffset, err := db.ReadCommitOffset()
+	switch {
+	case err != nil:
+		return nil, err
+	case commitOffset == wal.InvalidOffset:
+		return headEntryId, nil
+	}
+	return &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}, nil
 }
 
 // CommitOffset is the offset of the last entry applied to the database, rather

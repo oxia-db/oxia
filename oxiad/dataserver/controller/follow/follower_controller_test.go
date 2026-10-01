@@ -1028,6 +1028,132 @@ func TestFollower_SnapshotRecoveryFromNotMember(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// sendSnapshot adds all the chunks of the snapshot to the stream, in the given
+// term, and ends the stream.
+func sendSnapshot(t *testing.T, stream *rpc.MockServerSendSnapshotStream, snapshot kvstore.Snapshot, term int64) {
+	t.Helper()
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		require.NoError(t, err)
+		stream.AddChunk(&proto.SnapshotChunk{
+			Term:       term,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(stream.Chunks)
+}
+
+// A follower seeded from a snapshot has an empty wal, while its database holds
+// the entries up to the snapshot's commit offset. Fenced with a new term, it
+// must report them, so that an election doesn't take it for a follower without
+// any data.
+func TestFollower_NewTermAfterSnapshot(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerSendSnapshotStream()
+	sendSnapshot(t, stream, prepareTestDb(t, 1), 1)
+	require.NoError(t, fc.InstallSnapshot(stream))
+
+	res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	assertProtoEqual(t, &proto.EntryId{Term: wal.InvalidTerm, Offset: 99}, res.HeadEntryId)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// abortedSnapshotStream delivers the first chunk of a snapshot, then fails once
+// aborted, like a stream that the leader closes when it gets fenced.
+type abortedSnapshotStream struct {
+	*rpc.MockServerSendSnapshotStream
+	firstChunk *proto.SnapshotChunk
+	abort      chan struct{}
+}
+
+func (s *abortedSnapshotStream) Recv() (*proto.SnapshotChunk, error) {
+	if chunk := s.firstChunk; chunk != nil {
+		s.firstChunk = nil
+		return chunk, nil
+	}
+	<-s.abort
+	return nil, context.Canceled
+}
+
+// The installation of a snapshot replaces the wal and the database of the
+// follower, which must stop reporting the entries that it had: while it
+// installs the snapshot, and when the installation fails, where it recovers an
+// empty database.
+func TestFollower_FailedSnapshotInstall(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerSendSnapshotStream()
+	sendSnapshot(t, stream, prepareTestDb(t, 1), 1)
+	require.NoError(t, fc.InstallSnapshot(stream))
+	status, err := fc.GetStatus(&proto.GetStatusRequest{Shard: shardId})
+	require.NoError(t, err)
+	assert.EqualValues(t, 99, status.HeadOffset)
+	assert.EqualValues(t, 99, status.CommitOffset)
+
+	snapshot := prepareTestDb(t, 1)
+	chunk, err := snapshot.Chunk()
+	require.NoError(t, err)
+	abortedStream := &abortedSnapshotStream{
+		MockServerSendSnapshotStream: rpc.NewMockServerSendSnapshotStream(),
+		firstChunk: &proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		},
+		abort: make(chan struct{}),
+	}
+	installErr := make(chan error, 1)
+	go func() { installErr <- fc.InstallSnapshot(abortedStream) }()
+	assert.Eventually(t, func() bool {
+		status, err := fc.GetStatus(&proto.GetStatusRequest{Shard: shardId})
+		return err == nil && status.HeadOffset == wal.InvalidOffset && status.CommitOffset == wal.InvalidOffset
+	}, 10*time.Second, 10*time.Millisecond, "the follower reports the entries that it is replacing")
+	close(abortedStream.abort)
+	assert.Error(t, <-installErr)
+
+	status, err = fc.GetStatus(&proto.GetStatusRequest{Shard: shardId})
+	require.NoError(t, err)
+	assert.EqualValues(t, wal.InvalidOffset, status.HeadOffset)
+	assert.EqualValues(t, wal.InvalidOffset, status.CommitOffset)
+
+	res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	assertProtoEqual(t, constant2.InvalidEntryId, res.HeadEntryId)
+
+	assert.NoError(t, snapshot.Close())
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestFollower_DisconnectLeader(t *testing.T) {
 	var shardId int64
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))

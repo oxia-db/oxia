@@ -33,7 +33,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -384,14 +383,15 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	}
 	fc.term.Store(newTerm)
 	fc.status.Store(int32(proto.ServingStatus_FENCED))
-	lastEntryId, err := getLastEntryIdInWal(fc.wal) // todo: consider support it in the WAL directly
+	headEntryId, err := lead.HeadEntryId(fc.wal, fc.db)
 	if err != nil {
-		fc.log.Warn("Failed to get last entry from WAL", slog.Any("error", err), slog.Int64("new-term", req.Term))
-		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get last entry from WAL failed")
+		fc.log.Warn("Failed to get the head entry", slog.Any("error", err), slog.Int64("new-term", req.Term))
+		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get head entry failed")
 	}
-	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()), slog.Any("last-entry", lastEntryId))
+	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()),
+		slog.Any("last-entry", headEntryId))
 	return &proto.NewTermResponse{
-		HeadEntryId:     lastEntryId,
+		HeadEntryId:     headEntryId,
 		FeaturesEnabled: fc.db.EnabledFeatures(),
 	}, nil
 }
@@ -626,13 +626,24 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	if err = fc.wal.Clear(); err != nil {
 		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to clear WAL")
 	}
+	// The database gets replaced as well: until the snapshot is installed, the
+	// follower has no entries
+	fc.lastAppendedOffset.Store(wal.InvalidOffset)
+	fc.commitOffset.Store(wal.InvalidOffset)
+	fc.advertisedCommitOffset.Store(wal.InvalidOffset)
 	// If anything below fails, recover by re-opening the database from disk
 	// so the follower controller remains usable for retries.
 	defer func() {
 		if err != nil && fc.db == nil {
 			fc.log.Warn("Recovering database after failed snapshot install", slog.Any("error", err))
-			if _, _, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
+			_, commitOffset, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory)
+			if initErr == nil {
 				fc.db = db
+				// The follower is left with the entries of the recovered
+				// database: none if the snapshot loader wiped it already
+				fc.lastAppendedOffset.Store(commitOffset)
+				fc.commitOffset.Store(commitOffset)
+				fc.advertisedCommitOffset.Store(commitOffset)
 			} else {
 				fc.log.Error("Failed to recover database, follower is in a broken state", slog.Any("error", initErr))
 			}
@@ -803,21 +814,4 @@ func (fc *followerController) Checksum() crc.Checksum {
 	fc.rwMutex.RLock()
 	defer fc.rwMutex.RUnlock()
 	return fc.db.ReadChecksum()
-}
-
-func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
-	reader, err := walObject.NewReverseReader()
-	if err != nil {
-		return nil, err
-	}
-
-	if !reader.HasNext() {
-		return constant2.InvalidEntryId, nil
-	}
-
-	entry, _, _, err := reader.ReadNext()
-	if err != nil {
-		return nil, err
-	}
-	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
