@@ -89,6 +89,12 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 		return constant.ErrNamespaceNotFound
 	}
 
+	assignmentsInterceptorFunc, err := s.assignmentsInterceptorFunc(clientStream)
+	if err != nil {
+		s.Unlock()
+		return err
+	}
+
 	initialAssignments := filterByNamespace(s.assignments, namespace)
 
 	// A one-slot mailbox: an update the client has not picked up yet is replaced
@@ -98,11 +104,6 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 	s.nextClientId++
 
 	s.clients[clientId] = clientCh
-
-	assignmentsInterceptorFunc, err := s.assignmentsInterceptorFunc(clientStream)
-	if err != nil {
-		return err
-	}
 	s.Unlock()
 
 	// Send initial assignments
