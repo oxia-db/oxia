@@ -1232,3 +1232,56 @@ func TestWal_TruncateBelowAllSegments(t *testing.T) {
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())
 }
+
+// Each entry read records one read-latency sample, whichever way the reader
+// goes: the forward reader used to time the read a second time around
+// readAtIndex.
+func TestWal_ReadLatencyRecordedOncePerEntry(t *testing.T) {
+	// Read the histograms through their producer, as the Prometheus exporter
+	// does.
+	reader := sdkmetric.NewManualReader(sdkmetric.WithProducer(metric.HistogramProducer))
+	sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	readLatencyCount := func() uint64 {
+		var rm metricdata.ResourceMetrics
+		assert.NoError(t, reader.Collect(context.Background(), &rm))
+		for _, scope := range rm.ScopeMetrics {
+			for _, m := range scope.Metrics {
+				if m.Name != "oxia_server_wal_read_latency" {
+					continue
+				}
+				histo, ok := m.Data.(metricdata.Histogram[float64])
+				assert.True(t, ok, "unexpected data: %#v", m.Data)
+				var total uint64
+				for _, dp := range histo.DataPoints {
+					total += dp.Count
+				}
+				return total
+			}
+		}
+		return 0
+	}
+
+	f, w := createWal(t)
+
+	input := []string{"A", "B", "C"}
+	for i, s := range input {
+		assert.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: int64(i), Value: []byte(s)}))
+	}
+
+	before := readLatencyCount()
+	fr, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, fr, input)
+	assert.NoError(t, fr.Close())
+	assert.EqualValues(t, len(input), readLatencyCount()-before)
+
+	before = readLatencyCount()
+	rr, err := w.NewReverseReader()
+	assert.NoError(t, err)
+	assertReaderReads(t, rr, []string{"C", "B", "A"})
+	assert.NoError(t, rr.Close())
+	assert.EqualValues(t, len(input), readLatencyCount()-before)
+
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
