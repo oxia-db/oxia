@@ -501,6 +501,9 @@ func (fc *followerCursor) waitAtHead(ctx context.Context, reader wal.Reader, cur
 	if err := fc.ackTracker.WaitForHeadOffsetOrCommitAdvance(ctx, currentOffset+1, lastSentCommitOffset); err != nil {
 		return lastSentCommitOffset, err
 	}
+	if err := holdBackCommitAdvertisement(ctx, fc.ackTracker, currentOffset); err != nil {
+		return lastSentCommitOffset, err
+	}
 
 	commitOffset := fc.ackTracker.CommitOffset()
 	if commitOffset <= lastSentCommitOffset || reader.HasNext() {
