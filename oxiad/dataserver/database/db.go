@@ -1149,7 +1149,7 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 			return nil, errors.Wrap(multierr.Combine(err, it.Close()), "oxia db: failed to get value on delete range")
 		}
 		se := proto.StorageEntryFromVTPool()
-		if err = Deserialize(value, se); err != nil {
+		if err = DeserializeMetadata(value, se); err != nil {
 			se.ReturnToVTPool()
 			return nil, errors.Wrap(deserializeFailure(key, err, it.Close()),
 				"oxia db: failed to deserialize value on delete range")
@@ -1309,6 +1309,9 @@ func checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersio
 // out and Value is dropped.
 func DeserializeMetadata(buf []byte, se *proto.StorageEntry) error {
 	if err := se.UnmarshalVTUnsafe(buf); err != nil {
+		// The unmarshal can fail after the value: drop it too, as the pool
+		// keeps the Value capacity
+		se.Value = nil
 		return errors.Wrap(err, "failed to Deserialize storage entry")
 	}
 
