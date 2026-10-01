@@ -1098,6 +1098,124 @@ func TestCoordinator_ShardSplit_InheritedSessionKeptAlive(t *testing.T) {
 	}, sessionTimeout/2, 100*time.Millisecond, "ephemeral records left after the client closed")
 }
 
+// TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp checks that a session
+// created on the parent while the children catch up from its log reaches both
+// children, like the sessions in the parent's snapshot. A child without it
+// rejects the ephemeral records of the session in its hash range, which the
+// parent acknowledged.
+func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
+	// The cutover freezes the parent once both children have loaded its
+	// snapshot and caught up with its log. Hold it there: what is written
+	// before it resumes reaches the children through the parent's log only.
+	reachedFreeze := make(chan struct{})
+	resumeFreeze := make(chan struct{})
+	rpcProvider := &freezeHookRpcProvider{beforeFreeze: sync.OnceFunc(func() {
+		close(reachedFreeze)
+		<-resumeFreeze
+	})}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer c.close(t)
+	resume := sync.OnceFunc(func() { close(resumeFreeze) })
+	defer resume()
+
+	ctx := context.Background()
+
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	_, _, err = client.Put(ctx, "seed", []byte("seed"))
+	require.NoError(t, err)
+
+	c.initiateSplit(t)
+	select {
+	case <-reachedFreeze:
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A record on each side of the split point: one of them is in the child
+	// that the session key doesn't hash to, whatever the session id
+	var leftKey, rightKey string
+	for i := 0; leftKey == "" || rightKey == ""; i++ {
+		key := fmt.Sprintf("catch-up-%d", i)
+		if h := hash.Xxh332(key); h < math.MaxUint32/4 {
+			leftKey = key
+		} else if h > math.MaxUint32/4*3 {
+			rightKey = key
+		}
+	}
+	keys := []string{leftKey, rightKey}
+
+	sessionClient, err := oxia.NewSyncClient(c.sa1.Public,
+		oxia.WithSessionTimeout(time.Minute),
+		oxia.WithIdentity("catch-up-client"),
+	)
+	require.NoError(t, err)
+	var sessionId int64
+	for _, key := range keys {
+		_, version, err := sessionClient.Put(ctx, key, []byte(key), oxia.Ephemeral())
+		require.NoError(t, err)
+		sessionId = version.SessionId
+	}
+
+	resume()
+	c.waitForSplit(t)
+
+	// Each child holds the session, and the records of the session in its hash
+	// range, with the shadow keys that delete them with the session
+	sessionKey := lead.SessionKey(lead.SessionId(sessionId))
+	for child, childMeta := range map[int64]*proto.ShardMetadata{c.leftChild: c.leftMeta, c.rightChild: c.rightMeta} {
+		childKeys := make(map[string]bool)
+		for _, key := range c.listShardKeys(t, child) {
+			childKeys[key] = true
+		}
+		assert.True(t, childKeys[sessionKey], "shard %d lacks session %d", child, sessionId)
+
+		hashRange := childMeta.Int32HashRange
+		for _, key := range keys {
+			h := hash.Xxh332(key)
+			inRange := h >= hashRange.Min && h <= hashRange.Max
+			assert.Equal(t, inRange, childKeys[key], "record %q in shard %d", key, child)
+			assert.Equal(t, inRange, childKeys[lead.ShadowKey(lead.SessionId(sessionId), key)],
+				"shadow key of %q in shard %d", key, child)
+		}
+	}
+
+	// The records that the parent acknowledged are readable from the children
+	client = c.reconnectClient(t, client, "seed")
+	for _, key := range keys {
+		_, value, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "acknowledged record %q missing after the split", key) {
+			assert.Equal(t, []byte(key), value)
+			assert.True(t, version.Ephemeral)
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+	assert.NoError(t, client.Close())
+
+	// The client closes the session on both children
+	assert.NoError(t, sessionClient.Close())
+}
+
+// freezeHookRpcProvider calls beforeFreeze before freezing a shard, as the
+// cutover of a split does with the parent.
+type freezeHookRpcProvider struct {
+	rpc2.Provider
+	beforeFreeze func()
+}
+
+func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen {
+		p.beforeFreeze()
+	}
+	return p.Provider.FreezeShard(ctx, node, req)
+}
+
 // The first ephemeral put of a client creates its session, on the shard of the
 // key, and the next ephemeral puts wait for it. A put issued while the cutover
 // of a split freezes the parent can't create it there: the parent rejects it,
