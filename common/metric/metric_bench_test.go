@@ -15,7 +15,6 @@
 package metric
 
 import (
-	"sync/atomic"
 	"testing"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -124,26 +123,6 @@ func BenchmarkLatencyHistogram(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				h.Timer().Done()
-			}
-		})
-	})
-}
-
-// BenchmarkAtomicInt64 is the baseline the wrappers are compared against.
-func BenchmarkAtomicInt64(b *testing.B) {
-	var c atomic.Int64
-
-	b.Run("serial", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			c.Add(1)
-		}
-	})
-	b.Run("parallel", func(b *testing.B) {
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				c.Add(1)
 			}
 		})
 	})
