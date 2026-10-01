@@ -183,6 +183,11 @@ func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*s
 // in the separator, so that a key ending in "//" keeps the level that the
 // hierarchical sorting gives it, as in the range of the children of a key,
 // like ["/a/", "/a//").
+//
+// The entries of a secondary key ending in "//" are the exception: they end in
+// the separator and the escaped primary key, so the hierarchical sorting puts
+// them one level after the key, and a range can miss them or return them out
+// of order.
 func secondaryIndexRangeBound(indexPrefix, key string) string {
 	if key == "/" {
 		// The prefix ends in '/', so the bound would end in "//", unlike the
