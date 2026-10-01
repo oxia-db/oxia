@@ -941,8 +941,7 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond)
 
 	// Verify all ephemeral keys survived the split and retained their
-	// ephemeral property before the inherited pre-split session can expire
-	// on the child shards.
+	// ephemeral property
 	for key, expectedValue := range ephemeralKeys {
 		_, value, version, err := ephemeralClient.Get(ctx, key)
 		if !assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
@@ -968,31 +967,6 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Regular keys verified after split")
 
-	// Reconnect the ephemeral client to pick up new shard assignments
-	// We must NOT close the old client first (that would delete ephemeral
-	// records), so we create a new one and close the old one only after.
-	var newEphemeralClient oxia.SyncClient
-	require.Eventually(t, func() bool {
-		var err2 error
-		newEphemeralClient, err2 = oxia.NewSyncClient(cluster.sa1.Public,
-			oxia.WithSessionTimeout(30*time.Second),
-			oxia.WithIdentity("ephemeral-test-client"),
-		)
-		if err2 != nil {
-			return false
-		}
-		_, _, _, err2 = newEphemeralClient.Get(ctx, "regular-0000")
-		if err2 != nil {
-			_ = newEphemeralClient.Close()
-			return false
-		}
-		return true
-	}, 30*time.Second, 500*time.Millisecond)
-	// Close old client — may error because shard 0 no longer exists for
-	// session cleanup, but that's expected after a split.
-	_ = ephemeralClient.Close()
-	ephemeralClient = newEphemeralClient
-
 	// Write new ephemeral records to child shards
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("post-split-eph-%04d", i)
@@ -1002,20 +976,15 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Post-split ephemeral writes verified")
 
-	// Close the ephemeral client — all ephemeral records should eventually
-	// be deleted by session expiry. Verify using a separate non-ephemeral client.
+	// Close the ephemeral client: it closes its session on both child shards,
+	// which deletes all its ephemeral records. Verify using a separate
+	// non-ephemeral client.
 	assert.NoError(t, ephemeralClient.Close())
 
 	readerClient, err := oxia.NewSyncClient(cluster.sa1.Public)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, readerClient.Close()) }()
 
-	// Wait for ephemeral records to be cleaned up (session expiry). A new
-	// leader restarts the timeout of every session it loads, as it can't know
-	// when the last heartbeat arrived. If both children are led by the same
-	// data server, leader balancing re-elects one of them 30s after the
-	// coordinator started, right before its inherited session would expire,
-	// and the records then outlive the split by up to two session timeouts.
 	require.Eventually(t, func() bool {
 		for key := range ephemeralKeys {
 			_, _, _, err := readerClient.Get(ctx, key)
@@ -1030,7 +999,7 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 			}
 		}
 		return true
-	}, 90*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
+	}, 10*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
 	slog.Info("Ephemeral records cleaned up after client close")
 
