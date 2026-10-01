@@ -81,7 +81,7 @@ func NewUpDownCounter(name string, description string, unit Unit, labels map[str
 	}
 }
 
-// Counters are kept in atomics and exported through observable instruments:
+// Counters are kept in adders and exported through observable instruments:
 // a synchronous OTel counter costs ~20x an atomic add on every call. The
 // exported data is the same cumulative sum, as long as the observable side
 // keeps the synchronous semantics:
@@ -98,7 +98,7 @@ type sumID struct {
 
 // sumSeries is the cumulative value of one attribute set.
 type sumSeries struct {
-	value    atomic.Int64
+	value    adder
 	recorded atomic.Bool
 	attrs    metric.MeasurementOption
 }
@@ -135,7 +135,7 @@ func (o *observedSum) observe(_ context.Context, obs metric.Int64Observer) error
 	defer o.Unlock()
 	for _, s := range o.byAttrs {
 		if s.recorded.Load() {
-			obs.Observe(s.value.Load(), s.attrs)
+			obs.Observe(s.value.Sum(), s.attrs)
 		}
 	}
 	return nil
