@@ -527,11 +527,12 @@ func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorO
 		panic(fmt.Sprintf("Unknown comparison type: %v", comparisonType))
 	}
 
-	if errors.Is(err, pebble.ErrNotFound) {
+	switch {
+	case errors.Is(err, pebble.ErrNotFound):
 		err = ErrKeyNotFound
-	} else if err != nil {
+	case err != nil:
 		p.readErrors.Inc()
-	} else {
+	default:
 		p.readBytes.Add(len(value))
 	}
 	return returnedKey, value, closer, err

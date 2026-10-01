@@ -56,6 +56,26 @@ func TestPebbleReadWriteOpsMetrics(t *testing.T) {
 		return 0
 	}
 
+	readHistogramCount := func(name string) uint64 {
+		var rm metricdata.ResourceMetrics
+		require.NoError(t, reader.Collect(context.Background(), &rm))
+		for _, scope := range rm.ScopeMetrics {
+			for _, m := range scope.Metrics {
+				if m.Name != name {
+					continue
+				}
+				histo, ok := m.Data.(metricdata.Histogram[float64])
+				require.True(t, ok, "unexpected data for %s: %#v", name, m.Data)
+				var total uint64
+				for _, dp := range histo.DataPoints {
+					total += dp.Count
+				}
+				return total
+			}
+		}
+		return 0
+	}
+
 	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
 	require.NoError(t, err)
 	defer factory.Close()
@@ -66,6 +86,7 @@ func TestPebbleReadWriteOpsMetrics(t *testing.T) {
 	writesBefore := readCounter("oxia_server_kv_write_ops")
 	readsBefore := readCounter("oxia_server_kv_read_ops")
 	readBytesBefore := readCounter("oxia_server_kv_read")
+	readLatencyBefore := readHistogramCount("oxia_server_kv_read_latency")
 
 	wb := kv.NewWriteBatch()
 	assert.NoError(t, wb.Put("a", []byte("0")))
@@ -85,4 +106,5 @@ func TestPebbleReadWriteOpsMetrics(t *testing.T) {
 	assert.EqualValues(t, 3, readCounter("oxia_server_kv_write_ops")-writesBefore)
 	assert.EqualValues(t, 5, readCounter("oxia_server_kv_read_ops")-readsBefore)
 	assert.EqualValues(t, 4, readCounter("oxia_server_kv_read")-readBytesBefore)
+	assert.EqualValues(t, 5, readHistogramCount("oxia_server_kv_read_latency")-readLatencyBefore)
 }
