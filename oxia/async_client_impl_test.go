@@ -350,15 +350,16 @@ func TestRerouteDeleteRangeWithoutSuccessors(t *testing.T) {
 func TestCloseClosesShardManager(t *testing.T) {
 	shardManager := &staticShardManager{}
 	ctx, cancel := context.WithCancel(context.Background())
+	rpcProvider := internal.NewRpcProvider(ctx, "default", nil, nil, "localhost:6648",
+		func() internal.ShardManager { return shardManager })
 	client := &clientImpl{
 		shardManager:      shardManager,
 		writeBatchManager: batch.NewWriteManager(ctx, nil, nil),
 		readBatchManager:  batch.NewManager(ctx, nil),
-		sessions:          &sessions{},
-		rpcProvider: internal.NewRpcProvider(ctx, "default", nil, nil, "localhost:6648",
-			func() internal.ShardManager { return shardManager }),
-		ctx:    ctx,
-		cancel: cancel,
+		sessions:          newSessions(ctx, shardManager, rpcProvider, clientOptions{}),
+		rpcProvider:       rpcProvider,
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 
 	assert.NoError(t, client.Close())

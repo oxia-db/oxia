@@ -265,7 +265,6 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 		return ch
 	}
 
-	shardId := c.getShardForKey(key, opts)
 	putCall := model.PutCall{
 		Key:                key,
 		Value:              value,
@@ -277,7 +276,9 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 	}
 	if opts.ephemeral {
 		putCall.ClientIdentity = &c.options.identity
-		c.sessions.executeWithSessionId(shardId, func(sessionId int64, err error) {
+		c.sessions.executeWithSessionId(func() int64 {
+			return c.getShardForKey(key, opts)
+		}, func(shardId int64, sessionId int64, err error) {
 			if err != nil {
 				callback(nil, err)
 				return
@@ -286,7 +287,7 @@ func (c *clientImpl) Put(key string, value []byte, options ...PutOption) <-chan 
 			c.writeBatchManager.Add(shardId, putCall)
 		})
 	} else {
-		c.writeBatchManager.Add(shardId, putCall)
+		c.writeBatchManager.Add(c.getShardForKey(key, opts), putCall)
 	}
 	return ch
 }

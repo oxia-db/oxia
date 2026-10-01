@@ -1044,6 +1044,78 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	slog.Info("Ephemeral records test passed")
 }
 
+// Both children of a split inherit the sessions of the parent, with the
+// ephemeral records of each session that fall in their hash range. The records
+// must live as long as the client that wrote them, and go away when it closes.
+func TestCoordinator_ShardSplit_InheritedSessionKeptAlive(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+
+	ctx := context.Background()
+	sessionTimeout := 10 * time.Second
+	client, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithSessionTimeout(sessionTimeout))
+	require.NoError(t, err)
+
+	var keys []string
+	var sessionId int64
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("ephemeral-%04d", i)
+		_, version, err := client.Put(ctx, key, []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		keys = append(keys, key)
+		sessionId = version.SessionId
+	}
+
+	cluster.splitAndWait(t)
+	keysPerChild := map[int64]int{}
+	for _, key := range keys {
+		if hash.Xxh332(key) <= cluster.leftMeta.Int32HashRange.Max {
+			keysPerChild[cluster.leftChild]++
+		} else {
+			keysPerChild[cluster.rightChild]++
+		}
+	}
+	require.Len(t, keysPerChild, 2, "the records must be in both children")
+
+	// The children restart the timeout of the sessions they inherit when they
+	// are elected, before the split completes
+	time.Sleep(2 * sessionTimeout)
+
+	for _, key := range keys {
+		_, _, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "ephemeral record %s lost while its client is alive", key) {
+			assert.True(t, version.Ephemeral)
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+
+	// The new ephemeral records of the client on the children belong to the
+	// session they inherited
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		key := cluster.childKey(child, "post-split")
+		_, version, err := client.Put(ctx, key, []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		assert.Equal(t, sessionId, version.SessionId)
+		keys = append(keys, key)
+	}
+
+	require.NoError(t, client.Close())
+
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	// Closing the client deletes them, without waiting for the session to expire
+	assert.Eventually(t, func() bool {
+		for _, key := range keys {
+			if _, _, _, err := reader.Get(ctx, key); !errors.Is(err, oxia.ErrKeyNotFound) {
+				return false
+			}
+		}
+		return true
+	}, sessionTimeout/2, 100*time.Millisecond, "ephemeral records left after the client closed")
+}
+
 // ---- Secondary indexes test ----
 
 func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
