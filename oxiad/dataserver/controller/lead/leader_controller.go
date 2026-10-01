@@ -1396,14 +1396,14 @@ func (lc *leaderController) applyFromWal(w wal.Wal, offset int64) (statemachine.
 
 //nolint:revive
 func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch]) {
-	lc.Lock()
+	lc.RLock()
 	if err := checkStatusIsLeader(lc.status); err != nil {
-		lc.Unlock()
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
 	if !lc.termOptions.NotificationsEnabled {
-		lc.Unlock()
+		lc.RUnlock()
 		cb.OnComplete(constant.ErrNotificationsNotEnabled)
 		return
 	}
@@ -1414,7 +1414,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 		offsetExclusive = *req.StartOffsetExclusive
 	} else {
 		if qat == nil {
-			lc.Unlock()
+			lc.RUnlock()
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
@@ -1489,7 +1489,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			},
 		)
 	})
-	lc.Unlock()
+	lc.RUnlock()
 }
 
 func (lc *leaderController) Close() error {
