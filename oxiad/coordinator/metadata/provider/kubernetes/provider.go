@@ -114,7 +114,7 @@ func NewProvider[T gproto.Message](
 	}
 
 	m.ctx, m.ctxCancel = context.WithCancel(ctx)
-	initialSnapshot, err := m.loadLatest() //nolint:contextcheck // Constructor seeds the watch from the provider-owned context.
+	initialSnapshot, err := m.loadLatest()
 	if err != nil {
 		return nil, err
 	}

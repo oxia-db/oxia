@@ -29,9 +29,10 @@ import (
 )
 
 func TestPebbleReadWriteOpsMetrics(t *testing.T) {
-	// Swap in an SDK meter so the counter values can be read back.
+	// Swap in an SDK meter so the counter values can be read back, and read
+	// the histograms through their producer, as the Prometheus exporter does.
 	previous := metric.GetMeter()
-	reader := sdkmetric.NewManualReader()
+	reader := sdkmetric.NewManualReader(sdkmetric.WithProducer(metric.HistogramProducer))
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	metric.SetMeter(provider.Meter("test"))
 	defer metric.SetMeter(previous)

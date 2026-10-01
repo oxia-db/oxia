@@ -36,22 +36,10 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 )
 
-var latencyBucketsMillis = []float64{
-	0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000,
-}
-
-var sizeBucketsBytes = []float64{
-	0x10, 0x20, 0x40, 0x80,
-	0x100, 0x200, 0x400, 0x800,
-	0x1000, 0x2000, 0x4000, 0x8000,
-	0x10000, 0x20000, 0x40000, 0x80000,
-	0x100000, 0x200000, 0x400000, 0x800000,
-}
-
-var sizeBucketsCount = []float64{1, 5, 10, 20, 50, 100, 200, 500, 1000, 10_000, 20_000, 50_000, 100_000, 1_000_000}
-
 func init() {
-	exporter, err := prometheus.New()
+	// Histograms are aggregated by common/metric, which hands them over to the
+	// exporter as a producer.
+	exporter, err := prometheus.New(prometheus.WithProducer(metric2.HistogramProducer))
 	if err != nil {
 		slog.Error(
 			"Failed to initialize Prometheus metrics exporter",
@@ -60,48 +48,9 @@ func init() {
 		os.Exit(1)
 	}
 
-	// Use a specific list of buckets for different types of histograms
-	latencyHistogramView := metric.NewView(
-		metric.Instrument{
-			Kind: metric.InstrumentKindHistogram,
-			Unit: string(metric2.Milliseconds),
-		},
-		metric.Stream{
-			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: latencyBucketsMillis,
-			},
-		},
-	)
-	sizeHistogramView := metric.NewView(
-		metric.Instrument{
-			Kind: metric.InstrumentKindHistogram,
-			Unit: string(metric2.Bytes),
-		},
-		metric.Stream{
-			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: sizeBucketsBytes,
-			},
-		},
-	)
-	countHistogramView := metric.NewView(
-		metric.Instrument{
-			Kind: metric.InstrumentKindHistogram,
-			Unit: string(metric2.Dimensionless),
-		},
-		metric.Stream{
-			Aggregation: metric.AggregationExplicitBucketHistogram{
-				Boundaries: sizeBucketsCount,
-			},
-		},
-	)
-
-	// Default view to keep all instruments
-	defaultView := metric.NewView(metric.Instrument{Name: "*"}, metric.Stream{})
-
 	// Since v1.44.0 the SDK caps each instrument at 2000 attribute sets, collapsing the excess into a single
 	// `otel.metric.overflow` series. Per-shard labels can exceed that in large clusters, so disable the limit.
 	provider := metric.NewMeterProvider(metric.WithReader(exporter),
-		metric.WithView(latencyHistogramView, sizeHistogramView, countHistogramView, defaultView),
 		metric.WithCardinalityLimit(0))
 
 	// Set as the default provider
