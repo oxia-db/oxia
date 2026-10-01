@@ -1076,7 +1076,7 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 	case se == nil:
 		return &proto.DeleteResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	default:
-		err = updateOperationCallback.OnDelete(batch, notifications, delReq.Key, d)
+		err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, delReq.Key, se, d)
 		if err != nil {
 			return nil, err
 		}
