@@ -1068,13 +1068,11 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
 	// before it resumes reaches the children through the parent's log only.
 	reachedFreeze := make(chan struct{})
 	resumeFreeze := make(chan struct{})
-	holdFreeze := sync.OnceFunc(func() {
+	rpcProvider := &freezeHookRpcProvider{beforeFreeze: sync.OnceFunc(func() {
 		close(reachedFreeze)
 		<-resumeFreeze
-	})
-	c := setupSplitClusterWithRpc(t, func(instanceID string) rpc2.Provider {
-		return &freezeHookRpcProvider{Provider: rpc2.NewRpcProvider(nil, instanceID), beforeFreeze: holdFreeze}
-	})
+	})}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
 	defer c.close(t)
 	resume := sync.OnceFunc(func() { close(resumeFreeze) })
 	defer resume()
@@ -1162,6 +1160,11 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
 type freezeHookRpcProvider struct {
 	rpc2.Provider
 	beforeFreeze func()
+}
+
+func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
 }
 
 func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
