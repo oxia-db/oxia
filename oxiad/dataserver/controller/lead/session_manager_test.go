@@ -275,30 +275,15 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.ErrorIs(t, err, expectedErr)
 }
 
-func storageEntry(t *testing.T, sessionId int64) []byte {
-	t.Helper()
-
-	entry := &proto.StorageEntry{
-		Value:                 nil,
-		VersionId:             0,
-		CreationTimestamp:     0,
-		ModificationTimestamp: 0,
-		SessionId:             &sessionId,
-	}
-	bytes, err := pb.Marshal(entry)
-	assert.NoError(t, err)
-	return bytes
-}
-
-func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
+func TestSessionUpdateOperationCallback_OnDeleteWithEntry(t *testing.T) {
 	sessionId := int64(12345)
 
 	writeBatch := mockWriteBatch{
-		"a/b/c": storageEntry(t, sessionId),
 		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
 	}
 
-	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c", testFeatureChecker{})
+	err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(writeBatch, nil, "a/b/c",
+		&proto.StorageEntry{SessionId: &sessionId}, testFeatureChecker{})
 	assert.NoError(t, err)
 	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
 	assert.False(t, found)
