@@ -515,6 +515,11 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 			fc.checksumGauge.Record(int64(*resp.Checksum))
 			fc.walChecksumGauge.Record(int64(entryCrc))
 		}
+		if entry.Offset == maxInclusive {
+			// Stop at the max point, not at the WAL head: the next entry
+			// would only be discarded, and read again by the next pass
+			return nil
+		}
 	}
 
 	return nil
