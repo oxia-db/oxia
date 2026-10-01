@@ -196,11 +196,13 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 	defer nt.Unlock()
 
 	for startOffset > nt.lastOffset.Load() && !nt.closed.Load() {
-		nt.log.Debug(
-			"Waiting for notification to be available",
-			slog.Int64("start-offset", startOffset),
-			slog.Int64("last-notification-offset", nt.lastOffset.Load()),
-		)
+		if nt.log.Enabled(ctx, slog.LevelDebug) {
+			nt.log.Debug(
+				"Waiting for notification to be available",
+				slog.Int64("start-offset", startOffset),
+				slog.Int64("last-notification-offset", nt.lastOffset.Load()),
+			)
+		}
 
 		if err := nt.cond.Wait(ctx); err != nil {
 			return err

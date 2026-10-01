@@ -153,12 +153,14 @@ func (cm *cacheManager) handleNotification(n *Notification) {
 	cm.Lock()
 	defer cm.Unlock()
 
-	slog.Debug(
-		"Received notification",
-		slog.String("key", n.Key),
-		slog.Any("type", n.Type),
-		slog.Int64("version-id", n.VersionId),
-	)
+	if slog.Default().Enabled(cm.ctx, slog.LevelDebug) {
+		slog.Debug(
+			"Received notification",
+			slog.String("key", n.Key),
+			slog.Any("type", n.Type),
+			slog.Int64("version-id", n.VersionId),
+		)
+	}
 
 	for _, c := range cm.caches {
 		c.handleNotification(n)
