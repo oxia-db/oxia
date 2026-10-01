@@ -62,16 +62,6 @@ func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *data
 	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se)
 }
 
-func (wrapperUpdateCallback) OnDelete(batch kvstore.WriteBatch, notifications *database.Notifications, key string, features feature.Checker) error {
-	// First update the session
-	if err := sessionManagerUpdateOperationCallback.OnDelete(batch, notifications, key, features); err != nil {
-		return err
-	}
-
-	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnDelete(batch, notifications, key, features)
-}
-
 var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUpdateCallback{}
 
 type secondaryIndexesUpdateCallbackS struct{}
@@ -103,18 +93,6 @@ func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *databa
 	return proto.Status_OK, writeSecondaryIndexes(batch, request.Key, request.SecondaryIndexes)
 }
 
-func (secondaryIndexesUpdateCallbackS) OnDelete(batch kvstore.WriteBatch, _ *database.Notifications, key string, _ feature.Checker) error {
-	se, err := database.GetStorageEntryMetadata(batch, key)
-	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
-			return nil
-		}
-		return err
-	}
-	defer se.ReturnToVTPool()
-	return deleteSecondaryIndexes(batch, key, se)
-}
-
 func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, _ *database.Notifications, key string, value *proto.StorageEntry, _ feature.Checker) error {
 	return deleteSecondaryIndexes(batch, key, value)
 }
@@ -136,6 +114,20 @@ func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existin
 		}
 	}
 	return nil
+}
+
+// deleteKeySecondaryIndexes deletes the secondary indexes of the record at key,
+// which it reads from the record's entry.
+func deleteKeySecondaryIndexes(batch kvstore.WriteBatch, key string) error {
+	se, err := database.GetStorageEntryMetadata(batch, key)
+	if err != nil {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
+			return nil
+		}
+		return err
+	}
+	defer se.ReturnToVTPool()
+	return deleteSecondaryIndexes(batch, key, se)
 }
 
 var emptyValue []byte

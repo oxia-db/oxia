@@ -1838,12 +1838,6 @@ func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *prot
 	}
 	return proto.Status_OK, nil
 }
-func (f FailureCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, key string, _ feature.Checker) error {
-	if key == FailureCallbackKey {
-		return errors.New("failure injection")
-	}
-	return nil
-}
 func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry, _ feature.Checker) error {
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
