@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -2404,4 +2405,45 @@ func TestDeserializeMetadata(t *testing.T) {
 	assert.Equal(t, 1, len(se.SecondaryIndexes))
 	assert.Equal(t, "idx", se.SecondaryIndexes[0].IndexName)
 	assert.Equal(t, "sk", se.SecondaryIndexes[0].SecondaryKey)
+}
+
+// applyPut must detach the request's value from the pooled entry before
+// returning it: ResetVT keeps the Value capacity, and a pooled Deserialize, like
+// the split filter's, appends into it. In the zero-copy apply of a WAL entry,
+// that capacity runs to the end of the entry payload, which the other
+// operations of the entry still alias.
+func TestApplyPutDetachesRequestValue(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	d := testDB.(*db)
+
+	stored, err := (&proto.StorageEntry{Value: []byte("overwritten")}).MarshalVT()
+	assert.NoError(t, err)
+
+	// Several rounds: the Deserialize needs the pool Get to return the entry
+	// that applyPut just recycled, which holds on the same P but is not
+	// guaranteed by sync.Pool (preemption or a GC can break the chain in any
+	// single round)
+	const payloadText = "value, then the rest of the payload"
+	for range 10 {
+		payload := []byte(payloadText)
+		batch := d.kv.NewWriteBatch()
+		_, err := d.applyPut(batch, &atomic.Int64{}, nil, &proto.PutRequest{
+			Key:   "key",
+			Value: payload[:len("value")],
+		}, 0, NoOpCallback, false)
+		assert.NoError(t, err)
+		assert.NoError(t, batch.Close())
+
+		se := proto.StorageEntryFromVTPool()
+		assert.NoError(t, Deserialize(stored, se))
+		se.ReturnToVTPool()
+
+		assert.Equal(t, payloadText, string(payload))
+	}
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
 }
