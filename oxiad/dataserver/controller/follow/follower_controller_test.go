@@ -1056,7 +1056,8 @@ func TestFollower_NewTermAfterSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	walFactory := newTestWalFactory(t)
 
-	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+		kvFactory, nil)
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
@@ -1101,7 +1102,8 @@ func TestFollower_FailedSnapshotInstall(t *testing.T) {
 	require.NoError(t, err)
 	walFactory := newTestWalFactory(t)
 
-	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+		kvFactory, nil)
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)

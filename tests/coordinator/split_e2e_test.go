@@ -1734,26 +1734,26 @@ func TestCoordinator_ShardSplit_ChildElectionBeforeFollowersSeeded(t *testing.T)
 	defer func() { assert.NoError(t, reader.Close()) }()
 
 	// Among the members with the highest head entry, the election can pick any:
-	// elect the leaders of the children a few times
+	// elect the leader of each child a few times. Check the keys after every
+	// election, before the next one: an election that moves the leader of a child
+	// to the data server that leads the other child would get it elected again
+	// by the next BecameUnavailable
 	for range 3 {
-		terms := make(map[int64]int64)
-		leaders := make(map[string]*proto.DataServerIdentity)
 		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
-			sm := cluster.shardStatus(t, child)
-			terms[child] = sm.Term
-			leaders[sm.Leader.GetNameOrDefault()] = sm.Leader
-		}
-		for _, leader := range leaders {
-			cluster.coordinator.BecameUnavailable(leader)
-		}
-		for child, term := range terms {
-			cluster.waitForNewTerm(t, child, term)
-		}
+			// The children can have the same leader, and get elected together
+			var before *proto.ShardMetadata
+			require.Eventually(t, func() bool {
+				before = cluster.shardStatus(t, child)
+				return before.Leader != nil && before.GetStatusOrDefault() == proto.ShardStatusSteadyState
+			}, 30*time.Second, 100*time.Millisecond)
+			cluster.coordinator.BecameUnavailable(before.Leader)
+			cluster.waitForNewTerm(t, child, before.Term)
 
-		for key, expected := range keys {
-			_, value, _, err := reader.Get(ctx, key)
-			require.NoError(t, err, "key %s lost by a leader election of a split child", key)
-			assert.Equal(t, expected, value)
+			for key, expected := range keys {
+				_, value, _, err := reader.Get(ctx, key)
+				require.NoError(t, err, "key %s lost by a leader election of a split child", key)
+				assert.Equal(t, expected, value)
+			}
 		}
 	}
 }

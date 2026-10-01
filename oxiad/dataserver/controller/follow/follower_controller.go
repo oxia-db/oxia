@@ -388,7 +388,8 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		fc.log.Warn("Failed to get the head entry", slog.Any("error", err), slog.Int64("new-term", req.Term))
 		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get head entry failed")
 	}
-	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()), slog.Any("last-entry", headEntryId))
+	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()),
+		slog.Any("last-entry", headEntryId))
 	return &proto.NewTermResponse{
 		HeadEntryId:     headEntryId,
 		FeaturesEnabled: fc.db.EnabledFeatures(),
@@ -630,7 +631,8 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	defer func() {
 		if err != nil && fc.db == nil {
 			fc.log.Warn("Recovering database after failed snapshot install", slog.Any("error", err))
-			if _, commitOffset, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
+			_, commitOffset, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory)
+			if initErr == nil {
 				fc.db = db
 				// The follower is left with the entries of the recovered
 				// database: none if the snapshot loader wiped it already

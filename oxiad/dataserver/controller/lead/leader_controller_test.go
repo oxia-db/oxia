@@ -3033,7 +3033,8 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 	// The entries 0 to 9 are in the wal and in the database of the leader
 	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
 	require.NoError(t, err)
-	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
+		1*time.Hour, time2.SystemClock)
 	require.NoError(t, err)
 	for i := int64(0); i < 10; i++ {
 		wr := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}}
@@ -3052,7 +3053,8 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 	rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
 		HeadEntryId: &proto.EntryId{Term: 2, Offset: wal.InvalidOffset},
 	}}
-	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient, walFactory, kvFactory, nil)
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
+		walFactory, kvFactory, nil)
 	require.NoError(t, err)
 	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
 	require.NoError(t, err)
