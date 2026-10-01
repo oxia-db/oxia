@@ -2407,6 +2407,20 @@ func TestDeserializeMetadata(t *testing.T) {
 	assert.Equal(t, "sk", se.SecondaryIndexes[0].SecondaryKey)
 }
 
+// A record can fail to deserialize after its value: the entry must not keep the
+// value, which aliases the source buffer, as the pool keeps the Value capacity.
+func TestDeserializeMetadataFailureDropsValue(t *testing.T) {
+	buf, err := (&proto.StorageEntry{Value: []byte("payload-bytes")}).MarshalVT()
+	assert.NoError(t, err)
+	// Then the version id, field 2, with the wire type of a length-delimited field
+	buf = append(buf, 2<<3|2, 0)
+
+	se := proto.StorageEntryFromVTPool()
+	defer se.ReturnToVTPool()
+	assert.ErrorContains(t, DeserializeMetadata(buf, se), "wrong wireType")
+	assert.Nil(t, se.Value)
+}
+
 // applyPut must detach the request's value from the pooled entry before
 // returning it: ResetVT keeps the Value capacity, and a pooled Deserialize, like
 // the split filter's, appends into it. In the zero-copy apply of a WAL entry,

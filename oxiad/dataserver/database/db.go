@@ -1309,6 +1309,9 @@ func checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersio
 // out and Value is dropped.
 func DeserializeMetadata(buf []byte, se *proto.StorageEntry) error {
 	if err := se.UnmarshalVTUnsafe(buf); err != nil {
+		// The unmarshal can fail after the value: drop it too, as the pool
+		// keeps the Value capacity
+		se.Value = nil
 		return errors.Wrap(err, "failed to Deserialize storage entry")
 	}
 
