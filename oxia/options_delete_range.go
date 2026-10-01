@@ -14,8 +14,11 @@
 
 package oxia
 
+import "github.com/oxia-db/oxia/oxia/internal/model"
+
 type deleteRangeOptions struct {
 	baseOptions
+	callContext *model.CallContext
 }
 
 // DeleteRangeOption represents an option for the [SyncClient.Delete] operation.

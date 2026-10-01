@@ -120,6 +120,41 @@ func (s notLeaderOxiaClientServer) CloseSession(context.Context, *proto.CloseSes
 	return nil, s.notLeader()
 }
 
+// writeServer counts the write requests it receives, and answers them unless it
+// is stuck, like a deposed leader that is still reachable, or a saturated one.
+type writeServer struct {
+	proto.UnimplementedOxiaClientServer
+	stuck     bool
+	onRequest func()
+	requests  atomic.Int64
+}
+
+func (s *writeServer) WriteStream(stream proto.OxiaClient_WriteStreamServer) error {
+	for {
+		request, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		s.requests.Add(1)
+		if s.onRequest != nil {
+			s.onRequest()
+		}
+		if s.stuck {
+			continue
+		}
+		response := &proto.WriteResponse{}
+		for range request.Puts {
+			response.Puts = append(response.Puts, &proto.PutResponse{})
+		}
+		if err := stream.Send(response); err != nil {
+			return err
+		}
+	}
+}
+
 func startTestOxiaClientServer(t *testing.T, oxiaClientServer proto.OxiaClientServer) string {
 	t.Helper()
 
@@ -155,6 +190,16 @@ func (m *testShardManager) Leader(int64) string { return *m.leader.Load() }
 
 func (*testShardManager) Changed() <-chan struct{} { return nil }
 
+func executeTestWrite(ctx context.Context, provider RpcProvider, shardId int64) error {
+	_, err := provider.ExecuteWrite(ctx, shardId, func() (*proto.WriteRequest, error) {
+		return &proto.WriteRequest{
+			Shard: &shardId,
+			Puts:  []*proto.PutRequest{{Key: "key", Value: []byte("value")}},
+		}, nil
+	})
+	return err
+}
+
 type shardRequest struct {
 	name    string
 	execute func(context.Context, RpcProvider) error
@@ -163,11 +208,7 @@ type shardRequest struct {
 func shardRequests(shardId *int64) []shardRequest {
 	return []shardRequest{
 		{"write", func(ctx context.Context, provider RpcProvider) error {
-			_, err := provider.ExecuteWrite(ctx, &proto.WriteRequest{
-				Shard: shardId,
-				Puts:  []*proto.PutRequest{{Key: "key", Value: []byte("value")}},
-			})
-			return err
+			return executeTestWrite(ctx, provider, *shardId)
 		}},
 		{"read", func(ctx context.Context, provider RpcProvider) error {
 			_, err := provider.ExecuteRead(ctx, &proto.ReadRequest{
@@ -246,6 +287,80 @@ func TestRpcProvider_RetryWhenHintedLeaderIsUnreachable(t *testing.T) {
 			assert.NoError(t, tt.execute(ctx, provider))
 		})
 	}
+}
+
+// A leader that was deposed, but is still reachable, keeps the write stream of
+// the client open without answering the writes. Once the shard assignments name
+// the new leader, the writes must go to it. The write in flight to the old
+// leader must not be sent again to the new one: the old leader may apply it.
+func TestRpcProvider_WritesGoToTheNewLeader(t *testing.T) {
+	shardId := int64(0)
+	shardManager := &testShardManager{}
+	newLeader := &writeServer{}
+	newLeaderAddress := startTestOxiaClientServer(t, newLeader)
+	oldLeader := &writeServer{
+		stuck: true,
+		// The shard assignments name the new leader while the write is in flight
+		onRequest: func() { shardManager.leader.Store(&newLeaderAddress) },
+	}
+	oldLeaderAddress := startTestOxiaClientServer(t, oldLeader)
+	shardManager.leader.Store(&oldLeaderAddress)
+
+	provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, newLeaderAddress,
+		func() ShardManager { return shardManager })
+	defer func() {
+		assert.NoError(t, provider.Close())
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	assert.ErrorIs(t, executeTestWrite(ctx, provider, shardId), context.DeadlineExceeded)
+
+	ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	assert.NoError(t, executeTestWrite(ctx, provider, shardId))
+
+	assert.EqualValues(t, 1, oldLeader.requests.Load())
+	assert.EqualValues(t, 1, newLeader.requests.Load())
+}
+
+// Connecting to a leader that cannot be reached, e.g. because its address is
+// blackholed, can take up to the gRPC connect timeout. Setting up the write
+// stream must not outlast the request, and the request must never be sent after
+// its deadline.
+func TestRpcProvider_WriteStreamSetupRespectsTheDeadline(t *testing.T) {
+	shardId := int64(0)
+	leader := &writeServer{}
+	leaderAddress := startTestOxiaClientServer(t, leader)
+	shardManager := &testShardManager{}
+	shardManager.leader.Store(&leaderAddress)
+
+	// Connecting to the leader takes longer than the request timeout
+	connect := make(chan struct{})
+	dialer := func(ctx context.Context, address string) (net.Conn, error) {
+		select {
+		case <-connect:
+		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	}
+	provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, leaderAddress,
+		func() ShardManager { return shardManager }, grpc.WithContextDialer(dialer))
+	defer func() {
+		assert.NoError(t, provider.Close())
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	assert.ErrorIs(t, executeTestWrite(ctx, provider, shardId), context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), 2*time.Second)
+
+	// Once connected, the request is not sent
+	close(connect)
+	assert.Never(t, func() bool { return leader.requests.Load() > 0 }, 300*time.Millisecond, 10*time.Millisecond)
 }
 
 func TestExecuteWithRetry_ShardRequestErrors(t *testing.T) {

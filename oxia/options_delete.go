@@ -14,9 +14,12 @@
 
 package oxia
 
+import "github.com/oxia-db/oxia/oxia/internal/model"
+
 type deleteOptions struct {
 	baseOptions
 	expectedVersion *int64
+	callContext     *model.CallContext
 }
 
 // DeleteOption represents an option for the [SyncClient.Delete] operation.

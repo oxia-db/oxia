@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+
+	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
 type putOptions struct {
@@ -26,6 +28,7 @@ type putOptions struct {
 	ephemeral          bool
 	sequenceKeysDeltas []uint64
 	secondaryIndexes   []*secondaryIdxOption
+	callContext        *model.CallContext
 }
 
 // PutOption represents an option for the [SyncClient.Put] operation.

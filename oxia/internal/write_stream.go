@@ -29,14 +29,22 @@ import (
 type streamWrapper struct {
 	sync.Mutex
 
+	// target is the shard leader the stream goes to
+	target          string
 	stream          proto.OxiaClient_WriteStreamClient
+	cancel          context.CancelFunc
 	pendingRequests []concurrent.Future[*proto.WriteResponse]
 	failed          atomic.Bool
 }
 
-func newStreamWrapper(shard int64, stream proto.OxiaClient_WriteStreamClient) *streamWrapper {
+// newStreamWrapper wraps a write stream to target. cancel cancels the context of
+// the stream, and it is invoked once the stream ends.
+func newStreamWrapper(shard int64, target string, stream proto.OxiaClient_WriteStreamClient,
+	cancel context.CancelFunc) *streamWrapper {
 	sw := &streamWrapper{
+		target:          target,
 		stream:          stream,
+		cancel:          cancel,
 		pendingRequests: nil,
 	}
 
@@ -47,7 +55,18 @@ func newStreamWrapper(shard int64, stream proto.OxiaClient_WriteStreamClient) *s
 	return sw
 }
 
-func (sw *streamWrapper) Send(ctx context.Context, req *proto.WriteRequest) (*proto.WriteResponse, error) {
+// Send hands the request returned by prepare to gRPC, and waits for its
+// response. prepare is invoked right before, unless ctx is done: a request is
+// never sent after its deadline.
+func (sw *streamWrapper) Send(ctx context.Context, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	req, err := prepare()
+	if err != nil {
+		return nil, err
+	}
+
 	f := concurrent.NewFuture[*proto.WriteResponse]()
 
 	sw.Lock()
@@ -64,16 +83,19 @@ func (sw *streamWrapper) Send(ctx context.Context, req *proto.WriteRequest) (*pr
 }
 
 func (sw *streamWrapper) handleResponses() {
+	defer sw.cancel()
+
 	for {
 		response, err := sw.stream.Recv()
 		sw.Lock()
 
 		if err != nil {
+			// Before failing the requests, so that their retries use a new stream
+			sw.failed.Store(true)
 			for _, f := range sw.pendingRequests {
 				f.Fail(err)
 			}
 			sw.pendingRequests = nil
-			sw.failed.Store(true)
 			sw.Unlock()
 			return
 		}

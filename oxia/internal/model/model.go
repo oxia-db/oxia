@@ -30,7 +30,8 @@ type PutCall struct {
 	ClientIdentity     *string
 	PartitionKey       *string
 	SecondaryIndexes   []*proto.SecondaryIndex
-	OpIndex            uint32 // Position in the write batch, set when added to it
+	OpIndex            uint32       // Position in the write batch, set when added to it
+	CallContext        *CallContext // Set if the caller can give up on the call until it is sent
 	Callback           func(*proto.PutResponse, error)
 }
 
@@ -38,15 +39,17 @@ type DeleteCall struct {
 	Key               string
 	ExpectedVersionId *int64
 	PartitionKey      *string
-	OpIndex           uint32 // Position in the write batch, set when added to it
+	OpIndex           uint32       // Position in the write batch, set when added to it
+	CallContext       *CallContext // Set if the caller can give up on the call until it is sent
 	Callback          func(*proto.DeleteResponse, error)
 }
 
 type DeleteRangeCall struct {
 	MinKeyInclusive string
 	MaxKeyExclusive string
-	PartitionKey    *string // Only used for shard routing, not sent to the server
-	OpIndex         uint32  // Position in the write batch, set when added to it
+	PartitionKey    *string      // Only used for shard routing, not sent to the server
+	OpIndex         uint32       // Position in the write batch, set when added to it
+	CallContext     *CallContext // Set if the caller can give up on the call until it is sent
 	Callback        func(*proto.DeleteRangeResponse, error)
 }
 

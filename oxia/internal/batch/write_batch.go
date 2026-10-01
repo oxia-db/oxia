@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/oxia-db/oxia/oxia/batch"
@@ -30,9 +31,12 @@ import (
 
 var ErrRequestTooLarge = errors.New("put request is too large")
 
+// errCallsDropped fails the execution of a batch whose calls were all dropped.
+var errCallsDropped = errors.New("all the calls were dropped")
+
 type writeBatchFactory struct {
 	namespace      string
-	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	execute        func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
 	reroute        WriteRerouter
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -59,7 +63,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 type writeBatch struct {
 	namespace      string
 	shardId        *int64
-	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	execute        func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
 	reroute        WriteRerouter
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -108,7 +112,24 @@ func (b *writeBatch) Complete() {
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
 	defer cancel()
 
-	response, err := b.execute(ctx, request)
+	// The calls are dropped or sent when the request is first handed to gRPC
+	prepared := false
+	response, err := b.execute(ctx, *b.shardId, func() (*proto.WriteRequest, error) {
+		if !prepared {
+			prepared = true
+			if b.dropCancelledCalls() {
+				if b.Size() == 0 {
+					return nil, errCallsDropped
+				}
+				request = b.toProto()
+			}
+		}
+		return request, nil
+	})
+	if b.Size() == 0 {
+		// Every call was dropped, and failed already
+		return
+	}
 	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
@@ -123,10 +144,42 @@ func (b *writeBatch) Complete() {
 	b.callback(executionStart, request, response, err)
 
 	if err != nil {
+		if !prepared {
+			// The request was never handed to gRPC: the server did not apply
+			// it, and never will
+			err = model.NotSent(err)
+		}
 		b.Fail(err)
 	} else {
 		b.handle(response)
 	}
+}
+
+// dropCancelledCalls fails and removes the calls whose caller gave up on them,
+// right before the request is first handed to gRPC. It marks the other calls
+// as sent, and it returns true if any call was dropped.
+func (b *writeBatch) dropCancelledCalls() bool {
+	size := b.Size()
+	b.puts = slices.DeleteFunc(b.puts, func(put model.PutCall) bool {
+		return dropIfCancelled(put.CallContext, func(err error) { put.Callback(nil, err) })
+	})
+	b.deletes = slices.DeleteFunc(b.deletes, func(_delete model.DeleteCall) bool {
+		return dropIfCancelled(_delete.CallContext, func(err error) { _delete.Callback(nil, err) })
+	})
+	b.deleteRanges = slices.DeleteFunc(b.deleteRanges, func(deleteRange model.DeleteRangeCall) bool {
+		return dropIfCancelled(deleteRange.CallContext, func(err error) { deleteRange.Callback(nil, err) })
+	})
+	return b.Size() < size
+}
+
+// dropIfCancelled marks a call as sent, unless its caller gave up on it: then
+// it fails the call, and returns true.
+func dropIfCancelled(callContext *model.CallContext, fail func(error)) bool {
+	if callContext.MarkSent() {
+		return false
+	}
+	fail(callContext.Err())
+	return true
 }
 
 func (b *writeBatch) Fail(err error) {
