@@ -195,8 +195,8 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 			"The amount of write operations", "count", labels),
 		readBytes: metric.NewCounter("oxia_server_kv_read",
 			"The amount of bytes read from the database", metric.Bytes, labels),
-		readCount: metric.NewCounter("oxia_server_kv_write_ops",
-			"The amount of write operations", "count", labels),
+		readCount: metric.NewCounter("oxia_server_kv_read_ops",
+			"The amount of read operations", "count", labels),
 		writeErrors: metric.NewCounter("oxia_server_kv_write_errors",
 			"The count of write operations errors", "count", labels),
 		readErrors: metric.NewCounter("oxia_server_kv_read_errors",
@@ -504,6 +504,10 @@ func closeNotFound(it *pebble.Iterator, notFound error) error {
 }
 
 func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorOpts) (returnedKey string, value []byte, closer io.Closer, err error) {
+	timer := p.readLatency.Timer()
+	defer timer.Done()
+	p.readCount.Inc()
+
 	k := p.keyEncoder.Encode(key)
 	switch comparisonType {
 	case ComparisonEqual:
@@ -527,6 +531,8 @@ func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorO
 		err = ErrKeyNotFound
 	} else if err != nil {
 		p.readErrors.Inc()
+	} else {
+		p.readBytes.Add(len(value))
 	}
 	return returnedKey, value, closer, err
 }
