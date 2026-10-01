@@ -124,3 +124,31 @@ func TestCounter_ExportedDataUnchanged(t *testing.T) {
 	require.Empty(t, expected[0].Metrics)
 	require.Len(t, expected[1].Metrics, 4)
 }
+
+// The SDK ignores the callbacks of an observable instrument created again on
+// the same meter, so counters created after a meter is restored must keep
+// adding into the series registered on it the first time.
+func TestCounter_MeterRestored(t *testing.T) {
+	previous := GetMeter()
+	defer SetMeter(previous)
+
+	reader := sdkmetric.NewManualReader()
+	SetMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
+	restored := GetMeter()
+	NewCounter("restored", "", Dimensionless, map[string]any{}).Inc()
+
+	SetMeter(sdkmetric.NewMeterProvider().Meter("other"))
+	NewCounter("restored", "", Dimensionless, map[string]any{}).Inc()
+
+	SetMeter(restored)
+	NewCounter("restored", "", Dimensionless, map[string]any{}).Add(5)
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+	require.Len(t, rm.ScopeMetrics, 1)
+	require.Len(t, rm.ScopeMetrics[0].Metrics, 1)
+	sum, ok := rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64])
+	require.True(t, ok)
+	require.Len(t, sum.DataPoints, 1)
+	require.EqualValues(t, 6, sum.DataPoints[0].Value)
+}

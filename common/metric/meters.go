@@ -40,11 +40,7 @@ func GetMeter() metric.Meter {
 }
 
 func SetMeter(m metric.Meter) {
-	observedSumsLock.Lock()
-	defer observedSumsLock.Unlock()
 	meter = m
-	// Counters created from now on need instruments on the new meter.
-	observedSums = map[sumID]*observedSum{}
 }
 
 func LabelsForShard(namespace string, shard int64) map[string]any {

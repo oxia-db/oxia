@@ -143,14 +143,22 @@ func (o *observedSum) observe(_ context.Context, obs metric.Int64Observer) error
 
 var (
 	observedSumsLock sync.Mutex
-	// observedSums holds the instruments of the current meter.
-	observedSums = map[sumID]*observedSum{}
+	// observedSums holds the instruments of each meter. The SDK ignores the
+	// callbacks of an instrument created again on the same meter, so a meter
+	// that is swapped out and back in must get its instruments back.
+	observedSums = map[metric.Meter]map[sumID]*observedSum{}
 )
 
 func getObservedSum(id sumID) *observedSum {
 	observedSumsLock.Lock()
 	defer observedSumsLock.Unlock()
-	if o, ok := observedSums[id]; ok {
+	m := GetMeter()
+	sums, ok := observedSums[m]
+	if !ok {
+		sums = map[sumID]*observedSum{}
+		observedSums[m] = sums
+	}
+	if o, ok := sums[id]; ok {
 		return o
 	}
 
@@ -160,11 +168,11 @@ func getObservedSum(id sumID) *observedSum {
 	callback := metric.WithInt64Callback(o.observe)
 	var err error
 	if id.upDown {
-		_, err = GetMeter().Int64ObservableUpDownCounter(id.name, unit, description, callback)
+		_, err = m.Int64ObservableUpDownCounter(id.name, unit, description, callback)
 	} else {
-		_, err = GetMeter().Int64ObservableCounter(id.name, unit, description, callback)
+		_, err = m.Int64ObservableCounter(id.name, unit, description, callback)
 	}
 	fatalOnErr(err, id.name)
-	observedSums[id] = o
+	sums[id] = o
 	return o
 }
