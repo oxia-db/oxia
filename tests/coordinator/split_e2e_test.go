@@ -1197,10 +1197,12 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
 }
 
 // freezeHookRpcProvider calls beforeFreeze before freezing a shard, as the
-// cutover of a split does with the parent.
+// cutover of a split does with the parent, and afterFreeze once the shard is
+// frozen. The cutover waits for them to return.
 type freezeHookRpcProvider struct {
 	rpc2.Provider
 	beforeFreeze func()
+	afterFreeze  func()
 }
 
 func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
@@ -1210,10 +1212,14 @@ func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
 
 func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
-	if req.Frozen {
+	if req.Frozen && p.beforeFreeze != nil {
 		p.beforeFreeze()
 	}
-	return p.Provider.FreezeShard(ctx, node, req)
+	response, err := p.Provider.FreezeShard(ctx, node, req)
+	if err == nil && req.Frozen && p.afterFreeze != nil {
+		p.afterFreeze()
+	}
+	return response, err
 }
 
 // The first ephemeral put of a client creates its session, on the shard of the
@@ -1225,7 +1231,7 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCutover(t *testing.T) {
 	// Hold the cutover once it has frozen the parent
 	frozen := make(chan struct{})
 	resumeCutover := make(chan struct{})
-	rpcProvider := &frozenCutoverRpcProvider{afterFreeze: sync.OnceFunc(func() {
+	rpcProvider := &freezeHookRpcProvider{afterFreeze: sync.OnceFunc(func() {
 		close(frozen)
 		<-resumeCutover
 	})}
@@ -1305,27 +1311,6 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCutover(t *testing.T) {
 		assert.Equal(t, []byte(key), value)
 		assert.Equal(t, expected.SessionId, version.SessionId)
 	}
-}
-
-// frozenCutoverRpcProvider calls afterFreeze once the cutover of a split has
-// frozen the parent. The cutover resumes when afterFreeze returns.
-type frozenCutoverRpcProvider struct {
-	rpc2.Provider
-	afterFreeze func()
-}
-
-func (p *frozenCutoverRpcProvider) factory(instanceID string) rpc2.Provider {
-	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
-	return p
-}
-
-func (p *frozenCutoverRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
-	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
-	response, err := p.Provider.FreezeShard(ctx, node, req)
-	if err == nil && req.Frozen {
-		p.afterFreeze()
-	}
-	return response, err
 }
 
 // ---- Secondary indexes test ----
