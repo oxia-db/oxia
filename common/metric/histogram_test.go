@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
@@ -223,4 +224,20 @@ func TestHistogram_ExportedDataUnchanged(t *testing.T) {
 	// Sanity check on the scenario itself.
 	require.Empty(t, expected[0].Metrics)
 	require.Len(t, expected[1].Metrics, 3)
+}
+
+// A timer records the time elapsed since it started.
+func TestTimer_RecordsElapsedTime(t *testing.T) {
+	name := fmt.Sprintf("timer_test_%d", histogramTestRun.Add(1))
+	h := NewLatencyHistogram(name, "", map[string]any{}).(*latencyHistogram)
+
+	timer := h.Timer()
+	time.Sleep(2 * time.Millisecond)
+	timer.Done()
+	require.GreaterOrEqual(t, h.s.sum.Sum(), int64(2_000))
+
+	// A timer started an hour ago lands past the last bucket bound.
+	Timer{h, time.Since(timerEpoch) - time.Hour}.Done()
+	require.EqualValues(t, 1, h.s.buckets[len(latencyBucketsMillis)].Sum())
+	require.InDelta(t, time.Hour.Microseconds(), h.s.sum.Sum(), float64(time.Minute.Microseconds()))
 }
