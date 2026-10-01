@@ -89,6 +89,12 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 		return constant.ErrNamespaceNotFound
 	}
 
+	assignmentsInterceptorFunc, err := s.assignmentsInterceptorFunc(clientStream)
+	if err != nil {
+		s.Unlock()
+		return err
+	}
+
 	initialAssignments := filterByNamespace(s.assignments, namespace)
 
 	clientCh := make(chan *proto.ShardAssignments)
@@ -96,11 +102,6 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 	s.nextClientId++
 
 	s.clients[clientId] = clientCh
-
-	assignmentsInterceptorFunc, err := s.assignmentsInterceptorFunc(clientStream)
-	if err != nil {
-		return err
-	}
 	s.Unlock()
 
 	// Send initial assignments

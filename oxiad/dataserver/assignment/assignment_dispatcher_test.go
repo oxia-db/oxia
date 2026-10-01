@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
@@ -440,6 +441,25 @@ func TestShardAssignmentDispatcher_ClientAssignmentsDoNotIncludeAuthorities(t *t
 
 	mockClient.Cancel()
 	assert.NoError(t, <-done)
+	assert.NoError(t, dispatcher.Close())
+}
+
+func TestShardAssignmentDispatcher_StandaloneRegisterWithoutAuthority(t *testing.T) {
+	dispatcher := NewStandaloneShardAssignmentDispatcher(1, proto.KeySortingType_UNKNOWN)
+
+	// The standalone dispatcher sends the client's own authority as the leader,
+	// so it rejects a client stream that carries no authority
+	err := dispatcher.RegisterForUpdates(&proto.ShardAssignmentsRequest{}, rpc.NewMockShardAssignmentClientStream())
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	// The rejected client must not keep the lock or stay registered
+	require.Eventually(t, dispatcher.Initialized, 10*time.Second, 10*time.Millisecond,
+		"the dispatcher lock is still held")
+	s := dispatcher.(*shardAssignmentDispatcher)
+	s.RLock()
+	assert.Empty(t, s.clients)
+	s.RUnlock()
+
 	assert.NoError(t, dispatcher.Close())
 }
 
