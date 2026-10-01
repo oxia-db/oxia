@@ -15,6 +15,7 @@
 package metric
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 
@@ -32,15 +33,22 @@ func TestAdder_Uncontended(t *testing.T) {
 func TestAdder_Contended(t *testing.T) {
 	var a adder
 	const goroutines, adds = 16, 100_000
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for range goroutines {
 		wg.Go(func() {
+			<-start
 			for range adds {
 				a.Add(1)
 			}
 		})
 	}
+	close(start)
 	wg.Wait()
 	assert.EqualValues(t, goroutines*adds, a.Sum())
-	assert.NotNil(t, a.stripes.Load())
+	// Adds only collide when they run in parallel: with a single P, they can
+	// all go through the base atomic.
+	if runtime.GOMAXPROCS(0) > 1 {
+		assert.NotNil(t, a.stripes.Load())
+	}
 }
