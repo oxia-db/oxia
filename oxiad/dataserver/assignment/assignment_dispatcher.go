@@ -91,7 +91,9 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 
 	initialAssignments := filterByNamespace(s.assignments, namespace)
 
-	clientCh := make(chan *proto.ShardAssignments)
+	// A one-slot mailbox: an update the client has not picked up yet is replaced
+	// by the next one, so a client busy sending gets the latest assignments next
+	clientCh := make(chan *proto.ShardAssignments, 1)
 	clientId := s.nextClientId
 	s.nextClientId++
 
@@ -115,10 +117,6 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 	for {
 		select {
 		case assignments := <-clientCh:
-			if assignments == nil {
-				return constant.ErrAborted
-			}
-
 			assignments = filterByNamespace(assignments, namespace)
 			err := clientStream.Send(assignmentsInterceptorFunc(assignments))
 			if err != nil {
@@ -255,17 +253,15 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	s.shardAssignmentsIndex = shardIndex
 	s.allowedAuthorities = allowedAuthorities
 
-	// Update all the clients, without getting stuck if any client is not responsive
-	for id, clientCh := range s.clients {
+	// Update all the clients, without getting stuck if any client is not responsive:
+	// replace an update still waiting in a client mailbox. We are the only sender
+	// and hold the lock, so the put cannot block once the mailbox is drained.
+	for _, clientCh := range s.clients {
 		select {
-		case clientCh <- assignments:
-			// Good, we were able to pass the update to the client
-
+		case <-clientCh:
 		default:
-			// The client is not responsive, cut it off
-			close(clientCh)
-			delete(s.clients, id)
 		}
+		clientCh <- assignments
 	}
 
 	return nil
