@@ -15,12 +15,16 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1582,6 +1586,291 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 		assert.Equal(t, []byte(fmt.Sprintf("value-%d", i)), value)
 	}
 	assert.NoError(t, client.Close())
+}
+
+// cutoverHoldingRpcProvider holds the first cutover of a split before it
+// freezes the parent, and records the BecomeLeader requests that data servers
+// refused because of the features enabled on the shard.
+//
+// Once delayChildSnapshots is called, it also delays the snapshots that the
+// parent sends to the children when the split adds them as observers again:
+// the parent gets a child as observer only once the child reports that it has
+// no data, or once the split fences the parent past the point of no return.
+// That fence then waits until the children are installing the snapshot, or
+// have installed it. This is the worst timing for a child that still reports
+// the data that it received in an earlier term of the parent.
+type cutoverHoldingRpcProvider struct {
+	rpc2.Provider
+	cutoverReached chan struct{}
+	resumeCutover  chan struct{}
+	holdOnce       sync.Once
+	resumeOnce     sync.Once
+	fenceOnce      sync.Once
+
+	mu                  sync.Mutex
+	refusedBecomeLeader map[int64]int
+	// parentTerm is the term of the parent whose observers are delayed, -1
+	// until delayChildSnapshots
+	parentTerm       int64
+	delayedObservers map[int64]*delayedObserver
+	childLeaders     map[int64]*proto.DataServerIdentity
+}
+
+type delayedObserver struct {
+	parentLeader *proto.DataServerIdentity
+	req          *proto.AddFollowerRequest
+}
+
+func newCutoverHoldingRpcProvider() *cutoverHoldingRpcProvider {
+	return &cutoverHoldingRpcProvider{
+		cutoverReached:      make(chan struct{}),
+		resumeCutover:       make(chan struct{}),
+		refusedBecomeLeader: make(map[int64]int),
+		parentTerm:          -1,
+		delayedObservers:    make(map[int64]*delayedObserver),
+		childLeaders:        make(map[int64]*proto.DataServerIdentity),
+	}
+}
+
+func (p *cutoverHoldingRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *cutoverHoldingRpcProvider) resume() {
+	p.resumeOnce.Do(func() { close(p.resumeCutover) })
+}
+
+// delayChildSnapshots delays the snapshots that the parent, led in the given
+// term, sends to the children.
+func (p *cutoverHoldingRpcProvider) delayChildSnapshots(parentTerm int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parentTerm = parentTerm
+}
+
+func (p *cutoverHoldingRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	p.mu.Lock()
+	if req.Observer && p.parentTerm >= 0 && req.Term == p.parentTerm {
+		p.delayedObservers[req.GetTargetShard()] = &delayedObserver{parentLeader: node, req: req}
+		p.childLeaders[req.GetTargetShard()] = &proto.DataServerIdentity{Internal: req.FollowerName}
+		p.mu.Unlock()
+		return &proto.AddFollowerResponse{}, nil
+	}
+	p.mu.Unlock()
+	return p.Provider.AddFollower(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	res, err := p.Provider.GetStatus(ctx, node, req)
+	if err == nil && res.CommitOffset < 0 {
+		// The child has no data: the parent must send it a snapshot
+		p.addDelayedObserver(ctx, req.Shard)
+	}
+	return res, err
+}
+
+func (p *cutoverHoldingRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	p.mu.Lock()
+	finalizeFence := req.Shard == 0 && p.parentTerm >= 0 && req.Term > p.parentTerm
+	p.mu.Unlock()
+	if finalizeFence {
+		p.fenceOnce.Do(func() { p.startChildSnapshots(ctx) })
+	}
+	return p.Provider.NewTerm(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, child int64) {
+	p.mu.Lock()
+	observer := p.delayedObservers[child]
+	delete(p.delayedObservers, child)
+	p.mu.Unlock()
+	if observer == nil {
+		return
+	}
+	if _, err := p.Provider.AddFollower(ctx, observer.parentLeader, observer.req); err != nil {
+		slog.Warn("Failed to add the delayed observer", slog.Int64("child-shard", child), slog.Any("error", err))
+	}
+}
+
+// startChildSnapshots lets the parent send the delayed snapshots, and waits
+// until the children are installing them, or have installed them.
+func (p *cutoverHoldingRpcProvider) startChildSnapshots(ctx context.Context) {
+	p.mu.Lock()
+	childLeaders := maps.Clone(p.childLeaders)
+	p.mu.Unlock()
+	for child := range childLeaders {
+		p.addDelayedObserver(ctx, child)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for child, leader := range childLeaders {
+		for ; time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			res, err := p.Provider.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: child})
+			if err == nil && (res.Status == proto.ServingStatus_FOLLOWER || res.CommitOffset < 0) {
+				break
+			}
+		}
+	}
+}
+
+func (p *cutoverHoldingRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen {
+		p.holdOnce.Do(func() {
+			close(p.cutoverReached)
+			select {
+			case <-p.resumeCutover:
+			case <-ctx.Done():
+			}
+		})
+	}
+	return p.Provider.FreezeShard(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+	res, err := p.Provider.BecomeLeader(ctx, node, req)
+	if errors.Is(err, constant.ErrUnsupportedFeatures) {
+		p.mu.Lock()
+		p.refusedBecomeLeader[req.Shard]++
+		p.mu.Unlock()
+	}
+	return res, err
+}
+
+func (p *cutoverHoldingRpcProvider) refusedBecomeLeaderCount(shard int64) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refusedBecomeLeader[shard]
+}
+
+// A leader election of the parent, once the children have received its data,
+// sends the split back to Bootstrap. It elects the children's leaders again in
+// the parent's new term, and the parent sends them a new snapshot. The split
+// must not pass the point of no return before they have installed it: fencing
+// the parent aborts the installation, which would leave the child leaders
+// without their data. The child leaders must also accept to lead the new
+// term, though they got the features enabled on the parent with the first
+// snapshot.
+func TestCoordinator_ShardSplit_ParentElectionAfterSnapshot(t *testing.T) {
+	rpcProvider := newCutoverHoldingRpcProvider()
+	cluster := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer cluster.close(t)
+	// Runs before close: the split controller must not stay held
+	defer rpcProvider.resume()
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	// Incompressible values, so that installing a snapshot of the parent
+	// takes a while
+	random := rand.New(rand.NewPCG(1, 2))
+	keys := make(map[string][]byte)
+	for i := 0; i < 50; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), make([]byte, 128*1024)
+		for j := range value {
+			value[j] = byte(random.Uint32())
+		}
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+
+	cluster.leftChild, cluster.rightChild, err = cluster.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
+	require.NoError(t, err)
+
+	// The children have caught up with the parent, starting from its snapshot
+	select {
+	case <-rpcProvider.cutoverReached:
+	case <-time.After(60 * time.Second):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A write after the snapshot makes each child leader the most up-to-date
+	// member of the child's ensemble, so that Bootstrap elects it again
+	_, _, err = client.Put(ctx, "key-after-snapshot", []byte("value"))
+	require.NoError(t, err)
+	keys["key-after-snapshot"] = []byte("value")
+	assert.NoError(t, client.Close())
+	parent := cluster.shardStatus(t, 0)
+	parentStatus, err := rpcProvider.GetStatus(ctx, parent.Leader, &proto.GetStatusRequest{Shard: 0})
+	require.NoError(t, err)
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		childLeader := cluster.shardStatus(t, child).Leader
+		require.Eventually(t, func() bool {
+			childStatus, err := rpcProvider.GetStatus(ctx, childLeader, &proto.GetStatusRequest{Shard: child})
+			return err == nil && childStatus.HeadOffset >= parentStatus.HeadOffset
+		}, 30*time.Second, 100*time.Millisecond)
+	}
+
+	// A new leader election of the parent sends the split back to Bootstrap.
+	// The new snapshots reach the children as late as possible, right before
+	// the split fences the parent, unless a child reports that it needs one.
+	slog.Info("Electing a new parent leader during the cutover", slog.Any("leader", parent.Leader))
+	cluster.coordinator.BecameUnavailable(parent.Leader)
+	cluster.waitForNewTerm(t, 0, parent.Term)
+	rpcProvider.delayChildSnapshots(cluster.shardStatus(t, 0).Term)
+	rpcProvider.resume()
+
+	require.Eventually(t, func() bool {
+		ns := mock.StatusSnapshot(t, cluster.metadata).Namespaces[constant.DefaultNamespace]
+		parentShard, exists := ns.Shards[0]
+		if exists && parentShard.GetStatusOrDefault() != proto.ShardStatusDeleting {
+			return false
+		}
+		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+			if sm, ok := ns.Shards[child]; !ok || sm.Split != nil {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Minute, 500*time.Millisecond, "the split did not complete")
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		assert.Zero(t, rpcProvider.refusedBecomeLeaderCount(child),
+			"the leader of child %d refused to lead because of the features enabled on it", child)
+	}
+
+	// Reads of a child without a leader give up, instead of retrying until
+	// the client is closed
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+	var unreadable []string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+		if unreadable = unreadableKeys(ctx, reader, keys); len(unreadable) == 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	assert.Empty(t, unreadable, "keys lost by the split")
+}
+
+// unreadableKeys returns the keys that can't be read with their expected value,
+// with the reason.
+func unreadableKeys(ctx context.Context, client oxia.SyncClient, expected map[string][]byte) []string {
+	var (
+		mu         sync.Mutex
+		unreadable []string
+		wg         sync.WaitGroup
+	)
+	for key, value := range expected {
+		wg.Go(func() {
+			getCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			_, actual, _, err := client.Get(getCtx, key)
+			if err == nil && bytes.Equal(actual, value) {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			unreadable = append(unreadable, fmt.Sprintf("%s (%d bytes read, error: %v)", key, len(actual), err))
+		})
+	}
+	wg.Wait()
+	slices.Sort(unreadable)
+	return unreadable
 }
 
 func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
