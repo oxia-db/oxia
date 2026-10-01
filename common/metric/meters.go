@@ -25,6 +25,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// meterName is the instrumentation scope of the oxia metrics.
+const meterName = "oxia"
+
 var (
 	meter metric.Meter
 	once  sync.Once
@@ -32,9 +35,7 @@ var (
 
 func GetMeter() metric.Meter {
 	once.Do(func() {
-		meter = otel.GetMeterProvider().Meter(
-			"oxia",
-		)
+		meter = otel.GetMeterProvider().Meter(meterName)
 	})
 	return meter
 }
