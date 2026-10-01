@@ -16,6 +16,9 @@ package metric
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -86,9 +89,12 @@ func histogramViews() sdkmetric.Option {
 		view(Milliseconds, latencyBucketsMillis), view(Bytes, sizeBucketsBytes), view(Dimensionless, sizeBucketsCount))
 }
 
-// histogramScenario records values on and around the bucket bounds, and
-// returns the data collected after each step.
-func histogramScenario(t *testing.T, r histogramRecorder, collect func() metricdata.ScopeMetrics) []metricdata.ScopeMetrics {
+// histogramScenario records values on and around the bucket bounds into
+// histograms named with prefix, and returns the data collected after each
+// step.
+func histogramScenario(
+	t *testing.T, prefix string, r histogramRecorder, collect func() metricdata.ScopeMetrics,
+) []metricdata.ScopeMetrics {
 	t.Helper()
 	shard1 := LabelsForShard("default", 1)
 	shard2 := LabelsForShard("default", 2)
@@ -97,27 +103,27 @@ func histogramScenario(t *testing.T, r histogramRecorder, collect func() metricd
 	}
 
 	// A histogram, or a series, that was never recorded is not reported.
-	r.create("histo_test_latency", Milliseconds, shard1)
-	r.create("histo_test_bytes", Bytes, shard2)
-	r.create("histo_test_untouched", Dimensionless, shard1)
+	r.create(prefix+"latency", Milliseconds, shard1)
+	r.create(prefix+"bytes", Bytes, shard2)
+	r.create(prefix+"untouched", Dimensionless, shard1)
 	var steps []metricdata.ScopeMetrics
 	steps = append(steps, collect())
 
 	for _, micros := range []int64{0, 99, 100, 101, 1_000, 1_001, 49_999_999, 50_000_000, 50_000_001, 3_600_000_000} {
-		latency("histo_test_latency", shard1, micros)
+		latency(prefix+"latency", shard1, micros)
 	}
-	latency("histo_test_latency", shard2, 250)
+	latency(prefix+"latency", shard2, 250)
 	for _, size := range []float64{0, 1, 15, 16, 17, 0x800000, 0x800001, 1 << 30} {
-		r.record("histo_test_bytes", Bytes, shard1, size, int64(size))
+		r.record(prefix+"bytes", Bytes, shard1, size, int64(size))
 	}
 	for _, count := range []float64{0, 1, 2, 5, 6, 1_000_000, 1_000_001} {
-		r.record("histo_test_count", Dimensionless, map[string]any{}, count, int64(count))
+		r.record(prefix+"count", Dimensionless, map[string]any{}, count, int64(count))
 	}
 	steps = append(steps, collect())
 
 	// Cumulative: values carry over across collections.
-	latency("histo_test_latency", shard1, 12_345)
-	r.record("histo_test_bytes", Bytes, shard1, 100, 100)
+	latency(prefix+"latency", shard1, 12_345)
+	r.record(prefix+"bytes", Bytes, shard1, 100, 100)
 	steps = append(steps, collect())
 	return steps
 }
@@ -173,10 +179,15 @@ func withSumsOf(t *testing.T, actual, expected metricdata.ScopeMetrics) metricda
 	return actual
 }
 
+var histogramTestRun atomic.Int64
+
 func TestHistogram_ExportedDataUnchanged(t *testing.T) {
+	// The histograms registry is global: the names must be new on each run
+	// (e.g. with -count), for the first collection to be empty.
+	prefix := fmt.Sprintf("histo_test_%d_", histogramTestRun.Add(1))
 	sdkReader := sdkmetric.NewManualReader()
 	sdkProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkReader), histogramViews())
-	expected := histogramScenario(t, sdkHistogramRecorder(t, sdkProvider.Meter(meterName)), func() metricdata.ScopeMetrics {
+	expected := histogramScenario(t, prefix, sdkHistogramRecorder(t, sdkProvider.Meter(meterName)), func() metricdata.ScopeMetrics {
 		var rm metricdata.ResourceMetrics
 		require.NoError(t, sdkReader.Collect(context.Background(), &rm))
 		if len(rm.ScopeMetrics) == 0 {
@@ -189,14 +200,14 @@ func TestHistogram_ExportedDataUnchanged(t *testing.T) {
 	// A reader with the producer, as the Prometheus exporter has.
 	reader := sdkmetric.NewManualReader(sdkmetric.WithProducer(HistogramProducer))
 	sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	actual := histogramScenario(t, wrapperHistogramRecorder(), func() metricdata.ScopeMetrics {
+	actual := histogramScenario(t, prefix, wrapperHistogramRecorder(), func() metricdata.ScopeMetrics {
 		var rm metricdata.ResourceMetrics
 		require.NoError(t, reader.Collect(context.Background(), &rm))
 		var sm metricdata.ScopeMetrics
 		for _, s := range rm.ScopeMetrics {
 			for _, m := range s.Metrics {
 				// Only the histograms of this test: the registry is global.
-				if len(m.Name) > 11 && m.Name[:11] == "histo_test_" {
+				if strings.HasPrefix(m.Name, prefix) {
 					sm.Scope = s.Scope
 					sm.Metrics = append(sm.Metrics, m)
 				}
