@@ -1393,12 +1393,13 @@ func TestSessionManager_CloseWithInFlightExpiry(t *testing.T) {
 	}
 }
 
-// The active-sessions metric is a synchronous up-down counter, maintained at
-// the map insert/remove sites, instead of an observable gauge: gauge callbacks
-// run under the metrics SDK's collection lock, which is how the #597 deadlock
-// happened. The counter must move exactly once per insert and remove —
-// CloseSession and session expiry can race on the same id, and the losing
-// remove must not decrement it a second time.
+// The active-sessions metric is an up-down counter, maintained at the map
+// insert/remove sites, instead of a gauge whose callback reads the sessions
+// map: gauge callbacks run under the metrics SDK's collection lock, so taking
+// the session manager lock there is how the #597 deadlock happened. The
+// counter must move exactly once per insert and remove — CloseSession and
+// session expiry can race on the same id, and the losing remove must not
+// decrement it a second time.
 func TestSessionManager_ActiveSessionsMetric(t *testing.T) {
 	// Swap in an SDK meter so the counter value can be read back.
 	previous := metric.GetMeter()
