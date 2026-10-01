@@ -49,6 +49,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/common/rpc"
+	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
@@ -58,6 +59,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -2897,4 +2899,240 @@ func TestCoordinator_ShardSplit_ChildDataSurvivesLeaderLossAfterSplit(t *testing
 		}
 	}
 	assert.Empty(t, unreadable, "keys lost with the leader of the left child")
+}
+
+// ---- Split of a parent without committed entries ----
+
+// featurelessServerRpcProvider makes the coordinator see a data server as
+// supporting no feature, as it sees one whose features it doesn't know yet,
+// e.g. while it is down: a term of an ensemble with that data server pins no
+// feature, so its leader enables none with an entry, and a shard that gets no
+// write has no committed entry. It also holds the first cutover of a split
+// before it freezes the parent.
+type featurelessServerRpcProvider struct {
+	rpc2.Provider
+	featurelessServer string
+	cutoverReached    chan struct{}
+	resumeCutover     chan struct{}
+	holdOnce          sync.Once
+	resumeOnce        sync.Once
+}
+
+func newFeaturelessServerRpcProvider(featurelessServer string) *featurelessServerRpcProvider {
+	return &featurelessServerRpcProvider{
+		featurelessServer: featurelessServer,
+		cutoverReached:    make(chan struct{}),
+		resumeCutover:     make(chan struct{}),
+	}
+}
+
+func (p *featurelessServerRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *featurelessServerRpcProvider) resume() {
+	p.resumeOnce.Do(func() { close(p.resumeCutover) })
+}
+
+func (p *featurelessServerRpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	res, err := p.Provider.Handshake(ctx, node, req)
+	if res != nil && node.GetNameOrDefault() == p.featurelessServer {
+		res.FeaturesSupported = nil
+	}
+	return res, err
+}
+
+func (p *featurelessServerRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen {
+		p.holdOnce.Do(func() {
+			close(p.cutoverReached)
+			select {
+			case <-p.resumeCutover:
+			case <-ctx.Done():
+			}
+		})
+	}
+	return p.Provider.FreezeShard(ctx, node, req)
+}
+
+// setupSplitClusterWithDbDirs is setupSplitCluster, with data servers named
+// s1, s2 and s3, and a coordinator that uses the given rpc provider factory. It
+// also returns the database directory of each data server.
+func setupSplitClusterWithDbDirs(t *testing.T,
+	rpcProviderFactory rpc2.ProviderFactory) (*splitTestCluster, map[string]string) {
+	t.Helper()
+
+	servers := make(map[string]*dataserver.Server)
+	dbDirs := make(map[string]string)
+	var addresses []*proto.DataServerIdentity
+	for _, name := range []string{"s1", "s2", "s3"} {
+		s, addr := mock.NewServerWithOptions(t, name, func(options *option.Options) {
+			dbDirs[name] = options.Storage.Database.Dir
+		})
+		servers[name] = s
+		addresses = append(addresses, addr)
+	}
+
+	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+		Value: newClusterConfig([]*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 1,
+		}}, addresses),
+		Version: metadatacommon.NotExists,
+	})
+	require.NoError(t, err)
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpcProviderFactory)
+
+	metadata := coordinatorInstance.Metadata()
+	require.Eventually(t, func() bool {
+		shard := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards[0]
+		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
+	}, 30*time.Second, 100*time.Millisecond)
+
+	return &splitTestCluster{
+		servers:     servers,
+		addresses:   addresses,
+		sa1:         addresses[0],
+		coordinator: coordinatorInstance,
+		metadata:    metadata,
+	}, dbDirs
+}
+
+// readShardKeys reads the keys of a shard from the database directory of a
+// data server that was closed.
+func readShardKeys(t *testing.T, dbDir string, shard int64) []string {
+	t.Helper()
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{DataDir: dbDir, CacheSizeMB: 1})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_UNKNOWN,
+		time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
+
+	it, err := db.List(&proto.ListRequest{})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, it.Close()) }()
+	var keys []string
+	for ; it.Valid(); it.Next() {
+		keys = append(keys, it.Key())
+	}
+	require.NoError(t, it.Error())
+	return keys
+}
+
+// A split child applies the entries of the parent with the split filter while
+// it observes the parent, and the parent first sends it a snapshot of its
+// database: the wal of the child starts after the entries in the snapshot, and
+// at the end of the split, the followers of the child get a snapshot of the
+// child as well. A parent that has committed no entry, like a shard that got no
+// write and whose ensemble pins no feature, must not send the child its entries
+// from the first one on, or the followers of the child would get them from the
+// child's wal and apply them without the filter, keeping the records of the
+// other child.
+func TestCoordinator_ShardSplit_ParentWithoutCommittedEntries(t *testing.T) {
+	rpcProvider := newFeaturelessServerRpcProvider("s3")
+	cluster, dbDirs := setupSplitClusterWithDbDirs(t, rpcProvider.factory)
+	closed := false
+	defer func() {
+		if !closed {
+			cluster.close(t)
+		}
+	}()
+	// Runs before close: the split controller must not stay held
+	defer rpcProvider.resume()
+
+	parent := cluster.shardStatus(t, 0)
+	parentLeader, err := cluster.servers[parent.Leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
+	require.NoError(t, err)
+	parentStatus, err := parentLeader.GetStatus(&proto.GetStatusRequest{Shard: 0})
+	require.NoError(t, err)
+	require.EqualValues(t, -1, parentStatus.HeadOffset, "the parent has entries")
+
+	cluster.leftChild, cluster.rightChild, err = cluster.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
+	require.NoError(t, err)
+
+	// The children observe the parent: write to it on both sides of the split
+	// point before its cutover
+	select {
+	case <-rpcProvider.cutoverReached:
+	case <-time.After(60 * time.Second):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	var keys []string
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key-%03d", i)
+		_, _, err = client.Put(ctx, key, []byte("value"))
+		require.NoError(t, err)
+		keys = append(keys, key)
+	}
+	assert.NoError(t, client.Close())
+	parentStatus, err = parentLeader.GetStatus(&proto.GetStatusRequest{Shard: 0})
+	require.NoError(t, err)
+
+	rpcProvider.resume()
+	cluster.waitForSplit(t)
+	children := map[int64]*proto.ShardMetadata{cluster.leftChild: cluster.leftMeta, cluster.rightChild: cluster.rightMeta}
+
+	// Every member of the ensemble of a child gets the data of the child
+	for child, childMeta := range children {
+		for _, member := range childMeta.Ensemble {
+			require.Eventually(t, func() bool {
+				status, err := rpcProvider.GetStatus(ctx, member, &proto.GetStatusRequest{Shard: child})
+				return err == nil && status.CommitOffset >= parentStatus.HeadOffset
+			}, 30*time.Second, 100*time.Millisecond, "%s did not get the data of shard %d",
+				member.GetNameOrDefault(), child)
+		}
+	}
+
+	// Closing the data servers flushes their databases
+	cluster.close(t)
+	closed = true
+	for child, childMeta := range children {
+		var expected []string
+		for _, key := range keys {
+			if h := hash.Xxh332(key); h >= childMeta.Int32HashRange.Min && h <= childMeta.Int32HashRange.Max {
+				expected = append(expected, key)
+			}
+		}
+		require.NotEmpty(t, expected)
+		for _, member := range childMeta.Ensemble {
+			assert.ElementsMatch(t, expected, readShardKeys(t, dbDirs[member.GetNameOrDefault()], child),
+				"keys of shard %d on %s", child, member.GetNameOrDefault())
+		}
+	}
+}
+
+// The split of a parent that never commits an entry completes as well: the
+// children have nothing to get from it.
+func TestCoordinator_ShardSplit_ParentWithoutEntries(t *testing.T) {
+	rpcProvider := newFeaturelessServerRpcProvider("s3")
+	rpcProvider.resume()
+	cluster, _ := setupSplitClusterWithDbDirs(t, rpcProvider.factory)
+	defer cluster.close(t)
+
+	cluster.splitAndWait(t)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		key := cluster.childKey(child, "key")
+		_, _, err = client.Put(ctx, key, []byte("value"))
+		require.NoError(t, err, "write to shard %d", child)
+		_, value, _, err := client.Get(ctx, key)
+		require.NoError(t, err, "read from shard %d", child)
+		assert.Equal(t, []byte("value"), value)
+	}
 }

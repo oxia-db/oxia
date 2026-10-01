@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -323,6 +324,25 @@ func (fc *followerCursor) run() {
 }
 
 func (fc *followerCursor) runOnce() error {
+	// A split child must start from a snapshot that holds an entry of the
+	// parent, so that its wal starts after that entry. Once the split
+	// completes, the followers of the child are brought up to date by tailing
+	// the child's wal if it starts at the first entry (see shouldSendSnapshot),
+	// and they would apply the parent's entries in it without the split
+	// filter. Until the parent has committed an entry, its snapshot holds none.
+	seeding := fc.observer && fc.ackOffset.Load() == wal.InvalidOffset
+	if seeding {
+		// The head offset never reaches math.MaxInt64: wait for the commit
+		// offset only
+		if err := fc.ackTracker.WaitForHeadOffsetOrCommitAdvance(fc.ctx, math.MaxInt64, wal.InvalidOffset); err != nil {
+			return err
+		}
+		if fc.ackTracker.CommitOffset() == wal.InvalidOffset {
+			// The tracker was closed: the term ended, and the cursor is closing
+			return nil
+		}
+	}
+
 	if fc.shouldSendSnapshot() {
 		timer := fc.snapshotsTransferTime.Timer()
 
@@ -334,6 +354,11 @@ func (fc *followerCursor) runOnce() error {
 		timer.Done()
 	}
 
+	if seeding && fc.ackOffset.Load() == wal.InvalidOffset {
+		// The database had not applied the committed entry yet when the
+		// snapshot was taken
+		return errors.New("the snapshot sent to the split child holds no entry of the parent")
+	}
 	return fc.streamEntries()
 }
 
