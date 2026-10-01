@@ -76,27 +76,39 @@ type sessions struct {
 // executeWithSessionId invokes the callback with the shard that shardForKey
 // returns and the id of the session on that shard, once the session has been
 // established. The shard is looked up under the lock: a shard looked up before
-// could be one whose session followSplits has moved since.
+// could be one whose session followSplits has moved since. It is looked up
+// again when the shard is split before the session is established on it.
 func (s *sessions) executeWithSessionId(shardForKey func() int64,
 	callback func(shardId int64, sessionId int64, err error)) {
 	s.Lock()
 	defer s.Unlock()
-	shardId := shardForKey()
-	session, found := s.sessionsByShard[shardId]
-	if !found {
-		// The shard may have replaced a shard that was split, and inherited
-		// its session
-		s.followSplits()
-		session, found = s.sessionsByShard[shardId]
-	}
-	if !found {
-		session = s.startSession(shardId)
-		s.sessionsByShard[shardId] = session
-	}
-	if !session.executeWithId(func(sessionId int64, err error) { callback(shardId, sessionId, err) }) {
+	for {
+		shardId := shardForKey()
+		session, found := s.sessionsByShard[shardId]
+		if !found {
+			// The shard may have replaced a shard that was split, and inherited
+			// its session
+			s.followSplits()
+			session, found = s.sessionsByShard[shardId]
+		}
+		if !found {
+			session = s.startSession(shardId)
+			s.sessionsByShard[shardId] = session
+		}
+		err := session.executeWithId(func(sessionId int64, err error) { callback(shardId, sessionId, err) })
+		if err == nil {
+			return
+		}
 		// The session failed to start: forget it, so that the next operation
 		// attempts a fresh one
 		delete(s.sessionsByShard, shardId)
+		if !errors.Is(err, constant.ErrShardNotFound) {
+			callback(shardId, -1, err)
+			return
+		}
+		// The shard was split before the session was established: the key is
+		// now on one of the shards that replaced it
+		session.log.Info("The shard was split before the session was established on it")
 	}
 }
 
@@ -236,15 +248,15 @@ type clientSession struct {
 }
 
 // executeWithId invokes the callback with the session id, once the session
-// has been established. It returns false when the session failed to start:
-// the caller — which already holds the sessions lock — discards it, so that
-// re-acquiring that lock here (a self-deadlock) is never needed.
-func (cs *clientSession) executeWithId(callback func(int64, error)) bool {
+// has been established. When the session failed to start, it returns the error
+// without invoking the callback: the caller — which already holds the sessions
+// lock — discards the session, so that re-acquiring that lock here (a
+// self-deadlock) is never needed.
+func (cs *clientSession) executeWithId(callback func(int64, error)) error {
 	select {
 	case err := <-cs.started:
 		if err != nil {
-			callback(-1, err)
-			return false
+			return err
 		}
 		cs.Lock()
 		callback(cs.sessionId, nil)
@@ -254,21 +266,26 @@ func (cs *clientSession) executeWithId(callback func(int64, error)) bool {
 			callback(-1, cs.ctx.Err())
 		}
 	}
-	return true
+	return nil
 }
 
 func (cs *clientSession) createSessionWithRetries() {
 	backOff := time2.NewBackOff(cs.ctx)
-	err := backoff.RetryNotify(cs.createSession,
-		backOff, func(err error, duration time.Duration) {
-			if !errors.Is(err, context.Canceled) {
-				cs.log.Error(
-					"Error while creating session",
-					slog.Any("error", err),
-					slog.Duration("retry-after", duration),
-				)
-			}
-		})
+	// A change of the shard map ends the wait for the next attempt: it can be
+	// the split of the shard, which ends the creation
+	timer := &internal.ShardMapTimer{}
+	err := backoff.RetryNotifyWithTimer(func() error {
+		timer.Changed = cs.sessions.shardManager.Changed()
+		return cs.createSession()
+	}, backOff, func(err error, duration time.Duration) {
+		if !errors.Is(err, context.Canceled) {
+			cs.log.Error(
+				"Error while creating session",
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		}
+	}, timer)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		cs.Lock()
 		cs.started <- err
@@ -278,6 +295,11 @@ func (cs *clientSession) createSessionWithRetries() {
 }
 
 func (cs *clientSession) createSession() error {
+	if !cs.sessions.shardManager.Exists(cs.shardId) {
+		// The shard was split and deleted: no data server accepts the session
+		// on it anymore
+		return backoff.Permanent(constant.ErrShardNotFound)
+	}
 	ctx, cancel := context.WithTimeout(cs.ctx, cs.sessions.clientOpts.requestTimeout)
 	defer cancel()
 	createSessionResponse, err := cs.sessions.rpcProvider.CreateSession(ctx, cs.leader(), &proto.CreateSessionRequest{

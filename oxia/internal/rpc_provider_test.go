@@ -402,7 +402,7 @@ func TestRpcProvider_ShardWithoutLeader(t *testing.T) {
 
 func TestShardMapTimer(t *testing.T) {
 	changed := make(chan struct{})
-	timer := &shardMapTimer{changed: changed}
+	timer := &ShardMapTimer{Changed: changed}
 	defer timer.Stop()
 
 	timer.Start(time.Millisecond)
@@ -427,10 +427,10 @@ func TestExecuteWithRetryWakesUpOnShardMapChange(t *testing.T) {
 	defer cancel()
 
 	changed := make(chan struct{})
-	timer := &shardMapTimer{}
+	timer := &ShardMapTimer{}
 	attempts := 0
 	result, err := executeWithRetryTimer(ctx, timer, func(constant.ErrorMetadata) (int, error) {
-		timer.changed = changed
+		timer.Changed = changed
 		attempts++
 		if attempts == 1 {
 			// The shard map changes while the attempt is in progress

@@ -1201,10 +1201,12 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
 }
 
 // freezeHookRpcProvider calls beforeFreeze before freezing a shard, as the
-// cutover of a split does with the parent.
+// cutover of a split does with the parent, and afterFreeze once the shard is
+// frozen. The cutover waits for them to return.
 type freezeHookRpcProvider struct {
 	rpc2.Provider
 	beforeFreeze func()
+	afterFreeze  func()
 }
 
 func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
@@ -1214,10 +1216,105 @@ func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
 
 func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
-	if req.Frozen {
+	if req.Frozen && p.beforeFreeze != nil {
 		p.beforeFreeze()
 	}
-	return p.Provider.FreezeShard(ctx, node, req)
+	response, err := p.Provider.FreezeShard(ctx, node, req)
+	if err == nil && req.Frozen && p.afterFreeze != nil {
+		p.afterFreeze()
+	}
+	return response, err
+}
+
+// The first ephemeral put of a client creates its session, on the shard of the
+// key, and the next ephemeral puts wait for it. A put issued while the cutover
+// of a split freezes the parent can't create it there: the parent rejects it,
+// then the parent is deleted. The put must create the session on the child that
+// took over its key instead.
+func TestCoordinator_ShardSplit_SessionCreatedDuringCutover(t *testing.T) {
+	// Hold the cutover once it has frozen the parent
+	frozen := make(chan struct{})
+	resumeCutover := make(chan struct{})
+	rpcProvider := &freezeHookRpcProvider{afterFreeze: sync.OnceFunc(func() {
+		close(frozen)
+		<-resumeCutover
+	})}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer c.close(t)
+	resume := sync.OnceFunc(func() { close(resumeCutover) })
+	defer resume()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+	_, _, err = client.Put(ctx, "seed", []byte("seed"))
+	require.NoError(t, err)
+
+	c.initiateSplit(t)
+	select {
+	case <-frozen:
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A key on each side of the split point
+	var leftKey, rightKey string
+	for i := 0; leftKey == "" || rightKey == ""; i++ {
+		key := fmt.Sprintf("cutover-%d", i)
+		if h := hash.Xxh332(key); h < math.MaxUint32/4 {
+			leftKey = key
+		} else if h > math.MaxUint32/4*3 {
+			rightKey = key
+		}
+	}
+
+	type putResult struct {
+		version oxia.Version
+		err     error
+	}
+	put := func(key string) <-chan putResult {
+		ch := make(chan putResult, 1)
+		go func() {
+			_, version, err := client.Put(ctx, key, []byte(key), oxia.Ephemeral())
+			ch <- putResult{version, err}
+		}()
+		return ch
+	}
+	await := func(ch <-chan putResult, key string) oxia.Version {
+		select {
+		case result := <-ch:
+			require.NoError(t, result.err, "ephemeral put of %s", key)
+			assert.True(t, result.version.Ephemeral)
+			return result.version
+		case <-time.After(30 * time.Second):
+			require.FailNow(t, "ephemeral put stuck after the split", "key %s", key)
+			return oxia.Version{}
+		}
+	}
+
+	leftPut := put(leftKey)
+	select {
+	case result := <-leftPut:
+		require.FailNow(t, "ephemeral put completed on the frozen parent", "%+v", result)
+	case <-time.After(time.Second):
+	}
+
+	resume()
+	c.waitForSplit(t)
+	rightPut := put(rightKey)
+	versions := map[string]oxia.Version{
+		leftKey:  await(leftPut, leftKey),
+		rightKey: await(rightPut, rightKey),
+	}
+
+	for key, expected := range versions {
+		_, value, version, err := client.Get(ctx, key)
+		require.NoError(t, err)
+		assert.Equal(t, []byte(key), value)
+		assert.Equal(t, expected.SessionId, version.SessionId)
+	}
 }
 
 // ---- Secondary indexes test ----

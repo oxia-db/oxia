@@ -16,7 +16,9 @@ package oxia
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -30,6 +32,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal"
 )
@@ -284,4 +288,100 @@ func testSessionsFollowSplit(t *testing.T, test followSplitTest) {
 	defer server.Unlock()
 	assert.Equal(t, []int64{0}, server.created)
 	assert.ElementsMatch(t, inherited, server.closed)
+}
+
+// frozenShardServer is a sessionRequestsServer that rejects the creation of
+// the sessions on shard 0 with ErrNodeIsNotLeader, like the parent of a split
+// while the cutover freezes it, and the data servers once it is deleted.
+type frozenShardServer struct {
+	*sessionRequestsServer
+	rejected atomic.Int64
+}
+
+func (s *frozenShardServer) CreateSession(ctx context.Context,
+	req *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
+	if req.Shard == 0 {
+		s.rejected.Add(1)
+		return nil, constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
+	}
+	return s.sessionRequestsServer.CreateSession(ctx, req)
+}
+
+type sessionResult struct {
+	shard     int64
+	sessionId int64
+	err       error
+}
+
+// The first ephemeral operation on a shard creates the session there, and holds
+// the sessions lock until the session is established. When the shard is split
+// meanwhile, the session can no longer be created on it: the operation must get
+// one on the shard that took over its key, and release the lock, without
+// waiting for the next attempt of the creation.
+func TestSessions_ShardSplitDuringCreation(t *testing.T) {
+	server := &frozenShardServer{
+		sessionRequestsServer: &sessionRequestsServer{heartbeats: make(chan shardSession, 100)},
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcServer := grpc.NewServer()
+	proto.RegisterOxiaClientServer(grpcServer, server)
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	options, err := newClientOptions(listener.Addr().String())
+	require.NoError(t, err)
+	shardManager := newSplittableShardManager(options.serviceAddress)
+	rpcProvider := internal.NewRpcProvider(t.Context(), options.namespace, nil, nil, options.serviceAddress,
+		func() internal.ShardManager { return shardManager })
+	defer func() {
+		assert.NoError(t, rpcProvider.Close())
+	}()
+
+	s := newSessions(t.Context(), shardManager, rpcProvider, options)
+	execute := func(key string) <-chan sessionResult {
+		ch := make(chan sessionResult, 1)
+		go s.executeWithSessionId(func() int64 { return shardManager.Get(key) },
+			func(shardId int64, sessionId int64, err error) { ch <- sessionResult{shardId, sessionId, err} })
+		return ch
+	}
+
+	// The split gives the lower half of the hash range to shard 1, the upper
+	// half to shard 2
+	var leftKey, rightKey string
+	for i := 0; leftKey == "" || rightKey == ""; i++ {
+		key := fmt.Sprintf("key-%d", i)
+		if hash.Xxh332(key) <= math.MaxUint32/2 {
+			leftKey = key
+		} else {
+			rightKey = key
+		}
+	}
+
+	await := func(ch <-chan sessionResult) sessionResult {
+		select {
+		case result := <-ch:
+			return result
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "the operation is stuck on the session of the split shard",
+				"creations rejected on shard 0: %d", server.rejected.Load())
+			return sessionResult{}
+		}
+	}
+
+	first := execute(leftKey)
+	// After its 8th attempt, the creation waits 854 ms at least
+	require.Eventually(t, func() bool { return server.rejected.Load() >= 8 }, 30*time.Second, time.Millisecond)
+	splitAt := time.Now()
+	shardManager.split(0, 1, 2)
+	second := execute(rightKey)
+	assert.Equal(t, sessionResult{shard: 1, sessionId: 11}, await(first))
+	assert.Less(t, time.Since(splitAt), 500*time.Millisecond, "the creation waited for its next attempt")
+	assert.Equal(t, sessionResult{shard: 2, sessionId: 12}, await(second))
+
+	require.NoError(t, s.Close())
+	server.Lock()
+	defer server.Unlock()
+	assert.Equal(t, []int64{1, 2}, server.created)
+	assert.ElementsMatch(t, []shardSession{{1, 11}, {2, 12}}, server.closed)
 }
