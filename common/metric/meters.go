@@ -40,7 +40,11 @@ func GetMeter() metric.Meter {
 }
 
 func SetMeter(m metric.Meter) {
+	observedSumsLock.Lock()
+	defer observedSumsLock.Unlock()
 	meter = m
+	// Counters created from now on need instruments on the new meter.
+	observedSums = map[sumID]*observedSum{}
 }
 
 func LabelsForShard(namespace string, shard int64) map[string]any {
@@ -61,6 +65,10 @@ func fatalOnErr(err error, name string) {
 }
 
 func getAttrs(labels map[string]any) (options metric.MeasurementOption) {
+	return metric.WithAttributeSet(getAttrSet(labels))
+}
+
+func getAttrSet(labels map[string]any) attribute.Set {
 	attrs := make([]attribute.KeyValue, 0, len(labels))
 	for k, v := range labels {
 		key := attribute.Key(k)
@@ -87,5 +95,5 @@ func getAttrs(labels map[string]any) (options metric.MeasurementOption) {
 		attrs = append(attrs, attr)
 	}
 
-	return metric.WithAttributes(attrs...)
+	return attribute.NewSet(attrs...)
 }
