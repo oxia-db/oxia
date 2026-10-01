@@ -316,7 +316,8 @@ type sessionResult struct {
 // The first ephemeral operation on a shard creates the session there, and holds
 // the sessions lock until the session is established. When the shard is split
 // meanwhile, the session can no longer be created on it: the operation must get
-// one on the shard that took over its key, and release the lock.
+// one on the shard that took over its key, and release the lock, without
+// waiting for the next attempt of the creation.
 func TestSessions_ShardSplitDuringCreation(t *testing.T) {
 	server := &frozenShardServer{
 		sessionRequestsServer: &sessionRequestsServer{heartbeats: make(chan shardSession, 100)},
@@ -369,10 +370,13 @@ func TestSessions_ShardSplitDuringCreation(t *testing.T) {
 	}
 
 	first := execute(leftKey)
-	require.Eventually(t, func() bool { return server.rejected.Load() > 0 }, 10*time.Second, 10*time.Millisecond)
+	// After its 8th attempt, the creation waits 854 ms at least
+	require.Eventually(t, func() bool { return server.rejected.Load() >= 8 }, 30*time.Second, time.Millisecond)
+	splitAt := time.Now()
 	shardManager.split(0, 1, 2)
 	second := execute(rightKey)
 	assert.Equal(t, sessionResult{shard: 1, sessionId: 11}, await(first))
+	assert.Less(t, time.Since(splitAt), 500*time.Millisecond, "the creation waited for its next attempt")
 	assert.Equal(t, sessionResult{shard: 2, sessionId: 12}, await(second))
 
 	require.NoError(t, s.Close())

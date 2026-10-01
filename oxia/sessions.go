@@ -271,16 +271,21 @@ func (cs *clientSession) executeWithId(callback func(int64, error)) error {
 
 func (cs *clientSession) createSessionWithRetries() {
 	backOff := time2.NewBackOff(cs.ctx)
-	err := backoff.RetryNotify(cs.createSession,
-		backOff, func(err error, duration time.Duration) {
-			if !errors.Is(err, context.Canceled) {
-				cs.log.Error(
-					"Error while creating session",
-					slog.Any("error", err),
-					slog.Duration("retry-after", duration),
-				)
-			}
-		})
+	// A change of the shard map ends the wait for the next attempt: it can be
+	// the split of the shard, which ends the creation
+	timer := &internal.ShardMapTimer{}
+	err := backoff.RetryNotifyWithTimer(func() error {
+		timer.Changed = cs.sessions.shardManager.Changed()
+		return cs.createSession()
+	}, backOff, func(err error, duration time.Duration) {
+		if !errors.Is(err, context.Canceled) {
+			cs.log.Error(
+				"Error while creating session",
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		}
+	}, timer)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		cs.Lock()
 		cs.started <- err
