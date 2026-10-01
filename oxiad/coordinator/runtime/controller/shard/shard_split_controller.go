@@ -415,7 +415,8 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 // as its leader, and fences it again in the child's term, with an empty copy.
 // Until the split passes the point of no return, the parent has all the data
 // of its children.
-func (sc *SplitController) resetChildLeader(childId int64, childTerm int64, childLeader *proto.DataServerIdentity) error {
+func (sc *SplitController) resetChildLeader(childId int64, childTerm int64,
+	childLeader *proto.DataServerIdentity) error {
 	if _, err := sc.rpcProvider.DeleteShard(sc.ctx, childLeader, &proto.DeleteShardRequest{
 		Namespace: sc.namespace,
 		Shard:     childId,

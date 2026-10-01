@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -1591,37 +1592,44 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 // freezes the parent, and records the BecomeLeader requests that data servers
 // refused because of the features enabled on the shard.
 //
-// Past the parent's term given to seedFollowersAfter, a leader elected in a
-// shard other than the parent is only reported as elected once its followers
-// have its data. A leader election of a split child right after the split,
-// like the one that BecameUnavailable triggers when the parent's leader also
-// leads a child, could otherwise elect a member still being seeded: every
-// member seeded from a snapshot fences with an empty wal, so the election
-// can't tell them apart.
+// Once delayChildSnapshots is called, it also delays the snapshots that the
+// parent sends to the children when the split adds them as observers again:
+// the parent gets a child as observer only once the child reports that it has
+// no data, or once the split fences the parent past the point of no return.
+// That fence then waits until the children are installing the snapshot, or
+// have installed it. This is the worst timing for a child that still reports
+// the data that it received in an earlier term of the parent.
 type cutoverHoldingRpcProvider struct {
 	rpc2.Provider
 	cutoverReached chan struct{}
 	resumeCutover  chan struct{}
 	holdOnce       sync.Once
 	resumeOnce     sync.Once
-	seedTerm       atomic.Int64
+	fenceOnce      sync.Once
 
 	mu                  sync.Mutex
 	refusedBecomeLeader map[int64]int
+	// parentTerm is the term of the parent whose observers are delayed, -1
+	// until delayChildSnapshots
+	parentTerm       int64
+	delayedObservers map[int64]*delayedObserver
+	childLeaders     map[int64]*proto.DataServerIdentity
+}
+
+type delayedObserver struct {
+	parentLeader *proto.DataServerIdentity
+	req          *proto.AddFollowerRequest
 }
 
 func newCutoverHoldingRpcProvider() *cutoverHoldingRpcProvider {
-	p := &cutoverHoldingRpcProvider{
+	return &cutoverHoldingRpcProvider{
 		cutoverReached:      make(chan struct{}),
 		resumeCutover:       make(chan struct{}),
 		refusedBecomeLeader: make(map[int64]int),
+		parentTerm:          -1,
+		delayedObservers:    make(map[int64]*delayedObserver),
+		childLeaders:        make(map[int64]*proto.DataServerIdentity),
 	}
-	p.seedTerm.Store(math.MaxInt64)
-	return p
-}
-
-func (p *cutoverHoldingRpcProvider) seedFollowersAfter(parentTerm int64) {
-	p.seedTerm.Store(parentTerm)
 }
 
 func (p *cutoverHoldingRpcProvider) factory(instanceID string) rpc2.Provider {
@@ -1631,6 +1639,81 @@ func (p *cutoverHoldingRpcProvider) factory(instanceID string) rpc2.Provider {
 
 func (p *cutoverHoldingRpcProvider) resume() {
 	p.resumeOnce.Do(func() { close(p.resumeCutover) })
+}
+
+// delayChildSnapshots delays the snapshots that the parent, led in the given
+// term, sends to the children.
+func (p *cutoverHoldingRpcProvider) delayChildSnapshots(parentTerm int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parentTerm = parentTerm
+}
+
+func (p *cutoverHoldingRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	p.mu.Lock()
+	if req.Observer && p.parentTerm >= 0 && req.Term == p.parentTerm {
+		p.delayedObservers[req.GetTargetShard()] = &delayedObserver{parentLeader: node, req: req}
+		p.childLeaders[req.GetTargetShard()] = &proto.DataServerIdentity{Internal: req.FollowerName}
+		p.mu.Unlock()
+		return &proto.AddFollowerResponse{}, nil
+	}
+	p.mu.Unlock()
+	return p.Provider.AddFollower(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	res, err := p.Provider.GetStatus(ctx, node, req)
+	if err == nil && res.CommitOffset < 0 {
+		// The child has no data: the parent must send it a snapshot
+		p.addDelayedObserver(ctx, req.Shard)
+	}
+	return res, err
+}
+
+func (p *cutoverHoldingRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	p.mu.Lock()
+	finalizeFence := req.Shard == 0 && p.parentTerm >= 0 && req.Term > p.parentTerm
+	p.mu.Unlock()
+	if finalizeFence {
+		p.fenceOnce.Do(func() { p.startChildSnapshots(ctx) })
+	}
+	return p.Provider.NewTerm(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, child int64) {
+	p.mu.Lock()
+	observer := p.delayedObservers[child]
+	delete(p.delayedObservers, child)
+	p.mu.Unlock()
+	if observer == nil {
+		return
+	}
+	if _, err := p.Provider.AddFollower(ctx, observer.parentLeader, observer.req); err != nil {
+		slog.Warn("Failed to add the delayed observer", slog.Int64("child-shard", child), slog.Any("error", err))
+	}
+}
+
+// startChildSnapshots lets the parent send the delayed snapshots, and waits
+// until the children are installing them, or have installed them.
+func (p *cutoverHoldingRpcProvider) startChildSnapshots(ctx context.Context) {
+	p.mu.Lock()
+	childLeaders := maps.Clone(p.childLeaders)
+	p.mu.Unlock()
+	for child := range childLeaders {
+		p.addDelayedObserver(ctx, child)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for child, leader := range childLeaders {
+		for ; time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			res, err := p.Provider.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: child})
+			if err == nil && (res.Status == proto.ServingStatus_FOLLOWER || res.CommitOffset < 0) {
+				break
+			}
+		}
+	}
 }
 
 func (p *cutoverHoldingRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
@@ -1655,30 +1738,7 @@ func (p *cutoverHoldingRpcProvider) BecomeLeader(ctx context.Context, node *prot
 		p.refusedBecomeLeader[req.Shard]++
 		p.mu.Unlock()
 	}
-	if err == nil && req.Shard != 0 && req.Term > p.seedTerm.Load() {
-		p.waitForFollowers(ctx, node, req)
-	}
 	return res, err
-}
-
-// waitForFollowers waits, for a while, until the followers of a new leader
-// have committed its data.
-func (p *cutoverHoldingRpcProvider) waitForFollowers(ctx context.Context, leader *proto.DataServerIdentity,
-	req *proto.BecomeLeaderRequest) {
-	leaderStatus, err := p.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: req.Shard})
-	if err != nil {
-		return
-	}
-	deadline := time.Now().Add(30 * time.Second)
-	for follower := range req.FollowerMaps {
-		for ; time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			status, err := p.GetStatus(ctx, &proto.DataServerIdentity{Internal: follower},
-				&proto.GetStatusRequest{Shard: req.Shard})
-			if err == nil && status.CommitOffset >= leaderStatus.CommitOffset {
-				break
-			}
-		}
-	}
 }
 
 func (p *cutoverHoldingRpcProvider) refusedBecomeLeaderCount(shard int64) int {
@@ -1746,16 +1806,19 @@ func TestCoordinator_ShardSplit_ParentElectionAfterSnapshot(t *testing.T) {
 		}, 30*time.Second, 100*time.Millisecond)
 	}
 
-	// A new leader election of the parent sends the split back to Bootstrap
+	// A new leader election of the parent sends the split back to Bootstrap.
+	// The new snapshots reach the children as late as possible, right before
+	// the split fences the parent, unless a child reports that it needs one.
 	slog.Info("Electing a new parent leader during the cutover", slog.Any("leader", parent.Leader))
 	cluster.coordinator.BecameUnavailable(parent.Leader)
 	cluster.waitForNewTerm(t, 0, parent.Term)
-	rpcProvider.seedFollowersAfter(cluster.shardStatus(t, 0).Term)
+	rpcProvider.delayChildSnapshots(cluster.shardStatus(t, 0).Term)
 	rpcProvider.resume()
 
 	require.Eventually(t, func() bool {
 		ns := mock.StatusSnapshot(t, cluster.metadata).Namespaces[constant.DefaultNamespace]
-		if parentMeta, parentExists := ns.Shards[0]; parentExists && parentMeta.GetStatusOrDefault() != proto.ShardStatusDeleting {
+		parentShard, exists := ns.Shards[0]
+		if exists && parentShard.GetStatusOrDefault() != proto.ShardStatusDeleting {
 			return false
 		}
 		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
