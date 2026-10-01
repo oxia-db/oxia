@@ -15,6 +15,7 @@
 package database
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -339,6 +340,71 @@ func isUserKeyInRange(key string, se *proto.StorageEntry, hashRange *proto.HashR
 
 func isHashInRange(h uint32, hashRange *proto.HashRange) bool {
 	return h >= hashRange.GetMin() && h <= hashRange.GetMax()
+}
+
+// SplitFilter is what a split child keeps of the data of its parent shard: the
+// keys whose hash is in [MinHash, MaxHash], in the parent's snapshot as well as
+// in the parent's log entries that the child applies after it.
+type SplitFilter struct {
+	MinHash uint32
+	MaxHash uint32
+
+	// ParentTerm is the term of the parent when it sent the snapshot: the
+	// parent's entries are of terms up to it, while the child writes its own
+	// entries in the later terms it leads in.
+	ParentTerm int64
+}
+
+// SetSplitFilter records the filter of a split child. The child doesn't apply
+// the parent's entries only as the follower of the parent, which filters them:
+// e.g. it replays them from its log after a restart, as a leader too, and the
+// replay filters the entries of terms up to ParentTerm with the recorded one.
+func (d *db) SetSplitFilter(filter *SplitFilter) error {
+	value, err := json.Marshal(filter)
+	if err != nil {
+		return err
+	}
+
+	batch := d.kv.NewWriteBatch()
+	defer batch.Close()
+	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
+		Key:   splitFilterKey,
+		Value: value,
+	}, now(), NoOpCallback, true); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
+		return err
+	}
+
+	// The database runs without the Pebble WAL: flush, so that the filter,
+	// and the filtering of the parent's snapshot before it, survive a crash
+	if err := d.kv.Flush(); err != nil {
+		return err
+	}
+	d.splitFilter.Store(filter)
+	return nil
+}
+
+func (d *db) SplitFilter() *SplitFilter {
+	return d.splitFilter.Load()
+}
+
+func (d *db) recoverSplitFilter() error {
+	gr, err := applyGet(d.kv, &proto.GetRequest{Key: splitFilterKey, IncludeValue: true})
+	if err != nil {
+		return err
+	}
+	if gr.Status == proto.Status_KEY_NOT_FOUND {
+		return nil
+	}
+
+	filter := &SplitFilter{}
+	if err := json.Unmarshal(gr.Value, filter); err != nil {
+		return errors.Wrap(err, "invalid split filter")
+	}
+	d.splitFilter.Store(filter)
+	return nil
 }
 
 // FilterWriteRequestForSplit filters a WriteRequest to only include operations

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
@@ -42,6 +43,25 @@ func TestUninitializedAssignmentDispatcher(t *testing.T) {
 	req := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
 	err := dispatcher.RegisterForUpdates(req, mockClient)
 	assert.ErrorIs(t, err, constant.ErrNotInitialized)
+	assert.NoError(t, dispatcher.Close())
+}
+
+func TestShardAssignmentDispatcher_StandaloneRegisterWithoutAuthority(t *testing.T) {
+	dispatcher := NewStandaloneShardAssignmentDispatcher(1, proto.KeySortingType_UNKNOWN)
+
+	// The standalone dispatcher sends the client's own authority as the leader,
+	// so it rejects a client stream that carries no authority
+	err := dispatcher.RegisterForUpdates(&proto.ShardAssignmentsRequest{}, rpc.NewMockShardAssignmentClientStream())
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	// The rejected client must not keep the lock or stay registered
+	require.Eventually(t, dispatcher.Initialized, 10*time.Second, 10*time.Millisecond,
+		"the dispatcher lock is still held")
+	s := dispatcher.(*shardAssignmentDispatcher)
+	s.RLock()
+	assert.Empty(t, s.clients)
+	s.RUnlock()
+
 	assert.NoError(t, dispatcher.Close())
 }
 
@@ -439,6 +459,99 @@ func TestShardAssignmentDispatcher_ClientAssignmentsDoNotIncludeAuthorities(t *t
 	assert.Equal(t, request.Namespaces, response.Namespaces)
 
 	mockClient.Cancel()
+	assert.NoError(t, <-done)
+	assert.NoError(t, dispatcher.Close())
+}
+
+// busyClient is a client stream that stays busy sending each update until the
+// test reads it.
+type busyClient struct {
+	ctx       context.Context
+	sending   chan struct{}
+	responses chan *proto.ShardAssignments
+}
+
+func (c *busyClient) Send(assignments *proto.ShardAssignments) error {
+	c.sending <- struct{}{}
+	select {
+	case c.responses <- assignments:
+		return nil
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	}
+}
+
+func (c *busyClient) Context() context.Context {
+	return c.ctx
+}
+
+func TestShardAssignmentDispatcher_BusyClientGetsLatestAssignments(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
+
+	coordinatorStream := rpc.NewMockShardAssignmentControllerStream()
+	go func() {
+		err := dispatcher.PushShardAssignments(coordinatorStream)
+		assert.NoError(t, err)
+	}()
+
+	assignmentsWithLeader := func(leader string) *proto.ShardAssignments {
+		return &proto.ShardAssignments{
+			Namespaces: map[string]*proto.NamespaceShardsAssignment{
+				constant.DefaultNamespace: {
+					Assignments:    []*proto.ShardAssignment{newShardAssignment(0, leader, 0, math.MaxUint32)},
+					ShardKeyRouter: proto.ShardKeyRouter_XXHASH3,
+				},
+			},
+		}
+	}
+	// pushAssignments returns once the dispatcher has handed the update to the
+	// clients: GetLeader only sees it after that, as both happen under the lock.
+	pushAssignments := func(leader string) {
+		coordinatorStream.AddRequest(assignmentsWithLeader(leader))
+		require.Eventually(t, func() bool {
+			return dispatcher.GetLeader(0) == leader
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+
+	pushAssignments("server1")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client := &busyClient{
+		ctx:       ctx,
+		sending:   make(chan struct{}, 10),
+		responses: make(chan *proto.ShardAssignments),
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- dispatcher.RegisterForUpdates(&proto.ShardAssignmentsRequest{
+			Namespace: constant.DefaultNamespace,
+		}, client)
+	}()
+
+	// Two updates arrive while the client is still busy sending the initial
+	// assignments
+	<-client.sending
+	pushAssignments("server2")
+	pushAssignments("server3")
+
+	receive := func() *proto.ShardAssignments {
+		select {
+		case assignments := <-client.responses:
+			return assignments
+		case err := <-done:
+			require.FailNow(t, "the dispatcher closed the client stream", "error: %v", err)
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out waiting for the assignments")
+		}
+		return nil
+	}
+	assert.True(t, pb.Equal(assignmentsWithLeader("server1"), receive()))
+	// The client is not cut off: once done with the initial assignments, it
+	// sends the latest ones
+	assert.True(t, pb.Equal(assignmentsWithLeader("server3"), receive()))
+
+	cancel()
 	assert.NoError(t, <-done)
 	assert.NoError(t, dispatcher.Close())
 }

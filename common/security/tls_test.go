@@ -173,3 +173,39 @@ func TestMakeCommonConfig_ValidVersions(t *testing.T) {
 	assert.Equal(t, uint16(libtls.VersionTLS12), conf.MinVersion)
 	assert.Equal(t, uint16(libtls.VersionTLS13), conf.MaxVersion)
 }
+
+func TestTryIntoServerTLSConf_ClientAuthRequiresTrustedCA(t *testing.T) {
+	dir := t.TempDir()
+	certPEM, keyPEM := generateSelfSignedCert(t, "server")
+	certPath := writeTempFile(t, dir, "cert.pem", certPEM)
+	keyPath := writeTempFile(t, dir, "key.pem", keyPEM)
+
+	opts := &TLSOptions{
+		CertFile:   certPath,
+		KeyFile:    keyPath,
+		ClientAuth: true,
+	}
+	_, err := opts.TryIntoServerTLSConf()
+	assert.ErrorIs(t, err, ErrClientAuthWithoutTrustedCa)
+}
+
+func TestTryIntoServerTLSConf_ClientAuthWithTrustedCA(t *testing.T) {
+	dir := t.TempDir()
+	certPEM, keyPEM := generateSelfSignedCert(t, "server")
+	certPath := writeTempFile(t, dir, "cert.pem", certPEM)
+	keyPath := writeTempFile(t, dir, "key.pem", keyPEM)
+	caPEM, _ := generateSelfSignedCert(t, "ClientCA")
+	caPath := writeTempFile(t, dir, "ca.pem", caPEM)
+
+	opts := &TLSOptions{
+		CertFile:      certPath,
+		KeyFile:       keyPath,
+		TrustedCaFile: caPath,
+		ClientAuth:    true,
+	}
+	conf, err := opts.TryIntoServerTLSConf()
+	require.NoError(t, err)
+	assert.Equal(t, libtls.RequireAndVerifyClientCert, conf.ClientAuth)
+	require.NotNil(t, conf.ClientCAs)
+	assert.Len(t, conf.ClientCAs.Subjects(), 1) //nolint:staticcheck
+}

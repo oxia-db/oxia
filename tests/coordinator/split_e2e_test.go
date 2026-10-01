@@ -16,7 +16,9 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"strings"
@@ -47,6 +49,8 @@ import (
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
@@ -306,7 +310,19 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 // (freeze stops writes but keeps observers streaming) before fencing the
 // parent — otherwise the children could never reach the parent's final offset
 // and the split would hang, or acknowledged writes would be lost.
+//
+// The children must also have applied the tail by then: they apply the
+// parent's entries with the split filter only while they observe the parent,
+// and a child leader replays the entries it did not apply yet without it. A
+// child would then hold the records of the other one.
 func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
+	// The children apply an entry once the parent advertises a commit offset
+	// that covers it. Hold the advertisement back, unless a new entry carries
+	// it: once the parent is frozen, the children receive its tail long before
+	// they can apply it.
+	lead.SetObserverCommitAdvertisementDelay(2 * time.Second)
+	defer lead.SetObserverCommitAdvertisementDelay(0)
+
 	c := setupSplitCluster(t)
 	defer c.close(t)
 
@@ -325,8 +341,22 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 		initialKeys[key] = value
 	}
 
+	// A partition key on each side of the split point, the midpoint of the
+	// hash range
+	var leftPk, rightPk string
+	for i := 0; leftPk == "" || rightPk == ""; i++ {
+		pk := fmt.Sprintf("pk-%d", i)
+		if h := hash.Xxh332(pk); h < math.MaxUint32/4 {
+			leftPk = pk
+		} else if h > math.MaxUint32/4*3 {
+			rightPk = pk
+		}
+	}
+
 	// Background writer: keep writing new keys for the entire duration of the
-	// split, recording only the writes the server acknowledged.
+	// split, recording only the writes the server acknowledged. Besides the
+	// records routed by their key, it writes records under each partition key,
+	// both with a secondary index, and records of a sequence.
 	writerClient, err := oxia.NewSyncClient(c.sa1.Public)
 	require.NoError(t, err)
 
@@ -336,17 +366,24 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 		stop    atomic.Bool
 		wg      sync.WaitGroup
 	)
+	put := func(key string, value []byte, opts ...oxia.PutOption) {
+		putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		// The key of a record of a sequence is the one the server assigned
+		key, _, putErr := writerClient.Put(putCtx, key, value, opts...)
+		if putErr == nil {
+			mu.Lock()
+			written[key] = value
+			mu.Unlock()
+		}
+	}
 	wg.Go(func() {
 		for i := 0; !stop.Load(); i++ {
-			key := fmt.Sprintf("live-%06d", i)
 			value := []byte(fmt.Sprintf("live-value-%06d", i))
-			putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			_, _, putErr := writerClient.Put(putCtx, key, value)
-			cancel()
-			if putErr == nil {
-				mu.Lock()
-				written[key] = value
-				mu.Unlock()
+			put(fmt.Sprintf("live-%06d", i), value, oxia.SecondaryIndex("live", fmt.Sprintf("%06d", i)))
+			for _, pk := range []string{leftPk, rightPk} {
+				put(fmt.Sprintf("%s/rec-%06d", pk, i), value, oxia.PartitionKey(pk), oxia.SecondaryIndex("pk", pk))
+				put(pk+"/seq", value, oxia.PartitionKey(pk), oxia.SequenceKeysDeltas(1))
 			}
 			time.Sleep(2 * time.Millisecond)
 		}
@@ -382,7 +419,7 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	for key, expected := range written {
-		_, value, _, err := client.Get(ctx, key)
+		_, value, _, err := client.Get(ctx, key, oxia.PartitionKey(splitPartitionKey(key)))
 		if assert.NoError(t, err, "acknowledged live key %s missing after split", key) {
 			assert.Equal(t, expected, value, "live value mismatch for %s", key)
 		}
@@ -390,6 +427,75 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 
 	slog.Info("All acknowledged writes survived the split", slog.Int("verified", len(written)+len(initialKeys)))
 	assert.NoError(t, client.Close())
+
+	c.assertChildrenHoldOnlyTheirRecords(t)
+}
+
+// splitPartitionKey returns the partition key of a record written by the split
+// tests: the part of the key before the first "/", if any, or else the key.
+func splitPartitionKey(key string) string {
+	partitionKey, _, _ := strings.Cut(key, "/")
+	return partitionKey
+}
+
+// assertChildrenHoldOnlyTheirRecords checks that each child holds only the
+// records in its hash range, with their secondary index entries, and that no
+// key is in both children, like the key of a record of a sequence of the other
+// child.
+func (c *splitTestCluster) assertChildrenHoldOnlyTheirRecords(t *testing.T) {
+	t.Helper()
+	childOfKey := make(map[string]int64)
+	for child, childMeta := range map[int64]*proto.ShardMetadata{c.leftChild: c.leftMeta, c.rightChild: c.rightMeta} {
+		for _, key := range c.listShardKeys(t, child) {
+			record := key
+			if strings.HasPrefix(key, constant.InternalKeyPrefix) {
+				primaryKey, _, err := database.ParseSecondaryIndexKey(key)
+				if err != nil {
+					// Not a secondary index entry
+					continue
+				}
+				record = primaryKey
+			} else {
+				if other, found := childOfKey[key]; found {
+					assert.Fail(t, "key in both children", "key %q is in shard %d and shard %d", key, other, child)
+				}
+				childOfKey[key] = child
+			}
+
+			hashRange := childMeta.Int32HashRange
+			partitionKey := splitPartitionKey(record)
+			h := hash.Xxh332(partitionKey)
+			assert.True(t, h >= hashRange.Min && h <= hashRange.Max,
+				"shard %d [%d, %d] holds %q, of partition key %q (hash %d)",
+				child, hashRange.Min, hashRange.Max, key, partitionKey, h)
+		}
+	}
+}
+
+// listShardKeys lists all the keys of a shard on its leader, the internal keys
+// included.
+func (c *splitTestCluster) listShardKeys(t *testing.T, shard int64) []string {
+	t.Helper()
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer func() { assert.NoError(t, clientPool.Close()) }()
+
+	rpcClient, err := clientPool.GetClientRpc(c.shardStatus(t, shard).Leader.Public)
+	require.NoError(t, err)
+	stream, err := rpcClient.List(context.Background(), &proto.ListRequest{
+		Shard:               &shard,
+		IncludeInternalKeys: true,
+	})
+	require.NoError(t, err)
+
+	var keys []string
+	for {
+		res, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return keys
+		}
+		require.NoError(t, err, "list the keys of shard %d", shard)
+		keys = append(keys, res.Keys...)
+	}
 }
 
 // TestCoordinator_ShardSplit_WriteOrder checks that the puts a client issues

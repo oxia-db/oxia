@@ -68,6 +68,7 @@ const (
 	featureFlagKeyPrefix   = constant.InternalKeyPrefix + "features"
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
+	splitFilterKey         = constant.InternalKeyPrefix + "split-filter"
 )
 
 type UpdateOperationCallback interface {
@@ -121,6 +122,10 @@ type DB interface {
 	// prefix, internal keys included, to position with SeekGE or SeekLT
 	KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error)
 
+	// ListPrefix returns the iterator of KeyPrefixIterator, and counts it as a
+	// list, like List
+	ListPrefix(prefix string) (kvstore.KeyIterator, error)
+
 	// CompareKeys compares two keys in the order the shard sorts them
 	CompareKeys(a, b string) int
 
@@ -131,6 +136,12 @@ type DB interface {
 
 	UpdateTerm(newTerm int64, options TermOptions) error
 	ReadTerm() (term int64, options TermOptions, err error)
+
+	// SetSplitFilter records the filter of a split child, and flushes the
+	// database: the writes that precede it become durable as well.
+	SetSplitFilter(filter *SplitFilter) error
+	// SplitFilter returns the filter recorded by SetSplitFilter, or nil.
+	SplitFilter() *SplitFilter
 
 	Snapshot() (kvstore.Snapshot, error)
 
@@ -212,6 +223,10 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		return nil, multierr.Append(err, kv.Close())
 	}
 
+	if err := db.recoverSplitFilter(); err != nil {
+		return nil, multierr.Append(err, kv.Close())
+	}
+
 	lastNotificationOffset, err := db.readLastNotificationOffset()
 	if err != nil {
 		return nil, multierr.Append(errors.Wrap(err, "failed to read last notification offset"), kv.Close())
@@ -230,6 +245,7 @@ type db struct {
 	log                   *slog.Logger
 	notificationsEnabled  atomic.Bool
 	enabledFeatures       sync.Map
+	splitFilter           atomic.Pointer[SplitFilter]
 	sequenceWaiterTracker SequenceWaiterTracker
 
 	putCounter                metric.Counter
@@ -732,6 +748,21 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 
 func (d *db) KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error) {
 	return d.kv.KeyPrefixIterator(prefix)
+}
+
+func (d *db) ListPrefix(prefix string) (kvstore.KeyIterator, error) {
+	d.listCounter.Add(1)
+	d.readOpsTotal.Add(1)
+
+	it, err := d.kv.KeyPrefixIterator(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listIterator{
+		KeyIterator: it,
+		timer:       d.listLatencyHisto.Timer(),
+	}, nil
 }
 
 func (d *db) CompareKeys(a, b string) int {
