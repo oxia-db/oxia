@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
@@ -162,21 +163,24 @@ func newE2EBench(b *testing.B) *e2eBench {
 func (e *e2eBench) waitForFollowersApplied(b *testing.B, servers []*Server) {
 	b.Helper()
 	const shard = int64(0)
+	var leaderServer *Server
 	var leaderOffset int64
-	var followers []*Server
 	for _, s := range servers {
-		if leader, err := s.shardsDirector.GetLeader(shard); err == nil {
-			leaderOffset = leader.CommitOffset()
-		} else {
-			followers = append(followers, s)
+		// The other members hold a fenced leader controller from the election
+		// until the leader's cursor reaches them and makes them followers.
+		if leader, err := s.shardsDirector.GetLeader(shard); err == nil && leader.Status() == proto.ServingStatus_LEADER {
+			leaderServer, leaderOffset = s, leader.CommitOffset()
 		}
 	}
-	require.Len(b, followers, len(servers)-1)
+	require.NotNil(b, leaderServer)
 	// The followers learn the commit offset from the leader's next append: one
 	// more put carries it, leaving only that put to be applied.
 	require.NoError(b, e.put(e.keys[0])())
 	require.Eventually(b, func() bool {
-		for _, s := range followers {
+		for _, s := range servers {
+			if s == leaderServer {
+				continue
+			}
 			follower, err := s.shardsDirector.GetFollower(shard)
 			if err != nil || follower.CommitOffset() < leaderOffset {
 				return false
