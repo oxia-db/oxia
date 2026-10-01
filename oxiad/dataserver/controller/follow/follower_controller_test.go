@@ -1496,7 +1496,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	fc.SetSplitHashRange(&proto.HashRange{
 		Min: 0,
 		Max: 0x7FFFFFFF, // 2147483647
-	})
+	}, 1)
 
 	// --- Phase 1: Snapshot installation with filtering ---
 	// Prepare a snapshot DB containing keys a..f
@@ -1650,8 +1650,8 @@ func TestFollower_SplitSnapshotFilterSurvivesCrash(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange)
-	installSplitTestSnapshot(t, fc)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshot(t, fc, 1)
 
 	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
 	assert.NoError(t, fc.Close())
@@ -1689,8 +1689,8 @@ func TestFollower_SplitReplayAfterCrashKeepsFilter(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange)
-	installSplitTestSnapshot(t, fc)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshot(t, fc, 1)
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
@@ -1735,13 +1735,66 @@ func TestFollower_SplitReplayAfterCrashKeepsFilter(t *testing.T) {
 	assert.NoError(t, crashedWalFactory.Close())
 }
 
+// A node that observed the parent for a split child can stay a follower of the
+// child in a later term, e.g. when the split elects the child on another node.
+// From then on, it gets the child's own entries and snapshots, which must not
+// be filtered: e.g. the child's session records hash anywhere in the hash
+// space. The split range only holds in the parent's term.
+func TestFollower_SplitHashRangeEndsAtNewTerm(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshot(t, fc, 1)
+
+	// A late stream of the parent, in the parent's term, doesn't set the range
+	// again either
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+	stream.AddRequest(createAddRequest(t, 2, 6, map[string]string{"a": "child-a", "d": "child-d"}, 6))
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 6
+	}, 10*time.Second, 10*time.Millisecond)
+	fci := fc.(*followerController)
+	assertSplitTestKeys(t, fci.db, map[string]string{
+		"a": "child-a", "b": "snapshot-b", "c": "snapshot-c", "d": "child-d", "e": "snapshot-e",
+	})
+
+	close(stream.Requests)
+	assert.Eventually(t, func() bool {
+		return !closeChanIsNotNil(fc)()
+	}, 10*time.Second, 10*time.Millisecond)
+	installSplitTestSnapshot(t, fc, 2)
+	assertSplitTestKeys(t, fci.db, map[string]string{
+		"a": "snapshot-a", "b": "snapshot-b", "c": "snapshot-c", "d": "snapshot-d", "e": "snapshot-e", "f": "snapshot-f",
+	})
+	assert.Nil(t, fci.db.SplitFilter())
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 // splitTestHashRange is the lower half of the hash space: of the keys a..f, it
 // keeps a, b, c and e (see TestFollower_SplitHashRangeFiltering).
 var splitTestHashRange = &proto.HashRange{Min: 0, Max: 0x7FFFFFFF}
 
-// installSplitTestSnapshot installs, at term 1, the snapshot of a parent shard
+// installSplitTestSnapshot installs, at the given term, the snapshot of a shard
 // holding the keys a..f, written at the offsets 0..5.
-func installSplitTestSnapshot(t *testing.T, fc FollowerController) {
+func installSplitTestSnapshot(t *testing.T, fc FollowerController, term int64) {
 	t.Helper()
 
 	parentKvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1755,7 +1808,7 @@ func installSplitTestSnapshot(t *testing.T, fc FollowerController) {
 		}, int64(i), 0, database.NoOpCallback)
 		require.NoError(t, err)
 	}
-	require.NoError(t, parentDb.UpdateTerm(1, database.TermOptions{}))
+	require.NoError(t, parentDb.UpdateTerm(term, database.TermOptions{}))
 	snapshot, err := parentDb.Snapshot()
 	require.NoError(t, err)
 
@@ -1768,7 +1821,7 @@ func installSplitTestSnapshot(t *testing.T, fc FollowerController) {
 		chunk, err := snapshot.Chunk()
 		require.NoError(t, err)
 		stream.AddChunk(&proto.SnapshotChunk{
-			Term:       1,
+			Term:       term,
 			Name:       chunk.Name(),
 			Content:    chunk.Content(),
 			ChunkIndex: chunk.Index(),

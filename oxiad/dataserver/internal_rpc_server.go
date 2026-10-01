@@ -412,7 +412,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 		return err
 	}
 	if ok {
-		follower.SetSplitHashRange(hashRange)
+		follower.SetSplitHashRange(hashRange, term)
 	}
 
 	err = follower.AppendEntries(srv)
@@ -477,7 +477,7 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 		return err
 	}
 	if ok {
-		follower.SetSplitHashRange(hashRange)
+		follower.SetSplitHashRange(hashRange, term)
 	}
 
 	err = follower.InstallSnapshot(srv)
