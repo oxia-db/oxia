@@ -31,13 +31,19 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-const rpcTimeout = 30 * time.Second
+// DefaultTimeout is the timeout of the calls to the data servers. The provider
+// applies it to every call but BecomeLeader (see Provider.BecomeLeader).
+const DefaultTimeout = 30 * time.Second
 
 type Provider interface {
 	io.Closer
 
 	PushShardAssignments(ctx context.Context, node *proto.DataServerIdentity) (proto.OxiaCoordination_PushShardAssignmentsClient, error)
 	NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error)
+	// BecomeLeader returns once the new leader has committed the entries of its
+	// wal through its followers, which can include sending them a snapshot of
+	// the whole shard. Only the caller knows how long that can take: the
+	// provider doesn't bound it, the caller does through ctx.
 	BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error)
 	AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error)
 	GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
@@ -50,16 +56,24 @@ type Provider interface {
 }
 
 type rpcProvider struct {
-	pool commonrpc.ClientPool
+	pool    commonrpc.ClientPool
+	timeout time.Duration
 }
 
 func NewRpcProvider(tlsConf *tls.Config, instanceID string) Provider {
+	return NewRpcProviderWithTimeout(tlsConf, instanceID, DefaultTimeout)
+}
+
+// NewRpcProviderWithTimeout is NewRpcProvider, with the timeout that bounds the
+// calls to the data servers instead of DefaultTimeout.
+func NewRpcProviderWithTimeout(tlsConf *tls.Config, instanceID string, timeout time.Duration) Provider {
 	return &rpcProvider{
 		pool: commonrpc.NewClientPool(tlsConf, nil, commonrpc.MetadataInjectionDialOptions(func() map[string]string {
 			return map[string]string{
 				constant.MetadataInstanceId: instanceID,
 			}
 		})...),
+		timeout: timeout,
 	}
 }
 
@@ -86,7 +100,7 @@ func (r *rpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentit
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	response, err := client.NewTerm(ctx, req)
@@ -101,9 +115,6 @@ func (r *rpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerId
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
-	defer cancel()
-
 	response, err := client.BecomeLeader(ctx, req)
 	oxiaErr, _ := constant.FromGrpcError(err)
 	return response, oxiaErr
@@ -116,7 +127,7 @@ func (r *rpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	response, err := client.AddFollower(ctx, req)
@@ -131,7 +142,7 @@ func (r *rpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdent
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	response, err := client.GetStatus(ctx, req)
@@ -146,7 +157,7 @@ func (r *rpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdent
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	res, err := client.Handshake(ctx, &proto.HandshakeRequest{
@@ -178,7 +189,7 @@ func (r *rpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIde
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	response, err := client.DeleteShard(ctx, req)
@@ -193,7 +204,7 @@ func (r *rpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	response, err := client.RemoveObserver(ctx, req)
@@ -208,7 +219,7 @@ func (r *rpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIde
 		return nil, oxiaErr
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	response, err := client.FreezeShard(ctx, req)

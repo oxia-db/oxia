@@ -392,7 +392,9 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 		}
 	}
 
-	_, err = sc.rpcProvider.BecomeLeader(sc.ctx, childLeader, &proto.BecomeLeaderRequest{
+	ctx, cancel := context.WithTimeout(sc.ctx, rpc.DefaultTimeout)
+	defer cancel()
+	_, err = sc.rpcProvider.BecomeLeader(ctx, childLeader, &proto.BecomeLeaderRequest{
 		Namespace:         sc.namespace,
 		Shard:             childId,
 		Term:              childTerm,
@@ -1214,6 +1216,13 @@ func (sc *SplitController) reelectChild(ctx context.Context, childId int64) erro
 		}
 	}
 
+	// Not bounded by the rpc timeout: the followers of the child only get its
+	// data from a snapshot of the leader. A leader with entries left to commit
+	// through them, e.g. entries it wrote in the term of an earlier attempt,
+	// only returns once a follower installed the snapshot, which takes as long
+	// as the child is big. An attempt that gave up before then would only make
+	// the next one start over: fencing the child in a new term aborts the
+	// installation. A leader that goes away still fails the call.
 	_, err = sc.rpcProvider.BecomeLeader(ctx, newLeader, &proto.BecomeLeaderRequest{
 		Namespace:         sc.namespace,
 		Shard:             childId,
