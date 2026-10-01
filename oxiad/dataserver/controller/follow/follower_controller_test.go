@@ -2366,3 +2366,112 @@ func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+// countingWalFactory wraps the follower WAL to count how many times the state
+// applier reads each entry.
+type countingWalFactory struct {
+	wal.Factory
+	sync.Mutex
+	reads map[int64]int
+}
+
+func (f *countingWalFactory) NewWal(namespace string, shard int64, provider wal.CommitOffsetProvider) (wal.Wal, error) {
+	w, err := f.Factory.NewWal(namespace, shard, provider)
+	if err != nil {
+		return nil, err
+	}
+	return &countingWal{Wal: w, factory: f}, nil
+}
+
+func (f *countingWalFactory) readsOf(offset int64) int {
+	f.Lock()
+	defer f.Unlock()
+	return f.reads[offset]
+}
+
+type countingWal struct {
+	wal.Wal
+	factory *countingWalFactory
+}
+
+// NewReader is only used by the follower state applier.
+func (w *countingWal) NewReader(after int64) (wal.Reader, error) {
+	r, err := w.Wal.NewReader(after)
+	if err != nil {
+		return nil, err
+	}
+	return &countingReader{Reader: r, factory: w.factory}, nil
+}
+
+type countingReader struct {
+	wal.Reader
+	factory *countingWalFactory
+}
+
+func (r *countingReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
+	entry, previousCrc, entryCrc, err = r.Reader.ReadNext()
+	if err == nil {
+		r.factory.Lock()
+		r.factory.reads[entry.Offset]++
+		r.factory.Unlock()
+	}
+	return entry, previousCrc, entryCrc, err
+}
+
+// The leader sends the commit offset of an entry along with the next entry, so
+// the WAL head of a follower is usually past the commit offset. The state
+// applier must stop at the commit offset: reading on would only read the next
+// entry to discard it, and the next pass would read it again.
+func TestFollower_ReadsEachCommittedEntryOnce(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &countingWalFactory{
+		Factory: newTestWalFactory(t),
+		reads:   map[int64]int{},
+	}
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	_, err = fc.Truncate(&proto.TruncateRequest{
+		Term:        1,
+		HeadEntryId: &proto.EntryId{Term: 1, Offset: wal.InvalidOffset},
+	})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
+
+	// One write at a time: each entry carries the commit offset of the entry
+	// before it, which the follower applies before the next entry comes
+	const entries = 10
+	for i := int64(0); i < entries; i++ {
+		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"k": fmt.Sprintf("v%d", i)}, i-1))
+		assert.EqualValues(t, i, stream.GetResponse().Offset)
+		assert.Eventually(t, func() bool {
+			return fc.CommitOffset() == i-1
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+	// Then commit the last entry, with no new entry to carry the commit offset
+	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: entries - 1})
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == entries-1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	for i := int64(0); i < entries; i++ {
+		assert.Equalf(t, 1, walFactory.readsOf(i), "reads of the entry at offset %d", i)
+	}
+	dbRes, err := fc.(*followerController).db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, []byte(fmt.Sprintf("v%d", entries-1)), dbRes.Value)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
