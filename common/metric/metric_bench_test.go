@@ -15,16 +15,14 @@
 package metric
 
 import (
+	"sync/atomic"
 	"testing"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 // withSDKMeter swaps in an SDK meter for the duration of the benchmark: the
-// default global meter is a no-op, which would measure nothing. Each run gets
-// its own meter, hence fresh series: counters size their stripes when they
-// first see contention, and with -cpu the sub-benchmarks are re-run under
-// another GOMAXPROCS.
+// default global meter is a no-op, which would measure nothing.
 func withSDKMeter(b *testing.B) {
 	b.Helper()
 	previous := GetMeter()
@@ -38,19 +36,26 @@ func withSDKMeter(b *testing.B) {
 	})
 }
 
+var benchRun atomic.Int64
+
 // benchLabels mirrors the widest label sets on the dataserver hot paths
-// (e.g. the per-follower cursor metrics).
-var benchLabels = map[string]any{
-	"oxia_namespace": "default",
-	"shard":          int64(1),
-	"follower":       "oxia-2.oxia-svc.oxia.svc.cluster.local:6649",
-	"type":           "write",
+// (e.g. the per-follower cursor metrics). Each call returns another shard, so
+// that each run gets fresh series: adders size their stripes when they first
+// see contention, and with -cpu the sub-benchmarks are re-run under another
+// GOMAXPROCS.
+func benchLabels() map[string]any {
+	return map[string]any{
+		"oxia_namespace": "default",
+		"shard":          benchRun.Add(1),
+		"follower":       "oxia-2.oxia-svc.oxia.svc.cluster.local:6649",
+		"type":           "write",
+	}
 }
 
 func BenchmarkCounter(b *testing.B) {
 	b.Run("serial", func(b *testing.B) {
 		withSDKMeter(b)
-		c := NewCounter("bench_counter", "", Dimensionless, benchLabels)
+		c := NewCounter("bench_counter", "", Dimensionless, benchLabels())
 		b.ReportAllocs()
 		for b.Loop() {
 			c.Inc()
@@ -58,7 +63,7 @@ func BenchmarkCounter(b *testing.B) {
 	})
 	b.Run("parallel", func(b *testing.B) {
 		withSDKMeter(b)
-		c := NewCounter("bench_counter", "", Dimensionless, benchLabels)
+		c := NewCounter("bench_counter", "", Dimensionless, benchLabels())
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -71,7 +76,7 @@ func BenchmarkCounter(b *testing.B) {
 func BenchmarkUpDownCounter(b *testing.B) {
 	b.Run("serial", func(b *testing.B) {
 		withSDKMeter(b)
-		c := NewUpDownCounter("bench_up_down_counter", "", Dimensionless, benchLabels)
+		c := NewUpDownCounter("bench_up_down_counter", "", Dimensionless, benchLabels())
 		b.ReportAllocs()
 		for b.Loop() {
 			c.Add(1)
@@ -79,7 +84,7 @@ func BenchmarkUpDownCounter(b *testing.B) {
 	})
 	b.Run("parallel", func(b *testing.B) {
 		withSDKMeter(b)
-		c := NewUpDownCounter("bench_up_down_counter", "", Dimensionless, benchLabels)
+		c := NewUpDownCounter("bench_up_down_counter", "", Dimensionless, benchLabels())
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -92,7 +97,7 @@ func BenchmarkUpDownCounter(b *testing.B) {
 func BenchmarkHistogram(b *testing.B) {
 	b.Run("serial", func(b *testing.B) {
 		withSDKMeter(b)
-		h := NewBytesHistogram("bench_histogram", "", benchLabels)
+		h := NewBytesHistogram("bench_histogram", "", benchLabels())
 		b.ReportAllocs()
 		i := 0
 		for b.Loop() {
@@ -102,7 +107,7 @@ func BenchmarkHistogram(b *testing.B) {
 	})
 	b.Run("parallel", func(b *testing.B) {
 		withSDKMeter(b)
-		h := NewBytesHistogram("bench_histogram", "", benchLabels)
+		h := NewBytesHistogram("bench_histogram", "", benchLabels())
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
@@ -117,7 +122,7 @@ func BenchmarkHistogram(b *testing.B) {
 func BenchmarkLatencyHistogram(b *testing.B) {
 	b.Run("serial", func(b *testing.B) {
 		withSDKMeter(b)
-		h := NewLatencyHistogram("bench_latency_histogram", "", benchLabels)
+		h := NewLatencyHistogram("bench_latency_histogram", "", benchLabels())
 		b.ReportAllocs()
 		for b.Loop() {
 			h.Timer().Done()
@@ -125,7 +130,7 @@ func BenchmarkLatencyHistogram(b *testing.B) {
 	})
 	b.Run("parallel", func(b *testing.B) {
 		withSDKMeter(b)
-		h := NewLatencyHistogram("bench_latency_histogram", "", benchLabels)
+		h := NewLatencyHistogram("bench_latency_histogram", "", benchLabels())
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {

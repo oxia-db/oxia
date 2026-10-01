@@ -104,7 +104,7 @@ func NewLatencyHistogram(name string, description string, labels map[string]any)
 	}
 }
 
-// Histograms are kept in atomics and exported by HistogramProducer: a
+// Histograms are kept in adders and exported by HistogramProducer: a
 // synchronous OTel histogram looks up the attribute set, takes a lock and
 // allocates on every record. The exported data is the same as what the SDK
 // aggregates with explicit buckets, as long as the producer keeps its
@@ -124,8 +124,8 @@ type histSeries struct {
 	bounds []float64
 	// buckets[i] counts the values in (bounds[i-1], bounds[i]]; the last one
 	// the values above all bounds.
-	buckets  []atomic.Uint64
-	sum      atomic.Int64
+	buckets  []adder
+	sum      adder
 	recorded atomic.Bool
 	attrs    attribute.Set
 }
@@ -157,7 +157,7 @@ func (o *observedHistogram) series(labels map[string]any) *histSeries {
 	if !ok {
 		s = &histSeries{
 			bounds:  o.bounds,
-			buckets: make([]atomic.Uint64, len(o.bounds)+1),
+			buckets: make([]adder, len(o.bounds)+1),
 			attrs:   set,
 		}
 		o.byAttrs[set.Equivalent()] = s
@@ -169,14 +169,14 @@ func histogramDataPoint[N int64 | float64](o *observedHistogram, s *histSeries, 
 	counts := make([]uint64, len(s.buckets))
 	var count uint64
 	for i := range s.buckets {
-		counts[i] = s.buckets[i].Load()
+		counts[i] = uint64(s.buckets[i].Sum())
 		count += counts[i]
 	}
 	var sum N
 	if o.sumDivisor == 1 {
-		sum = N(s.sum.Load())
+		sum = N(s.sum.Sum())
 	} else {
-		sum = N(float64(s.sum.Load()) / float64(o.sumDivisor))
+		sum = N(float64(s.sum.Sum()) / float64(o.sumDivisor))
 	}
 	return metricdata.HistogramDataPoint[N]{
 		Attributes:   s.attrs,
