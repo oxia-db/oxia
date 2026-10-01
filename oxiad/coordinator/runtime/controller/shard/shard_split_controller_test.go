@@ -1730,6 +1730,53 @@ func TestSplitController_FinalizeOutlivesSplitTimeout(t *testing.T) {
 	assertSplitCompleted(t, statusRes, 6, 6)
 }
 
+// A child applies the parent's entries with the split filter only while it
+// observes the parent: once re-elected, it would apply the rest without it, and
+// keep the records of the other child. Cutover must not pass the point of no
+// return while a child received the tail of the parent, but did not apply it.
+func TestSplitController_CutoverWaitsForChildrenToApplyTail(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseCutover)
+	setBootstrappedState(t, metadata)
+
+	// The parent is frozen at 105: the left child received the whole tail, but
+	// applied it only up to 100
+	rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
+	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 100)
+	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      metadata,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
+	})
+	defer sc.Close()
+
+	// Cutover polls the left child again, without passing the point of no return
+	rpcMock.GetNode(ls1).ExpectGetStatusRequest(t, 1)
+	rpcMock.GetNode(ls1).ExpectGetStatusRequest(t, 1)
+	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+	assert.Equal(t, proto.SplitPhaseCutover, parent.GetSplit().GetPhaseOrDefault())
+	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
+		assert.Empty(t, drainNewTermRequests(rpcMock.GetNode(node)), "NewTerm requests to %s", node.GetPublic())
+	}
+
+	// Once the left child applied the tail too, the split completes
+	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	queueNewTermResponses(rpcMock, ps1, ps2, ps3)
+	queueChildrenReelectionResponses(rpcMock)
+	select {
+	case <-listener.completions:
+	case <-listener.aborts:
+		t.Fatal("Split should not have been aborted")
+	case <-time.After(30 * time.Second):
+		t.Fatal("Split did not complete in time")
+	}
+	assertSplitCompleted(t, metadata, 6, 6)
+}
+
 // --- Parent Leader Elections Around the Point of No Return ---
 
 // holdingMetadata holds the first shard status update made through it while

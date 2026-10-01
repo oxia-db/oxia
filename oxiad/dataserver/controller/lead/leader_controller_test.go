@@ -357,6 +357,101 @@ func TestLeaderController_Freeze(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// heldSyncWalFactory creates wals that hold back the sync of the entries
+// appended while syncs are held: it blocks the sync goroutine of the wal, like
+// a slow disk.
+type heldSyncWalFactory struct {
+	wal.Factory
+	held atomic.Pointer[chan struct{}]
+}
+
+func (f *heldSyncWalFactory) NewWal(namespace string, shard int64, provider wal.CommitOffsetProvider) (wal.Wal, error) {
+	w, err := f.Factory.NewWal(namespace, shard, provider)
+	if err != nil {
+		return nil, err
+	}
+	return &heldSyncWal{Wal: w, factory: f}, nil
+}
+
+// holdSyncs holds back the sync of the next entries, until release is called.
+func (f *heldSyncWalFactory) holdSyncs() (release func()) {
+	held := make(chan struct{})
+	f.held.Store(&held)
+	return func() { close(held) }
+}
+
+type heldSyncWal struct {
+	wal.Wal
+	factory *heldSyncWalFactory
+}
+
+func (w *heldSyncWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
+	held := w.factory.held.Load()
+	w.Wal.AppendAndSync(entry, func(entryCrc uint32, err error) {
+		if held != nil {
+			<-*held
+		}
+		callback(entryCrc, err)
+	})
+}
+
+// A write that the leader accepted before a freeze is in the wal, but the head
+// offset covers it only once it is synced. The head offset a freeze returns is
+// the final offset the split children must reach: it must cover the write,
+// which the leader acknowledges once it is committed.
+func TestLeaderController_FreezeCoversAcceptedWrites(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &heldSyncWalFactory{Factory: wal.NewWalFactory(&wal.FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	// The leader accepts a write, which is not synced yet when the freeze comes
+	release := walFactory.holdSyncs()
+	written := make(chan error, 1)
+	lc.Write(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("value-a")}},
+	}, concurrent.NewOnce(func(*proto.WriteResponse) { written <- nil }, func(err error) { written <- err }))
+
+	frozen := make(chan *proto.FreezeShardResponse, 1)
+	go func() {
+		fr, err := lc.Freeze(&proto.FreezeShardRequest{Shard: shard, Term: 1, Frozen: true})
+		assert.NoError(t, err)
+		frozen <- fr
+	}()
+	assert.Never(t, func() bool { return len(frozen) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the freeze returned before the write was synced")
+
+	release()
+	select {
+	case fr := <-frozen:
+		assert.EqualValues(t, 0, fr.GetHeadOffset())
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the freeze did not return")
+	}
+	assert.NoError(t, <-written)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	var shard int64 = 1
 
