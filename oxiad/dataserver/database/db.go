@@ -1056,7 +1056,10 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	pr := &proto.PutResponse{Version: version}
 	if newKey != "" {
-		pr.Key = &newKey
+		// Return the address of a copy: the address of newKey would move it
+		// to the heap on every put, while only the sequential ones return it
+		key := newKey
+		pr.Key = &key
 	}
 	return pr, nil
 }
@@ -1250,7 +1253,10 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 	}
 
 	if getReq.ComparisonType != proto.KeyComparisonType_EQUAL {
-		res.Key = &key
+		// Return the address of a copy: the address of key would move it to
+		// the heap on every get, while the EQUAL ones don't return it
+		foundKey := key
+		res.Key = &foundKey
 	}
 
 	return res, nil
