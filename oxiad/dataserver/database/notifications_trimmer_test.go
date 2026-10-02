@@ -32,52 +32,60 @@ import (
 )
 
 func TestNotificationsTrimmer(t *testing.T) {
-	clock := &time2.MockedClock{}
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cached=%v", cached), func(t *testing.T) {
+			clock := &time2.MockedClock{}
 
-	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
-	assert.NoError(t, err)
-	dbx, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 10*time.Millisecond, clock)
-	assert.NoError(t, err)
-	defer dbx.Close()
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			dbx, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 10*time.Millisecond, clock)
+			assert.NoError(t, err)
+			defer dbx.Close()
+			if cached {
+				// The trimmer drops the batches from the cache as well
+				cacheNotifications(t, dbx)
+			}
 
-	for i := int64(0); i < 100; i++ {
-		_, err = dbx.ProcessWrite(&proto.WriteRequest{
-			Puts: []*proto.PutRequest{{
-				Key:   fmt.Sprintf("key-%d", i),
-				Value: []byte("0"),
-			}},
-		}, i, uint64(i), NoOpCallback)
-		assert.NoError(t, err)
+			for i := int64(0); i < 100; i++ {
+				_, err = dbx.ProcessWrite(&proto.WriteRequest{
+					Puts: []*proto.PutRequest{{
+						Key:   fmt.Sprintf("key-%d", i),
+						Value: []byte("0"),
+					}},
+				}, i, uint64(i), NoOpCallback)
+				assert.NoError(t, err)
+			}
+
+			time.Sleep(1 * time.Second)
+			// No entries should have been trimmed
+			assert.EqualValues(t, 0, firstNotification(t, dbx))
+
+			// Clock has advanced, though not enough to have the trimming started
+			clock.Set(3)
+
+			time.Sleep(1 * time.Second)
+			// No entries should have been trimmed
+			assert.EqualValues(t, 0, firstNotification(t, dbx))
+
+			clock.Set(15)
+
+			assert.Eventually(t, func() bool {
+				return firstNotification(t, dbx) == 6
+			}, 10*time.Second, 1*time.Second)
+
+			clock.Set(75)
+
+			assert.Eventually(t, func() bool {
+				return firstNotification(t, dbx) == 66
+			}, 10*time.Second, 1*time.Second)
+
+			clock.Set(120)
+
+			assert.Eventually(t, func() bool {
+				return firstNotification(t, dbx) == -1
+			}, 10*time.Second, 1*time.Second)
+		})
 	}
-
-	time.Sleep(1 * time.Second)
-	// No entries should have been trimmed
-	assert.EqualValues(t, 0, firstNotification(t, dbx))
-
-	// Clock has advanced, though not enough to have the trimming started
-	clock.Set(3)
-
-	time.Sleep(1 * time.Second)
-	// No entries should have been trimmed
-	assert.EqualValues(t, 0, firstNotification(t, dbx))
-
-	clock.Set(15)
-
-	assert.Eventually(t, func() bool {
-		return firstNotification(t, dbx) == 6
-	}, 10*time.Second, 1*time.Second)
-
-	clock.Set(75)
-
-	assert.Eventually(t, func() bool {
-		return firstNotification(t, dbx) == 66
-	}, 10*time.Second, 1*time.Second)
-
-	clock.Set(120)
-
-	assert.Eventually(t, func() bool {
-		return firstNotification(t, dbx) == -1
-	}, 10*time.Second, 1*time.Second)
 }
 
 func firstNotification(t *testing.T, db DB) int64 {

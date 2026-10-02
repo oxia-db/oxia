@@ -41,8 +41,21 @@ type vtprotoMessage interface {
 	UnmarshalVT([]byte) error
 }
 
+// EncodedNotificationBatch is a NotificationBatch already in the wire format,
+// which the codec sends as it is: a batch going to many subscribers is
+// neither decoded nor marshaled again for each of them. Every stream sending
+// the batch shares Data, which must never be modified.
+type EncodedNotificationBatch struct {
+	Offset int64
+	Data   []byte
+}
+
 func (vtprotoCodec) Marshal(v any) (mem.BufferSlice, error) {
 	switch v := v.(type) {
+	case *EncodedNotificationBatch:
+		// gRPC only reads the buffer, and a SliceBuffer frees nothing
+		return mem.BufferSlice{mem.SliceBuffer(v.Data)}, nil
+
 	case vtprotoMessage:
 		size := v.SizeVT()
 		if mem.IsBelowBufferPoolingThreshold(size) {

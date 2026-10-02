@@ -46,9 +46,13 @@ type notificationsTrimmer struct {
 	notificationsRetentionTime time.Duration
 	clock                      time2.Clock
 	log                        *slog.Logger
+	// onTrimmed gets the offset up to which the batches were trimmed, included
+	onTrimmed func(offset int64)
 }
 
-func newNotificationsTrimmer(ctx context.Context, namespace string, shardId int64, kv kvstore.KV, notificationRetentionTime time.Duration, waitClose concurrent.WaitGroup, clock time2.Clock) *notificationsTrimmer {
+func newNotificationsTrimmer(ctx context.Context, namespace string, shardId int64, kv kvstore.KV,
+	notificationRetentionTime time.Duration, waitClose concurrent.WaitGroup, clock time2.Clock,
+	onTrimmed func(offset int64)) *notificationsTrimmer {
 	interval := notificationRetentionTime / 10
 	if interval < minNotificationTrimmingInterval {
 		interval = minNotificationTrimmingInterval
@@ -64,6 +68,7 @@ func newNotificationsTrimmer(ctx context.Context, namespace string, shardId int6
 		interval:                   interval,
 		notificationsRetentionTime: notificationRetentionTime,
 		clock:                      clock,
+		onTrimmed:                  onTrimmed,
 		log: slog.With(
 			slog.String("component", "db-notifications-trimmer"),
 			slog.String("namespace", namespace),
@@ -159,6 +164,7 @@ func (t *notificationsTrimmer) trimNotifications() error {
 	if err = wb.Commit(); err != nil {
 		return err
 	}
+	t.onTrimmed(trimOffset)
 
 	t.log.Debug(
 		"Successfully trimmed the notification",

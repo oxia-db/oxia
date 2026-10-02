@@ -89,6 +89,27 @@ func TestVtprotoCodec_StandardProtoFallback(t *testing.T) {
 	assert.Equal(t, "oxia", decoded.Service)
 }
 
+func TestVtprotoCodec_EncodedNotificationBatch(t *testing.T) {
+	codec := vtprotoCodec{}
+
+	key := "a"
+	nb := &NotificationBatch{Shard: 1, Offset: 42, Timestamp: 123, Notifications: []*NotificationEntry{
+		{Key: &key, Value: &Notification{Type: NotificationType_KEY_DELETED}},
+	}}
+	raw, err := nb.MarshalVT()
+	require.NoError(t, err)
+
+	// The bytes go out as they are, and decode as the batch on the other side
+	data, err := codec.Marshal(&EncodedNotificationBatch{Offset: 42, Data: raw})
+	require.NoError(t, err)
+	assert.Equal(t, raw, data.Materialize())
+
+	decoded := &NotificationBatch{}
+	require.NoError(t, codec.Unmarshal(data, decoded))
+	data.Free()
+	assert.True(t, nb.EqualVT(decoded))
+}
+
 func TestVtprotoCodec_InvalidMessage(t *testing.T) {
 	codec := vtprotoCodec{}
 
