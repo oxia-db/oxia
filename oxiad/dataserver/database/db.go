@@ -322,6 +322,16 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	baseVersionId *atomic.Int64, commitOffset int64, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, []sequenceUpdate, error) {
 	res := &proto.WriteResponse{}
+	// Room for all the responses: unlike make, Grow keeps a list nil when the
+	// request has no operation of its kind
+	res.Puts = slices.Grow(res.Puts, len(b.Puts))
+	res.Deletes = slices.Grow(res.Deletes, len(b.Deletes))
+	res.DeleteRanges = slices.Grow(res.DeleteRanges, len(b.DeleteRanges))
+	// The responses, and the versions of the puts, come from one slice each
+	// rather than from an allocation per operation
+	putResponses := make([]proto.PutResponse, len(b.Puts))
+	versions := make([]proto.Version, len(b.Puts))
+	deleteResponses := make([]proto.DeleteResponse, len(b.Deletes))
 	var notifications *Notifications
 	if d.notificationsEnabled.Load() {
 		notifications = newNotifications(d.shardId, commitOffset, timestamp)
@@ -342,8 +352,9 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 		case writeOpPut:
 			// A sequential put replaces the request key with the generated one
 			prefixKey := b.Puts[p].Key
-			pr, err := d.applyPut(batch, baseVersionId, notifications, b.Puts[p], timestamp, updateOperationCallback, false)
-			if err != nil {
+			pr := &putResponses[p]
+			if err := d.applyPut(batch, baseVersionId, notifications, b.Puts[p], timestamp, updateOperationCallback,
+				false, pr, &versions[p]); err != nil {
 				return nil, nil, nil, err
 			}
 			if pr.Key != nil {
@@ -352,8 +363,8 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 			res.Puts = append(res.Puts, pr)
 			p++
 		case writeOpDelete:
-			delRes, err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback)
-			if err != nil {
+			delRes := &deleteResponses[dl]
+			if err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback, delRes); err != nil {
 				return nil, nil, nil, err
 			}
 			res.Deletes = append(res.Deletes, delRes)
@@ -615,12 +626,11 @@ func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notificatio
 
 func (d *db) addASCIILong(key string, value int64, batch kvstore.WriteBatch, timestamp uint64) error {
 	asciiValue := []byte(fmt.Sprintf("%d", value))
-	_, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
+	return d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:               key,
 		Value:             asciiValue,
 		ExpectedVersionId: nil,
-	}, timestamp, NoOpCallback, true)
-	return err
+	}, timestamp, NoOpCallback, true, nil, nil)
 }
 
 func (d *db) Get(request *proto.GetRequest) (*proto.GetResponse, error) {
@@ -874,10 +884,10 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	batch := d.kv.NewWriteBatch()
 	defer batch.Close()
 
-	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
+	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
 		Value: []byte(fmt.Sprintf("%d", newTerm)),
-	}, now(), NoOpCallback, true); err != nil {
+	}, now(), NoOpCallback, true, nil, nil); err != nil {
 		return err
 	}
 
@@ -885,10 +895,10 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	if err != nil {
 		return err
 	}
-	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
+	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termOptionsKey,
 		Value: serOptions,
-	}, now(), NoOpCallback, true); err != nil {
+	}, now(), NoOpCallback, true, nil, nil); err != nil {
 		return err
 	}
 
@@ -933,12 +943,18 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 	return term, options, nil
 }
 
+// applyPut applies putReq to the batch and writes its response to pr. A put
+// that succeeds gets version in its response, filled with the new version of
+// the record. An internal put has no response: pr and version are nil.
+//
 //nolint:revive
 func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
-	updateOperationCallback UpdateOperationCallback, internal bool) (*proto.PutResponse, error) {
+	updateOperationCallback UpdateOperationCallback, internal bool,
+	pr *proto.PutResponse, version *proto.Version) error {
 	if status := updateOperationCallback.ValidatePut(putReq, d); status != proto.Status_OK {
-		return &proto.PutResponse{Status: status}, nil
+		pr.Status = status
+		return nil
 	}
 
 	var se *proto.StorageEntry
@@ -954,17 +970,15 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	switch {
 	case errors.Is(err, ErrBadVersionId):
-		return &proto.PutResponse{
-			Status: proto.Status_UNEXPECTED_VERSION_ID,
-		}, nil
+		pr.Status = proto.Status_UNEXPECTED_VERSION_ID
+		return nil
 	case isInvalidSequentialPut(err) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
 		// Only this put fails, instead of the whole write request with its
 		// other operations
-		return &proto.PutResponse{
-			Status: proto.Status_INVALID_ARGUMENT,
-		}, nil
+		pr.Status = proto.Status_INVALID_ARGUMENT
+		return nil
 	case err != nil:
-		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
+		return errors.Wrap(err, "oxia db: failed to apply batch")
 	}
 
 	// No version conflict.
@@ -977,12 +991,11 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	if !internal {
 		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if status != proto.Status_OK {
-			return &proto.PutResponse{
-				Status: status,
-			}, nil
+			pr.Status = status
+			return nil
 		}
 		if putReq.OverrideVersionId != nil {
 			versionId = *putReq.OverrideVersionId
@@ -1030,14 +1043,18 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	se.Value = nil
 	se.SecondaryIndexes = nil
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if notifications != nil {
 		notifications.Modified(putReq.Key, se.VersionId, se.ModificationsCount)
 	}
 
-	version := &proto.Version{
+	if internal {
+		return nil
+	}
+
+	*version = proto.Version{
 		VersionId:          se.VersionId,
 		ModificationsCount: se.ModificationsCount,
 		CreatedTimestamp:   se.CreationTimestamp,
@@ -1054,14 +1071,15 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 		)
 	}
 
-	pr := &proto.PutResponse{Version: version}
+	pr.Version = version
 	if newKey != "" {
 		pr.Key = &newKey
 	}
-	return pr, nil
+	return nil
 }
 
-func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRequest, updateOperationCallback UpdateOperationCallback) (*proto.DeleteResponse, error) {
+func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRequest,
+	updateOperationCallback UpdateOperationCallback, res *proto.DeleteResponse) error {
 	se, err := checkExpectedVersionId(batch, delReq.Key, delReq.ExpectedVersionId)
 	if se != nil {
 		defer se.ReturnToVTPool()
@@ -1069,19 +1087,21 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 
 	switch {
 	case errors.Is(err, ErrBadVersionId):
-		return &proto.DeleteResponse{Status: proto.Status_UNEXPECTED_VERSION_ID}, nil
+		res.Status = proto.Status_UNEXPECTED_VERSION_ID
+		return nil
 	case err != nil:
-		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
+		return errors.Wrap(err, "oxia db: failed to apply batch")
 	case se == nil:
-		return &proto.DeleteResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
+		res.Status = proto.Status_KEY_NOT_FOUND
+		return nil
 	default:
 		err = updateOperationCallback.OnDeleteWithEntry(batch, notifications, delReq.Key, se, d)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if err = batch.Delete(delReq.Key); err != nil {
-			return &proto.DeleteResponse{}, err
+			return err
 		}
 
 		if notifications != nil {
@@ -1094,7 +1114,8 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 				slog.String("key", delReq.Key),
 			)
 		}
-		return &proto.DeleteResponse{Status: proto.Status_OK}, nil
+		res.Status = proto.Status_OK
+		return nil
 	}
 }
 
