@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -36,6 +35,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/auth"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/common/rpc/grpcmetrics"
 )
 
 const (
@@ -121,8 +121,8 @@ func newConnectionWithHealthConfig(
 
 	options := []grpc.DialOption{
 		grpc.WithTransportCredentials(transportCredential),
-		grpc.WithChainStreamInterceptor(grpcprometheus.StreamClientInterceptor),
-		grpc.WithChainUnaryInterceptor(grpcprometheus.UnaryClientInterceptor),
+		grpc.WithChainStreamInterceptor(grpcmetrics.StreamClientInterceptor),
+		grpc.WithChainUnaryInterceptor(grpcmetrics.UnaryClientInterceptor),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			PermitWithoutStream: defaultGrpcClientPermitWithoutStream,
 			Time:                defaultGrpcClientKeepAliveTime,
