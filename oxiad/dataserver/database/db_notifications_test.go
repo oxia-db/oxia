@@ -41,6 +41,32 @@ func init() {
 	logging.ConfigureLogger()
 }
 
+// readNotifications reads the next notification batches, decoded as the
+// clients get them.
+func readNotifications(ctx context.Context, db DB, startOffset int64) ([]*proto.NotificationBatch, error) {
+	encoded, err := db.ReadNextNotifications(ctx, startOffset)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]*proto.NotificationBatch, len(encoded))
+	for i := range encoded {
+		res[i] = &proto.NotificationBatch{}
+		if err := res[i].UnmarshalVT(encoded[i].Data); err != nil {
+			return nil, err
+		}
+		if res[i].Offset != encoded[i].Offset {
+			return nil, fmt.Errorf("batch at offset %d read as offset %d", res[i].Offset, encoded[i].Offset)
+		}
+	}
+	return res, nil
+}
+
+// trimmedNotifications tells the tracker of d that the batches up to offset,
+// included, were deleted, as the trimmer does.
+func trimmedNotifications(d DB, offset int64) {
+	d.(*db).notificationsTracker.trimmed(offset)
+}
+
 func findNotification(nb *proto.NotificationBatch, key string) (*proto.Notification, bool) {
 	for _, e := range nb.Notifications {
 		if e.GetKey() == key {
@@ -64,7 +90,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 0, t0, NoOpCallback)
 
-	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	notifications, err := readNotifications(context.Background(), db, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -94,7 +120,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 2, t2, NoOpCallback)
 
-	notifications, err = db.ReadNextNotifications(context.Background(), 1)
+	notifications, err = readNotifications(context.Background(), db, 1)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(notifications))
 
@@ -133,7 +159,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 3, t3, NoOpCallback)
 
-	notifications, err = db.ReadNextNotifications(context.Background(), 3)
+	notifications, err = readNotifications(context.Background(), db, 3)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -168,7 +194,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 4, t4, NoOpCallback)
 
-	notifications, err = db.ReadNextNotifications(context.Background(), 4)
+	notifications, err = readNotifications(context.Background(), db, 4)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -205,7 +231,7 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 	doneCh := make(chan error)
 
 	go func() {
-		notifications, err := db.ReadNextNotifications(ctx, 5)
+		notifications, err := readNotifications(ctx, db, 5)
 		assert.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, notifications)
 		close(doneCh)
@@ -284,7 +310,7 @@ func TestDB_NotificationsCommitBeforeWaiterParks(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	notifications, err := d.ReadNextNotifications(ctx, 1)
+	notifications, err := readNotifications(ctx, d, 1)
 	require.NoError(t, err)
 	require.Len(t, notifications, 1)
 	assert.EqualValues(t, 1, notifications[0].Offset)
@@ -309,7 +335,7 @@ func TestDB_NotificationsCloseBeforeWaiterParks(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	notifications, err := d.ReadNextNotifications(ctx, 0)
+	notifications, err := readNotifications(ctx, d, 0)
 	require.ErrorIs(t, err, constant.ErrResourceUnavailable)
 	assert.Nil(t, notifications)
 
@@ -368,7 +394,7 @@ func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
 			defer factory.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			notifications, err := db.ReadNextNotifications(ctx, 1)
+			notifications, err := readNotifications(ctx, db, 1)
 			cancel()
 			assert.ErrorIs(t, err, context.DeadlineExceeded)
 			assert.Nil(t, notifications)
@@ -381,7 +407,7 @@ func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
 			}, 2, now(), NoOpCallback)
 			assert.NoError(t, err)
 
-			notifications, err = db.ReadNextNotifications(context.Background(), 1)
+			notifications, err = readNotifications(context.Background(), db, 1)
 			assert.NoError(t, err)
 			if assert.Len(t, notifications, 1) {
 				assert.EqualValues(t, 2, notifications[0].Offset)
@@ -405,7 +431,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 		}},
 	}, 0, t0, NoOpCallback)
 
-	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	notifications, err := readNotifications(context.Background(), db, 0)
 	assert.Error(t, ErrNotificationsDisabled, err)
 	assert.Nil(t, notifications)
 
@@ -436,7 +462,7 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 		}},
 	}, 1, t1, NoOpCallback)
 
-	notifications, err := db.ReadNextNotifications(context.Background(), 1)
+	notifications, err := readNotifications(context.Background(), db, 1)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -627,7 +653,7 @@ func TestDB_DeleteRangeRegularAndInternalKeys(t *testing.T) {
 			// No notification for the rejected range
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			notifications, err := db.ReadNextNotifications(ctx, 0)
+			notifications, err := readNotifications(ctx, db, 0)
 			require.NoError(t, err)
 			require.Len(t, notifications, 2)
 			assert.Empty(t, notifications[1].Notifications)
@@ -884,7 +910,7 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 	// First read is capped at maxNotificationBatchSize batches. require, not
 	// assert: with an uncapped read the resume below would ask for an offset
 	// past the backlog and block until the suite timeout.
-	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	notifications, err := readNotifications(context.Background(), db, 0)
 	require.NoError(t, err)
 	require.Equal(t, maxNotificationBatchSize, len(notifications))
 	assert.EqualValues(t, 0, notifications[0].Offset)
@@ -892,7 +918,7 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 	assert.EqualValues(t, maxNotificationBatchSize-1, lastDelivered)
 
 	// Resuming from the last delivered offset + 1 returns the remainder
-	rest, err := db.ReadNextNotifications(context.Background(), lastDelivered+1)
+	rest, err := readNotifications(context.Background(), db, lastDelivered+1)
 	assert.NoError(t, err)
 	assert.Equal(t, total-maxNotificationBatchSize, len(rest))
 	assert.EqualValues(t, maxNotificationBatchSize, rest[0].Offset)
@@ -922,7 +948,7 @@ func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
 	assertReadWaits := func(startOffset int64) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		notifications, err := db.ReadNextNotifications(ctx, startOffset)
+		notifications, err := readNotifications(ctx, db, startOffset)
 		assert.ErrorIs(t, err, context.DeadlineExceeded, "start offset %d", startOffset)
 		assert.Nil(t, notifications, "start offset %d", startOffset)
 	}
@@ -936,7 +962,7 @@ func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
 	write(1)
 
 	// A negative start offset reads from the first retained batch
-	notifications, err := db.ReadNextNotifications(context.Background(), -5)
+	notifications, err := readNotifications(context.Background(), db, -5)
 	require.NoError(t, err)
 	require.Len(t, notifications, 2)
 	assert.EqualValues(t, 0, notifications[0].Offset)
@@ -947,6 +973,7 @@ func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
 	require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey))
 	require.NoError(t, wb.Commit())
 	require.NoError(t, wb.Close())
+	trimmedNotifications(db, 1)
 
 	assertReadWaits(-5)
 	assertReadWaits(0)
@@ -958,7 +985,7 @@ func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
 	defer cancel()
 	readCh := make(chan []*proto.NotificationBatch, 1)
 	go func() {
-		notifications, err := db.ReadNextNotifications(ctx, 0)
+		notifications, err := readNotifications(ctx, db, 0)
 		assert.NoError(t, err)
 		readCh <- notifications
 	}()
