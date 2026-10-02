@@ -130,7 +130,7 @@ type DB interface {
 
 	ReadCommitOffset() (int64, error)
 
-	ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error)
+	ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error)
 	GetSequenceUpdates(prefixKey string) (SequenceWaiter, error)
 
 	UpdateTerm(newTerm int64, options TermOptions) error
@@ -533,7 +533,7 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	d.committedChecksum.Store(&committedChecksum)
 
 	if notifications != nil {
-		d.notificationsTracker.UpdatedCommitOffset(commitOffset)
+		d.notificationsTracker.Committed(notifications)
 	}
 
 	// Only once committed: the waiters must never see a key that doesn't
@@ -605,12 +605,21 @@ func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) erro
 	return fmt.Errorf("%w: %w", ErrWriteRejected, cause)
 }
 
-func (*db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
+func (d *db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
 	// seal() sorts the entries by key, which makes the generated marshal
 	// deterministic — required because the value feeds the replicated batch
-	// checksum. The bytes land directly in the batch arena.
+	// checksum.
 	nb := notifications.seal()
-	return batch.PutMarshalable(notificationKey(nb.Offset), nb)
+	if !d.notificationsTracker.Caching() {
+		// The bytes land directly in the batch arena
+		return batch.PutMarshalable(notificationKey(nb.Offset), nb)
+	}
+	// The notifications cache keeps the bytes, which the batch copies
+	var err error
+	if notifications.encoded, err = nb.MarshalVT(); err != nil {
+		return err
+	}
+	return batch.Put(notificationKey(nb.Offset), notifications.encoded)
 }
 
 func (d *db) addASCIILong(key string, value int64, batch kvstore.WriteBatch, timestamp uint64) error {
@@ -1136,7 +1145,8 @@ func (d *db) applyDeleteRange(batch kvstore.WriteBatch, notifications *Notificat
 		key := it.Key()
 		if internalKeys && strings.HasPrefix(key, notificationsPrefix+"/") {
 			// No session or secondary index entry to clean up: the range
-			// deletion below removes the record
+			// deletion below removes the record, which can't stay cached
+			d.notificationsTracker.RecordsDeleted()
 			continue
 		}
 		validKeysNum++
@@ -1338,7 +1348,7 @@ func Deserialize(value []byte, se *proto.StorageEntry) error {
 	return nil
 }
 
-func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
+func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error) {
 	if !d.notificationsEnabled.Load() {
 		return nil, ErrNotificationsDisabled
 	}

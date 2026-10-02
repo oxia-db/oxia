@@ -1781,6 +1781,15 @@ func TestLeaderController_RetriesFailedApplyPastWalRetention(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// decodeNotificationBatch decodes a batch the leader sends, as the clients do.
+func decodeNotificationBatch(t *testing.T, encoded *proto.EncodedNotificationBatch) *proto.NotificationBatch {
+	t.Helper()
+	nb := &proto.NotificationBatch{}
+	require.NoError(t, nb.UnmarshalVT(encoded.Data))
+	assert.Equal(t, encoded.Offset, nb.Offset)
+	return nb
+}
+
 func TestLeaderController_Notifications(t *testing.T) {
 	var shard int64 = 1
 
@@ -1798,11 +1807,11 @@ func TestLeaderController_Notifications(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
 
 	// The subscription is confirmed by an empty batch on the requested offset
-	nb0 := <-adaptor.Ch()
+	nb0 := decodeNotificationBatch(t, <-adaptor.Ch())
 	assert.EqualValues(t, wal.InvalidOffset, nb0.Offset)
 	assert.Empty(t, nb0.Notifications)
 
@@ -1814,7 +1823,7 @@ func TestLeaderController_Notifications(t *testing.T) {
 			Value: []byte("value-a")}},
 	})
 
-	nb1 := <-adaptor.Ch()
+	nb1 := decodeNotificationBatch(t, <-adaptor.Ch())
 	assert.EqualValues(t, 0, nb1.Offset)
 	assert.Equal(t, 1, len(nb1.Notifications))
 	assert.Equal(t, "a", nb1.Notifications[0].GetKey())
@@ -1866,18 +1875,18 @@ func TestLeaderController_NotificationsResumeEchoesRequestedOffset(t *testing.T)
 	// Resume from an offset that is neither the invalid offset nor the commit
 	// offset, so the confirmation batch can only match by echoing the request
 	startOffsetExclusive := int64(1)
-	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{
 		Shard:                shard,
 		StartOffsetExclusive: &startOffsetExclusive,
 	}, adaptor)
 
-	nb0 := <-adaptor.Ch()
+	nb0 := decodeNotificationBatch(t, <-adaptor.Ch())
 	assert.EqualValues(t, startOffsetExclusive, nb0.Offset)
 	assert.Empty(t, nb0.Notifications)
 
 	// Dispatch then resumes right after the requested offset
-	nb1 := <-adaptor.Ch()
+	nb1 := decodeNotificationBatch(t, <-adaptor.Ch())
 	assert.EqualValues(t, 2, nb1.Offset)
 	assert.Equal(t, 1, len(nb1.Notifications))
 	assert.Equal(t, "c", nb1.Notifications[0].GetKey())
@@ -1908,7 +1917,7 @@ func TestLeaderController_NotificationsCloseLeader(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
 
 	// The handler is still running waiting for more notifications
@@ -1952,7 +1961,7 @@ func TestLeaderController_NotificationsNewTerm(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
 
 	// The dispatch reads the next notifications right after confirming the
@@ -1984,7 +1993,7 @@ func TestLeaderController_NotificationsWhenNotReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
 	assert.ErrorIs(t, adaptor.Error(), constant.ErrNodeIsNotLeader)
 
@@ -2353,7 +2362,7 @@ func TestLeaderController_NotificationsDisabled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.NotificationBatch]()
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
 	lc.GetNotifications(ctx, &proto.NotificationsRequest{Shard: shard, StartOffsetExclusive: &wal.InvalidOffset}, adaptor)
 	assert.ErrorIs(t, adaptor.Error(), constant.ErrNotificationsNotEnabled)
 

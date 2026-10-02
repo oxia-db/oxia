@@ -416,8 +416,9 @@ func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stre
 	ctx := stream.Context()
 
 	finish := make(chan error, 1)
-	lc.GetNotifications(ctx, req, concurrent.NewStreamOnce(func(notificationBatch *proto.NotificationBatch) error {
-		return stream.Send(notificationBatch)
+	lc.GetNotifications(ctx, req, concurrent.NewStreamOnce(func(notificationBatch *proto.EncodedNotificationBatch) error {
+		// The codec sends the encoded batch as it is
+		return stream.SendMsg(notificationBatch)
 	}, func(err error) {
 		channel.PushNoBlock(finish, err)
 	}))

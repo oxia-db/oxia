@@ -67,7 +67,8 @@ type LeaderController interface {
 
 	GetSequenceUpdates(ctx context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error)
 
-	GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch])
+	GetNotifications(ctx context.Context, req *proto.NotificationsRequest,
+		cb concurrent.StreamCallback[*proto.EncodedNotificationBatch])
 
 	// NewTerm Handle new term requests
 	NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error)
@@ -1415,7 +1416,8 @@ func (lc *leaderController) applyFromWal(w wal.Wal, offset int64) (statemachine.
 }
 
 //nolint:revive
-func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch]) {
+func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.NotificationsRequest,
+	cb concurrent.StreamCallback[*proto.EncodedNotificationBatch]) {
 	lc.RLock()
 	if err := checkStatusIsLeader(lc.status); err != nil {
 		lc.RUnlock()
@@ -1461,12 +1463,16 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 					slog.Int64("term", lc.term.Load()),
 					slog.Int64("offset", offsetExclusive),
 				)
-				if err := cb.OnNext(&proto.NotificationBatch{
+				confirmation, err := (&proto.NotificationBatch{
 					Shard:         lc.shardId,
 					Offset:        offsetExclusive,
 					Timestamp:     0,
 					Notifications: nil,
-				}); err != nil {
+				}).MarshalVT()
+				if err == nil {
+					err = cb.OnNext(&proto.EncodedNotificationBatch{Offset: offsetExclusive, Data: confirmation})
+				}
+				if err != nil {
 					cb.OnComplete(err)
 					return
 				}
@@ -1496,7 +1502,7 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 						}
 						if len(notifications) > 0 {
 							for idx := range notifications {
-								notification := notifications[idx]
+								notification := &notifications[idx]
 								if err := cb.OnNext(notification); err != nil {
 									cb.OnComplete(err)
 									return
