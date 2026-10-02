@@ -367,10 +367,10 @@ func (d *db) SetSplitFilter(filter *SplitFilter) error {
 
 	batch := d.kv.NewWriteBatch()
 	defer batch.Close()
-	if _, err := d.applyPut(batch, nil, nil, &proto.PutRequest{
+	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   splitFilterKey,
 		Value: value,
-	}, now(), NoOpCallback, true); err != nil {
+	}, now(), NoOpCallback, true, nil, nil); err != nil {
 		return err
 	}
 	if err := batch.Commit(); err != nil {
