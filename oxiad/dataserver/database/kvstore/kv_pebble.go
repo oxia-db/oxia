@@ -606,7 +606,22 @@ func (p *Pebble) Snapshot() (Snapshot, error) {
 type PebbleBatch struct {
 	p *Pebble
 	b *pebble.Batch
+	// getIter serves the point reads of the batch after the first one. A Get
+	// of the batch builds a whole iterator stack for every key, while seeking
+	// an existing iterator costs a fraction of it. Building the iterator
+	// costs more than a Get, though: the first read, which might be the only
+	// one, is a Get.
+	getIter *pebble.Iterator
+	gotOne  bool
 }
+
+// getIterOptions must stay the same for every refresh of getIter, which then
+// only extends its view of the batch.
+var getIterOptions = pebble.IterOptions{}
+
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
 
 func (b *PebbleBatch) Count() int {
 	return int(b.b.Count())
@@ -678,7 +693,16 @@ func (b *PebbleBatch) RangeOverlaps(lowerBound, upperBound string) (internalKeys
 }
 
 func (b *PebbleBatch) Close() error {
-	return b.b.Close()
+	return multierr.Append(b.closeGetIter(), b.b.Close())
+}
+
+func (b *PebbleBatch) closeGetIter() error {
+	if b.getIter == nil {
+		return nil
+	}
+	err := b.getIter.Close()
+	b.getIter = nil
+	return err
 }
 
 func (b *PebbleBatch) Put(key string, value []byte) error {
@@ -720,13 +744,44 @@ func (b *PebbleBatch) Delete(key string) error {
 }
 
 func (b *PebbleBatch) Get(key string) ([]byte, io.Closer, error) {
-	value, closer, err := b.b.Get(b.p.keyEncoder.Encode(key))
-	if errors.Is(err, pebble.ErrNotFound) {
-		err = ErrKeyNotFound
-	} else if err != nil {
-		b.p.readErrors.Inc()
+	encodedKey := b.p.keyEncoder.Encode(key)
+	if !b.gotOne {
+		b.gotOne = true
+		value, closer, err := b.b.Get(encodedKey)
+		if errors.Is(err, pebble.ErrNotFound) {
+			err = ErrKeyNotFound
+		} else if err != nil {
+			b.p.readErrors.Inc()
+		}
+		return value, closer, err
 	}
-	return value, closer, err
+	if b.getIter == nil {
+		it, err := b.b.NewIter(&getIterOptions)
+		if err != nil {
+			b.p.readErrors.Inc()
+			return nil, nil, err
+		}
+		b.getIter = it
+	} else {
+		// The iterator sees the batch as it was when created or last
+		// refreshed: refresh it, to see the mutations since then too
+		b.getIter.SetOptions(&getIterOptions)
+	}
+
+	// The comparers split no suffix off: the prefix is the whole key
+	if !b.getIter.SeekPrefixGE(encodedKey) || !bytes.Equal(b.getIter.Key(), encodedKey) {
+		if err := b.getIter.Error(); err != nil {
+			b.p.readErrors.Inc()
+			return nil, nil, err
+		}
+		return nil, nil, ErrKeyNotFound
+	}
+	value, err := b.getIter.ValueAndErr()
+	if err != nil {
+		b.p.readErrors.Inc()
+		return nil, nil, err
+	}
+	return value, nopCloser{}, nil
 }
 
 func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
@@ -750,6 +805,9 @@ func (b *PebbleBatch) Checksum(init crc.Checksum) crc.Checksum {
 }
 
 func (b *PebbleBatch) Commit() error {
+	if err := b.closeGetIter(); err != nil {
+		return err
+	}
 	b.p.writeCount.Add(b.Count())
 	b.p.writeBytes.Add(b.Size())
 	b.p.batchCountHisto.Record(b.Count())

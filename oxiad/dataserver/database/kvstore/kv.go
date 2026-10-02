@@ -48,6 +48,10 @@ type WriteBatch interface {
 	// committing.
 	PutMarshalable(key string, m ProtoMarshalable) error
 	Delete(key string) error
+	// Get returns the value of key with the mutations of the batch applied.
+	// The value is only valid until the closer is closed, and until the next
+	// Get of the batch, which holds a db iterator from its second Get until
+	// it is committed or closed.
 	Get(key string) ([]byte, io.Closer, error)
 	FindLower(key string) (lowerKey string, err error)
 

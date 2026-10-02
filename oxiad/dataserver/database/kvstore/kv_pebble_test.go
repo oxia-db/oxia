@@ -479,9 +479,53 @@ func TestPebbbleGetWithinBatch(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 	assert.Nil(t, value)
 	assert.Nil(t, closer)
+	assert.NoError(t, wb.Close())
 
 	assert.NoError(t, kv.Close())
 	assert.NoError(t, factory.Close())
+}
+
+// From its second read on, a batch reads through one iterator, which must see
+// the mutations made after it was created: a range deletion too, which pebble
+// handles by rebuilding the iterator stack.
+func TestPebbleBatchGetAfterDeleteRange(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+
+	wb := kv.NewWriteBatch()
+	for _, key := range []string{"a", "b", "c"} {
+		require.NoError(t, wb.Put(key, []byte(key)))
+	}
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+
+	wb = kv.NewWriteBatch()
+	for _, key := range []string{"a", "b"} {
+		value, closer, err := wb.Get(key)
+		require.NoError(t, err)
+		assert.Equal(t, key, string(value))
+		require.NoError(t, closer.Close())
+	}
+
+	require.NoError(t, wb.DeleteRange("b", "c"))
+	_, _, err = wb.Get("b")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+	value, closer, err := wb.Get("c")
+	require.NoError(t, err)
+	assert.Equal(t, "c", string(value))
+	require.NoError(t, closer.Close())
+
+	require.NoError(t, wb.Put("b", []byte("bb")))
+	value, closer, err = wb.Get("b")
+	require.NoError(t, err)
+	assert.Equal(t, "bb", string(value))
+	require.NoError(t, closer.Close())
+	require.NoError(t, wb.Close())
+
+	require.NoError(t, kv.Close())
+	require.NoError(t, factory.Close())
 }
 
 // PutMarshalable writes through pebble SetDeferred instead of Set: the entry
