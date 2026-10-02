@@ -334,7 +334,9 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	deleteResponses := make([]proto.DeleteResponse, len(b.Deletes))
 	var notifications *Notifications
 	if d.notificationsEnabled.Load() {
-		notifications = newNotifications(d.shardId, commitOffset, timestamp)
+		// Room for one notification per operation, the common case
+		notifications = newNotifications(d.shardId, commitOffset, timestamp,
+			len(b.Puts)+len(b.Deletes)+len(b.DeleteRanges))
 	}
 	var sequenceUpdates []sequenceUpdate
 
