@@ -72,20 +72,18 @@ type pendingNotification struct {
 	hasKeyRangeLast bool
 }
 
-func newNotifications(shardId int64, offset int64, timestamp uint64) *Notifications {
+// newNotifications creates the notifications of the batch at offset, with
+// room for expectedCount of them: add only has to grow the slice that holds
+// them past that count.
+func newNotifications(shardId int64, offset int64, timestamp uint64, expectedCount int) *Notifications {
 	return &Notifications{
 		batch: proto.NotificationBatch{
 			Shard:     shardId,
 			Offset:    offset,
 			Timestamp: timestamp,
 		},
+		pending: make([]pendingNotification, 0, expectedCount),
 	}
-}
-
-// reserve makes room for the given number of notifications, so that add
-// doesn't have to grow the slice that holds them.
-func (n *Notifications) reserve(notifications int) {
-	n.pending = slices.Grow(n.pending, notifications)
 }
 
 // add records the operation on key that the notification describes. It keeps
