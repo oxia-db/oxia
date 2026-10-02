@@ -2438,10 +2438,10 @@ func TestApplyPutDetachesRequestValue(t *testing.T) {
 	for range 10 {
 		payload := []byte(payloadText)
 		batch := d.kv.NewWriteBatch()
-		_, err := d.applyPut(batch, &atomic.Int64{}, nil, &proto.PutRequest{
+		err := d.applyPut(batch, &atomic.Int64{}, nil, &proto.PutRequest{
 			Key:   "key",
 			Value: payload[:len("value")],
-		}, 0, NoOpCallback, false)
+		}, 0, NoOpCallback, false, &proto.PutResponse{}, &proto.Version{})
 		assert.NoError(t, err)
 		assert.NoError(t, batch.Close())
 
