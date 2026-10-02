@@ -359,6 +359,18 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 
 	childLeader := sc.pickLeader(headEntries)
 
+	// The child leader gets its data from the snapshot that the parent sends
+	// to its observer, and CatchUp and Cutover measure what it received with
+	// the offsets it reports: they must only cover data of this term of the
+	// parent. A child leader can have data already, e.g. when a leader
+	// election of the parent sent the split back to Bootstrap. It reports it
+	// until the installation of the new snapshot wipes it, so the split could
+	// pass the point of no return in the meantime, and then lose the data when
+	// fencing the parent aborts the installation.
+	if err := sc.resetChildLeader(childId, childTerm, childLeader); err != nil {
+		return errors.Wrapf(err, "failed to reset the leader of child shard %d", childId)
+	}
+
 	if err := sc.updateChildMeta(childId, func(meta *proto.ShardMetadata) {
 		meta.Term = childTerm
 		meta.Leader = childLeader
@@ -369,6 +381,10 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 
 	// Elect the child leader so it replicates to its followers immediately.
 	// Without this, only the single child leader node has the data.
+	// The term pins no feature: the leader would enable it with an entry of
+	// its own in the parent's term, where the parent can have another entry at
+	// the same offset. Its empty copy has no feature enabled that it would
+	// refuse to lead without.
 	followerMap := make(map[string]*proto.EntryId)
 	for server, entry := range headEntries {
 		if server.GetNameOrDefault() != childLeader.GetNameOrDefault() {
@@ -376,7 +392,9 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 		}
 	}
 
-	_, err = sc.rpcProvider.BecomeLeader(sc.ctx, childLeader, &proto.BecomeLeaderRequest{
+	ctx, cancel := context.WithTimeout(sc.ctx, rpc.DefaultTimeout)
+	defer cancel()
+	_, err = sc.rpcProvider.BecomeLeader(ctx, childLeader, &proto.BecomeLeaderRequest{
 		Namespace:         sc.namespace,
 		Shard:             childId,
 		Term:              childTerm,
@@ -393,6 +411,28 @@ func (sc *SplitController) fenceAndElectChild(childId int64, parentTerm int64) e
 		slog.Int64("term", childTerm),
 	)
 	return nil
+}
+
+// resetChildLeader deletes the copy of a child shard on the data server picked
+// as its leader, and fences it again in the child's term, with an empty copy.
+// Until the split passes the point of no return, the parent has all the data
+// of its children.
+func (sc *SplitController) resetChildLeader(childId int64, childTerm int64,
+	childLeader *proto.DataServerIdentity) error {
+	if _, err := sc.rpcProvider.DeleteShard(sc.ctx, childLeader, &proto.DeleteShardRequest{
+		Namespace: sc.namespace,
+		Shard:     childId,
+		Term:      childTerm,
+	}); err != nil {
+		return err
+	}
+	_, err := sc.rpcProvider.NewTerm(sc.ctx, childLeader, &proto.NewTermRequest{
+		Namespace: sc.namespace,
+		Shard:     childId,
+		Term:      childTerm,
+		Options:   namespaceTermOptions(sc.metadata, sc.namespace),
+	})
+	return err
 }
 
 // addChildObserver adds a child's leader as an observer follower on the parent
@@ -1176,6 +1216,13 @@ func (sc *SplitController) reelectChild(ctx context.Context, childId int64) erro
 		}
 	}
 
+	// Not bounded by the rpc timeout: the followers of the child only get its
+	// data from a snapshot of the leader. A leader with entries left to commit
+	// through them, e.g. entries it wrote in the term of an earlier attempt,
+	// only returns once a follower installed the snapshot, which takes as long
+	// as the child is big. An attempt that gave up before then would only make
+	// the next one start over: fencing the child in a new term aborts the
+	// installation. A leader that goes away still fails the call.
 	_, err = sc.rpcProvider.BecomeLeader(ctx, newLeader, &proto.BecomeLeaderRequest{
 		Namespace:         sc.namespace,
 		Shard:             childId,

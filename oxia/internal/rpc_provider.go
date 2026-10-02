@@ -121,9 +121,9 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 	// A change of the shard map ends the wait for the next attempt: once a
 	// shard is split, the other shards hold their writes until the batches
 	// pending on it are rerouted
-	timer := &shardMapTimer{}
+	timer := &ShardMapTimer{}
 	return executeWithRetryTimer(ctx, timer, func(hint constant.ErrorMetadata) (*proto.WriteResponse, error) {
-		timer.changed = p.shardMapChanged()
+		timer.Changed = p.shardMapChanged()
 		shardId := request.Shard
 		if _, err := p.getTargetByShard(shardId, hint); err != nil {
 			return nil, err
@@ -401,20 +401,20 @@ func executeOnce[T any](operation func() (T, error)) (T, error) {
 	return result, err
 }
 
-// shardMapTimer waits between the attempts of a retry like the system timer,
+// ShardMapTimer waits between the attempts of a retry like the system timer,
 // but it fires as soon as the shard map changes: the next attempt goes to the
 // shard's new leader, or finds that the shard was split.
-type shardMapTimer struct {
-	// changed is the channel of the shard map when the last attempt started
-	changed <-chan struct{}
+type ShardMapTimer struct {
+	// Changed is the channel of the shard map when the last attempt started
+	Changed <-chan struct{}
 	c       chan time.Time
 	stop    chan struct{}
 }
 
-func (t *shardMapTimer) Start(duration time.Duration) {
+func (t *ShardMapTimer) Start(duration time.Duration) {
 	c := make(chan time.Time, 1)
 	stop := make(chan struct{})
-	changed := t.changed
+	changed := t.Changed
 	t.c, t.stop = c, stop
 	go func() {
 		timer := time.NewTimer(duration)
@@ -429,13 +429,13 @@ func (t *shardMapTimer) Start(duration time.Duration) {
 	}()
 }
 
-func (t *shardMapTimer) Stop() {
+func (t *ShardMapTimer) Stop() {
 	if t.stop != nil {
 		close(t.stop)
 		t.stop = nil
 	}
 }
 
-func (t *shardMapTimer) C() <-chan time.Time {
+func (t *ShardMapTimer) C() <-chan time.Time {
 	return t.c
 }

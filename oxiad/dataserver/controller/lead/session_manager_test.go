@@ -275,30 +275,15 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.ErrorIs(t, err, expectedErr)
 }
 
-func storageEntry(t *testing.T, sessionId int64) []byte {
-	t.Helper()
-
-	entry := &proto.StorageEntry{
-		Value:                 nil,
-		VersionId:             0,
-		CreationTimestamp:     0,
-		ModificationTimestamp: 0,
-		SessionId:             &sessionId,
-	}
-	bytes, err := pb.Marshal(entry)
-	assert.NoError(t, err)
-	return bytes
-}
-
-func TestSessionUpdateOperationCallback_OnDelete(t *testing.T) {
+func TestSessionUpdateOperationCallback_OnDeleteWithEntry(t *testing.T) {
 	sessionId := int64(12345)
 
 	writeBatch := mockWriteBatch{
-		"a/b/c": storageEntry(t, sessionId),
 		SessionKey(SessionId(sessionId)) + "/a%2Fb%2Fc": []byte{},
 	}
 
-	err := sessionManagerUpdateOperationCallback.OnDelete(writeBatch, nil, "a/b/c", testFeatureChecker{})
+	err := sessionManagerUpdateOperationCallback.OnDeleteWithEntry(writeBatch, nil, "a/b/c",
+		&proto.StorageEntry{SessionId: &sessionId}, testFeatureChecker{})
 	assert.NoError(t, err)
 	_, found := writeBatch[SessionKey(SessionId(sessionId))+"/a%2Fb%2Fc"]
 	assert.False(t, found)
@@ -789,6 +774,97 @@ func TestSessionManager_StoppedManagerDoesNotWrite(t *testing.T) {
 	assert.NoError(t, walf.Close())
 }
 
+// The leader controller passes the session calls to the session manager of the
+// current term, which BecomeLeader replaces: the calls must get it under the
+// leader lock. A call that reaches a manager stopped by a new term fails.
+func TestSessionManager_SessionCallsDuringNewTerms(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, _, lc := createSessionManager(t)
+
+	// Every new leader restores this session
+	res, err := lc.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+	})
+	assert.NoError(t, err)
+	keptAliveId := res.SessionId
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// A session call fails when it reaches a manager stopped by a new term,
+	// which rejects the writes and dropped the sessions, when the node is
+	// fenced, or when the term ends before its write is applied
+	checkError := func(err error) {
+		if !errors.Is(err, constant.ErrNodeIsNotLeader) && !errors.Is(err, constant.ErrResourceUnavailable) &&
+			!errors.Is(err, constant.ErrSessionNotFound) {
+			assert.Fail(t, "unexpected session call error", "%+v", err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	// A client creates, keeps alive and closes sessions, a call every
+	// millisecond: new terms come in between the calls
+	created := 0
+	wg.Go(func() {
+		for ctx.Err() == nil {
+			time.Sleep(time.Millisecond)
+			res, err := lc.CreateSession(&proto.CreateSessionRequest{
+				Shard:            shardId,
+				SessionTimeoutMs: uint32(constant.MinSessionTimeout.Milliseconds()),
+			})
+			if err != nil {
+				checkError(err)
+				continue
+			}
+			created++
+			time.Sleep(time.Millisecond)
+			if err = lc.KeepAlive(res.SessionId); err != nil {
+				checkError(err)
+			}
+			time.Sleep(time.Millisecond)
+			if _, err = lc.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: res.SessionId}); err != nil {
+				checkError(err)
+			}
+		}
+	})
+	// Another client keeps its session alive. Unlike the session writes, a
+	// keep-alive takes the leader lock only to get the session manager
+	wg.Go(func() {
+		for ctx.Err() == nil {
+			if err := lc.KeepAlive(keptAliveId); err != nil {
+				checkError(err)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+	// The node leads each new term for a millisecond at least, for the session
+	// writes to get through
+	wg.Go(func() {
+		for term := int64(2); ctx.Err() == nil; term++ {
+			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: term})
+			if !assert.NoError(t, err) {
+				return
+			}
+			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shardId,
+				Term:              term,
+				ReplicationFactor: 1,
+			})
+			if !assert.NoError(t, err) {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+	wg.Wait()
+	assert.Positive(t, created)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
 func TestSessionManagerReopening(t *testing.T) {
 	shardId := int64(1)
 	// Invalid session timeout
@@ -969,6 +1045,54 @@ func TestSessionManager_CloseDeletesEphemeralRecords(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Deleting an ephemeral record deletes its shadow key and its secondary index
+// entries, which the record's entry lists. A shadow key left behind would make
+// the session end delete a later record at the same key.
+func TestSessionManager_DeleteEphemeralRecord(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+	})
+	assert.NoError(t, err)
+	sessionId := createResp.SessionId
+	secondaryIndex := &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "0"}
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: []*proto.PutRequest{{
+		Key:              "/a",
+		Value:            []byte("ephemeral"),
+		SessionId:        &sessionId,
+		SecondaryIndexes: []*proto.SecondaryIndex{secondaryIndex},
+	}}})
+	assert.NoError(t, err)
+	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
+	assert.True(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard:   &shardId,
+		Deletes: []*proto.DeleteRequest{{Key: "/a"}},
+	})
+	assert.NoError(t, err)
+	assert.False(t, keyExists(t, lc, "/a"))
+	assert.False(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
+	assert.False(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: []*proto.PutRequest{{
+		Key:   "/a",
+		Value: []byte("regular"),
+	}}})
+	assert.NoError(t, err)
+	_, err = sManager.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: sessionId})
+	assert.NoError(t, err)
+	assert.Equal(t, "regular", getData(t, lc, "/a"))
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
 }
 
 // A new leader deletes the ephemeral records whose session is gone: before the

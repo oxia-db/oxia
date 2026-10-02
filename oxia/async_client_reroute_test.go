@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
+	"google.golang.org/grpc"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -41,7 +43,24 @@ type splittableShardManager struct {
 	strategy         internal.ShardStrategy
 	shards           []internal.Shard
 	successors       map[int64][]internal.Shard
+	leader           string
+	changed          chan struct{}
 	onShardsReplaced internal.ShardsReplacedListener
+}
+
+// newSplittableShardManager returns a splittableShardManager with a single
+// shard, 0, on the whole hash range, led by the given leader.
+func newSplittableShardManager(leader string) *splittableShardManager {
+	return &splittableShardManager{
+		strategy: internal.NewShardStrategy(),
+		shards: []internal.Shard{
+			{Id: 0, HashRange: internal.HashRange{MinInclusive: 0, MaxInclusive: math.MaxUint32}},
+		},
+		successors:       map[int64][]internal.Shard{},
+		leader:           leader,
+		changed:          make(chan struct{}),
+		onShardsReplaced: func(map[int64][]int64) {},
+	}
 }
 
 func (*splittableShardManager) Close() error { return nil }
@@ -68,7 +87,7 @@ func (m *splittableShardManager) GetAll() []int64 {
 	return ids
 }
 
-func (*splittableShardManager) Leader(int64) string { return "" }
+func (m *splittableShardManager) Leader(int64) string { return m.leader }
 
 func (m *splittableShardManager) Exists(shardId int64) bool {
 	m.RLock()
@@ -103,7 +122,11 @@ func (m *splittableShardManager) GetSuccessor(shardId int64, key string) (int64,
 	return 0, false
 }
 
-func (*splittableShardManager) Changed() <-chan struct{} { return nil }
+func (m *splittableShardManager) Changed() <-chan struct{} {
+	m.RLock()
+	defer m.RUnlock()
+	return m.changed
+}
 
 func (*splittableShardManager) KeySorting() proto.KeySorting {
 	return proto.KeySorting_KEY_SORTING_UNKNOWN
@@ -126,6 +149,8 @@ func (m *splittableShardManager) split(parent int64, left int64, right int64) {
 		m.shards = append(append(m.shards[:i], m.shards[i+1:]...), children...)
 		m.successors[parent] = children
 		m.onShardsReplaced(map[int64][]int64{parent: {left, right}})
+		close(m.changed)
+		m.changed = make(chan struct{})
 		return
 	}
 }
@@ -189,11 +214,7 @@ func newRerouteTestClient(shardManager *splittableShardManager, executor interna
 // the post-split assignments goes to the child shard directly, and must still
 // be applied after the rerouted one.
 func TestRerouteKeepsWriteOrderAcrossSplit(t *testing.T) {
-	shardManager := &splittableShardManager{
-		strategy:   internal.NewShardStrategy(),
-		shards:     []internal.Shard{{Id: 0, HashRange: internal.HashRange{MinInclusive: 0, MaxInclusive: math.MaxUint32}}},
-		successors: map[int64][]internal.Shard{},
-	}
+	shardManager := newSplittableShardManager("")
 	executor := &splitExecutor{
 		shardManager: shardManager,
 		frozenShard:  0,
@@ -212,6 +233,65 @@ func TestRerouteKeepsWriteOrderAcrossSplit(t *testing.T) {
 	go func() { put2 <- <-client.Put("k", []byte("v2")) }()
 
 	// Give put(k, v2) the time to overtake put(k, v1), if the client lets it
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for len(executor.appliedWrites()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	close(executor.release)
+	require.NoError(t, (<-put1).Err)
+	require.NoError(t, (<-put2).Err)
+
+	assert.Equal(t, []string{"k=v1", "k=v2"}, executor.appliedWrites())
+}
+
+// An ephemeral put that waits for its session on a shard when the shard splits
+// gets a session on the child shard, and goes there directly. It must still be
+// applied after a write to the same key that was in flight to the split shard,
+// and is rerouted to the child shard.
+func TestRerouteKeepsEphemeralWriteOrderAcrossSplit(t *testing.T) {
+	server := &frozenShardServer{
+		sessionRequestsServer: &sessionRequestsServer{heartbeats: make(chan shardSession, 100)},
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcServer := grpc.NewServer()
+	proto.RegisterOxiaClientServer(grpcServer, server)
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	options, err := newClientOptions(listener.Addr().String())
+	require.NoError(t, err)
+	shardManager := newSplittableShardManager(options.serviceAddress)
+	executor := &splitExecutor{
+		shardManager: shardManager,
+		frozenShard:  0,
+		frozenWrite:  make(chan struct{}, 1),
+		release:      make(chan struct{}),
+	}
+	client := newRerouteTestClient(shardManager, executor)
+	defer func() { assert.NoError(t, client.writeBatchManager.Close()) }()
+	rpcProvider := internal.NewRpcProvider(t.Context(), options.namespace, nil, nil, options.serviceAddress,
+		func() internal.ShardManager { return shardManager })
+	defer func() { assert.NoError(t, rpcProvider.Close()) }()
+	client.options = options
+	client.sessions = newSessions(t.Context(), shardManager, rpcProvider, options)
+	defer func() { assert.NoError(t, client.sessions.Close()) }()
+
+	put1 := client.Put("k", []byte("v1"))
+	<-executor.frozenWrite
+	put2 := make(chan PutResult, 1)
+	go func() { put2 <- <-client.Put("k", []byte("v2"), Ephemeral()) }()
+	require.Eventually(t, func() bool { return server.rejected.Load() > 0 }, 10*time.Second, 10*time.Millisecond)
+
+	shardManager.split(0, 1, 2)
+	// Give put(k, v2) the time to overtake put(k, v1), if the client lets it,
+	// once it has a session on the child shard
+	require.Eventually(t, func() bool {
+		server.Lock()
+		defer server.Unlock()
+		return len(server.created) > 0
+	}, 10*time.Second, 10*time.Millisecond, "no session created on the child shard")
 	deadline := time.Now().Add(100 * time.Millisecond)
 	for len(executor.appliedWrites()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)

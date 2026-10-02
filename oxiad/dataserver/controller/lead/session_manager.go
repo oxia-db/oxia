@@ -539,18 +539,6 @@ func deleteShadow(batch kvstore.WriteBatch, _ *database.Notifications, key strin
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnDelete(batch kvstore.WriteBatch, notification *database.Notifications, key string, features feature.Checker) error {
-	se, err := database.GetStorageEntryMetadata(batch, key)
-	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
-			return nil
-		}
-		return err
-	}
-	defer se.ReturnToVTPool()
-	return s.OnDeleteWithEntry(batch, notification, key, se, features)
-}
-
 func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatch, notification *database.Notifications, key string, entry *proto.StorageEntry, features feature.Checker) error {
 	if _, err := deleteShadow(batch, notification, key, entry); err != nil {
 		return err
@@ -599,7 +587,7 @@ func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notific
 	if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
 		// delete the ephemeral key secondary indexes: they are listed
 		// in its entry, so this has to happen before the key goes
-		if err := secondaryIndexesUpdateCallback.OnDelete(batch, notification, key, features); err != nil {
+		if err := deleteKeySecondaryIndexes(batch, key); err != nil {
 			return err
 		}
 	}

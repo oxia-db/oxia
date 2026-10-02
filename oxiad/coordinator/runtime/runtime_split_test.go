@@ -265,6 +265,9 @@ func (r *splitTestRuntime) queueSplitResponses() {
 		r.rpc.GetNode(child[0]).NewTermResponse(0, 0, nil)
 		r.rpc.GetNode(child[1]).NewTermResponse(0, -1, nil)
 		r.rpc.GetNode(child[2]).NewTermResponse(0, -1, nil)
+		// The child leader is reset to an empty copy of the child
+		r.rpc.GetNode(child[0]).DeleteShardResponse(nil)
+		r.rpc.GetNode(child[0]).NewTermResponse(-1, -1, nil)
 		r.rpc.GetNode(child[0]).BecomeLeaderResponse(nil)
 	}
 	r.rpc.GetNode(splitPs1).AddFollowerResponse(nil)

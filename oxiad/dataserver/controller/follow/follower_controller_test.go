@@ -1028,6 +1028,132 @@ func TestFollower_SnapshotRecoveryFromNotMember(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// sendSnapshot adds all the chunks of the snapshot to the stream, in the given
+// term, and ends the stream.
+func sendSnapshot(t *testing.T, stream *rpc.MockServerSendSnapshotStream, snapshot kvstore.Snapshot, term int64) {
+	t.Helper()
+	for ; snapshot.Valid(); snapshot.Next() {
+		chunk, err := snapshot.Chunk()
+		require.NoError(t, err)
+		stream.AddChunk(&proto.SnapshotChunk{
+			Term:       term,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		})
+	}
+	close(stream.Chunks)
+}
+
+// A follower seeded from a snapshot has an empty wal, while its database holds
+// the entries up to the snapshot's commit offset. Fenced with a new term, it
+// must report them, so that an election doesn't take it for a follower without
+// any data.
+func TestFollower_NewTermAfterSnapshot(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerSendSnapshotStream()
+	sendSnapshot(t, stream, prepareTestDb(t, 1), 1)
+	require.NoError(t, fc.InstallSnapshot(stream))
+
+	res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	assertProtoEqual(t, &proto.EntryId{Term: wal.InvalidTerm, Offset: 99}, res.HeadEntryId)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// abortedSnapshotStream delivers the first chunk of a snapshot, then fails once
+// aborted, like a stream that the leader closes when it gets fenced.
+type abortedSnapshotStream struct {
+	*rpc.MockServerSendSnapshotStream
+	firstChunk *proto.SnapshotChunk
+	abort      chan struct{}
+}
+
+func (s *abortedSnapshotStream) Recv() (*proto.SnapshotChunk, error) {
+	if chunk := s.firstChunk; chunk != nil {
+		s.firstChunk = nil
+		return chunk, nil
+	}
+	<-s.abort
+	return nil, context.Canceled
+}
+
+// The installation of a snapshot replaces the wal and the database of the
+// follower, which must stop reporting the entries that it had: while it
+// installs the snapshot, and when the installation fails, where it recovers an
+// empty database.
+func TestFollower_FailedSnapshotInstall(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerSendSnapshotStream()
+	sendSnapshot(t, stream, prepareTestDb(t, 1), 1)
+	require.NoError(t, fc.InstallSnapshot(stream))
+	status, err := fc.GetStatus(&proto.GetStatusRequest{Shard: shardId})
+	require.NoError(t, err)
+	assert.EqualValues(t, 99, status.HeadOffset)
+	assert.EqualValues(t, 99, status.CommitOffset)
+
+	snapshot := prepareTestDb(t, 1)
+	chunk, err := snapshot.Chunk()
+	require.NoError(t, err)
+	abortedStream := &abortedSnapshotStream{
+		MockServerSendSnapshotStream: rpc.NewMockServerSendSnapshotStream(),
+		firstChunk: &proto.SnapshotChunk{
+			Term:       1,
+			Name:       chunk.Name(),
+			Content:    chunk.Content(),
+			ChunkIndex: chunk.Index(),
+			ChunkCount: chunk.TotalCount(),
+		},
+		abort: make(chan struct{}),
+	}
+	installErr := make(chan error, 1)
+	go func() { installErr <- fc.InstallSnapshot(abortedStream) }()
+	assert.Eventually(t, func() bool {
+		status, err := fc.GetStatus(&proto.GetStatusRequest{Shard: shardId})
+		return err == nil && status.HeadOffset == wal.InvalidOffset && status.CommitOffset == wal.InvalidOffset
+	}, 10*time.Second, 10*time.Millisecond, "the follower reports the entries that it is replacing")
+	close(abortedStream.abort)
+	assert.Error(t, <-installErr)
+
+	status, err = fc.GetStatus(&proto.GetStatusRequest{Shard: shardId})
+	require.NoError(t, err)
+	assert.EqualValues(t, wal.InvalidOffset, status.HeadOffset)
+	assert.EqualValues(t, wal.InvalidOffset, status.CommitOffset)
+
+	res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	assertProtoEqual(t, constant2.InvalidEntryId, res.HeadEntryId)
+
+	assert.NoError(t, snapshot.Close())
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestFollower_DisconnectLeader(t *testing.T) {
 	var shardId int64
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -2361,6 +2487,115 @@ func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
 	dbRes, err = fci.db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("v10"), dbRes.Value)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// countingWalFactory wraps the follower WAL to count how many times the state
+// applier reads each entry.
+type countingWalFactory struct {
+	wal.Factory
+	sync.Mutex
+	reads map[int64]int
+}
+
+func (f *countingWalFactory) NewWal(namespace string, shard int64, provider wal.CommitOffsetProvider) (wal.Wal, error) {
+	w, err := f.Factory.NewWal(namespace, shard, provider)
+	if err != nil {
+		return nil, err
+	}
+	return &countingWal{Wal: w, factory: f}, nil
+}
+
+func (f *countingWalFactory) readsOf(offset int64) int {
+	f.Lock()
+	defer f.Unlock()
+	return f.reads[offset]
+}
+
+type countingWal struct {
+	wal.Wal
+	factory *countingWalFactory
+}
+
+// NewReader is only used by the follower state applier.
+func (w *countingWal) NewReader(after int64) (wal.Reader, error) {
+	r, err := w.Wal.NewReader(after)
+	if err != nil {
+		return nil, err
+	}
+	return &countingReader{Reader: r, factory: w.factory}, nil
+}
+
+type countingReader struct {
+	wal.Reader
+	factory *countingWalFactory
+}
+
+func (r *countingReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
+	entry, previousCrc, entryCrc, err = r.Reader.ReadNext()
+	if err == nil {
+		r.factory.Lock()
+		r.factory.reads[entry.Offset]++
+		r.factory.Unlock()
+	}
+	return entry, previousCrc, entryCrc, err
+}
+
+// The leader sends the commit offset of an entry along with the next entry, so
+// the WAL head of a follower is usually past the commit offset. The state
+// applier must stop at the commit offset: reading on would only read the next
+// entry to discard it, and the next pass would read it again.
+func TestFollower_ReadsEachCommittedEntryOnce(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &countingWalFactory{
+		Factory: newTestWalFactory(t),
+		reads:   map[int64]int{},
+	}
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	_, err = fc.Truncate(&proto.TruncateRequest{
+		Term:        1,
+		HeadEntryId: &proto.EntryId{Term: 1, Offset: wal.InvalidOffset},
+	})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
+
+	// One write at a time: each entry carries the commit offset of the entry
+	// before it, which the follower applies before the next entry comes
+	const entries = 10
+	for i := int64(0); i < entries; i++ {
+		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"k": fmt.Sprintf("v%d", i)}, i-1))
+		assert.EqualValues(t, i, stream.GetResponse().Offset)
+		assert.Eventually(t, func() bool {
+			return fc.CommitOffset() == i-1
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+	// Then commit the last entry, with no new entry to carry the commit offset
+	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: entries - 1})
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == entries-1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	for i := int64(0); i < entries; i++ {
+		assert.Equalf(t, 1, walFactory.readsOf(i), "reads of the entry at offset %d", i)
+	}
+	dbRes, err := fc.(*followerController).db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, []byte(fmt.Sprintf("v%d", entries-1)), dbRes.Value)
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
