@@ -67,6 +67,12 @@ func newNotifications(shardId int64, offset int64, timestamp uint64) *Notificati
 	}
 }
 
+// reserve makes room for the given number of notifications, so that add
+// doesn't have to grow the slice that holds them.
+func (n *Notifications) reserve(notifications int) {
+	n.batch.Notifications = slices.Grow(n.batch.Notifications, notifications)
+}
+
 func (n *Notifications) add(key string, notification *proto.Notification) {
 	n.batch.Notifications = append(n.batch.Notifications,
 		&proto.NotificationEntry{Key: &key, Value: notification})
