@@ -1681,15 +1681,25 @@ func (lc *leaderController) deleteShard(request *proto.DeleteShardRequest) (*pro
 }
 
 func (lc *leaderController) CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return lc.sessionManager.CreateSession(request)
+	return lc.currentSessionManager().CreateSession(request)
 }
 
 func (lc *leaderController) KeepAlive(sessionId int64) error {
-	return lc.sessionManager.KeepAlive(sessionId)
+	return lc.currentSessionManager().KeepAlive(sessionId)
 }
 
 func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return lc.sessionManager.CloseSession(request)
+	return lc.currentSessionManager().CloseSession(request)
+}
+
+// currentSessionManager returns the session manager of the current term, which
+// becomeLeader replaces while holding the leader lock. The session calls use it
+// once the lock is released: the session writes take the leader lock, see
+// writeBlock. A call that reaches a manager stopped by a new term fails.
+func (lc *leaderController) currentSessionManager() SessionManager {
+	lc.RLock()
+	defer lc.RUnlock()
+	return lc.sessionManager
 }
 
 func (lc *leaderController) Checksum() crc.Checksum {
