@@ -452,6 +452,122 @@ func TestLeaderController_FreezeCoversAcceptedWrites(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// heldAppendWalFactory creates wals whose appends stall while appends are held,
+// on the goroutine of the caller: like an append waiting for room in a full
+// sync queue.
+type heldAppendWalFactory struct {
+	wal.Factory
+	held atomic.Pointer[chan struct{}]
+	// Gets a value for every append that stalls
+	stalled chan struct{}
+}
+
+func (f *heldAppendWalFactory) NewWal(namespace string, shard int64,
+	provider wal.CommitOffsetProvider) (wal.Wal, error) {
+	w, err := f.Factory.NewWal(namespace, shard, provider)
+	if err != nil {
+		return nil, err
+	}
+	return &heldAppendWal{Wal: w, factory: f}, nil
+}
+
+// holdAppends stalls the next appends, until release is called.
+func (f *heldAppendWalFactory) holdAppends() (release func()) {
+	held := make(chan struct{})
+	f.held.Store(&held)
+	return func() {
+		f.held.Store(nil)
+		close(held)
+	}
+}
+
+type heldAppendWal struct {
+	wal.Wal
+	factory *heldAppendWalFactory
+}
+
+func (w *heldAppendWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
+	if held := w.factory.held.Load(); held != nil {
+		w.factory.stalled <- struct{}{}
+		<-*held
+	}
+	w.Wal.AppendAndSync(entry, callback)
+}
+
+// A write stalled in the wal append, like one waiting for room in a full sync
+// queue, must not stall the reads of the shard. A new term still waits for it,
+// so the write is appended in the term that accepted it.
+func TestLeaderController_ReadDoesNotWaitForStalledAppend(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &heldAppendWalFactory{Factory: newTestWalFactory(t), stalled: make(chan struct{}, 1)}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("value-a")}},
+	})
+	require.NoError(t, err)
+
+	release := walFactory.holdAppends()
+	go lc.Write(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "b", Value: []byte("value-b")}},
+	}, concurrent.NewOnce(func(*proto.WriteResponse) {}, func(error) {}))
+	<-walFactory.stalled
+
+	read := make(chan []*proto.GetResponse, 1)
+	go func() {
+		results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+			Shard: &shard,
+			Gets:  []*proto.GetRequest{{Key: "a", IncludeValue: true}},
+		})
+		assert.NoError(t, err)
+		read <- results
+	}()
+	select {
+	case results := <-read:
+		require.Len(t, results, 1)
+		assert.Equal(t, []byte("value-a"), results[0].Value)
+	case <-time.After(10 * time.Second):
+		release()
+		require.FailNow(t, "the read waited for the stalled write")
+	}
+
+	newTerm := make(chan *proto.NewTermResponse, 1)
+	go func() {
+		res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+		assert.NoError(t, err)
+		newTerm <- res
+	}()
+	assert.Never(t, func() bool { return len(newTerm) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the new term did not wait for the stalled write")
+
+	release()
+	select {
+	case res := <-newTerm:
+		AssertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 1}, res.GetHeadEntryId())
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the new term did not return")
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 func TestLeaderController_BecomeLeader_RF2(t *testing.T) {
 	var shard int64 = 1
 

@@ -105,6 +105,11 @@ type LeaderController interface {
 type leaderController struct {
 	sync.RWMutex
 
+	// proposeMu serializes the proposals, which only hold the read lock, so
+	// that the reads don't wait for them. The write lock is for the state
+	// changes, like a new term: it waits for the proposals in progress.
+	proposeMu sync.Mutex
+
 	namespace         string
 	shardId           int64
 	status            proto.ServingStatus
@@ -145,8 +150,8 @@ type leaderController struct {
 	sessionManager SessionManager
 	log            *slog.Logger
 
-	// Reusable serialization buffer: only accessed by propose, while holding
-	// the leader write lock
+	// Reusable serialization buffer: only accessed by proposeLocked, while
+	// holding proposeMu
 	marshalBuf []byte
 
 	writeLatencyHisto       metric.LatencyHistogram
@@ -1118,7 +1123,7 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 // result. If closed is done by the time the leader lock is held, the write is
 // rejected without being appended; a nil closed is never done. The session
 // manager passes its own done channel: it is stopped while holding the leader
-// lock, so none of its writes can be appended once it is stopped.
+// write lock, so none of its writes can be appended once it is stopped.
 func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
 	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
 	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
@@ -1128,7 +1133,7 @@ func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct
 		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
 	})
 
-	lc.Lock()
+	lc.RLock()
 	var err error
 	select {
 	case <-closed:
@@ -1138,7 +1143,7 @@ func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct
 			return statemachine.NewWriteProposal(offset, requestSupplier(offset))
 		}, deferPropose)
 	}
-	lc.Unlock()
+	lc.RUnlock()
 	if err != nil {
 		return nil, err
 	}
@@ -1231,18 +1236,25 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 }
 
 func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
-	lc.Lock()
+	lc.RLock()
 	err := lc.proposeLocked(ctx, proposalSupplier, cb)
-	lc.Unlock()
+	lc.RUnlock()
 	if err != nil {
 		cb.OnCompleteError(err)
 	}
 }
 
 // proposeLocked appends a proposal to the WAL. The caller must hold the
-// leader write lock. A non-nil return means the proposal was not appended
-// and the callback will not be invoked.
+// leader lock, the read or the write one: the leader state can't change until
+// the proposal is appended. A non-nil return means the proposal was not
+// appended and the callback will not be invoked.
 func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
+	// One proposal at a time: the entries must be appended in the order of
+	// their offsets, and their syncs requested in the same order, since the
+	// sync callbacks queue the entries for the database apply.
+	lc.proposeMu.Lock()
+	defer lc.proposeMu.Unlock()
+
 	timer := lc.writeLatencyHisto.Timer()
 	if err := checkStatusIsLeader(lc.status); err != nil {
 		return err
@@ -1277,7 +1289,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	// This is safe: value is consumed synchronously by AppendAndSync below,
 	// on this goroutine (serialized into the wal before it returns, per the
 	// Wal interface contract), and the next proposal can only overwrite the
-	// buffer once this one releases the lock. The completion callbacks never
+	// buffer once this one releases proposeMu. The completion callbacks never
 	// reference value: the database apply uses the proposal object.
 	marshalBuf, value, err := proto.MarshalToBuffer(lc.marshalBuf, entryValue)
 	if err != nil {
