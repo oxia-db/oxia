@@ -75,14 +75,14 @@ func writeNotification(t *testing.T, d DB, offset int64) {
 
 func TestParseNotificationBatch(t *testing.T) {
 	versionId := int64(7)
-	many := newNotifications(2, 1<<40, 1)
+	many := newNotifications(2, 1<<40, 1, 0)
 	for i := range 30 {
 		many.Modified(fmt.Sprintf("key-%d", i), int64(i), 1)
 	}
 
 	for i, n := range []*Notifications{
-		newNotifications(0, 0, 0),
-		newNotifications(5, 42, 1234567890),
+		newNotifications(0, 0, 0, 0),
+		newNotifications(5, 42, 1234567890, 0),
 		notificationsFromMap(3, 11, 100, map[string]*proto.Notification{
 			"a": {Type: proto.NotificationType_KEY_MODIFIED, VersionId: &versionId},
 			"z": {Type: proto.NotificationType_KEY_DELETED},

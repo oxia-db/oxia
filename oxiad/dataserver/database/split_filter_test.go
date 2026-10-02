@@ -64,7 +64,7 @@ func putStorageEntry(t *testing.T, kv kvstore.KV, key string, partitionKey *stri
 
 func putNotificationBatch(t *testing.T, kv kvstore.KV, offset int64, keys map[string]*proto.Notification) {
 	t.Helper()
-	notifications := newNotifications(0, offset, 1000)
+	notifications := newNotifications(0, offset, 1000, len(keys))
 	for k, v := range keys {
 		notifications.add(k, v)
 	}
