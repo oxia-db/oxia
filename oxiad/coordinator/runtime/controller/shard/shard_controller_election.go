@@ -335,7 +335,9 @@ func (e *Election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	for server, e := range followers {
 		followersMap[server.GetInternal()] = e
 	}
-	if _, err := e.provider.BecomeLeader(e.ctx, leader, &proto.BecomeLeaderRequest{
+	ctx, cancel := context.WithTimeout(e.ctx, rpc.DefaultTimeout)
+	defer cancel()
+	if _, err := e.provider.BecomeLeader(ctx, leader, &proto.BecomeLeaderRequest{
 		Namespace:         e.namespace,
 		Shard:             e.shard,
 		Term:              term,
