@@ -229,8 +229,8 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 }
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
-	if saved, exists := c.metadata.GetNamespaceStatus(name); exists {
-		c.initShardControllers(name, namespaceConfig, saved.UnsafeBorrow())
+	if _, exists := c.metadata.GetNamespaceStatus(name); exists {
+		c.initShardControllers(name, namespaceConfig)
 		return nil
 	}
 
@@ -268,15 +268,24 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		return err
 	}
 
-	c.initShardControllers(name, namespaceConfig, namespaceStatus)
+	c.initShardControllers(name, namespaceConfig)
 	return nil
 }
 
-func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Namespace, namespaceStatus *proto.NamespaceStatus) {
+func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Namespace) {
 	c.Lock()
 	defer c.Unlock()
 
-	for shard, shardMetadata := range namespaceStatus.GetShards() {
+	// Shard deletion removes status before removing its controller from the
+	// map. Read under the runtime lock to avoid reviving a deleted shard.
+	namespaceStatus, exists := c.metadata.GetNamespaceStatus(name)
+	if !exists {
+		return
+	}
+	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
+		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {
+			continue
+		}
 		if _, exists := c.shardControllers[shard]; exists {
 			continue
 		}

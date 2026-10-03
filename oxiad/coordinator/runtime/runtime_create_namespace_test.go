@@ -21,9 +21,11 @@ import (
 	"log/slog"
 	"maps"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -37,6 +39,20 @@ type failingNamespaceMetadata struct {
 	coordmetadata.Metadata
 	err      error
 	proposed *proto.NamespaceStatus
+}
+
+type namespaceReadHookMetadata struct {
+	coordmetadata.Metadata
+	afterRead func()
+}
+
+func (m *namespaceReadHookMetadata) GetNamespaceStatus(name string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+	status, exists := m.Metadata.GetNamespaceStatus(name)
+	if hook := m.afterRead; hook != nil {
+		m.afterRead = nil
+		hook()
+	}
+	return status, exists
 }
 
 // committingNamespaceMetadata persists through the real metadata store before
@@ -157,6 +173,67 @@ func TestCreateNamespaceRepairsAlreadyExistsOnRetry(t *testing.T) {
 	require.Contains(t, c.shardControllers, int64(42))
 	require.NotContains(t, c.shardControllers, int64(0))
 	require.Equal(t, 1, metadata.reservations)
+}
+
+func TestCreateNamespaceDoesNotReviveDeletedShards(t *testing.T) {
+	for _, count := range []uint32{1, 2} {
+		t.Run(fmt.Sprintf("%d shards", count), func(t *testing.T) {
+			server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
+			namespace := &proto.Namespace{Name: "default", InitialShardCount: count, ReplicationFactor: 1}
+			metadata := &namespaceReadHookMetadata{
+				Metadata: newTestMetadata(t, &proto.ClusterConfiguration{
+					Servers:    []*proto.DataServerIdentity{server},
+					Namespaces: []*proto.Namespace{namespace},
+				}),
+			}
+			c := newNamespaceRuntimeForCreation(t, metadata)
+			require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
+			// Wait for the original controllers to start before deleting their status.
+			requests := c.rpc.(*mockutils.RpcProvider).GetNode(server).NewTermRequests
+			for range count {
+				select {
+				case <-requests:
+				case <-time.After(5 * time.Second):
+					t.Fatal("initial shard controller did not start")
+				}
+			}
+
+			// Remove the shard and its controller after the initial status read,
+			// while returning the old snapshot to CreateNamespace.
+			metadata.afterRead = func() {
+				require.NoError(t, metadata.DeleteShardStatus(namespace.Name, 0))
+				c.ShardDeleted(0)
+			}
+			require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
+			c.RLock()
+			defer c.RUnlock()
+			require.NotContains(t, c.shardControllers, int64(0))
+			require.Len(t, c.shardControllers, int(count)-1)
+		})
+	}
+}
+
+func TestCreateNamespaceSkipsDeletingShards(t *testing.T) {
+	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
+	namespace := &proto.Namespace{Name: "default", InitialShardCount: 2, ReplicationFactor: 1}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers:    []*proto.DataServerIdentity{server},
+		Namespaces: []*proto.Namespace{namespace},
+	})
+	require.NoError(t, metadata.CreateNamespaceStatus(namespace.Name, &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {Status: proto.ShardStatusDeleting, Ensemble: []*proto.DataServerIdentity{server}},
+			1: {Status: proto.ShardStatusUnknown, Ensemble: []*proto.DataServerIdentity{server}},
+		},
+	}))
+	c := newNamespaceRuntimeForCreation(t, metadata)
+
+	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
+	c.RLock()
+	defer c.RUnlock()
+	require.NotContains(t, c.shardControllers, int64(0))
+	require.Contains(t, c.shardControllers, int64(1))
 }
 
 func (m *failingNamespaceMetadata) CreateNamespaceStatus(_ string, status *proto.NamespaceStatus) error {
