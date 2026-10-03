@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	dataserveroption "github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -101,7 +100,7 @@ func newTLSServerWithInterceptor(t *testing.T, interceptor func(config *dataserv
 
 	interceptor(dataServerOption)
 
-	s, err = dataserver.New(t.Context(), commonwatch.New(dataServerOption))
+	s, err = dataserver.New(t.Context(), dataServerOption)
 
 	assert.NoError(t, err)
 

@@ -76,7 +76,21 @@ func NewTestConfig(dir string) StandaloneConfig {
 	}
 }
 
+// NewStandalone starts a single-node server with the given configuration,
+// with no replication and no coordinator. Unset data server options are
+// filled with their defaults and validated before the server starts, and
+// NumShards defaults to 1.
+//
+// Use ServiceAddr to obtain the address that Oxia clients should connect to.
 func NewStandalone(config StandaloneConfig) (*Standalone, error) {
+	config.DataServerOptions.WithDefault()
+	if err := config.DataServerOptions.Validate(); err != nil {
+		return nil, err
+	}
+	if config.NumShards == 0 {
+		config.NumShards = 1
+	}
+
 	slog.Info(
 		"Starting Oxia standalone",
 		slog.Any("config", config),
