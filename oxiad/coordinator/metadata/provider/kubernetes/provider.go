@@ -26,6 +26,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 	gproto "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,7 +81,8 @@ type Provider[T gproto.Message] struct {
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
 
-	watcher *commonwatch.Watch[provider.Versioned[T]]
+	watcher          *commonwatch.Watch[provider.Versioned[T]]
+	refreshRequested chan struct{}
 
 	logger *slog.Logger
 }
@@ -99,13 +101,14 @@ func NewProvider[T gproto.Message](
 	}
 
 	m := &Provider[T]{
-		kubernetes:    kc,
-		namespace:     namespace,
-		configMapName: configMapName,
-		codec:         codec,
-		watchEnabled:  watchEnabled,
-		name:          name,
-		logger:        slog.With("component", "metadata-config-map"),
+		kubernetes:       kc,
+		namespace:        namespace,
+		configMapName:    configMapName,
+		codec:            codec,
+		watchEnabled:     watchEnabled,
+		name:             name,
+		logger:           slog.With("component", "metadata-config-map"),
+		refreshRequested: make(chan struct{}, 1),
 
 		getLatencyHisto: metric.NewLatencyHistogram("oxia_coordinator_metadata_get_latency",
 			"Latency for reading coordinator metadata", nil),
@@ -149,9 +152,6 @@ func NewDefaultClientset() (kubernetes.Interface, error) {
 }
 
 func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
-	timer := m.getLatencyHisto.Timer()
-	defer timer.Done()
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	err = backoff.RetryNotify(func() error {
@@ -167,6 +167,9 @@ func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
 }
 
 func (m *Provider[T]) loadLatestWithoutLock() (snapshot provider.Versioned[T], err error) {
+	timer := m.getLatencyHisto.Timer()
+	defer timer.Done()
+
 	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
 	defer cancel()
 
@@ -227,7 +230,7 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	if snapshot.Version == metadatacommon.NotExists {
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Create(ctx, cmData, metav1.CreateOptions{})
 		if k8serrors.IsAlreadyExists(err) {
-			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+			err = metadatacommon.ErrBadVersion
 		}
 	} else {
 		if snapshot.Version == "" {
@@ -238,11 +241,20 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 			Force:        gproto.Bool(true),
 		})
 		if k8serrors.IsNotFound(err) || k8serrors.IsConflict(err) {
-			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+			err = metadatacommon.ErrBadVersion
 		}
 	}
 	if err != nil {
-		return metadatacommon.NotExists, err
+		refreshErr := m.refreshWithoutLock()
+		if refreshErr != nil {
+			// Retry even if the failed write never produces a watch event.
+			select {
+			case m.refreshRequested <- struct{}{}:
+			default:
+			}
+		}
+		return metadatacommon.NotExists, multierr.Combine(err,
+			errors.Wrap(refreshErr, "failed to refresh metadata after write failure"))
 	}
 	version := metadatacommon.Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(cmData.Data[m.codec.GetKey()])))
@@ -345,13 +357,31 @@ func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
 	return m.watcher
 }
 
+func (m *Provider[T]) refreshWithoutLock() error {
+	snapshot, err := m.loadLatestWithoutLock()
+	if err != nil {
+		return err
+	}
+	m.watcher.Publish(snapshot)
+	return nil
+}
+
+func (m *Provider[T]) refresh() error {
+	return backoff.RetryNotify(func() error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.refreshWithoutLock()
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn("Failed to refresh config map metadata, retrying",
+			slog.Any("error", err), slog.Duration("retry-after", duration))
+	})
+}
+
 func (m *Provider[T]) watchLoop() {
 	_ = backoff.RetryNotify(func() error {
-		snapshot, err := m.loadLatest()
-		if err != nil {
+		if err := m.refresh(); err != nil {
 			return err
 		}
-		m.watcher.Publish(snapshot)
 		return m.watch()
 	}, oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second), func(err error, duration time.Duration) {
 		m.logger.Warn("K8S config map watch failed, reconnecting",
@@ -363,33 +393,47 @@ func (m *Provider[T]) watchLoop() {
 }
 
 func (m *Provider[T]) watch() error {
+	version := m.watcher.Load().Version
+	if version == metadatacommon.NotExists {
+		version = ""
+	}
 	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
 		m.ctx,
-		metav1.SingleObject(metav1.ObjectMeta{Name: m.configMapName, Namespace: m.namespace}),
+		metav1.SingleObject(metav1.ObjectMeta{
+			Name: m.configMapName, Namespace: m.namespace, ResourceVersion: string(version),
+		}),
 	)
 	if err != nil {
 		return err
 	}
 	defer w.Stop()
 
-	for res := range w.ResultChan() {
-		if res.Type == k8swatch.Error {
-			return errors.Errorf("watch error: %v", res.Object)
+	for {
+		select {
+		case <-m.ctx.Done():
+			return nil
+		case <-m.refreshRequested:
+			if err := m.refresh(); err != nil {
+				return err
+			}
+		case res, ok := <-w.ResultChan():
+			if !ok {
+				if m.ctx.Err() != nil {
+					return nil
+				}
+				return errors.New("K8S config map watch channel closed")
+			}
+			if res.Type == k8swatch.Error {
+				return errors.Errorf("watch error: %v", res.Object)
+			}
+			if res.Type != k8swatch.Added && res.Type != k8swatch.Modified && res.Type != k8swatch.Deleted {
+				continue
+			}
+			if err := m.refresh(); err != nil {
+				return err
+			}
 		}
-		if res.Type != k8swatch.Added && res.Type != k8swatch.Modified {
-			continue
-		}
-		snapshot, err := m.loadLatest()
-		if err != nil {
-			return err
-		}
-		m.watcher.Publish(snapshot)
 	}
-
-	if m.ctx.Err() != nil {
-		return nil
-	}
-	return errors.New("K8S config map watch channel closed")
 }
 
 func makeDesiredConfigMap(name, dataKey string, data []byte, version metadatacommon.Version) *corev1.ConfigMap {

@@ -16,7 +16,6 @@ package metadata
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -139,9 +138,6 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 		Value:   next,
 		Version: current.Version,
 	})
-	if errors.Is(err, metadatacommon.ErrBadVersion) {
-		panic(err)
-	}
 	return err
 }
 
