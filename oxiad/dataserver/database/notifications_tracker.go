@@ -55,6 +55,21 @@ type Notifications struct {
 	// The sealed batch in the wire format, when it is kept for the
 	// notifications cache, or nil
 	encoded []byte
+	// The notifications recorded by add, in the order of their operations.
+	// Their keys can alias the WAL entry that the write was decoded from:
+	// nothing may keep them past the write.
+	pending []pendingNotification
+}
+
+// pendingNotification is a notification recorded by Notifications.add, held
+// by value: the entry that seal builds for it points into it.
+type pendingNotification struct {
+	key             string
+	keyRangeLast    string
+	versionId       int64
+	nType           proto.NotificationType
+	hasVersionId    bool
+	hasKeyRangeLast bool
 }
 
 // newNotifications creates the notifications of the batch at offset, with
@@ -63,26 +78,56 @@ type Notifications struct {
 func newNotifications(shardId int64, offset int64, timestamp uint64, expectedCount int) *Notifications {
 	return &Notifications{
 		batch: proto.NotificationBatch{
-			Shard:         shardId,
-			Offset:        offset,
-			Timestamp:     timestamp,
-			Notifications: make([]*proto.NotificationEntry, 0, expectedCount),
+			Shard:     shardId,
+			Offset:    offset,
+			Timestamp: timestamp,
 		},
+		pending: make([]pendingNotification, 0, expectedCount),
 	}
 }
 
+// add records the operation on key that the notification describes. It keeps
+// neither the notification nor its fields, but copies them, so that they can
+// stay on the stack of the caller.
 func (n *Notifications) add(key string, notification *proto.Notification) {
-	n.batch.Notifications = append(n.batch.Notifications,
-		&proto.NotificationEntry{Key: &key, Value: notification})
+	p := pendingNotification{key: key, nType: notification.Type}
+	if notification.VersionId != nil {
+		p.versionId, p.hasVersionId = *notification.VersionId, true
+	}
+	if notification.KeyRangeLast != nil {
+		p.keyRangeLast, p.hasKeyRangeLast = *notification.KeyRangeLast, true
+	}
+	n.pending = append(n.pending, p)
 }
 
-// seal sorts the accumulated entries in place and deduplicates them, keeping
-// the last operation recorded for each key. The sorted order makes the
-// generated marshal deterministic — the serialized batch feeds the replicated
-// checksum — and the sort must be stable so that "last within a run of equal
-// keys" still means "last operation applied".
+// seal builds the batch entries from the recorded operations, sorts them and
+// deduplicates them, keeping the last operation recorded for each key. The
+// sorted order makes the generated marshal deterministic — the serialized
+// batch feeds the replicated checksum — and the sort must be stable so that
+// "last within a run of equal keys" still means "last operation applied".
 func (n *Notifications) seal() *proto.NotificationBatch {
-	entries := n.batch.Notifications
+	// One allocation for each kind of object, whatever the number of entries:
+	// the entries point into the pending notifications for their keys,
+	// version ids and range ends
+	entries := make([]*proto.NotificationEntry, len(n.pending))
+	entryStore := make([]proto.NotificationEntry, len(n.pending))
+	notificationStore := make([]proto.Notification, len(n.pending))
+	for i := range n.pending {
+		p := &n.pending[i]
+		notification := &notificationStore[i]
+		notification.Type = p.nType
+		if p.hasVersionId {
+			notification.VersionId = &p.versionId
+		}
+		if p.hasKeyRangeLast {
+			notification.KeyRangeLast = &p.keyRangeLast
+		}
+		entry := &entryStore[i]
+		entry.Key = &p.key
+		entry.Value = notification
+		entries[i] = entry
+	}
+
 	slices.SortStableFunc(entries, func(a, b *proto.NotificationEntry) int {
 		return strings.Compare(a.GetKey(), b.GetKey())
 	})
