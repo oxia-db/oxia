@@ -716,7 +716,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// and picks a different server.
 	// The children inherit the features enabled on the parent, and the split
 	// can't complete if the ensemble of a child doesn't support them (see
-	// SplitController.addChildObserver): select them among the data servers
+	// SplitController.addChildObservers): select them among the data servers
 	// that support the features of the parent's ensemble.
 	parentFeatures := shardcontroller.NegotiateFeatures(parentMeta.Ensemble, c.findDataServerFeaturesLocked)
 	supportsParentFeatures := func(dataServer *proto.DataServerIdentity) bool {

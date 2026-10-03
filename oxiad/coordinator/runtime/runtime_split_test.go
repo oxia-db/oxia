@@ -265,24 +265,23 @@ func (r *splitTestRuntime) queueSplitResponses() {
 		r.rpc.GetNode(child[0]).NewTermResponse(0, 0, nil)
 		r.rpc.GetNode(child[1]).NewTermResponse(0, -1, nil)
 		r.rpc.GetNode(child[2]).NewTermResponse(0, -1, nil)
-		// The child leader is reset to an empty copy of the child
-		r.rpc.GetNode(child[0]).DeleteShardResponse(nil)
-		r.rpc.GetNode(child[0]).NewTermResponse(-1, -1, nil)
-		r.rpc.GetNode(child[0]).BecomeLeaderResponse(nil)
+		// Each member is reset to an empty copy of the child, and observes the
+		// parent
+		for _, member := range child {
+			r.rpc.GetNode(member).DeleteShardResponse(nil)
+			r.rpc.GetNode(member).NewTermResponse(-1, -1, nil)
+			r.rpc.GetNode(splitPs1).AddFollowerResponse(nil)
+		}
 	}
-	r.rpc.GetNode(splitPs1).AddFollowerResponse(nil)
-	r.rpc.GetNode(splitPs1).AddFollowerResponse(nil)
 
 	// CatchUp
 	r.rpc.GetNode(splitPs1).GetStatusResponse(splitParentTerm, proto.ServingStatus_LEADER, 105, 105)
-	r.rpc.GetNode(splitLs1).GetStatusResponse(splitParentTerm, proto.ServingStatus_LEADER, 105, 105)
-	r.rpc.GetNode(splitRs1).GetStatusResponse(splitParentTerm, proto.ServingStatus_LEADER, 105, 105)
+	r.queueChildrenAppliedResponses()
 
 	// Cutover: freeze the parent, wait for the children to receive its tail,
 	// fence the parent and re-elect the children in a clean term
 	r.rpc.GetNode(splitPs1).FreezeShardResponse(105, nil)
-	r.rpc.GetNode(splitLs1).GetStatusResponse(splitParentTerm, proto.ServingStatus_LEADER, 105, 105)
-	r.rpc.GetNode(splitRs1).GetStatusResponse(splitParentTerm, proto.ServingStatus_LEADER, 105, 105)
+	r.queueChildrenAppliedResponses()
 	for _, node := range []*proto.DataServerIdentity{
 		splitPs1, splitPs2, splitPs3, splitLs1, splitLs2, splitLs3, splitRs1, splitRs2, splitRs3,
 	} {
@@ -290,17 +289,14 @@ func (r *splitTestRuntime) queueSplitResponses() {
 	}
 	r.rpc.GetNode(splitLs1).BecomeLeaderResponse(nil)
 	r.rpc.GetNode(splitRs1).BecomeLeaderResponse(nil)
-	r.queueChildrenReplicatedResponses()
 }
 
-// queueChildrenReplicatedResponses queues what Finalize needs to see that a
-// majority of each child's ensemble holds the child's data, once it elected
-// the *1 nodes again: they still lead the children, and a follower of each has
-// everything that they committed.
-func (r *splitTestRuntime) queueChildrenReplicatedResponses() {
-	for _, child := range [][]*proto.DataServerIdentity{{splitLs1, splitLs2}, {splitRs1, splitRs2}} {
-		r.rpc.GetNode(child[0]).GetStatusResponse(splitParentTerm+1, proto.ServingStatus_LEADER, 105, 105)
-		r.rpc.GetNode(child[1]).GetStatusResponse(splitParentTerm+1, proto.ServingStatus_FOLLOWER, 105, 105)
+// queueChildrenAppliedResponses queues what CatchUp or Cutover need to see that
+// a majority of each child applied the parent's entries: its leader, the *1
+// node, and one of its followers.
+func (r *splitTestRuntime) queueChildrenAppliedResponses() {
+	for _, member := range []*proto.DataServerIdentity{splitLs1, splitLs2, splitRs1, splitRs2} {
+		r.rpc.GetNode(member).GetStatusResponse(splitParentTerm, proto.ServingStatus_FOLLOWER, 105, 105)
 	}
 }
 
@@ -413,7 +409,6 @@ func TestSplit_RestartPastPointOfNoReturn(t *testing.T) {
 	}
 	r.rpc.GetNode(splitLs1).BecomeLeaderResponse(nil)
 	r.rpc.GetNode(splitRs1).BecomeLeaderResponse(nil)
-	r.queueChildrenReplicatedResponses()
 	for _, node := range []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3} {
 		r.rpc.GetNode(node).DeleteShardResponse(nil)
 	}

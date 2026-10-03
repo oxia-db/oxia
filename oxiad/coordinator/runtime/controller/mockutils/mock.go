@@ -255,7 +255,7 @@ func (m *PerNodeChannels) ExpectDeleteShardRequest(t *testing.T, shard int64, te
 	assert.Equal(t, term, r.Term)
 }
 
-func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, term int64) {
+func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, term int64) *proto.AddFollowerRequest {
 	t.Helper()
 
 	var r *proto.AddFollowerRequest
@@ -263,11 +263,29 @@ func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, te
 	case r = <-m.addFollowerRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive AddFollower request in time")
-		return
+		return nil
 	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
+	return r
+}
+
+func (m *PerNodeChannels) ExpectRemoveObserverRequest(t *testing.T, shard int64,
+	term int64) *proto.RemoveObserverRequest {
+	t.Helper()
+
+	var r *proto.RemoveObserverRequest
+	select {
+	case r = <-m.removeObserverRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive RemoveObserver request in time")
+		return nil
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	return r
 }
 
 func (m *PerNodeChannels) ExpectGetStatusRequest(t *testing.T, shard int64) {

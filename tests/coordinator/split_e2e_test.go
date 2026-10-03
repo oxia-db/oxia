@@ -1743,12 +1743,13 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 // refused because of the features enabled on the shard.
 //
 // Once delayChildSnapshots is called, it also delays the snapshots that the
-// parent sends to the children when the split adds them as observers again:
-// the parent gets a child as observer only once the child reports that it has
-// no data, or once the split fences the parent past the point of no return.
-// That fence then waits until the children are installing the snapshot, or
-// have installed it. This is the worst timing for a child that still reports
-// the data that it received in an earlier term of the parent.
+// parent sends to the members of the children when the split adds them as
+// observers again: the parent gets a member as observer only once the member
+// reports that it has no data, or once the split fences the parent past the
+// point of no return. That fence then waits until the members are installing
+// the snapshot, or have installed it. This is the worst timing for a member
+// that still reports the data that it received in an earlier term of the
+// parent.
 type cutoverHoldingRpcProvider struct {
 	rpc2.Provider
 	cutoverReached chan struct{}
@@ -1762,8 +1763,14 @@ type cutoverHoldingRpcProvider struct {
 	// parentTerm is the term of the parent whose observers are delayed, -1
 	// until delayChildSnapshots
 	parentTerm       int64
-	delayedObservers map[int64]*delayedObserver
-	childLeaders     map[int64]*proto.DataServerIdentity
+	delayedObservers map[childMember]*delayedObserver
+	childMembers     map[childMember]bool
+}
+
+// childMember is a member of the ensemble of a split child.
+type childMember struct {
+	child    int64
+	internal string
 }
 
 type delayedObserver struct {
@@ -1777,8 +1784,8 @@ func newCutoverHoldingRpcProvider() *cutoverHoldingRpcProvider {
 		resumeCutover:       make(chan struct{}),
 		refusedBecomeLeader: make(map[int64]int),
 		parentTerm:          -1,
-		delayedObservers:    make(map[int64]*delayedObserver),
-		childLeaders:        make(map[int64]*proto.DataServerIdentity),
+		delayedObservers:    make(map[childMember]*delayedObserver),
+		childMembers:        make(map[childMember]bool),
 	}
 }
 
@@ -1803,8 +1810,9 @@ func (p *cutoverHoldingRpcProvider) AddFollower(ctx context.Context, node *proto
 	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
 	p.mu.Lock()
 	if req.Observer && p.parentTerm >= 0 && req.Term == p.parentTerm {
-		p.delayedObservers[req.GetTargetShard()] = &delayedObserver{parentLeader: node, req: req}
-		p.childLeaders[req.GetTargetShard()] = &proto.DataServerIdentity{Internal: req.FollowerName}
+		member := childMember{child: req.GetTargetShard(), internal: req.FollowerName}
+		p.delayedObservers[member] = &delayedObserver{parentLeader: node, req: req}
+		p.childMembers[member] = true
 		p.mu.Unlock()
 		return &proto.AddFollowerResponse{}, nil
 	}
@@ -1816,8 +1824,9 @@ func (p *cutoverHoldingRpcProvider) GetStatus(ctx context.Context, node *proto.D
 	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	res, err := p.Provider.GetStatus(ctx, node, req)
 	if err == nil && res.CommitOffset < 0 {
-		// The child has no data: the parent must send it a snapshot
-		p.addDelayedObserver(ctx, req.Shard)
+		// The member of the child has no data: the parent must send it a
+		// snapshot
+		p.addDelayedObserver(ctx, childMember{child: req.Shard, internal: node.GetInternal()})
 	}
 	return res, err
 }
@@ -1833,32 +1842,35 @@ func (p *cutoverHoldingRpcProvider) NewTerm(ctx context.Context, node *proto.Dat
 	return p.Provider.NewTerm(ctx, node, req)
 }
 
-func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, child int64) {
+func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, member childMember) {
 	p.mu.Lock()
-	observer := p.delayedObservers[child]
-	delete(p.delayedObservers, child)
+	observer := p.delayedObservers[member]
+	delete(p.delayedObservers, member)
 	p.mu.Unlock()
 	if observer == nil {
 		return
 	}
 	if _, err := p.Provider.AddFollower(ctx, observer.parentLeader, observer.req); err != nil {
-		slog.Warn("Failed to add the delayed observer", slog.Int64("child-shard", child), slog.Any("error", err))
+		slog.Warn("Failed to add the delayed observer", slog.Int64("child-shard", member.child),
+			slog.String("member", member.internal), slog.Any("error", err))
 	}
 }
 
 // startChildSnapshots lets the parent send the delayed snapshots, and waits
-// until the children are installing them, or have installed them.
+// until the members of the children are installing them, or have installed
+// them.
 func (p *cutoverHoldingRpcProvider) startChildSnapshots(ctx context.Context) {
 	p.mu.Lock()
-	childLeaders := maps.Clone(p.childLeaders)
+	childMembers := maps.Clone(p.childMembers)
 	p.mu.Unlock()
-	for child := range childLeaders {
-		p.addDelayedObserver(ctx, child)
+	for member := range childMembers {
+		p.addDelayedObserver(ctx, member)
 	}
 	deadline := time.Now().Add(30 * time.Second)
-	for child, leader := range childLeaders {
+	for member := range childMembers {
+		node := &proto.DataServerIdentity{Internal: member.internal}
 		for ; time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-			res, err := p.Provider.GetStatus(ctx, leader, &proto.GetStatusRequest{Shard: child})
+			res, err := p.Provider.GetStatus(ctx, node, &proto.GetStatusRequest{Shard: member.child})
 			if err == nil && (res.Status == proto.ServingStatus_FOLLOWER || res.CommitOffset < 0) {
 				break
 			}
@@ -1898,13 +1910,13 @@ func (p *cutoverHoldingRpcProvider) refusedBecomeLeaderCount(shard int64) int {
 }
 
 // A leader election of the parent, once the children have received its data,
-// sends the split back to Bootstrap. It elects the children's leaders again in
-// the parent's new term, and the parent sends them a new snapshot. The split
-// must not pass the point of no return before they have installed it: fencing
-// the parent aborts the installation, which would leave the child leaders
-// without their data. The child leaders must also accept to lead the new
-// term, though they got the features enabled on the parent with the first
-// snapshot.
+// sends the split back to Bootstrap. It fences the children again in the
+// parent's new term, and the parent sends their members a new snapshot. The
+// split must not pass the point of no return before a majority of each child
+// has installed it: fencing the parent aborts the installation, which would
+// leave the members without their data. The child leaders must also accept to
+// lead the new term, though they got the features enabled on the parent with
+// the first snapshot.
 func TestCoordinator_ShardSplit_ParentElectionAfterSnapshot(t *testing.T) {
 	rpcProvider := newCutoverHoldingRpcProvider()
 	cluster := setupSplitClusterWithRpc(t, rpcProvider.factory)
@@ -1939,8 +1951,8 @@ func TestCoordinator_ShardSplit_ParentElectionAfterSnapshot(t *testing.T) {
 		require.FailNow(t, "the split did not reach the cutover")
 	}
 
-	// A write after the snapshot makes each child leader the most up-to-date
-	// member of the child's ensemble, so that Bootstrap elects it again
+	// A write after the snapshot, which the members of the children receive as
+	// observers
 	_, _, err = client.Put(ctx, "key-after-snapshot", []byte("value"))
 	require.NoError(t, err)
 	keys["key-after-snapshot"] = []byte("value")
@@ -2242,15 +2254,63 @@ func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
 	assert.Equal(t, []byte("value"), value)
 }
 
+// leaderOnlyChildObservers adds only the leader of each split child as an
+// observer of the parent, and reports the other members of the child as
+// holding the parent's data while the split runs: the split completes with
+// the data of each child on its leader only, as if the other members had
+// missed it. They get it from a snapshot of the child leader once the split
+// elects it in a clean term.
+type leaderOnlyChildObservers struct {
+	rpc2.Provider
+
+	// The coordinator's metadata, once the cluster is up
+	metadata atomic.Value
+}
+
+// splittingChildLeader returns the leader of a split child, or nil for a shard
+// that isn't the child of a running split.
+func (p *leaderOnlyChildObservers) splittingChildLeader(shard int64) *proto.DataServerIdentity {
+	metadata, _ := p.metadata.Load().(coordmetadata.Metadata)
+	if metadata == nil {
+		return nil
+	}
+	status, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	if !exists {
+		return nil
+	}
+	child := status.UnsafeBorrow()
+	if child.GetSplit() == nil || len(child.GetSplit().GetChildShardIds()) > 0 {
+		return nil
+	}
+	return child.GetLeader()
+}
+
+func (p *leaderOnlyChildObservers) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	if leader := p.splittingChildLeader(req.GetTargetShard()); req.Observer && leader != nil &&
+		leader.GetInternal() != req.FollowerName {
+		return &proto.AddFollowerResponse{}, nil
+	}
+	return p.Provider.AddFollower(ctx, node, req)
+}
+
+func (p *leaderOnlyChildObservers) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	res, err := p.Provider.GetStatus(ctx, node, req)
+	if leader := p.splittingChildLeader(req.Shard); err == nil && leader != nil &&
+		leader.GetNameOrDefault() != node.GetNameOrDefault() {
+		res = res.CloneVT()
+		res.CommitOffset = math.MaxInt64
+	}
+	return res, err
+}
+
 // followerlessChildRpcProvider elects the leaders of the split children
 // without their followers, which never get the children's data: the children
 // stay as they are right after the split, while the followers are still
 // installing the snapshot that the child leader sends them.
 type followerlessChildRpcProvider struct {
-	rpc2.Provider
-
-	// The data server that each shard was last elected on
-	leaders sync.Map
+	leaderOnlyChildObservers
 }
 
 func (p *followerlessChildRpcProvider) factory(instanceID string) rpc2.Provider {
@@ -2264,26 +2324,7 @@ func (p *followerlessChildRpcProvider) BecomeLeader(ctx context.Context, node *p
 		req = req.CloneVT()
 		req.FollowerMaps = nil
 	}
-	res, err := p.Provider.BecomeLeader(ctx, node, req)
-	if err == nil {
-		p.leaders.Store(req.Shard, node.GetNameOrDefault())
-	}
-	return res, err
-}
-
-// GetStatus reports the members of a split child other than its leader as
-// following it with all of its data, which they never get: the split completes
-// once a majority of each child's ensemble holds the child's data.
-func (p *followerlessChildRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
-	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
-	res, err := p.Provider.GetStatus(ctx, node, req)
-	if leader, elected := p.leaders.Load(req.Shard); err == nil && req.Shard != 0 && elected &&
-		leader != node.GetNameOrDefault() {
-		res = res.CloneVT()
-		res.Status = proto.ServingStatus_FOLLOWER
-		res.HeadOffset = math.MaxInt64
-	}
-	return res, err
+	return p.Provider.BecomeLeader(ctx, node, req)
 }
 
 func (p *followerlessChildRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
@@ -2291,10 +2332,11 @@ func (p *followerlessChildRpcProvider) AddFollower(ctx context.Context, node *pr
 	if req.Shard != 0 {
 		return &proto.AddFollowerResponse{}, nil
 	}
-	return p.Provider.AddFollower(ctx, node, req)
+	return p.leaderOnlyChildObservers.AddFollower(ctx, node, req)
 }
 
-// The leader of a split child is seeded from a snapshot of the parent, and
+// The leader of a split child can be the only member seeded from a snapshot of
+// the parent, e.g. when the other members were down during the split, and it
 // sends one to the child's followers once the split elects it in a clean term.
 // A leader election of the child in the meantime, like the one that
 // BecameUnavailable runs, fences the leader, which aborts the installation of
@@ -2305,6 +2347,7 @@ func TestCoordinator_ShardSplit_ChildElectionBeforeFollowersSeeded(t *testing.T)
 	rpcProvider := &followerlessChildRpcProvider{}
 	cluster := setupSplitClusterWithRpc(t, rpcProvider.factory)
 	defer cluster.close(t)
+	rpcProvider.metadata.Store(cluster.metadata)
 
 	ctx := context.Background()
 	client, err := oxia.NewSyncClient(cluster.sa1.Public)
@@ -2417,7 +2460,7 @@ func newServerWithSlowChildSnapshots(t *testing.T, delay time.Duration) (*datase
 // as soon as the left child leader has an entry that its followers didn't ack.
 // It counts the elections of each child by Finalize.
 type finalizeRetryRpcProvider struct {
-	rpc2.Provider
+	leaderOnlyChildObservers
 
 	mu sync.Mutex
 	// The term of the parent when the split started: Finalize elects the
@@ -2486,7 +2529,8 @@ func (p *finalizeRetryRpcProvider) sawLeftPendingEntry() bool {
 }
 
 // Finalize elects each child of a split in a clean term. A child leader that
-// has entries left to commit through its followers only leads once one of them
+// has entries left to commit through followers that miss the child's data,
+// e.g. because they were down during the split, only leads once one of them
 // installed the snapshot of the child, which takes as long as the child is big.
 // The leader of the left child has such an entry when Finalize runs again after
 // electing it: a checksum it recorded while its followers were installing the
@@ -2512,6 +2556,7 @@ func TestCoordinator_ShardSplit_ChildElectionSlowerThanRpcTimeout(t *testing.T) 
 		return rpcProvider
 	}, servers, addresses)
 	defer cluster.close(t)
+	rpcProvider.metadata.Store(cluster.metadata)
 
 	ctx := context.Background()
 	client, err := oxia.NewSyncClient(cluster.sa1.Public)
@@ -2550,14 +2595,15 @@ func TestCoordinator_ShardSplit_ChildElectionSlowerThanRpcTimeout(t *testing.T) 
 	assert.Empty(t, unreadable, "keys lost by the split")
 }
 
-// The leader of a split child got the child's data as an observer of the
-// parent, and its followers get it once the split elects it in a clean term,
-// from the snapshot that it sends them. The split deletes the parent once it
-// completes: from then on, the child's data must survive the loss of the
-// child's leader, even right away.
+// The split deletes the parent once it completes: from then on, the data of a
+// child must survive the loss of the child's leader, even right away. A
+// majority of the child must hold it by then, which takes as long as the child
+// is big: the members of the child get it as observers of the parent, and the
+// child leader must not send them the whole child again once the split elects
+// it in a clean term.
 func TestCoordinator_ShardSplit_ChildDataSurvivesLeaderLossAfterSplit(t *testing.T) {
-	// The followers of a child take a few seconds to install its snapshot, as
-	// if the child were big
+	// The followers of a child take a few seconds to install a snapshot of the
+	// child leader, as if the child were big
 	servers := make(map[string]*dataserver.Server)
 	var addresses []*proto.DataServerIdentity
 	for range 3 {
