@@ -75,6 +75,8 @@ type ShardElection struct {
 	termOptions          *proto.NewTermOptions
 	// started
 	started atomic.Bool
+	// Floor learned from rejected servers; only the next attempt changes metadata.
+	nextTerm atomic.Int64
 }
 
 func (e *ShardElection) refreshedEnsemble(ensemble []model.Server) []model.Server {
@@ -102,11 +104,29 @@ func (e *ShardElection) fenceNewTerm(ctx context.Context, term int64, dataServer
 		Term:      term,
 		Options:   e.termOptions,
 	})
+	if errors.Is(err, constant.ErrInvalidTerm) {
+		// Coordinator metadata can be recreated while server data survives.
+		serverStatus, statusErr := e.provider.GetStatus(ctx, dataServer, &proto.GetStatusRequest{Shard: e.shard})
+		if statusErr != nil {
+			e.Warn("Failed to recover the rejected term", slog.Any("data-server", dataServer),
+				slog.Any("error", statusErr))
+		} else if reported := serverStatus.GetTerm(); reported >= term {
+			e.advanceNextTerm(reported + 1)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	return res.HeadEntryId, nil
+}
+
+func (e *ShardElection) advanceNextTerm(term int64) {
+	for floor := e.nextTerm.Load(); term > floor; floor = e.nextTerm.Load() {
+		if e.nextTerm.CompareAndSwap(floor, term) {
+			return
+		}
+	}
 }
 
 // Send NewTerm to all the ensemble members in parallel and wait for
@@ -446,7 +466,7 @@ func (e *ShardElection) start() (model.Server, error) {
 	mutShardMeta := e.meta.Compute(func(metadata *model.ShardMetadata) {
 		metadata.Status = model.ShardStatusElection
 		metadata.Leader = nil
-		metadata.Term++
+		metadata.Term = max(metadata.Term+1, e.nextTerm.Load())
 		metadata.Ensemble = e.refreshedEnsemble(metadata.Ensemble)
 	})
 	e.statusResource.UpdateShardMetadata(e.namespace, e.shard, mutShardMeta)

@@ -15,15 +15,18 @@
 package controller
 
 import (
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/model"
-
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/coordinator/model"
 )
 
 func TestNegotiate_EmptyInput(t *testing.T) {
@@ -485,4 +488,54 @@ func TestWaitForGracePeriod_AlreadyComplete(t *testing.T) {
 
 	assert.Len(t, candidatesResponse, 2)
 	assert.Less(t, elapsed, 10*time.Millisecond, "should return immediately when all responses received")
+}
+
+func TestFenceNewTermRecoversRejectedTerm(t *testing.T) {
+	provider := newMockRpcProvider()
+	server := model.Server{Internal: "server"}
+	node := provider.GetNode(server)
+	election := &ShardElection{Logger: slog.Default(), termOptions: &proto.NewTermOptions{}, provider: provider, namespace: "default", shard: 7}
+	for _, term := range []int64{34, 90, 40} {
+		node.NewTermResponse(0, 0, constant.ErrInvalidTerm)
+		node.GetStatusResponse(term, proto.ServingStatus_FENCED, 0, 0)
+		_, err := election.fenceNewTerm(t.Context(), 1, server)
+		require.ErrorIs(t, err, constant.ErrInvalidTerm)
+		node.expectNewTermRequest(t, 7, 1, false)
+		node.expectGetStatusRequest(t, 7)
+	}
+	require.Equal(t, int64(91), election.nextTerm.Load(), "later responses must not lower the term floor")
+}
+
+func TestFenceNewTermStatusFailurePreservesOriginalError(t *testing.T) {
+	provider := newMockRpcProvider()
+	server := model.Server{Internal: "server"}
+	node := provider.GetNode(server)
+	node.NewTermResponse(0, 0, constant.ErrInvalidTerm)
+	node.EnqueueGetStatusError(errors.New("server unavailable"))
+	election := &ShardElection{Logger: slog.Default(), provider: provider, shard: 7}
+	_, err := election.fenceNewTerm(t.Context(), 1, server)
+	require.ErrorIs(t, err, constant.ErrInvalidTerm)
+	require.Zero(t, election.nextTerm.Load())
+}
+
+func TestFenceNewTermDoesNotProbeHealthyServer(t *testing.T) {
+	provider := newMockRpcProvider()
+	server := model.Server{Internal: "server"}
+	node := provider.GetNode(server)
+	node.NewTermResponse(2, 10, nil)
+	election := &ShardElection{Logger: slog.Default(), provider: provider, shard: 7}
+	response, err := election.fenceNewTerm(t.Context(), 3, server)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), response.Term)
+	require.Zero(t, election.nextTerm.Load())
+}
+
+func TestRecoveredTermFloorIsMonotonicAcrossConcurrentResponses(t *testing.T) {
+	var election ShardElection
+	var wg sync.WaitGroup
+	for _, term := range []int64{35, 1001, 91, 4} {
+		wg.Go(func() { election.advanceNextTerm(term) })
+	}
+	wg.Wait()
+	require.Equal(t, int64(1001), election.nextTerm.Load())
 }
