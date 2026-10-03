@@ -50,7 +50,7 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		}
 		// A previous write may have committed before returning an error. The
 		// runtime also repairs missing controllers when the status already exists.
-		if err := r.runtime.CreateNamespace(namespace.GetName(), namespace); err != nil &&
+		if err := r.runtime.EnsureNamespace(namespace.GetName(), namespace); err != nil &&
 			!errors.Is(err, metadatacommon.ErrAlreadyExists) {
 			return err
 		}

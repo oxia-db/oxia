@@ -32,15 +32,15 @@ type failingNamespaceRuntime struct {
 	attempted []string
 }
 
-func (r *failingNamespaceRuntime) CreateNamespace(name string, namespace *proto.Namespace) error {
+func (r *failingNamespaceRuntime) EnsureNamespace(name string, namespace *proto.Namespace) error {
 	if _, exists := r.Metadata().GetNamespaceStatus(name); exists {
-		return r.Runtime.CreateNamespace(name, namespace)
+		return r.Runtime.EnsureNamespace(name, namespace)
 	}
 	r.attempted = append(r.attempted, name)
 	if err := r.failures[name]; err != nil {
 		return err
 	}
-	return r.Runtime.CreateNamespace(name, namespace)
+	return r.Runtime.EnsureNamespace(name, namespace)
 }
 
 func TestNamespaceReconcilerRepairsExistingNamespace(t *testing.T) {

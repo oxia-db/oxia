@@ -229,7 +229,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
+func (c *runtime) EnsureNamespace(name string, namespaceConfig *proto.Namespace) error {
 	if saved, exists := c.metadata.GetNamespaceStatus(name); exists {
 		c.ensureNamespaceShardControllers(name, namespaceConfig, saved.UnsafeBorrow())
 		return nil

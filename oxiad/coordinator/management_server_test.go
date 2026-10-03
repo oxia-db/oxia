@@ -99,7 +99,7 @@ func (*testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { 
 
 func (*testRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) { return nil, false }
 
-func (*testRuntime) CreateNamespace(string, *proto.Namespace) error {
+func (*testRuntime) EnsureNamespace(string, *proto.Namespace) error {
 	return errors.New("unexpected namespace creation")
 }
 

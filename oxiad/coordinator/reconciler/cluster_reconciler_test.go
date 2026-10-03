@@ -33,8 +33,8 @@ type recoveringNamespaceRuntime struct {
 	recomputations int
 }
 
-func (r *recoveringNamespaceRuntime) CreateNamespace(name string, namespace *proto.Namespace) error {
-	err := r.failingNamespaceRuntime.CreateNamespace(name, namespace)
+func (r *recoveringNamespaceRuntime) EnsureNamespace(name string, namespace *proto.Namespace) error {
+	err := r.failingNamespaceRuntime.EnsureNamespace(name, namespace)
 	delete(r.failures, name)
 	return err
 }
