@@ -38,6 +38,7 @@ var (
 		Use:   "standalone",
 		Short: "Start a standalone service",
 		Long:  `Long description`,
+		Args:  cobra.NoArgs,
 		Run:   exec,
 	}
 )

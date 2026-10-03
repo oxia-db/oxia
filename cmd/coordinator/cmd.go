@@ -42,6 +42,7 @@ var (
 		Use:   "coordinator",
 		Short: "Start a coordinator",
 		Long:  `Start a coordinator`,
+		Args:  cobra.NoArgs,
 		Run:   exec,
 	}
 )

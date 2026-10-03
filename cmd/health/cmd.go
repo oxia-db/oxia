@@ -48,6 +48,7 @@ var (
 		Use:   "health",
 		Short: "Oxia health probe",
 		Long:  `Oxia tool to check the health endpoint of a running service`,
+		Args:  cobra.NoArgs,
 		RunE:  exec,
 	}
 
