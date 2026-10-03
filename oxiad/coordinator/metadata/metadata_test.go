@@ -157,7 +157,7 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	// Every status writer gives up, and reports that nothing was persisted
 	_, err = metadata.ReserveShardIDs(1)
 	require.Error(t, err)
-	require.False(t, metadata.CreateNamespaceStatus("other", &commonproto.NamespaceStatus{}))
+	require.Error(t, metadata.CreateNamespaceStatus("other", &commonproto.NamespaceStatus{}))
 	require.Nil(t, metadata.DeleteNamespaceStatus("default").UnsafeBorrow())
 	require.Error(t, metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2}))
 	require.Error(t, metadata.UpdateShardStatuses("default", func(shards map[int64]*commonproto.ShardMetadata) bool {
@@ -176,7 +176,7 @@ func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
 	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
 	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
 	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
-	require.True(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{
 		Shards: map[int64]*commonproto.ShardMetadata{0: {Term: 1}},
 	}))
 
@@ -240,7 +240,7 @@ func TestMetadataUpdateShardStatusesDeletesEmptiedNamespace(t *testing.T) {
 			return true
 		}
 	}
-	require.True(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
+	require.NoError(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
 
 	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(0)))
 	_, exists := metadata.GetNamespaceStatus("default")
@@ -249,5 +249,5 @@ func TestMetadataUpdateShardStatusesDeletesEmptiedNamespace(t *testing.T) {
 	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(1)))
 	_, exists = metadata.GetNamespaceStatus("default")
 	require.False(t, exists)
-	require.True(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
+	require.NoError(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
 }

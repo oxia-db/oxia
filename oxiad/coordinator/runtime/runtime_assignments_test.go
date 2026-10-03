@@ -48,7 +48,7 @@ func TestComputeNewAssignmentsKeySorting(t *testing.T) {
 	}
 	metadata := newTestMetadata(t, clusterConfig)
 	for keySorting := range expected {
-		metadata.CreateNamespaceStatus("ns-"+keySorting, &proto.NamespaceStatus{
+		require.NoError(t, metadata.CreateNamespaceStatus("ns-"+keySorting, &proto.NamespaceStatus{
 			ReplicationFactor: 1,
 			Shards: map[int64]*proto.ShardMetadata{
 				0: {
@@ -58,7 +58,7 @@ func TestComputeNewAssignmentsKeySorting(t *testing.T) {
 					Int32HashRange: &proto.HashRange{Min: 0, Max: 100},
 				},
 			},
-		})
+		}))
 	}
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},

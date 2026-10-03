@@ -28,6 +28,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 )
@@ -102,21 +103,21 @@ func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) (int64, error) {
 func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	name string,
 	status *proto.NamespaceStatus,
-) bool {
+) error {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	if cloned.Namespaces == nil {
 		cloned.Namespaces = map[string]*proto.NamespaceStatus{}
 	}
 
 	if _, exists := cloned.Namespaces[name]; exists {
-		return false
+		return metadatacommon.ErrAlreadyExists
 	}
 
 	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus)
 	cloned.Namespaces[name] = namespaceStatus
 
 	m.status = cloned
-	return true
+	return nil
 }
 
 func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
@@ -294,10 +295,10 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
-func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
+func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
 	baseShardID, err := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
-		return false
+		return err
 	}
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
@@ -329,8 +330,8 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 		}
 	}
 
-	if !m.metadata.CreateNamespaceStatus(name, namespaceStatus) {
-		return false
+	if err := m.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
+		return err
 	}
 	for shard := range namespaceStatus.GetShards() {
 		if m.added == nil {
@@ -338,7 +339,7 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 		}
 		m.added[shard] = name
 	}
-	return true
+	return nil
 }
 
 func (m *mockNamespaceRuntime) DeleteNamespace(namespace string) {

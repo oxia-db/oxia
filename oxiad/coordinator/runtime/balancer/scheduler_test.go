@@ -16,6 +16,7 @@ package balancer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -70,8 +71,8 @@ func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() 
 
 func (*mockMetadata) ReserveShardIDs(uint32) (int64, error) { return 0, nil }
 
-func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool {
-	return false
+func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) error {
+	return errors.New("not implemented")
 }
 
 func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {

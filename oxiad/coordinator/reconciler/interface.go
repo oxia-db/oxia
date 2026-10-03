@@ -24,5 +24,6 @@ import (
 type Reconciler interface {
 	io.Closer
 
+	// Reconcile performs one pass. Callers can retry returned errors with backoff.
 	Reconcile(context.Context, *proto.ClusterConfiguration) error
 }

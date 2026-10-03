@@ -38,7 +38,7 @@ type Runtime interface {
 	ListDataServerStatus() map[string]*proto.DataServerStatus
 	GetDataServerStatus(name string) (*proto.DataServerStatus, bool)
 
-	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
+	CreateNamespace(name string, namespaceConfig *proto.Namespace) error
 	DeleteNamespace(namespace string)
 
 	LoadBalancer() balancer.LoadBalancer

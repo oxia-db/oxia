@@ -228,11 +228,10 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
+func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
 	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
-		c.logger.Warn("Failed to create namespace", slog.String("namespace", name), slog.Any("error", err))
-		return false
+		return err
 	}
 	status := c.metadata.ListNamespaceStatus()
 	namespaceStatus := &proto.NamespaceStatus{
@@ -260,9 +259,8 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		}
 	}
 
-	created := c.metadata.CreateNamespaceStatus(name, namespaceStatus)
-	if !created {
-		return false
+	if err := c.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
+		return err
 	}
 
 	c.Lock()
@@ -275,7 +273,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
-	return true
+	return nil
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {

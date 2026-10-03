@@ -99,7 +99,9 @@ func (*testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { 
 
 func (*testRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) { return nil, false }
 
-func (*testRuntime) CreateNamespace(string, *proto.Namespace) bool { return false }
+func (*testRuntime) CreateNamespace(string, *proto.Namespace) error {
+	return errors.New("unexpected namespace creation")
+}
 
 func (*testRuntime) DeleteNamespace(string) {}
 
@@ -469,7 +471,7 @@ func TestManagementServerGetNamespace(t *testing.T) {
 			KeySorting:        proto.KeySortingType_NATURAL.String(),
 		}},
 	})
-	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {Status: proto.ShardStatusSteadyState},
@@ -505,13 +507,13 @@ func TestManagementServerListNamespaces(t *testing.T) {
 			},
 		},
 	})
-	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {Status: proto.ShardStatusSteadyState},
 		},
 	}))
-	require.True(t, metadata.CreateNamespaceStatus("ns-2", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("ns-2", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			1: {Status: proto.ShardStatusElection},
