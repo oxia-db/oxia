@@ -135,6 +135,37 @@ func TestReadBatchComplete(t *testing.T) {
 	}
 }
 
+func TestReadBatchResponseCountMismatch(t *testing.T) {
+	// The server's reply carries no get for the requested key. Before the
+	// length check this indexed past the end of response.Gets and panicked the
+	// client; now the batch fails and the callback sees the error.
+	execute := func(context.Context, *proto.ReadRequest) (*proto.ReadResponse, error) {
+		return &proto.ReadResponse{Gets: nil}, nil
+	}
+
+	factory := &readBatchFactory{
+		execute: execute,
+		metrics: metrics.NewMetrics(noop.NewMeterProvider()),
+	}
+	batch := factory.newBatch(&shardId)
+
+	var getResponse *proto.GetResponse
+	var getErr error
+	batch.Add(model.GetCall{
+		Key: "/a",
+		Callback: func(response *proto.GetResponse, err error) {
+			getResponse = response
+			getErr = err
+		},
+		IncludeValue: true,
+	})
+
+	assert.NotPanics(t, batch.Complete)
+
+	assert.Nil(t, getResponse)
+	assert.Error(t, getErr)
+}
+
 func TestReadBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
