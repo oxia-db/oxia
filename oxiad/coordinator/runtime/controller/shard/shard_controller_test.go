@@ -147,7 +147,7 @@ func storeTestShardMetadata(
 			shard: gproto.CloneOf(shardMetadata),
 		},
 	}
-	assert.True(t, metadata.CreateNamespaceStatus(namespace, namespaceStatus))
+	require.NoError(t, metadata.CreateNamespaceStatus(namespace, namespaceStatus))
 }
 
 func testShardMetadata(metadata coordmetadata.Metadata, namespace string, shard int64) (*proto.ShardMetadata, bool) {
@@ -1807,7 +1807,7 @@ func TestController_PeriodicTasksPersistOnlyDirtyState(t *testing.T) {
 		Term:   1,
 		Leader: &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"},
 	}
-	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
 	}))
 
@@ -1897,7 +1897,7 @@ func TestController_PeriodicTasksKeepNamespaceDeletion(t *testing.T) {
 	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
 	removed := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
-	require.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{shard: {
 			Status:                  proto.ShardStatusSteadyState,
@@ -2045,7 +2045,7 @@ func TestController_DeleteShardAllowsNilEventListener(t *testing.T) {
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
-	assert.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			shard: &proto.ShardMetadata{
 				Status:   proto.ShardStatusDeleting,

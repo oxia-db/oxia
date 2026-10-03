@@ -32,6 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -228,11 +229,14 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 	}
 }
 
-func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) bool {
+func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
+	if _, exists := c.metadata.GetNamespaceStatus(name); exists {
+		return c.initShardControllers(name, namespaceConfig)
+	}
+
 	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
-		c.logger.Warn("Failed to create namespace", slog.String("namespace", name), slog.Any("error", err))
-		return false
+		return err
 	}
 	status := c.metadata.ListNamespaceStatus()
 	namespaceStatus := &proto.NamespaceStatus{
@@ -260,22 +264,38 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		}
 	}
 
-	created := c.metadata.CreateNamespaceStatus(name, namespaceStatus)
-	if !created {
-		return false
+	if err := c.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
+		return err
 	}
 
+	return c.initShardControllers(name, namespaceConfig)
+}
+
+func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Namespace) error {
 	c.Lock()
 	defer c.Unlock()
 
-	for shard, shardMetadata := range namespaceStatus.GetShards() {
+	// Shard deletion removes status before removing its controller from the
+	// map. Read under the runtime lock to avoid reviving a deleted shard.
+	namespaceStatus, exists := c.metadata.GetNamespaceStatus(name)
+	if !exists {
+		return fmt.Errorf("%w: namespace %q status disappeared during controller initialization",
+			metadatacommon.ErrConflict, name)
+	}
+	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
+		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {
+			continue
+		}
+		if _, exists := c.shardControllers[shard]; exists {
+			continue
+		}
 		c.shardControllers[shard] = shardcontroller.NewController(name, shard, namespaceConfig,
 			shardMetadata, c.metadata, c.findDataServerFeatures,
 			c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
-	return true
+	return nil
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {

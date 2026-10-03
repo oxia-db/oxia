@@ -85,7 +85,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		},
 	}
 	metadata := newTestMetadata(t, clusterConfig)
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
@@ -98,7 +98,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
 		metadata:         metadata,
@@ -140,7 +140,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		}},
 	}
 	metadata := newTestMetadata(t, clusterConfig)
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
@@ -154,7 +154,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
 		metadata:         metadata,

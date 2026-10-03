@@ -171,7 +171,7 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 		ParentShardId: splitParentShard,
 		SplitPoint:    splitPoint,
 	}
-	require.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{
 			splitParentShard: {
@@ -496,7 +496,7 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *racingMetadata) {
 	_, err := metadata.ReserveShardIDs(2)
 	require.NoError(t, err)
 	parentEnsemble := []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3}
-	require.True(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{
 			splitParentShard: {
