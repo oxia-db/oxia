@@ -204,7 +204,13 @@ func TestCreateNamespaceDoesNotReviveDeletedShards(t *testing.T) {
 				require.NoError(t, metadata.DeleteShardStatus(namespace.Name, 0))
 				c.ShardDeleted(0)
 			}
-			require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
+			err := c.CreateNamespace(namespace.Name, namespace)
+			if count == 1 {
+				require.ErrorIs(t, err, metadatacommon.ErrConflict)
+				require.Contains(t, err.Error(), namespace.Name)
+			} else {
+				require.NoError(t, err)
+			}
 			c.RLock()
 			defer c.RUnlock()
 			require.NotContains(t, c.shardControllers, int64(0))

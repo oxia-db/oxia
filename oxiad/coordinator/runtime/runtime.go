@@ -32,6 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -230,8 +231,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
 	if _, exists := c.metadata.GetNamespaceStatus(name); exists {
-		c.initShardControllers(name, namespaceConfig)
-		return nil
+		return c.initShardControllers(name, namespaceConfig)
 	}
 
 	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
@@ -268,11 +268,10 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		return err
 	}
 
-	c.initShardControllers(name, namespaceConfig)
-	return nil
+	return c.initShardControllers(name, namespaceConfig)
 }
 
-func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Namespace) {
+func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Namespace) error {
 	c.Lock()
 	defer c.Unlock()
 
@@ -280,7 +279,8 @@ func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Names
 	// map. Read under the runtime lock to avoid reviving a deleted shard.
 	namespaceStatus, exists := c.metadata.GetNamespaceStatus(name)
 	if !exists {
-		return
+		return fmt.Errorf("%w: namespace %q status disappeared during controller initialization",
+			metadatacommon.ErrConflict, name)
 	}
 	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
 		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {
@@ -295,6 +295,7 @@ func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Names
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
+	return nil
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {
