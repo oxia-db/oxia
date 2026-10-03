@@ -226,6 +226,63 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	assert.NoError(t, kvf.Close())
 }
 
+// A follower that holds every entry before the first one of the leader's wal,
+// like a follower seeded from a snapshot at that offset, gets the next entries
+// from the wal. Another snapshot would only wipe the data it has until it is
+// installed.
+func TestFollowerCursor_StreamToFollowerRightBeforeWalStart(t *testing.T) {
+	var term int64 = 1
+	var shard int64 = 2
+
+	n := int64(10)
+	stream := rpc.NewMockRpcClient()
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	// The entries up to n-1 are only in the database, and the wal starts at n
+	for i := int64(0); i < n; i++ {
+		wr := &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: fmt.Sprintf("key-%d", i), Value: []byte("value")}},
+		}
+		_, err := db.ProcessWrite(wr, i, uint64(i), database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	previousCrc := uint32(1)
+	assert.NoError(t, w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+		Term:      1,
+		Offset:    n,
+		Value:     []byte("after-snapshot"),
+		Timestamp: uint64(n),
+	}, &previousCrc))
+	assert.NoError(t, w.Sync(context.Background()))
+
+	ackTracker := NewQuorumAckTracker(3, n, n-1)
+	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, n-1)
+	assert.NoError(t, err)
+
+	select {
+	case req := <-stream.AppendReqs:
+		assert.EqualValues(t, n, req.Entry.Offset)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the follower got no entry")
+	}
+	assert.Empty(t, stream.SendSnapshotStream.Requests, "the follower got a snapshot")
+
+	// Complete a snapshot in progress: closing the cursor waits for it
+	stream.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: n - 1}
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
+}
+
 func TestFollowerCursor_StreamToEmptyFollowerWhenWalComplete(t *testing.T) {
 	var term int64 = 1
 	var shard int64 = 2

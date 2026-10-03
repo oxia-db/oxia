@@ -270,7 +270,7 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 			slog.Int64("leader-commit-offset", fc.ackTracker.CommitOffset()),
 		)
 		return true
-	} else if walFirstOffset > 0 && ackOffset < walFirstOffset {
+	} else if walFirstOffset > 0 && ackOffset+1 < walFirstOffset {
 		fc.log.Info(
 			"The follower is behind the first available entry in the leader WAL",
 			slog.Int64("follower-ack-offset", ackOffset),

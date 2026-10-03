@@ -3146,62 +3146,105 @@ func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
 }
 
 // A follower seeded from a snapshot reports the commit offset of the snapshot as
-// its head, with an invalid term. There is nothing to truncate in its empty wal:
-// the leader brings it up to date from the start, like a follower without data.
+// its head, with an invalid term, and its database holds the entries up to that
+// offset. There is nothing to truncate in its empty wal. If the wal of the leader
+// has the entries after that offset, the follower gets them from there: a
+// snapshot would wipe its data until it is installed, e.g. when the split of a
+// shard elects a child that all of its members observed, or when a leader
+// election follows a snapshot. Otherwise it gets a snapshot of the leader.
 func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.T) {
-	var shard int64 = 1
+	for _, test := range []struct {
+		name string
+		// The first entry in the wal of the leader, or -1 for an empty wal. The
+		// leader's database holds the entries 0 to 9.
+		walFirstOffset int64
+		followerOffset int64
+		// The first entry sent to the follower after the snapshot of its
+		// database, or -1 for a snapshot of the leader
+		firstAppend int64
+	}{
+		{name: "wal with the next entries", walFirstOffset: 0, followerOffset: 5, firstAppend: 6},
+		{name: "wal starting at the next entry", walFirstOffset: 6, followerOffset: 5, firstAppend: 6},
+		{name: "wal starting after the next entry", walFirstOffset: 8, followerOffset: 5,
+			firstAppend: wal.InvalidOffset},
+		{name: "empty wal at the follower's offset", walFirstOffset: wal.InvalidOffset, followerOffset: 9,
+			firstAppend: 10},
+		{name: "empty wal past the follower's offset", walFirstOffset: wal.InvalidOffset, followerOffset: 5,
+			firstAppend: wal.InvalidOffset},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var shard int64 = 1
 
-	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
-	require.NoError(t, err)
-	walFactory := newTestWalFactory(t)
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
 
-	// The entries 0 to 9 are in the wal and in the database of the leader
-	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
-	require.NoError(t, err)
-	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
-		1*time.Hour, time2.SystemClock)
-	require.NoError(t, err)
-	for i := int64(0); i < 10; i++ {
-		wr := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}}
-		value, err := pb.Marshal(wrapInLogEntryValue(wr))
-		require.NoError(t, err)
-		require.NoError(t, walObject.Append(&proto.LogEntry{Term: 1, Offset: i, Value: value}))
-		_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
-		require.NoError(t, err)
+			walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+			require.NoError(t, err)
+			db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
+				1*time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			previousCrc := uint32(1)
+			for i := int64(0); i < 10; i++ {
+				wr := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}}
+				value, err := pb.Marshal(wrapInLogEntryValue(wr))
+				require.NoError(t, err)
+				if test.walFirstOffset != wal.InvalidOffset && i >= test.walFirstOffset {
+					require.NoError(t, walObject.AppendAsyncWithPreviousCrc(
+						&proto.LogEntry{Term: 1, Offset: i, Value: value}, &previousCrc))
+				}
+				_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
+				require.NoError(t, err)
+			}
+			require.NoError(t, walObject.Sync(context.Background()))
+			require.NoError(t, db.UpdateTerm(1, database.TermOptions{}))
+			require.NoError(t, db.Close())
+			require.NoError(t, walObject.Close())
+
+			rpcClient := rpc.NewMockRpcClient()
+			// A truncation would block the leader until it gets a response
+			rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
+				HeadEntryId: &proto.EntryId{Term: 2, Offset: wal.InvalidOffset},
+			}}
+			lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
+				walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+			require.NoError(t, err)
+			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              2,
+				ReplicationFactor: 3,
+				FollowerMaps: map[string]*proto.EntryId{
+					"f1": {Term: wal.InvalidTerm, Offset: test.followerOffset},
+				},
+			})
+			require.NoError(t, err)
+			// The next entry of the leader, at offset 10
+			lc.Write(context.Background(), &proto.WriteRequest{
+				Shard: &shard,
+				Puts:  []*proto.PutRequest{{Key: "other-key", Value: []byte("")}},
+			}, concurrent.NewOnce(func(*proto.WriteResponse) {}, func(error) {}))
+
+			assert.Empty(t, rpcClient.TruncateReqs, "the empty wal of the follower got truncated")
+			if test.firstAppend == wal.InvalidOffset {
+				assert.Eventually(t, func() bool { return len(rpcClient.SendSnapshotStream.Requests) > 0 },
+					10*time.Second, 10*time.Millisecond, "the follower got no snapshot")
+			} else {
+				select {
+				case req := <-rpcClient.AppendReqs:
+					assert.EqualValues(t, test.firstAppend, req.Entry.Offset)
+				case <-time.After(10 * time.Second):
+					assert.Fail(t, "the leader sent no entry to the follower")
+				}
+				assert.Empty(t, rpcClient.SendSnapshotStream.Requests, "the follower got a snapshot")
+			}
+
+			// Complete a snapshot in progress: the leader waits for it to close
+			rpcClient.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: 9}
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
 	}
-	require.NoError(t, db.UpdateTerm(1, database.TermOptions{}))
-	require.NoError(t, db.Close())
-	require.NoError(t, walObject.Close())
-
-	rpcClient := rpc.NewMockRpcClient()
-	// A truncation would block the leader until it gets a response
-	rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
-		HeadEntryId: &proto.EntryId{Term: 2, Offset: wal.InvalidOffset},
-	}}
-	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
-		walFactory, kvFactory, nil)
-	require.NoError(t, err)
-	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
-	require.NoError(t, err)
-	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
-		Shard:             shard,
-		Term:              2,
-		ReplicationFactor: 3,
-		FollowerMaps: map[string]*proto.EntryId{
-			"f1": {Term: wal.InvalidTerm, Offset: 5},
-		},
-	})
-	require.NoError(t, err)
-
-	assert.Empty(t, rpcClient.TruncateReqs, "the empty wal of the follower got truncated")
-	select {
-	case req := <-rpcClient.AppendReqs:
-		assert.EqualValues(t, 0, req.Entry.Offset)
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "the leader sent no entry to the follower")
-	}
-
-	assert.NoError(t, lc.Close())
-	assert.NoError(t, kvFactory.Close())
-	assert.NoError(t, walFactory.Close())
 }
