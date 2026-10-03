@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	pb "google.golang.org/protobuf/proto"
@@ -792,12 +793,11 @@ func TestSessionManager_SessionCallsDuringNewTerms(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// A session call fails when it reaches a manager stopped by a new term,
-	// which rejects the writes and dropped the sessions, when the node is
-	// fenced, or when the term ends before its write is applied
+	// A session call fails when the node is fenced, when it reaches a manager
+	// stopped by a new term, or when the term ends before its write is
+	// applied. The sessions are alive: it never finds that they don't exist
 	checkError := func(err error) {
-		if !errors.Is(err, constant.ErrNodeIsNotLeader) && !errors.Is(err, constant.ErrResourceUnavailable) &&
-			!errors.Is(err, constant.ErrSessionNotFound) {
+		if !errors.Is(err, constant.ErrNodeIsNotLeader) && !errors.Is(err, constant.ErrResourceUnavailable) {
 			assert.Fail(t, "unexpected session call error", "%+v", err)
 		}
 	}
@@ -861,6 +861,74 @@ func TestSessionManager_SessionCallsDuringNewTerms(t *testing.T) {
 	assert.Positive(t, created)
 
 	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
+// sessionCalls are the session calls of the leader controller and of the
+// session manager.
+type sessionCalls interface {
+	CreateSession(*proto.CreateSessionRequest) (*proto.CreateSessionResponse, error)
+	KeepAlive(sessionId int64) error
+	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
+}
+
+func assertNotLeader(t *testing.T, calls sessionCalls, shardId int64, sessionId int64, msg string) {
+	t.Helper()
+	assert.ErrorIs(t, calls.KeepAlive(sessionId), constant.ErrNodeIsNotLeader, "keep-alive on the %s", msg)
+	_, err := calls.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: sessionId})
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader, "close on the %s", msg)
+	_, err = calls.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+	})
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader, "creation on the %s", msg)
+}
+
+// A node that doesn't lead the shard must reject the session calls with
+// ErrNodeIsNotLeader, which the clients retry on the leader of the shard. The
+// leader restores the sessions when it's elected, and expires those that are
+// not kept alive there: on ErrSessionNotFound, the client gives up the session
+// while it's alive, and so its ephemeral records get deleted.
+func TestSessionManager_SessionCallsOnNodeNotLeading(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, termOneManager, lc := createSessionManager(t)
+	res, err := lc.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+	})
+	require.NoError(t, err)
+	sessionId := res.SessionId
+
+	// A new term fences the node, like the leader election of the shard, or the
+	// end of a split for its parent. A call can also get the session manager of
+	// the node before the new term stops it.
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 2})
+	require.NoError(t, err)
+	assertNotLeader(t, lc, shardId, sessionId, "fenced node")
+	assertNotLeader(t, termOneManager, shardId, sessionId, "session manager of the previous term")
+
+	// Neither does a node that restarted lead the shard, until it's elected
+	require.NoError(t, lc.Close())
+	restarted, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shardId,
+		rpc.NewMockRpcClient(), walf, kvf, nil)
+	require.NoError(t, err)
+	assertNotLeader(t, restarted, shardId, sessionId, "restarted node")
+
+	// The leader of the next term restores the session
+	_, err = restarted.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 3})
+	require.NoError(t, err)
+	_, err = restarted.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shardId,
+		Term:              3,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+	assert.NoError(t, restarted.KeepAlive(sessionId))
+	_, err = restarted.CloseSession(&proto.CloseSessionRequest{Shard: shardId, SessionId: sessionId})
+	assert.NoError(t, err)
+
+	assert.NoError(t, restarted.Close())
 	assert.NoError(t, kvf.Close())
 	assert.NoError(t, walf.Close())
 }

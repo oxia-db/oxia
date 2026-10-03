@@ -1699,25 +1699,43 @@ func (lc *leaderController) deleteShard(request *proto.DeleteShardRequest) (*pro
 }
 
 func (lc *leaderController) CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return lc.currentSessionManager().CreateSession(request)
+	sessionManager, err := lc.currentSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	return sessionManager.CreateSession(request)
 }
 
 func (lc *leaderController) KeepAlive(sessionId int64) error {
-	return lc.currentSessionManager().KeepAlive(sessionId)
+	sessionManager, err := lc.currentSessionManager()
+	if err != nil {
+		return err
+	}
+	return sessionManager.KeepAlive(sessionId)
 }
 
 func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return lc.currentSessionManager().CloseSession(request)
+	sessionManager, err := lc.currentSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	return sessionManager.CloseSession(request)
 }
 
 // currentSessionManager returns the session manager of the current term, which
 // becomeLeader replaces while holding the leader lock. The session calls use it
 // once the lock is released: the session writes take the leader lock, see
-// writeBlock. A call that reaches a manager stopped by a new term fails.
-func (lc *leaderController) currentSessionManager() SessionManager {
+// writeBlock. A node that doesn't lead the shard fails them with
+// ErrNodeIsNotLeader, and so does a manager that a new term stopped after the
+// call got it: the leader of the shard restores the sessions, and the clients
+// retry the calls there.
+func (lc *leaderController) currentSessionManager() (SessionManager, error) {
 	lc.RLock()
 	defer lc.RUnlock()
-	return lc.sessionManager
+	if err := checkStatusIsLeader(lc.status); err != nil {
+		return nil, err
+	}
+	return lc.sessionManager, nil
 }
 
 func (lc *leaderController) Checksum() crc.Checksum {
