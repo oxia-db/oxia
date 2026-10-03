@@ -44,6 +44,7 @@ var (
 	Cmd     = &cobra.Command{
 		Use:   "perf",
 		Short: "Performance test",
+		Args:  cobra.NoArgs,
 		RunE:  run,
 	}
 )

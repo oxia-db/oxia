@@ -51,12 +51,12 @@ func TestHealthCmd(t *testing.T) {
 		args         []string
 		expectedCode codes.Code
 	}{
-		{"happy path", []string{"health", portArg}, codes.OK},
-		{"incorrect port", []string{"health", "--port=1"}, codes.Unavailable},
-		{"serving", []string{"health", portArg, "--service=serving"}, codes.OK},
-		{"not-serving", []string{"health", portArg, "--service=not-serving"}, codes.Unknown},
-		{"unknown", []string{"health", portArg, "--service=unknown"}, codes.Unknown},
-		{"invalid", []string{"health", portArg, "--service=invalid"}, codes.NotFound},
+		{"happy path", []string{portArg}, codes.OK},
+		{"incorrect port", []string{"--port=1"}, codes.Unavailable},
+		{"serving", []string{portArg, "--service=serving"}, codes.OK},
+		{"not-serving", []string{portArg, "--service=not-serving"}, codes.Unknown},
+		{"unknown", []string{portArg, "--service=unknown"}, codes.Unknown},
+		{"invalid", []string{portArg, "--service=invalid"}, codes.NotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config = NewConfig()

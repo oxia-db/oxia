@@ -45,6 +45,7 @@ var (
 		Use:   "server",
 		Short: "Start a server",
 		Long:  `Long description`,
+		Args:  cobra.NoArgs,
 		Run:   exec,
 	}
 )
