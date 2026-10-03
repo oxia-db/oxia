@@ -80,7 +80,7 @@ func newNamespaceRuntimeForCreation(t *testing.T, metadata coordmetadata.Metadat
 	return c
 }
 
-func TestEnsureNamespaceRepairsCommittedWrite(t *testing.T) {
+func TestCreateNamespaceRepairsCommittedWrite(t *testing.T) {
 	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
 	namespace := &proto.Namespace{Name: "default", InitialShardCount: 2, ReplicationFactor: 1}
 	storeErr := errors.New("metadata write timed out after committing")
@@ -93,14 +93,14 @@ func TestEnsureNamespaceRepairsCommittedWrite(t *testing.T) {
 	}
 	c := newNamespaceRuntimeForCreation(t, metadata)
 
-	require.ErrorIs(t, c.EnsureNamespace(namespace.Name, namespace), storeErr)
+	require.ErrorIs(t, c.CreateNamespace(namespace.Name, namespace), storeErr)
 	require.Empty(t, c.shardControllers)
 	saved, exists := metadata.GetNamespaceStatus(namespace.Name)
 	require.True(t, exists)
 	require.Len(t, saved.UnsafeBorrow().Shards, 2)
 	require.Equal(t, 1, metadata.reservations)
 
-	require.NoError(t, c.EnsureNamespace(namespace.Name, namespace))
+	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
 	controllers := maps.Clone(c.shardControllers)
 	c.RUnlock()
@@ -109,7 +109,7 @@ func TestEnsureNamespaceRepairsCommittedWrite(t *testing.T) {
 		require.Contains(t, controllers, shard)
 	}
 
-	require.NoError(t, c.EnsureNamespace(namespace.Name, namespace))
+	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
 	repeated := maps.Clone(c.shardControllers)
 	c.RUnlock()
@@ -122,7 +122,7 @@ func TestEnsureNamespaceRepairsCommittedWrite(t *testing.T) {
 	delete(c.shardControllers, 0)
 	c.Unlock()
 	require.NoError(t, controllers[0].Close())
-	require.NoError(t, c.EnsureNamespace(namespace.Name, namespace))
+	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
 	defer c.RUnlock()
 	require.Len(t, c.shardControllers, 2)
@@ -131,7 +131,7 @@ func TestEnsureNamespaceRepairsCommittedWrite(t *testing.T) {
 	require.Equal(t, 1, metadata.reservations)
 }
 
-func TestEnsureNamespaceUsesSavedStatusOnAlreadyExists(t *testing.T) {
+func TestCreateNamespaceUsesSavedStatusOnAlreadyExists(t *testing.T) {
 	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
 	namespace := &proto.Namespace{Name: "default", InitialShardCount: 1, ReplicationFactor: 1}
 	metadata := &committingNamespaceMetadata{
@@ -146,7 +146,7 @@ func TestEnsureNamespaceUsesSavedStatusOnAlreadyExists(t *testing.T) {
 	}
 	c := newNamespaceRuntimeForCreation(t, metadata)
 
-	require.NoError(t, c.EnsureNamespace(namespace.Name, namespace))
+	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
 	defer c.RUnlock()
 	require.Len(t, c.shardControllers, 1)
@@ -165,7 +165,7 @@ func (namespaceEnsembleSelector) Select(ctx *ensemble.Context) ([]string, error)
 	return ctx.Candidates.Values(), nil
 }
 
-func TestEnsureNamespaceHandlesStatusErrors(t *testing.T) {
+func TestCreateNamespaceHandlesStatusErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -191,7 +191,7 @@ func TestEnsureNamespaceHandlesStatusErrors(t *testing.T) {
 				shardControllers: make(map[int64]shardcontroller.Controller),
 			}
 
-			require.ErrorIs(t, c.EnsureNamespace(namespace.Name, namespace), tc.err)
+			require.ErrorIs(t, c.CreateNamespace(namespace.Name, namespace), tc.err)
 			require.NotNil(t, metadata.proposed)
 			require.Len(t, metadata.proposed.Shards, 1)
 			require.Empty(t, c.shardControllers)

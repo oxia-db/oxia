@@ -295,7 +295,7 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
-func (m *mockNamespaceRuntime) EnsureNamespace(name string, namespaceConfig *proto.Namespace) error {
+func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
 	if saved, exists := m.metadata.GetNamespaceStatus(name); exists {
 		m.ensureNamespaceShardControllers(name, saved.UnsafeBorrow())
 		return nil
