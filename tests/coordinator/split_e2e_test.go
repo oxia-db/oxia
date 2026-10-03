@@ -1114,6 +1114,84 @@ func TestCoordinator_ShardSplit_InheritedSessionKeptAlive(t *testing.T) {
 	}, sessionTimeout/2, 100*time.Millisecond, "ephemeral records left after the client closed")
 }
 
+// fenceHookRpcProvider calls afterFence once a data server is fenced in a new
+// term of a shard. The new term waits for it to return.
+type fenceHookRpcProvider struct {
+	rpc2.Provider
+	afterFence func(req *proto.NewTermRequest)
+}
+
+func (p *fenceHookRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *fenceHookRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	response, err := p.Provider.NewTerm(ctx, node, req)
+	if err == nil {
+		p.afterFence(req)
+	}
+	return response, err
+}
+
+// The Finalize of a split fences the parent, then it re-elects the children and
+// publishes them: meanwhile, the clients keep their sessions alive on the
+// parent. The fenced parent must reject those keep-alives like a node that is
+// not the leader, which the client retries until it moves the session to the
+// children. If it answers that the session doesn't exist, the client gives up
+// the session, and the children expire it, with its ephemeral records.
+func TestCoordinator_ShardSplit_KeepAliveOnFencedParent(t *testing.T) {
+	// Once the split started, the only new term of the parent is the fence of
+	// the Finalize: hold it for longer than the client waits between two
+	// keep-alives, 2s at least
+	var splitting atomic.Bool
+	holdFinalize := sync.OnceFunc(func() { time.Sleep(3 * time.Second) })
+	rpcProvider := &fenceHookRpcProvider{afterFence: func(req *proto.NewTermRequest) {
+		if splitting.Load() && req.Shard == 0 {
+			holdFinalize()
+		}
+	}}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer c.close(t)
+
+	ctx := context.Background()
+	sessionTimeout := 5 * time.Second
+	client, err := oxia.NewSyncClient(c.sa1.Public, oxia.WithSessionTimeout(sessionTimeout))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	var keys []string
+	var sessionId int64
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("ephemeral-%04d", i)
+		_, version, err := client.Put(ctx, key, []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		keys = append(keys, key)
+		sessionId = version.SessionId
+	}
+
+	splitting.Store(true)
+	c.splitAndWait(t)
+
+	// The client kept the session: its new ephemeral records belong to it
+	for _, child := range []int64{c.leftChild, c.rightChild} {
+		_, version, err := client.Put(ctx, c.childKey(child, "post-split"), []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		assert.Equal(t, sessionId, version.SessionId, "new session on shard %d", child)
+	}
+
+	// The children restart the timeout of the session when they are re-elected
+	time.Sleep(2 * sessionTimeout)
+
+	for _, key := range keys {
+		_, _, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "ephemeral record %s lost while its client is alive", key) {
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+}
+
 // TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp checks that a session
 // created on the parent while the children catch up from its log reaches both
 // children, like the sessions in the parent's snapshot. A child without it

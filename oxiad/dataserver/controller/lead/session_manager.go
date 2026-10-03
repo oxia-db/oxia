@@ -272,6 +272,11 @@ func (sm *sessionManager) deleteSessions(ids []SessionId) error {
 }
 
 func (sm *sessionManager) getSession(sessionId int64) (*session, error) {
+	if sm.ctx.Err() != nil {
+		// The manager is stopped, by a new term or the close of the shard, and
+		// dropped the sessions: the leader of the next term restores them
+		return nil, constant.ErrNodeIsNotLeader
+	}
 	s, found := sm.sessions[SessionId(sessionId)]
 	if !found {
 		sm.log.Warn(
