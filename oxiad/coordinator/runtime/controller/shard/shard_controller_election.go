@@ -102,6 +102,9 @@ type Election struct {
 	becomeLeaderSent bool
 	// started
 	started atomic.Bool
+	// nextTerm is the floor learned from data servers rejecting a stale term.
+	// Fencing runs concurrently; only the next attempt changes shard metadata.
+	nextTerm atomic.Int64
 }
 
 func (e *Election) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*proto.DataServerIdentity {
@@ -125,12 +128,32 @@ func (e *Election) refreshedEnsemble(ensemble []*proto.DataServerIdentity) []*pr
 }
 
 func (e *Election) fenceNewTerm(ctx context.Context, term int64, options *proto.NewTermOptions, dataServer *proto.DataServerIdentity) (*proto.NewTermResponse, error) {
-	return e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
+	response, err := e.provider.NewTerm(ctx, dataServer, &proto.NewTermRequest{
 		Namespace: e.namespace,
 		Shard:     e.shard,
 		Term:      term,
 		Options:   options,
 	})
+	if errors.Is(err, constant.ErrInvalidTerm) {
+		// Coordinator metadata can be recreated while server data survives. Use
+		// the persisted server term instead of retrying every intervening term.
+		serverStatus, statusErr := e.provider.GetStatus(ctx, dataServer, &proto.GetStatusRequest{Shard: e.shard})
+		if statusErr != nil {
+			e.logger.Warn("Failed to recover the rejected term", slog.Any("data-server", dataServer),
+				slog.Any("error", statusErr))
+		} else if reported := serverStatus.GetTerm(); reported >= term {
+			e.advanceNextTerm(reported + 1)
+		}
+	}
+	return response, err
+}
+
+func (e *Election) advanceNextTerm(term int64) {
+	for floor := e.nextTerm.Load(); term > floor; floor = e.nextTerm.Load() {
+		if e.nextTerm.CompareAndSwap(floor, term) {
+			return
+		}
+	}
 }
 
 type fenceResponse struct {
@@ -712,6 +735,7 @@ func (e *Election) start() (newLeader *proto.DataServerIdentity, err error) {
 	e.mutableShardMetadata.Status = proto.ShardStatusElection
 	e.mutableShardMetadata.Leader = nil
 	e.mutableShardMetadata.Term++
+	e.mutableShardMetadata.Term = max(e.mutableShardMetadata.Term, e.nextTerm.Load())
 	e.mutableShardMetadata.Ensemble = e.refreshedEnsemble(e.mutableShardMetadata.Ensemble)
 	if err = e.persistNewTerm(); err != nil {
 		return nil, err

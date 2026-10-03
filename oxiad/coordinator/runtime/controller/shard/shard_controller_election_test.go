@@ -17,6 +17,7 @@ package shard
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -755,4 +756,54 @@ func TestElection_KeepsDeletingStatus(t *testing.T) {
 	assert.Equal(t, proto.ShardStatusDeleting, shard.GetStatus())
 	assert.EqualValues(t, 6, shard.GetTerm())
 	assert.Equal(t, ps2.GetPublic(), shard.GetLeader().GetPublic())
+}
+
+func TestFenceNewTermRecoversRejectedTerm(t *testing.T) {
+	provider := mockutils.NewRpcProvider()
+	server := testDataServer("server")
+	node := provider.GetNode(server)
+	election := &Election{logger: slog.Default(), provider: provider, namespace: "default", shard: 7}
+	for _, term := range []int64{34, 90, 40} {
+		node.NewTermResponse(0, 0, constant.ErrInvalidTerm)
+		node.GetStatusResponse(term, proto.ServingStatus_FENCED, 0, 0)
+		_, err := election.fenceNewTerm(t.Context(), 1, &proto.NewTermOptions{}, server)
+		require.ErrorIs(t, err, constant.ErrInvalidTerm)
+		node.ExpectNewTermRequest(t, 7, 1, false)
+		node.ExpectGetStatusRequest(t, 7)
+	}
+	require.Equal(t, int64(91), election.nextTerm.Load(), "later responses must not lower the term floor")
+}
+
+func TestFenceNewTermStatusFailurePreservesOriginalError(t *testing.T) {
+	provider := mockutils.NewRpcProvider()
+	server := testDataServer("server")
+	node := provider.GetNode(server)
+	node.NewTermResponse(0, 0, constant.ErrInvalidTerm)
+	node.EnqueueGetStatusError(errors.New("server unavailable"))
+	election := &Election{logger: slog.Default(), provider: provider, shard: 7}
+	_, err := election.fenceNewTerm(t.Context(), 1, &proto.NewTermOptions{}, server)
+	require.ErrorIs(t, err, constant.ErrInvalidTerm)
+	require.Zero(t, election.nextTerm.Load())
+}
+
+func TestFenceNewTermDoesNotProbeHealthyServer(t *testing.T) {
+	provider := mockutils.NewRpcProvider()
+	server := testDataServer("server")
+	node := provider.GetNode(server)
+	node.NewTermResponse(2, 10, nil)
+	election := &Election{logger: slog.Default(), provider: provider, shard: 7}
+	response, err := election.fenceNewTerm(t.Context(), 3, nil, server)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), response.HeadEntryId.Term)
+	require.Zero(t, election.nextTerm.Load())
+}
+
+func TestRecoveredTermFloorIsMonotonicAcrossConcurrentResponses(t *testing.T) {
+	var election Election
+	var wg sync.WaitGroup
+	for _, term := range []int64{35, 1001, 91, 4} {
+		wg.Go(func() { election.advanceNextTerm(term) })
+	}
+	wg.Wait()
+	require.Equal(t, int64(1001), election.nextTerm.Load())
 }
