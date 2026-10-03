@@ -297,7 +297,7 @@ func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
 	if saved, exists := m.metadata.GetNamespaceStatus(name); exists {
-		m.initShardsController(name, saved.UnsafeBorrow())
+		m.initShardControllers(name, saved.UnsafeBorrow())
 		return nil
 	}
 	baseShardID, err := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
@@ -337,11 +337,11 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	if err := m.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
 		return err
 	}
-	m.initShardsController(name, namespaceStatus)
+	m.initShardControllers(name, namespaceStatus)
 	return nil
 }
 
-func (m *mockNamespaceRuntime) initShardsController(name string, namespaceStatus *proto.NamespaceStatus) {
+func (m *mockNamespaceRuntime) initShardControllers(name string, namespaceStatus *proto.NamespaceStatus) {
 	for shard := range namespaceStatus.GetShards() {
 		if m.added == nil {
 			m.added = map[int64]string{}
