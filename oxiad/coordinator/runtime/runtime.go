@@ -231,7 +231,7 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
 	if saved, exists := c.metadata.GetNamespaceStatus(name); exists {
-		c.ensureNamespaceShardControllers(name, namespaceConfig, saved.UnsafeBorrow())
+		c.initShardsController(name, namespaceConfig, saved.UnsafeBorrow())
 		return nil
 	}
 
@@ -276,11 +276,11 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		namespaceStatus = saved.UnsafeBorrow()
 	}
 
-	c.ensureNamespaceShardControllers(name, namespaceConfig, namespaceStatus)
+	c.initShardsController(name, namespaceConfig, namespaceStatus)
 	return nil
 }
 
-func (c *runtime) ensureNamespaceShardControllers(name string, namespaceConfig *proto.Namespace, namespaceStatus *proto.NamespaceStatus) {
+func (c *runtime) initShardsController(name string, namespaceConfig *proto.Namespace, namespaceStatus *proto.NamespaceStatus) {
 	c.Lock()
 	defer c.Unlock()
 
