@@ -33,11 +33,30 @@ type failingNamespaceRuntime struct {
 }
 
 func (r *failingNamespaceRuntime) CreateNamespace(name string, namespace *proto.Namespace) error {
+	if _, exists := r.Metadata().GetNamespaceStatus(name); exists {
+		return r.Runtime.CreateNamespace(name, namespace)
+	}
 	r.attempted = append(r.attempted, name)
 	if err := r.failures[name]; err != nil {
 		return err
 	}
 	return r.Runtime.CreateNamespace(name, namespace)
+}
+
+func TestNamespaceReconcilerRepairsExistingNamespace(t *testing.T) {
+	runtime := namespaceRuntimeForErrors("existing")
+	namespace := runtime.metadata.configNS["existing"]
+	require.NoError(t, runtime.metadata.CreateNamespaceStatus("existing", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{42: {Term: 3}},
+	}))
+	require.Empty(t, runtime.added)
+	shardIDGenerator := runtime.metadata.status.ShardIdGenerator
+
+	reconciler := &namespaceReconciler{runtime: runtime}
+	snapshot := &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{namespace}}
+	require.NoError(t, reconciler.Reconcile(t.Context(), snapshot))
+	require.Equal(t, map[int64]string{42: "existing"}, runtime.added)
+	require.Equal(t, shardIDGenerator, runtime.metadata.status.ShardIdGenerator)
 }
 
 func namespaceRuntimeForErrors(names ...string) *mockNamespaceRuntime {

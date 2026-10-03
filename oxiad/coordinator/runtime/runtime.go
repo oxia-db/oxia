@@ -32,6 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -229,6 +230,11 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 }
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
+	if saved, exists := c.metadata.GetNamespaceStatus(name); exists {
+		c.ensureNamespaceShardControllers(name, namespaceConfig, saved.UnsafeBorrow())
+		return nil
+	}
+
 	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
 		return err
@@ -260,20 +266,34 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	}
 
 	if err := c.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
-		return err
+		if !errors.Is(err, metadatacommon.ErrAlreadyExists) {
+			return err
+		}
+		saved, exists := c.metadata.GetNamespaceStatus(name)
+		if !exists {
+			return err
+		}
+		namespaceStatus = saved.UnsafeBorrow()
 	}
 
+	c.ensureNamespaceShardControllers(name, namespaceConfig, namespaceStatus)
+	return nil
+}
+
+func (c *runtime) ensureNamespaceShardControllers(name string, namespaceConfig *proto.Namespace, namespaceStatus *proto.NamespaceStatus) {
 	c.Lock()
 	defer c.Unlock()
 
 	for shard, shardMetadata := range namespaceStatus.GetShards() {
+		if _, exists := c.shardControllers[shard]; exists {
+			continue
+		}
 		c.shardControllers[shard] = shardcontroller.NewController(name, shard, namespaceConfig,
 			shardMetadata, c.metadata, c.findDataServerFeatures,
 			c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)
 		slog.Info("Added new shard", slog.Int64("shard", shard),
 			slog.String("namespace", name), slog.Any("shard-metadata", shardMetadata))
 	}
-	return nil
 }
 
 func (c *runtime) DeleteNamespace(namespace string) {

@@ -37,9 +37,6 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 	metadata := r.runtime.Metadata()
 
 	for _, namespace := range snapshot.GetNamespaces() {
-		if _, exists := metadata.GetNamespaceStatus(namespace.GetName()); exists {
-			continue
-		}
 		// A configuration file doesn't go through the management API checks.
 		// Skip the namespace instead of failing, which would block the
 		// reconciliation of the rest of the configuration.
@@ -51,6 +48,8 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 			)
 			continue
 		}
+		// A previous write may have committed before returning an error. The
+		// runtime also repairs missing controllers when the status already exists.
 		if err := r.runtime.CreateNamespace(namespace.GetName(), namespace); err != nil &&
 			!errors.Is(err, metadatacommon.ErrAlreadyExists) {
 			return err

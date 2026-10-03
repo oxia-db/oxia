@@ -111,3 +111,33 @@ func TestCreateNamespaceStatusCanBeRetriedByCaller(t *testing.T) {
 	require.True(t, exists)
 	require.EqualValues(t, 3, status.UnsafeBorrow().GetReplicationFactor())
 }
+
+func TestCreateNamespaceStatusReturnsErrorAfterCommit(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+	storeErr := errors.New("metadata write timed out after committing")
+	writes := 0
+	committing := interceptingStatusProvider{
+		Provider: statusProvider,
+		store: func(snapshot provider.Versioned[*proto.ClusterStatus]) (metadatacommon.Version, error) {
+			writes++
+			version, err := statusProvider.Store(snapshot)
+			if err != nil {
+				return version, err
+			}
+			return version, storeErr
+		},
+	}
+	metadata := newMetadata(t.Context(), committing, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	err := metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{ReplicationFactor: 3})
+	require.ErrorIs(t, err, storeErr)
+	saved, exists := metadata.GetNamespaceStatus("default")
+	require.True(t, exists)
+	require.EqualValues(t, 3, saved.UnsafeBorrow().ReplicationFactor)
+	require.NotEqual(t, metadatacommon.NotExists, statusProvider.Watch().Load().Version)
+
+	require.ErrorIs(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{}), metadatacommon.ErrAlreadyExists)
+	require.Equal(t, 1, writes)
+}

@@ -296,6 +296,10 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
+	if saved, exists := m.metadata.GetNamespaceStatus(name); exists {
+		m.ensureNamespaceShardControllers(name, saved.UnsafeBorrow())
+		return nil
+	}
 	baseShardID, err := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
 		return err
@@ -333,13 +337,17 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	if err := m.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
 		return err
 	}
+	m.ensureNamespaceShardControllers(name, namespaceStatus)
+	return nil
+}
+
+func (m *mockNamespaceRuntime) ensureNamespaceShardControllers(name string, namespaceStatus *proto.NamespaceStatus) {
 	for shard := range namespaceStatus.GetShards() {
 		if m.added == nil {
 			m.added = map[int64]string{}
 		}
 		m.added[shard] = name
 	}
-	return nil
 }
 
 func (m *mockNamespaceRuntime) DeleteNamespace(namespace string) {
@@ -497,6 +505,7 @@ func TestNamespaceReconcilerNamespaceAddedPersistsAggregateStatus(t *testing.T) 
 	}, metadata.status)
 
 	assert.Equal(t, map[int64]string{
+		0: "ns-1",
 		1: "ns-2",
 		2: "ns-2",
 	}, runtime.added)
@@ -570,7 +579,7 @@ func TestNamespaceReconcilerNamespaceRemovedMarksDeletingAndDeletesRuntimeShards
 
 	sort.Slice(runtime.deleted, func(i, j int) bool { return runtime.deleted[i] < runtime.deleted[j] })
 	assert.Equal(t, []int64{1, 2}, runtime.deleted)
-	assert.Empty(t, runtime.added)
+	assert.Equal(t, map[int64]string{0: "ns-1"}, runtime.added)
 }
 
 // Namespaces added to the configuration file don't go through the management
