@@ -32,7 +32,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -266,14 +265,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	}
 
 	if err := c.metadata.CreateNamespaceStatus(name, namespaceStatus); err != nil {
-		if !errors.Is(err, metadatacommon.ErrAlreadyExists) {
-			return err
-		}
-		saved, exists := c.metadata.GetNamespaceStatus(name)
-		if !exists {
-			return err
-		}
-		namespaceStatus = saved.UnsafeBorrow()
+		return err
 	}
 
 	c.initShardControllers(name, namespaceConfig, namespaceStatus)

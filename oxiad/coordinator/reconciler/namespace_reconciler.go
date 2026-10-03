@@ -16,12 +16,10 @@ package reconciler
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
@@ -50,8 +48,7 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		}
 		// A previous write may have committed before returning an error. The
 		// runtime also repairs missing controllers when the status already exists.
-		if err := r.runtime.CreateNamespace(namespace.GetName(), namespace); err != nil &&
-			!errors.Is(err, metadatacommon.ErrAlreadyExists) {
+		if err := r.runtime.CreateNamespace(namespace.GetName(), namespace); err != nil {
 			return err
 		}
 	}

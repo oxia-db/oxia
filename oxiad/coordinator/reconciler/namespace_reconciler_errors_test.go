@@ -116,21 +116,28 @@ func TestNamespaceReconcilerReturnsCreationError(t *testing.T) {
 	}
 }
 
-func TestNamespaceReconcilerIgnoresAlreadyExists(t *testing.T) {
+func TestNamespaceReconcilerReturnsAlreadyExistsForRetry(t *testing.T) {
 	base := namespaceRuntimeForErrors("existing", "healthy")
+	createErr := fmt.Errorf("namespace creation: %w", metadatacommon.ErrAlreadyExists)
 	runtime := &failingNamespaceRuntime{
 		Runtime: base,
 		failures: map[string]error{
-			"existing": fmt.Errorf("namespace creation: %w", metadatacommon.ErrAlreadyExists),
+			"existing": createErr,
 		},
 	}
 	snapshot := &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{
 		base.metadata.configNS["existing"], base.metadata.configNS["healthy"],
 	}}
 
-	require.NoError(t, (&namespaceReconciler{runtime: runtime}).Reconcile(t.Context(), snapshot))
-	require.Equal(t, []string{"existing", "healthy"}, runtime.attempted)
-	require.Len(t, base.added, 1)
+	reconciler := &namespaceReconciler{runtime: runtime}
+	require.Same(t, createErr, reconciler.Reconcile(t.Context(), snapshot))
+	require.Equal(t, []string{"existing"}, runtime.attempted)
+	require.Empty(t, base.added)
+
+	delete(runtime.failures, "existing")
+	require.NoError(t, reconciler.Reconcile(t.Context(), snapshot))
+	require.Equal(t, []string{"existing", "existing", "healthy"}, runtime.attempted)
+	require.Len(t, base.added, 2)
 	_, exists := base.metadata.GetNamespaceStatus("healthy")
 	require.True(t, exists)
 }

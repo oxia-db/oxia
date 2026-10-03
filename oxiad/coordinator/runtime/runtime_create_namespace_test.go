@@ -131,7 +131,7 @@ func TestCreateNamespaceRepairsCommittedWrite(t *testing.T) {
 	require.Equal(t, 1, metadata.reservations)
 }
 
-func TestCreateNamespaceUsesSavedStatusOnAlreadyExists(t *testing.T) {
+func TestCreateNamespaceRepairsAlreadyExistsOnRetry(t *testing.T) {
 	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
 	namespace := &proto.Namespace{Name: "default", InitialShardCount: 1, ReplicationFactor: 1}
 	metadata := &committingNamespaceMetadata{
@@ -146,12 +146,17 @@ func TestCreateNamespaceUsesSavedStatusOnAlreadyExists(t *testing.T) {
 	}
 	c := newNamespaceRuntimeForCreation(t, metadata)
 
+	require.Same(t, metadata.err, c.CreateNamespace(namespace.Name, namespace))
+	require.Empty(t, c.shardControllers)
+	require.Equal(t, 1, metadata.reservations)
+
 	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
 	defer c.RUnlock()
 	require.Len(t, c.shardControllers, 1)
 	require.Contains(t, c.shardControllers, int64(42))
 	require.NotContains(t, c.shardControllers, int64(0))
+	require.Equal(t, 1, metadata.reservations)
 }
 
 func (m *failingNamespaceMetadata) CreateNamespaceStatus(_ string, status *proto.NamespaceStatus) error {
