@@ -1,0 +1,89 @@
+# Ported from etcd tests/common/kv_test.go: TestKVDelete (exact-key deletion).
+# Exact deletion preserves child paths and neighbors in both key sorting modes.
+
+put key=a value=alpha
+----
+ok key="a" modifications=0
+
+put key=b value=bravo
+----
+ok key="b" modifications=0
+
+put key=c value=charlie
+----
+ok key="c" modifications=0
+
+put key=c/abc value=child
+----
+ok key="c/abc" modifications=0
+
+put key=d value=delta
+----
+ok key="d" modifications=0
+
+delete key=c
+----
+ok
+
+get key=c
+----
+error: key not found
+
+get key=a
+----
+key="a" value="alpha" modifications=0
+
+get key=b
+----
+key="b" value="bravo" modifications=0
+
+get key=c/abc
+----
+key="c/abc" value="child" modifications=0
+
+get key=d
+----
+key="d" value="delta" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="b"
+key="c/abc"
+key="d"
+
+# Deleting the child path also preserves the recreated parent record.
+put key=c value=reborn create-only
+----
+ok key="c" modifications=0
+
+delete key=c/abc
+----
+ok
+
+get key=c/abc
+----
+error: key not found
+
+get key=a
+----
+key="a" value="alpha" modifications=0
+
+get key=b
+----
+key="b" value="bravo" modifications=0
+
+get key=c
+----
+key="c" value="reborn" modifications=0
+
+get key=d
+----
+key="d" value="delta" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="b"
+key="c"
+key="d"

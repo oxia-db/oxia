@@ -1,0 +1,92 @@
+# Simple keys have the same order with natural and hierarchical sorting.
+
+put key=a value="one"
+----
+ok key="a" modifications=0
+
+put key=c value="three"
+----
+ok key="c" modifications=0
+
+put key=e value="five"
+----
+ok key="e" modifications=0
+
+get key=c comparison=equal
+----
+key="c" value="three" modifications=0
+
+get key=c comparison=floor
+----
+key="c" value="three" modifications=0
+
+get key=c comparison=ceiling
+----
+key="c" value="three" modifications=0
+
+get key=c comparison=lower
+----
+key="a" value="one" modifications=0
+
+get key=c comparison=higher
+----
+key="e" value="five" modifications=0
+
+# A missing query key can still select its adjacent stored key.
+get key=d comparison=equal
+----
+error: key not found
+
+get key=d comparison=floor
+----
+key="c" value="three" modifications=0
+
+get key=d comparison=ceiling
+----
+key="e" value="five" modifications=0
+
+get key=d comparison=lower
+----
+key="c" value="three" modifications=0
+
+get key=d comparison=higher
+----
+key="e" value="five" modifications=0
+
+# Selecting outside the stored key range reports a missing key.
+get key=0 comparison=floor
+----
+error: key not found
+
+get key=a comparison=lower
+----
+error: key not found
+
+get key=z comparison=ceiling
+----
+error: key not found
+
+get key=e comparison=higher
+----
+error: key not found
+
+get key=z comparison=floor
+----
+key="e" value="five" modifications=0
+
+get key=0 comparison=ceiling
+----
+key="a" value="one" modifications=0
+
+# Comparison reads observe deletions performed earlier in the sequence.
+delete key=c
+----
+ok
+
+get key=c comparison=floor
+----
+key="a" value="one" modifications=0
+
+get key=c comparison=ceiling
+----
+key="e" value="five" modifications=0

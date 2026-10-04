@@ -1,0 +1,85 @@
+# Each operation observes the state left by the preceding operations.
+
+get key=a
+----
+error: key not found
+
+put key=a value="one"
+----
+ok key="a" modifications=0
+
+get key=a
+----
+key="a" value="one" modifications=0
+
+put key=a value=("two words")
+----
+ok key="a" modifications=1
+
+get key=a
+----
+key="a" value="two words" modifications=1
+
+delete key=a
+----
+ok
+
+get key=a
+----
+error: key not found
+
+# Recreating a deleted key starts its modification count at zero.
+put key=a value="reborn"
+----
+ok key="a" modifications=0
+
+get key=a
+----
+key="a" value="reborn" modifications=0
+
+put key=b value=""
+----
+ok key="b" modifications=0
+
+get key=b
+----
+key="b" value="" modifications=0
+
+# All operations on explicitly routed records use the same partition.
+put key=qa value="first" partition=tenant
+----
+ok key="qa" modifications=0
+
+put key=qb value="second" partition=tenant
+----
+ok key="qb" modifications=0
+
+get key=qa partition=tenant
+----
+key="qa" value="first" modifications=0
+
+range start=qa end=qc partition=tenant
+----
+key="qa" value="first" modifications=0
+key="qb" value="second" modifications=0
+
+list start=qa end=qc partition=tenant
+----
+key="qa"
+key="qb"
+
+delete key=qa partition=tenant
+----
+ok
+
+get key=qa partition=tenant
+----
+error: key not found
+
+delete-range start=qa end=qc partition=tenant
+----
+ok
+
+range start=qa end=qc partition=tenant
+----
+(empty)

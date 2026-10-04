@@ -1,0 +1,109 @@
+# Ranges include start and exclude end; an empty end has no upper bound.
+
+range start=a end=z
+----
+(empty)
+
+list start=a end=z unordered
+----
+(empty)
+
+put key=a value="one"
+----
+ok key="a" modifications=0
+
+put key=b value="two"
+----
+ok key="b" modifications=0
+
+put key=c value="three"
+----
+ok key="c" modifications=0
+
+put key=d value="four"
+----
+ok key="d" modifications=0
+
+put key=z value="last"
+----
+ok key="z" modifications=0
+
+range start=b end=d
+----
+key="b" value="two" modifications=0
+key="c" value="three" modifications=0
+
+list start=b end=d unordered
+----
+key="b"
+key="c"
+
+range start=b end=b
+----
+(empty)
+
+list start=b end=b unordered
+----
+(empty)
+
+range start=c end=""
+----
+key="c" value="three" modifications=0
+key="d" value="four" modifications=0
+key="z" value="last" modifications=0
+
+list start=c end="" unordered
+----
+key="c"
+key="d"
+key="z"
+
+delete-range start=b end=d
+----
+ok
+
+get key=b
+----
+error: key not found
+
+get key=c
+----
+error: key not found
+
+get key=a
+----
+key="a" value="one" modifications=0
+
+get key=d
+----
+key="d" value="four" modifications=0
+
+range start=a end=""
+----
+key="a" value="one" modifications=0
+key="d" value="four" modifications=0
+key="z" value="last" modifications=0
+
+delete-range start=d end=""
+----
+ok
+
+range start=a end=""
+----
+key="a" value="one" modifications=0
+
+delete-range start=a end=""
+----
+ok
+
+range start=a end=""
+----
+(empty)
+
+list start=a end="" unordered
+----
+(empty)
+
+delete-range start=a end=""
+----
+ok

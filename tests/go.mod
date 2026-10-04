@@ -3,6 +3,7 @@ module github.com/oxia-db/oxia/tests
 go 1.27
 
 require (
+	github.com/cockroachdb/datadriven v1.0.3-0.20250407164829-2945557346d5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
