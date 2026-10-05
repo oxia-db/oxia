@@ -425,6 +425,18 @@ func TestMetadataGetInstanceIDReturnsLoadError(t *testing.T) {
 	require.ErrorContains(t, err, "status unavailable")
 }
 
+func TestMetadataListNamespaceStatusReturnsLoadError(t *testing.T) {
+	statusProvider := loadFailingStatusProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.ListNamespaceStatus()
+	require.ErrorContains(t, err, "status unavailable")
+}
+
 // countingFailingStatusProvider counts the status writes, and fails them.
 type countingFailingStatusProvider struct {
 	provider.Provider[*commonproto.ClusterStatus]

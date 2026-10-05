@@ -416,7 +416,8 @@ func TestSplit_RestartPastPointOfNoReturn(t *testing.T) {
 	// The restarted coordinator starts the controllers of the split shards,
 	// then resumes the split, the way New does
 	r.Lock()
-	status := r.metadata.ListNamespaceStatus()
+	status, err := r.metadata.ListNamespaceStatus()
+	require.NoError(t, err)
 	for _, shard := range []int64{splitParentShard, splitLeftChild, splitRightChild} {
 		r.shardControllers[shard] = shardcontroller.NewController(constant.DefaultNamespace, shard,
 			r.namespaceConfigForSplit(constant.DefaultNamespace),
