@@ -119,10 +119,6 @@ func NewProvider[T gproto.Message](
 		}
 	}
 	m.cache = cache.New(m.ctx, m.load, watch)
-	if m.Load() == nil {
-		_ = m.Close()
-		return nil, m.ctx.Err()
-	}
 
 	m.metadataSizeGauge = metric.NewGauge("oxia_coordinator_metadata_size",
 		"The size of the coordinator metadata", metric.Bytes, nil, func() int64 {

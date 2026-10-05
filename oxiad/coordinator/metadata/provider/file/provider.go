@@ -88,10 +88,6 @@ func NewProvider[T gproto.Message](
 		}
 	}
 	p.cache = cache.New(p.ctx, p.load, watch)
-	if p.Load() == nil {
-		_ = p.Close()
-		return nil, p.ctx.Err()
-	}
 	return p, nil
 }
 
