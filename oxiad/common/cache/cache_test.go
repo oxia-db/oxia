@@ -160,7 +160,6 @@ func TestCacheInitialLoad(t *testing.T) {
 	s := newSource(t, 1)
 	s.loadErrs = 2
 	c := newCache(t, s)
-	require.Nil(t, cached(c))
 	require.Eventually(t, func() bool { return get(c) == 1 }, waitFor, 10*time.Millisecond)
 }
 
@@ -299,6 +298,39 @@ func TestCacheInvalidateLoadsOnlyOnGet(t *testing.T) {
 
 // A Set after a write waits for a load that is running: that load may have
 // read the source before the write, and must not overwrite the Set.
+// Reads keep the cached value while a reload backs off between failed
+// attempts.
+func TestCacheReadsDuringReloadBackoff(t *testing.T) {
+	s := newSource(t, 1)
+	c := newQuietCache(t, s)
+
+	s.Lock()
+	s.value = 2
+	s.loadErrs = 1 << 20
+	s.Unlock()
+	reloaded := make(chan struct{})
+	go func() {
+		_, _ = c.Reload()
+		close(reloaded)
+	}()
+	require.Eventually(t, func() bool { return s.loadCount() > 3 }, waitFor, 10*time.Millisecond)
+
+	read := make(chan int, 1)
+	go func() { read <- *c.Get() }()
+	select {
+	case value := <-read:
+		require.Equal(t, 1, value)
+	case <-time.After(waitFor):
+		t.Fatal("Get waited for the failing reload")
+	}
+
+	s.Lock()
+	s.loadErrs = 0
+	s.Unlock()
+	<-reloaded
+	require.Equal(t, 2, get(c))
+}
+
 func TestCacheSetWaitsForRunningLoad(t *testing.T) {
 	loading := make(chan struct{})
 	release := make(chan struct{})

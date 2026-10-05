@@ -56,9 +56,10 @@ type Cache[T any] struct {
 	watch  WatchFunc
 
 	// mu guards the fields below it. Get takes the read lock. Set,
-	// Invalidate and the loads take the write lock, and a load holds it until
-	// it stores its value: a Set or Invalidate after a write to the source
-	// then cannot be overwritten by a load that read the source before.
+	// Invalidate and the load attempts take the write lock, and an attempt
+	// holds it until it stores its value: a Set or Invalidate after a write to
+	// the source then cannot be overwritten by a load that read the source
+	// before.
 	mu          sync.RWMutex
 	value       *T
 	subscribers map[*Subscription[T]]struct{}
@@ -96,13 +97,7 @@ func (c *Cache[T]) Get() *T {
 	if value != nil {
 		return value
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.value != nil {
-		return c.value
-	}
-	value, _ = c.reload()
+	value, _ = c.Reload()
 	return value
 }
 
@@ -160,15 +155,10 @@ func (c *Cache[T]) Close() error {
 }
 
 // Reload loads the value and stores it, retrying until a load succeeds. It
-// only fails once the cache is closed.
+// only fails once the cache is closed. Each attempt holds the write lock while
+// it loads and stores the value, and the backoff between attempts does not:
+// reads keep the cached value meanwhile.
 func (c *Cache[T]) Reload() (*T, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.reload()
-}
-
-// reload is Reload, for callers holding mu.
-func (c *Cache[T]) reload() (*T, error) {
 	return backoff.RetryNotifyWithData(func() (*T, error) {
 		select {
 		case <-c.ctx.Done():
@@ -176,6 +166,8 @@ func (c *Cache[T]) reload() (*T, error) {
 		default:
 		}
 
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		loadCtx, cancel := context.WithTimeout(c.ctx, loadTimeout)
 		defer cancel()
 		value, err := c.load(loadCtx)
