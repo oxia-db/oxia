@@ -18,6 +18,8 @@ import (
 	"context"
 	"log/slog"
 
+	"go.uber.org/multierr"
+
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -34,6 +36,7 @@ func (*namespaceReconciler) Close() error { return nil }
 func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
 	metadata := r.runtime.Metadata()
 
+	var errs error
 	for _, namespace := range snapshot.GetNamespaces() {
 		// A configuration file doesn't go through the management API checks.
 		// Skip the namespace instead of failing, which would block the
@@ -49,7 +52,12 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		// A previous write may have committed before returning an error. The
 		// runtime also repairs missing controllers when the status already exists.
 		if err := r.runtime.CreateNamespace(namespace.GetName(), namespace); err != nil {
-			return err
+			slog.Error(
+				"Failed to create namespace",
+				slog.String("namespace", namespace.GetName()),
+				slog.Any("error", err),
+			)
+			errs = multierr.Append(errs, err)
 		}
 	}
 
@@ -60,5 +68,5 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		r.runtime.DeleteNamespace(name)
 	}
 
-	return nil
+	return errs
 }

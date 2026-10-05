@@ -19,8 +19,8 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -28,52 +28,69 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
-type recoveringNamespaceRuntime struct {
-	*failingNamespaceRuntime
+type watchedNamespaceRuntime struct {
+	*mockNamespaceRuntime
+	failures       map[string]error
+	attempts       chan string
 	recomputations int
 }
 
-func (r *recoveringNamespaceRuntime) CreateNamespace(name string, namespace *proto.Namespace) error {
-	err := r.failingNamespaceRuntime.CreateNamespace(name, namespace)
-	delete(r.failures, name)
-	return err
+func (r *watchedNamespaceRuntime) CreateNamespace(name string, namespace *proto.Namespace) error {
+	r.attempts <- name
+	if err := r.failures[name]; err != nil {
+		delete(r.failures, name)
+		return err
+	}
+	return r.mockNamespaceRuntime.CreateNamespace(name, namespace)
 }
 
-func (r *recoveringNamespaceRuntime) RecomputeAssignments() {
+func (r *watchedNamespaceRuntime) RecomputeAssignments() {
 	r.recomputations++
 }
 
-func TestClusterReconcilerRetriesNamespaceCreationErrors(t *testing.T) {
+type countingBackOff struct {
+	backoff.ZeroBackOff
+	resets int
+}
+
+func (b *countingBackOff) Reset() {
+	b.resets++
+}
+
+func TestClusterReconcilerReturnsReconcileErrorForRetry(t *testing.T) {
 	base := namespaceRuntimeForErrors("retry", "healthy")
-	runtime := &recoveringNamespaceRuntime{
-		failingNamespaceRuntime: &failingNamespaceRuntime{
-			Runtime:  base,
-			failures: map[string]error{"retry": errors.New("temporary namespace write failure")},
-		},
-	}
-	snapshot := &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{
+	base.metadata.config = &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{
 		base.metadata.configNS["healthy"], base.metadata.configNS["retry"],
 	}}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
+	runtime := &watchedNamespaceRuntime{
+		mockNamespaceRuntime: base,
+		failures:             map[string]error{"retry": errors.New("temporary namespace write failure")},
+		attempts:             make(chan string, 16),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
 	reconciler := &clusterReconciler{
 		ctx:         ctx,
+		ctxCancel:   cancel,
 		logger:      slog.Default(),
 		runtime:     runtime,
 		reconcilers: []Reconciler{&namespaceReconciler{runtime: runtime}},
 	}
 	config := cache.New(ctx, func(context.Context) (*provider.Versioned[*proto.ClusterConfiguration], error) {
-		return &provider.Versioned[*proto.ClusterConfiguration]{Value: snapshot}, nil
+		return &provider.Versioned[*proto.ClusterConfiguration]{Value: base.metadata.config}, nil
 	}, nil)
 	defer func() { require.NoError(t, config.Close()) }()
 	subscription := config.Subscribe()
+	bo := &countingBackOff{}
+	require.EqualError(t, reconciler.bgWatchClusterConfiguration(subscription, bo), "temporary namespace write failure")
+	require.Equal(t, []string{"healthy", "retry"}, []string{<-runtime.attempts, <-runtime.attempts})
+	require.Zero(t, bo.resets)
 
-	reconciler.reconcile0(snapshot, subscription)
-
-	require.NoError(t, ctx.Err())
-	require.Equal(t, []string{"healthy", "retry", "retry"}, runtime.attempted)
+	reconciler.wg.Go(func() { require.NoError(t, reconciler.bgWatchClusterConfiguration(subscription, bo)) })
+	require.Equal(t, []string{"healthy", "retry"}, []string{<-runtime.attempts, <-runtime.attempts})
+	require.NoError(t, reconciler.Close())
+	require.Equal(t, 2, runtime.recomputations)
+	require.Equal(t, 1, bo.resets)
 	require.Len(t, base.added, 2)
-	require.Equal(t, 1, runtime.recomputations)
 	for _, name := range []string{"retry", "healthy"} {
 		_, exists := base.metadata.GetNamespaceStatus(name)
 		require.True(t, exists)

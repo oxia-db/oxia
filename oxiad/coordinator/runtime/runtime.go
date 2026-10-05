@@ -248,8 +248,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
 		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status, nil)
 		if err != nil {
-			c.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
-			continue
+			return errors.Wrapf(err, "failed to select the ensemble of shard %d", shard.Id)
 		}
 
 		namespaceStatus.Shards[shard.Id] = &proto.ShardMetadata{
