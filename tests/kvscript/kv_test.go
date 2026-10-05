@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,7 +101,9 @@ func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType, topolo
 	options := []oxia.ClientOption{oxia.WithRequestTimeout(requestTimeout)}
 	if topology == replicatedTopology {
 		r.cluster, r.address = newScriptCluster(t, shards, sorting)
-		options = append(options, oxia.WithDialResolver(&seedResolver{addresses: r.cluster.seedAddresses()}))
+		resolver := &seedResolver{addresses: r.cluster.seedAddresses()}
+		r.cluster.updateSeeds = resolver.update
+		options = append(options, oxia.WithDialResolver(resolver))
 		r.address = "kvscript:///" + r.address
 	} else {
 		r.address = newStandalone(t, shards, sorting)
@@ -124,14 +127,43 @@ func newStandalone(t *testing.T, shards uint32, sorting proto.KeySortingType) st
 	return server.ServiceAddr()
 }
 
-// Seed discovery stays available when any one server is stopped. The SDK's
-// advertised per-shard leader addresses still control all KV operations.
-type seedResolver struct{ addresses []string }
+// The harness removes stopped seeds and only readmits fully initialized ones.
+// Advertised per-shard leader addresses still control all KV operations.
+type seedResolver struct {
+	mu        sync.Mutex
+	addresses []string
+	updaters  []oxia.AddressUpdater
+}
 
 func (*seedResolver) Scheme() string { return "kvscript" }
 
 func (r *seedResolver) Resolve(_ string, updater oxia.AddressUpdater) {
-	_ = updater(r.addresses)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.updaters = append(r.updaters, updater)
+	_ = updater(slices.Clone(r.addresses))
+}
+
+func (r *seedResolver) update(addresses []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Keep surviving seeds ahead of restarted ones so discovery need not leave
+	// its healthy connection just because an earlier seed has recovered.
+	next := make([]string, 0, len(addresses))
+	for _, address := range r.addresses {
+		if slices.Contains(addresses, address) {
+			next = append(next, address)
+		}
+	}
+	for _, address := range addresses {
+		if !slices.Contains(next, address) {
+			next = append(next, address)
+		}
+	}
+	r.addresses = next
+	for _, updater := range r.updaters {
+		_ = updater(slices.Clone(next))
+	}
 }
 
 type command struct {

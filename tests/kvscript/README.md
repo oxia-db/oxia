@@ -115,8 +115,10 @@ only a text file, without writing more Go test scaffolding.
   members to have a serving leader and followers ready at the current terms.
   An idle follower can remain fenced until its first append in a new term;
   `wait-replicated` additionally requires that append to have been accepted.
-  The existing
-  client and saved versions/records remain in use across both commands.
+  The test resolver removes a seed after stopping it and readmits it only
+  after restart readiness, keeping surviving seeds ahead of restored ones.
+  The existing client and saved versions/records remain in use across both
+  commands.
 - `wait-replicated` requires all three servers to be running. It snapshots each
   leader's quorum commit offset, sends an empty write to advertise that commit
   to followers, and waits for every replica's database-applied offset to reach
@@ -179,9 +181,13 @@ rejected writes/deletes and invalid UTF-8 deletion bounds.
 runtime and reconciler plus three data servers, each with separate public/internal
 gRPC endpoints and storage. All components run inside the same Go test process.
 The coordinator uses in-memory metadata; coordinator restart is outside this suite.
-Immutable seed discovery supplies all three server addresses through
-`WithDialResolver`, allowing the same client's assignment stream to reconnect
-when a seed server stops. Advertised leader addresses determine KV routing.
+The test resolver supplies ready server addresses through `WithDialResolver`,
+removing a node after its controlled stop and restoring it after readiness.
+This keeps the same client's assignment stream connected to available seeds
+while restarted servers initialize. Advertised leader addresses determine KV
+routing; the test resolver only controls discovery endpoints. The harness keeps
+live-address service discovery current; recovery through static or stale
+bootstrap addresses requires separate SDK tests.
 
 Files in `testdata/cluster/common` add leader failover, follower catch-up, CAS
 across elections, and deletion/recreation across elections, under both sortings

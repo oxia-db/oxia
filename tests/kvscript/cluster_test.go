@@ -49,6 +49,9 @@ type scriptCluster struct {
 	metadata coordmetadata.Metadata
 	shards   uint32
 	sorting  proto.KeySorting
+	// Discovery excludes a stopped node after close and includes it only
+	// after its restart and assignment streams are ready.
+	updateSeeds func([]string)
 }
 
 type scriptNode struct {
@@ -126,6 +129,16 @@ func (cluster *scriptCluster) seedAddresses() []string {
 	addresses := make([]string, 0, len(cluster.nodes))
 	for _, node := range cluster.nodes {
 		addresses = append(addresses, node.identity.Public)
+	}
+	return addresses
+}
+
+func (cluster *scriptCluster) liveSeeds() []string {
+	addresses := make([]string, 0, len(cluster.nodes))
+	for _, node := range cluster.nodes {
+		if node.server != nil {
+			addresses = append(addresses, node.identity.Public)
+		}
 	}
 	return addresses
 }
@@ -343,6 +356,9 @@ func (cluster *scriptCluster) stop(c command, role, key string, partition *strin
 	node := cluster.node(name)
 	require.NoError(c.t, node.server.Close())
 	node.server = nil
+	if cluster.updateSeeds != nil {
+		cluster.updateSeeds(cluster.liveSeeds())
+	}
 	cluster.wait(c, "RF3 availability after node stop", func() string {
 		if reason := cluster.health(c.t, 2); reason != "" {
 			return reason
@@ -399,6 +415,9 @@ func (cluster *scriptCluster) restart(c command, name string) {
 		return cluster.health(c.t, 3)
 	})
 	cluster.waitAssignments(c)
+	if cluster.updateSeeds != nil {
+		cluster.updateSeeds(cluster.liveSeeds())
+	}
 	c.t.Logf("restarted %s with its original storage and endpoints", name)
 }
 
