@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
@@ -564,11 +566,18 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *runtime) computeNewAssignments() {
+	_ = backoff.RetryNotify(c.computeNewAssignments0, oxiatime.NewBackOff(c.ctx), func(err error, retryAfter time.Duration) {
+		c.logger.Warn("Failed to compute the shard assignments, retrying later",
+			slog.Any("error", err),
+			slog.Duration("retry-after", retryAfter))
+	})
+}
+
+func (c *runtime) computeNewAssignments0() error {
 	config := c.metadata.GetConfig().UnsafeBorrow()
 	status, err := c.metadata.ListNamespaceStatus()
 	if err != nil {
-		c.logger.Warn("Failed to compute the shard assignments", slog.Any("error", err))
-		return
+		return err
 	}
 	namespaces := c.metadata.ListNamespace()
 	assignments := &proto.ShardAssignments{
@@ -617,6 +626,7 @@ func (c *runtime) computeNewAssignments() {
 	}
 
 	c.assignmentsWatch.Publish(assignments)
+	return nil
 }
 
 func mergedAuthorities(status map[string]commonobject.Borrowed[*proto.NamespaceStatus], servers []*proto.DataServerIdentity, extraAuthorities []string) []string {

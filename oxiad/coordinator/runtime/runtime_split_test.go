@@ -211,6 +211,7 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 	r := &splitTestRuntime{rpc: mockutils.NewRpcProvider()}
 	r.runtime = &runtime{
 		logger: slog.With(slog.String("component", "coordinator")),
+		ctx:    t.Context(),
 		metadata: &recomputingMetadata{
 			Metadata: metadata,
 			afterWrite: func() {
@@ -528,6 +529,7 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *racingMetadata) {
 	racing := &racingMetadata{Metadata: metadata, beforeWrite: func() {}}
 	r := &runtime{
 		logger:           slog.With(slog.String("component", "coordinator")),
+		ctx:              t.Context(),
 		metadata:         racing,
 		rpc:              mockutils.NewRpcProvider(),
 		ensembleSelector: ensemble.NewSelector(),
