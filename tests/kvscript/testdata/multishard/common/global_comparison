@@ -1,0 +1,87 @@
+# Candidates occupy three shards; the fourth shard is empty.
+# d routes to a shard holding g, and f routes to the empty shard.
+# Neither query may settle for its local candidate or a local missing result.
+
+put key=g value=seven
+----
+ok key="g" modifications=0
+
+put key=c value=three
+----
+ok key="c" modifications=0
+
+put key=a value=one
+----
+ok key="a" modifications=0
+
+put key=e value=five
+----
+ok key="e" modifications=0
+
+placement keys=(a,c,e,g) min-shards=3
+----
+ok
+
+get key=c comparison=equal
+----
+key="c" value="three" modifications=0
+
+get key=c comparison=floor
+----
+key="c" value="three" modifications=0
+
+get key=c comparison=ceiling
+----
+key="c" value="three" modifications=0
+
+get key=c comparison=lower
+----
+key="a" value="one" modifications=0
+
+get key=c comparison=higher
+----
+key="e" value="five" modifications=0
+
+get key=d comparison=equal
+----
+error: key not found
+
+get key=d comparison=floor
+----
+key="c" value="three" modifications=0
+
+get key=d comparison=ceiling
+----
+key="e" value="five" modifications=0
+
+get key=f comparison=lower
+----
+key="e" value="five" modifications=0
+
+get key=f comparison=higher
+----
+key="g" value="seven" modifications=0
+
+get key=a comparison=lower
+----
+error: key not found
+
+get key=g comparison=higher
+----
+error: key not found
+
+delete key=e
+----
+ok
+
+assert-record key=e missing
+----
+ok
+
+get key=d comparison=ceiling
+----
+key="g" value="seven" modifications=0
+
+get key=f comparison=floor
+----
+key="c" value="three" modifications=0

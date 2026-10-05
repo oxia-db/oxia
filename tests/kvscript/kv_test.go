@@ -15,6 +15,7 @@
 package kvscript
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,7 +42,11 @@ func TestKVScripts(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/shards-%d", sorting, shards), func(t *testing.T) {
 				keySorting, err := proto.ParseKeySortingType(sorting)
 				require.NoError(t, err)
-				for _, dir := range []string{"common", sorting} {
+				dirs := []string{"common", sorting}
+				if shards > 1 {
+					dirs = append(dirs, filepath.Join("multishard", "common"), filepath.Join("multishard", sorting))
+				}
+				for _, dir := range dirs {
 					datadriven.Walk(t, filepath.Join("testdata", dir), func(t *testing.T, path string) {
 						t.Helper()
 						runner := newRunner(t, shards, keySorting)
@@ -55,7 +60,9 @@ func TestKVScripts(t *testing.T) {
 
 type runner struct {
 	client   oxia.SyncClient
+	address  string
 	versions map[string]int64
+	records  map[string]oxia.GetResult
 }
 
 func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType) *runner {
@@ -70,7 +77,10 @@ func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType) *runne
 	client, err := oxia.NewSyncClient(server.ServiceAddr(), oxia.WithRequestTimeout(requestTimeout))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	return &runner{client: client, versions: make(map[string]int64)}
+	return &runner{
+		client: client, address: server.ServiceAddr(),
+		versions: make(map[string]int64), records: make(map[string]oxia.GetResult),
+	}
 }
 
 type command struct {
@@ -97,6 +107,10 @@ func (r *runner) run(t *testing.T, data *datadriven.TestData) string {
 		return r.list(c)
 	case "delete-range":
 		return r.deleteRange(c)
+	case "placement":
+		return r.placement(c)
+	case "assert-record":
+		return r.assertRecord(c)
 	default:
 		t.Fatalf("%s: unknown command %q", data.Pos, data.Cmd)
 		return ""
@@ -114,9 +128,14 @@ func (c command) checkArgs(allowed ...string) {
 			c.t.Fatalf("%s: unknown or duplicate argument %q", c.data.Pos, arg.Key)
 		}
 		seen[arg.Key] = true
-		if arg.Key == "create-only" || arg.Key == "unordered" {
+		switch arg.Key {
+		case "create-only", "unordered", "require-override", "missing":
 			arg.ExpectNumVals(c.t, 0)
-		} else {
+		case "keys":
+			if len(arg.Vals) == 0 {
+				c.t.Fatalf("%s: keys requires at least one value", c.data.Pos)
+			}
+		default:
 			arg.ExpectNumVals(c.t, 1)
 		}
 	}
@@ -126,6 +145,26 @@ func (c command) arg(name string) string {
 	c.t.Helper()
 	var value string
 	c.data.ScanArgs(c.t, name, &value)
+	return c.decodeArg(name, value)
+}
+
+func (c command) args(name string) []string {
+	c.t.Helper()
+	for _, arg := range c.data.CmdArgs {
+		if arg.Key == name {
+			values := make([]string, 0, len(arg.Vals))
+			for _, value := range arg.Vals {
+				values = append(values, c.decodeArg(name, value))
+			}
+			return values
+		}
+	}
+	c.t.Fatalf("%s: missing argument %q", c.data.Pos, name)
+	return nil
+}
+
+func (c command) decodeArg(name, value string) string {
+	c.t.Helper()
 	if strings.HasPrefix(value, "\"") {
 		unquoted, err := strconv.Unquote(value)
 		if err != nil {
@@ -195,7 +234,7 @@ func (r *runner) put(c command) string {
 
 func (r *runner) get(c command) string {
 	c.t.Helper()
-	c.checkArgs("key", "partition", "comparison", "save")
+	c.checkArgs("key", "partition", "comparison", "save", "save-record")
 	key := c.arg("key")
 	var options []oxia.GetOption
 	if partition := c.partition(); partition != nil {
@@ -218,7 +257,47 @@ func (r *runner) get(c command) string {
 		return c.domainError(err)
 	}
 	r.saveVersion(c, version)
+	if c.data.HasArg("save-record") {
+		r.records[c.arg("save-record")] = oxia.GetResult{Key: storedKey, Value: bytes.Clone(value), Version: version}
+	}
 	return formatRecord(storedKey, value, version)
+}
+
+func (r *runner) assertRecord(c command) string {
+	c.t.Helper()
+	c.checkArgs("key", "partition", "unchanged", "missing")
+	if c.data.HasArg("missing") {
+		if c.data.HasArg("unchanged") {
+			c.t.Fatalf("%s: missing and unchanged cannot be combined", c.data.Pos)
+		}
+		result := r.readRecord(c)
+		require.ErrorIs(c.t, result.Err, oxia.ErrKeyNotFound, "%s: record must be missing", c.data.Pos)
+		return "ok\n"
+	}
+	alias, ok := strings.CutPrefix(c.arg("unchanged"), "@")
+	if !ok {
+		c.t.Fatalf("%s: unchanged must reference a saved record with @name", c.data.Pos)
+	}
+	saved, exists := r.records[alias]
+	if !exists {
+		c.t.Fatalf("%s: unknown saved record %q", c.data.Pos, alias)
+	}
+	result := r.readRecord(c)
+	require.NoError(c.t, result.Err, "%s: cannot read record for unchanged assertion", c.data.Pos)
+	require.Equal(c.t, saved.Key, result.Key, "%s: record key changed", c.data.Pos)
+	require.Equal(c.t, saved.Value, result.Value, "%s: record value changed", c.data.Pos)
+	require.Equal(c.t, saved.Version, result.Version, "%s: record version metadata changed", c.data.Pos)
+	return "ok\n"
+}
+
+func (r *runner) readRecord(c command) oxia.GetResult {
+	c.t.Helper()
+	var options []oxia.GetOption
+	if partition := c.partition(); partition != nil {
+		options = append(options, partition)
+	}
+	key, value, version, err := r.client.Get(c.ctx, c.arg("key"), options...)
+	return oxia.GetResult{Key: key, Value: value, Version: version, Err: err}
 }
 
 func (r *runner) delete(c command) string {
@@ -240,14 +319,14 @@ func (r *runner) delete(c command) string {
 
 func (r *runner) scan(c command) string {
 	c.t.Helper()
-	c.checkArgs("start", "end", "partition")
+	c.checkArgs("start", "end", "partition", "unordered")
 	start, end := c.arg("start"), c.arg("end")
 	var options []oxia.RangeScanOption
 	if partition := c.partition(); partition != nil {
 		options = append(options, partition)
 	}
 	results := r.client.RangeScan(c.ctx, start, end, options...)
-	var output strings.Builder
+	var records []string
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -257,12 +336,15 @@ func (r *runner) scan(c command) string {
 				if err := c.ctx.Err(); err != nil {
 					c.t.Fatalf("%s: range did not complete: %v", c.data.Pos, err)
 				}
-				return nonemptyOutput(output.String())
+				if c.data.HasArg("unordered") {
+					slices.Sort(records)
+				}
+				return nonemptyOutput(strings.Join(records, ""))
 			}
 			if result.Err != nil {
 				return c.domainError(result.Err)
 			}
-			output.WriteString(formatRecord(result.Key, result.Value, result.Version))
+			records = append(records, formatRecord(result.Key, result.Value, result.Version))
 		}
 	}
 }

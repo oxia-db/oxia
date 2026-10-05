@@ -1,0 +1,128 @@
+# Leading, trailing, and repeated separators are ordinary bytes in natural order.
+# These exact keys occupy all four shards; expected comparison results are handwritten.
+
+put key=/ab value=neighbor
+----
+ok key="/ab" modifications=0
+
+put key=/a/b value=child save=child
+----
+ok key="/a/b" modifications=0
+
+put key=/a value=parent save=parent
+----
+ok key="/a" modifications=0
+
+put key=/a//b value=empty-component
+----
+ok key="/a//b" modifications=0
+
+put key=/a0 value=adjacent
+----
+ok key="/a0" modifications=0
+
+put key=/a/ value=trailing
+----
+ok key="/a/" modifications=0
+
+placement keys=(/a,/a/,/a//b,/a/b,/a0,/ab) min-shards=4
+----
+ok
+
+get key=/a save-record=parent
+----
+key="/a" value="parent" modifications=0
+
+get key=/a/b save-record=child
+----
+key="/a/b" value="child" modifications=0
+
+get key=/a/ comparison=higher
+----
+key="/a//b" value="empty-component" modifications=0
+
+get key=/a/b comparison=higher
+----
+key="/a0" value="adjacent" modifications=0
+
+get key=/a0 comparison=lower
+----
+key="/a/b" value="child" modifications=0
+
+range start=/a end=/a0 unordered
+----
+key="/a" value="parent" modifications=0
+key="/a/" value="trailing" modifications=0
+key="/a//b" value="empty-component" modifications=0
+key="/a/b" value="child" modifications=0
+
+list start=/a end=/a0 unordered
+----
+key="/a"
+key="/a/"
+key="/a//b"
+key="/a/b"
+
+range start=/a/ end=/a/b unordered
+----
+key="/a/" value="trailing" modifications=0
+key="/a//b" value="empty-component" modifications=0
+
+delete-range start=/a/ end=/a/b
+----
+ok
+
+get key=/a/
+----
+error: key not found
+
+get key=/a//b
+----
+error: key not found
+
+assert-record key=/a/ missing
+----
+ok
+
+assert-record key=/a//b missing
+----
+ok
+
+assert-record key=/a unchanged=@parent
+----
+ok
+
+assert-record key=/a/b unchanged=@child
+----
+ok
+
+get key=/a/ comparison=floor
+----
+key="/a" value="parent" modifications=0
+
+get key=/a/ comparison=ceiling
+----
+key="/a/b" value="child" modifications=0
+
+range start=/a end="" unordered
+----
+key="/a" value="parent" modifications=0
+key="/a/b" value="child" modifications=0
+key="/a0" value="adjacent" modifications=0
+key="/ab" value="neighbor" modifications=0
+
+delete key=/a expected-version=@parent
+----
+ok
+
+assert-record key=/a missing
+----
+ok
+
+assert-record key=/a/b unchanged=@child
+----
+ok
+
+put key=/a/b value=child-updated expected-version=@child
+----
+ok key="/a/b" modifications=1

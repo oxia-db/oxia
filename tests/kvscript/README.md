@@ -63,11 +63,13 @@ only a text file, without writing more Go test scaffolding.
 | Command | Required arguments | Optional arguments | API |
 | --- | --- | --- | --- |
 | `put` | `key`, `value` | `create-only`, `expected-version`, `save`, `partition` | `Put` |
-| `get` | `key` | `comparison`, `save`, `partition` | `Get` |
+| `get` | `key` | `comparison`, `save`, `save-record`, `partition` | `Get` |
 | `delete` | `key` | `expected-version`, `partition` | `Delete` |
-| `range` | `start`, `end` | `partition` | `RangeScan` |
+| `range` | `start`, `end` | `partition`, `unordered` | `RangeScan` |
 | `list` | `start`, `end` | `partition`, `unordered` | `List` |
 | `delete-range` | `start`, `end` | `partition` | `DeleteRange` |
+| `placement` | `keys` | `partition`, `min-shards`, `require-override` | Independent shard reads |
+| `assert-record` | `key`, either `unchanged` or `missing` | `partition` | `Get` and record assertion |
 
 - `create-only` is a bare flag, mapped to `ExpectedRecordNotExists()`.
 - `save=name` stores the successful put/get result's version ID. Use
@@ -75,6 +77,12 @@ only a text file, without writing more Go test scaffolding.
   is also accepted, but aliases avoid assumptions about assigned version IDs.
   Saving to the same name replaces its previous value; failed operations do not
   update aliases.
+- `get ... save-record=name` saves the complete returned record, including its
+  value and all version metadata. `assert-record key=a unchanged=@name` reads it
+  again and requires every field to match. Record aliases are separate from
+  version aliases, and neither absolute IDs nor timestamps enter expected output.
+  `assert-record key=a missing` instead requires a not-found result; it cannot be
+  combined with `unchanged`.
 - `comparison` accepts `equal` (the default), `floor`, `ceiling`, `lower`, and
   `higher`.
 - `partition` maps to `PartitionKey()`. Supply it consistently on writes and
@@ -85,6 +93,14 @@ only a text file, without writing more Go test scaffolding.
 - `list ... unordered` checks the returned key set by sorting it in byte order
   before comparison. Use this for multi-shard lists, whose order is not stable.
   Without this flag, list output is compared in the original returned order.
+- `range ... unordered` sorts the formatted record lines before comparison,
+  retaining duplicates. This checks complete results without requiring an order.
+- `placement keys=(a,c,e) min-shards=2` reads those keys from every assigned shard
+  using an independent gRPC connection and explicit shard IDs. Every key must
+  exist on exactly one shard and match the advertised XXHASH3 routing. The
+  optional `partition` checks the overridden route, including an empty string.
+  `require-override` requires `partition` and verifies that at least one key was
+  placed differently from its default route. Shard IDs appear only in diagnostics.
 
 Put results include the returned key and modification count. Get/range results
 also include the quoted value. This preserves spaces and empty values in the
@@ -92,13 +108,14 @@ assertions. List emits one quoted key per line; an empty range/list emits
 `(empty)`. Delete operations emit `ok` on success.
 
 The adapter omits timestamps, session IDs, and absolute version IDs from output,
-so fixtures stay deterministic. Range output keeps the API's returned order;
-list output does too unless `unordered` is explicitly requested. Known domain
+so fixtures stay deterministic. Range and list output keep the API's returned
+order unless `unordered` is explicitly requested. Known domain
 errors (`key not found`, `unexpected version id`, `invalid options`) have stable
 error output; unexpected transport failures
 and timeouts fail the test even when rewriting expected results. Malformed
 commands, duplicate/unsupported arguments, and unknown version aliases also fail.
-Each request has a five-second deadline.
+Placement failures and unchanged-record assertion failures are fatal even with
+`-rewrite`. Each command has a five-second deadline.
 
 ## Running and extending
 
@@ -122,10 +139,20 @@ queries, range boundaries, explicit partition routing, string/binary values,
 and invalid UTF-8 keys. Sorting fixtures
 check the differences between the two key orders, including merged shard reads.
 
+Files in `testdata/multishard/common` and `testdata/multishard/<sorting>` run only
+with four shards. They verify actual shard placement before checking default
+and partition routing, empty/colliding/wrong partition keys, comparison candidates
+on different shards, query completeness, and global or partition range deletion.
+The sorting-specific cases cover leading, trailing and repeated slashes and path
+depth boundaries. Common failure scenarios compare complete saved records after
+rejected writes/deletes and invalid UTF-8 deletion bounds.
+
 The configurations use one standalone server with a replication factor of one.
 Four shards exercise client routing and aggregation within that server; they do
-not cover multi-node replication or failover. The matrix currently does not
-assert that a fixture's records occupy multiple distinct shards. Cross-shard
+not cover multi-node replication or failover. Multishard fixtures assert their
+placement prerequisites rather than assuming that four configured shards are
+enough. The probe observes applied records; it does not establish crash durability.
+Cross-shard
 operations should not be interpreted as a global atomic transaction or snapshot.
 
 Add a file under the appropriate directory to introduce another scenario. On a
@@ -203,9 +230,6 @@ The key adaptations are:
   Oxia version aliases. Multi-shard lists use explicit `unordered` assertions.
 
 ## Follow-on work
-
-Multi-shard scenarios can be strengthened by verifying that the selected keys
-occupy distinct shards and that partition overrides change the default routing.
 
 The runner operates on `SyncClient`, so the same command vocabulary can be
 connected to a coordinated cluster by changing the setup. Useful additions are
