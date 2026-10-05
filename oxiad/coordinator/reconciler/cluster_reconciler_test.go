@@ -73,7 +73,7 @@ func TestClusterReconcilerRetriesNamespaceCreationErrors(t *testing.T) {
 	require.NoError(t, ctx.Err())
 	require.Equal(t, []string{"healthy", "retry", "retry"}, runtime.attempted)
 	require.Len(t, base.added, 2)
-	require.Equal(t, 1, runtime.recomputations)
+	require.Equal(t, 2, runtime.recomputations)
 	for _, name := range []string{"retry", "healthy"} {
 		_, exists := base.metadata.GetNamespaceStatus(name)
 		require.True(t, exists)

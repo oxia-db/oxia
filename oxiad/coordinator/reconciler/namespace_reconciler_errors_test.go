@@ -92,23 +92,22 @@ func TestNamespaceReconcilerReturnsCreationError(t *testing.T) {
 	}}
 
 	err := reconciler.Reconcile(t.Context(), snapshot)
-	require.Same(t, firstErr, err)
-	require.NotErrorIs(t, err, secondErr)
-	require.Equal(t, []string{"healthy", "first"}, runtime.attempted)
+	require.ErrorIs(t, err, firstErr)
+	require.ErrorIs(t, err, secondErr)
+	require.Equal(t, []string{"healthy", "first", "second"}, runtime.attempted)
 	require.Len(t, base.added, 1)
 	_, exists := base.metadata.GetNamespaceStatus("healthy")
 	require.True(t, exists)
 
-	// Each retry skips namespaces already created and stops at the next error.
 	delete(runtime.failures, "first")
 	err = reconciler.Reconcile(t.Context(), snapshot)
 	require.Same(t, secondErr, err)
-	require.Equal(t, []string{"healthy", "first", "first", "second"}, runtime.attempted)
+	require.Equal(t, []string{"healthy", "first", "second", "first", "second"}, runtime.attempted)
 	require.Len(t, base.added, 2)
 
 	delete(runtime.failures, "second")
 	require.NoError(t, reconciler.Reconcile(t.Context(), snapshot))
-	require.Equal(t, []string{"healthy", "first", "first", "second", "second"}, runtime.attempted)
+	require.Equal(t, []string{"healthy", "first", "second", "first", "second", "second"}, runtime.attempted)
 	require.Len(t, base.added, 3)
 	for _, name := range []string{"first", "second", "healthy"} {
 		_, exists := base.metadata.GetNamespaceStatus(name)
@@ -131,12 +130,12 @@ func TestNamespaceReconcilerReturnsAlreadyExistsForRetry(t *testing.T) {
 
 	reconciler := &namespaceReconciler{runtime: runtime}
 	require.Same(t, createErr, reconciler.Reconcile(t.Context(), snapshot))
-	require.Equal(t, []string{"existing"}, runtime.attempted)
-	require.Empty(t, base.added)
+	require.Equal(t, []string{"existing", "healthy"}, runtime.attempted)
+	require.Len(t, base.added, 1)
 
 	delete(runtime.failures, "existing")
 	require.NoError(t, reconciler.Reconcile(t.Context(), snapshot))
-	require.Equal(t, []string{"existing", "existing", "healthy"}, runtime.attempted)
+	require.Equal(t, []string{"existing", "healthy", "existing"}, runtime.attempted)
 	require.Len(t, base.added, 2)
 	_, exists := base.metadata.GetNamespaceStatus("healthy")
 	require.True(t, exists)

@@ -60,13 +60,14 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 	// The subscription signals the changes, and GetConfig reads the
 	// configuration, retrying its load if needed.
 	subscription := r.runtime.Metadata().SubscribeConfig()
-	r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), subscription)
-
 	r.wg.Go(func() {
 		defer subscription.Close()
 		process.DoWithLabels(reconcilerCtx, map[string]string{
 			"component": "coordinator-reconciler",
-		}, func() { r.bgWatchClusterConfiguration(subscription) })
+		}, func() {
+			r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), subscription)
+			r.bgWatchClusterConfiguration(subscription)
+		})
 	})
 
 	return r
@@ -84,13 +85,14 @@ func (r *clusterReconciler) Close() error {
 }
 
 func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
+	var errs error
 	for _, reconciler := range r.reconcilers {
 		if err := reconciler.Reconcile(r.ctx, snapshot); err != nil {
-			return err
+			errs = multierr.Append(errs, err)
 		}
 	}
 	r.runtime.RecomputeAssignments()
-	return nil
+	return errs
 }
 
 func (r *clusterReconciler) bgWatchClusterConfiguration(subscription *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]]) {
