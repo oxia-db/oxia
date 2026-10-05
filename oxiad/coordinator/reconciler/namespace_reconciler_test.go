@@ -93,7 +93,7 @@ func (*mockNamespaceMetadata) Close() error { return nil }
 
 func (m *mockNamespaceMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
-func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) (int64, error) {
+func (m *mockNamespaceMetadata) AllocateShardIDs(count uint32) (int64, error) {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	base := cloned.ShardIdGenerator
 	cloned.ShardIdGenerator += int64(count)
@@ -298,7 +298,7 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	if _, exists := m.metadata.GetNamespaceStatus(name); exists {
 		return m.initShardControllers(name)
 	}
-	baseShardID, err := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	baseShardID, err := m.metadata.AllocateShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
 		return err
 	}

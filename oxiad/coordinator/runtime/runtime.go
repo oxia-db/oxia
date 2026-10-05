@@ -234,7 +234,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 		return c.initShardControllers(name, namespaceConfig)
 	}
 
-	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	baseShardID, err := c.metadata.AllocateShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
 		return err
 	}
@@ -705,9 +705,9 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Allocate child shard IDs
-	leftChildId, err := c.metadata.ReserveShardIDs(2)
+	leftChildId, err := c.metadata.AllocateShardIDs(2)
 	if err != nil {
-		return 0, 0, errors.Wrap(err, "failed to reserve the child shard ids")
+		return 0, 0, errors.Wrap(err, "failed to allocate the child shard ids")
 	}
 	rightChildId := leftChildId + 1
 	// Select ensembles for children.

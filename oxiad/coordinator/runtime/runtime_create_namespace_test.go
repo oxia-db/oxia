@@ -59,14 +59,14 @@ func (m *namespaceReadHookMetadata) GetNamespaceStatus(name string) (commonobjec
 // reporting an ambiguous write error, or a competing namespace creation.
 type committingNamespaceMetadata struct {
 	coordmetadata.Metadata
-	err          error
-	saved        *proto.NamespaceStatus
-	reservations int
+	err         error
+	saved       *proto.NamespaceStatus
+	allocations int
 }
 
-func (m *committingNamespaceMetadata) ReserveShardIDs(count uint32) (int64, error) {
-	m.reservations++
-	return m.Metadata.ReserveShardIDs(count)
+func (m *committingNamespaceMetadata) AllocateShardIDs(count uint32) (int64, error) {
+	m.allocations++
+	return m.Metadata.AllocateShardIDs(count)
 }
 
 func (m *committingNamespaceMetadata) CreateNamespaceStatus(name string, status *proto.NamespaceStatus) error {
@@ -114,7 +114,7 @@ func TestCreateNamespaceRepairsCommittedWrite(t *testing.T) {
 	saved, exists := metadata.GetNamespaceStatus(namespace.Name)
 	require.True(t, exists)
 	require.Len(t, saved.UnsafeBorrow().Shards, 2)
-	require.Equal(t, 1, metadata.reservations)
+	require.Equal(t, 1, metadata.allocations)
 
 	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
@@ -144,7 +144,7 @@ func TestCreateNamespaceRepairsCommittedWrite(t *testing.T) {
 	require.Len(t, c.shardControllers, 2)
 	require.NotSame(t, controllers[0], c.shardControllers[0])
 	require.Same(t, controllers[1], c.shardControllers[1])
-	require.Equal(t, 1, metadata.reservations)
+	require.Equal(t, 1, metadata.allocations)
 }
 
 func TestCreateNamespaceRepairsAlreadyExistsOnRetry(t *testing.T) {
@@ -164,7 +164,7 @@ func TestCreateNamespaceRepairsAlreadyExistsOnRetry(t *testing.T) {
 
 	require.Same(t, metadata.err, c.CreateNamespace(namespace.Name, namespace))
 	require.Empty(t, c.shardControllers)
-	require.Equal(t, 1, metadata.reservations)
+	require.Equal(t, 1, metadata.allocations)
 
 	require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 	c.RLock()
@@ -172,7 +172,7 @@ func TestCreateNamespaceRepairsAlreadyExistsOnRetry(t *testing.T) {
 	require.Len(t, c.shardControllers, 1)
 	require.Contains(t, c.shardControllers, int64(42))
 	require.NotContains(t, c.shardControllers, int64(0))
-	require.Equal(t, 1, metadata.reservations)
+	require.Equal(t, 1, metadata.allocations)
 }
 
 func TestCreateNamespaceDoesNotReviveDeletedShards(t *testing.T) {
