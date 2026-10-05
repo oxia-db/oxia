@@ -360,3 +360,26 @@ func TestMetadataTakeoverFailsWhenRecoveryFails(t *testing.T) {
 	_, err := metadata.WaitToBecomeLeader()
 	require.ErrorContains(t, err, "store unavailable")
 }
+
+// loadFailingConfigProvider fails every load of the configuration.
+type loadFailingConfigProvider struct {
+	provider.Provider[*commonproto.ClusterConfiguration]
+}
+
+func (loadFailingConfigProvider) Load() (*provider.Versioned[*commonproto.ClusterConfiguration], error) {
+	return nil, errors.New("configuration unavailable")
+}
+
+// GetSelf reports a configuration that cannot be loaded, without waiting for
+// it.
+func TestMetadataGetSelfReturnsLoadError(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "")
+	configProvider := loadFailingConfigProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, ""),
+	}
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "coordinator")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.GetSelf()
+	require.ErrorContains(t, err, "configuration unavailable")
+}
