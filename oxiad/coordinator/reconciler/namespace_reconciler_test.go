@@ -86,6 +86,7 @@ func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
 
 type mockNamespaceMetadata struct {
 	status   *proto.ClusterStatus
+	config   *proto.ClusterConfiguration
 	configNS map[string]*proto.Namespace
 }
 
@@ -207,8 +208,8 @@ func (m *mockNamespaceMetadata) ListNamespace() map[string]commonobject.Borrowed
 	return namespaces
 }
 
-func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
-	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
+func (m *mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
+	return commonobject.Borrow(m.config)
 }
 
 // SubscribeConfig is not used by these tests.

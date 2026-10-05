@@ -65,8 +65,14 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 		process.DoWithLabels(reconcilerCtx, map[string]string{
 			"component": "coordinator-reconciler",
 		}, func() {
-			r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), subscription)
-			r.bgWatchClusterConfiguration(subscription)
+			_ = backoff.RetryNotify(func() error {
+				return r.bgWatchClusterConfiguration(subscription)
+			}, oxiatime.NewBackOffWithInitialInterval(reconcilerCtx, time.Second), func(err error, retryAfter time.Duration) {
+				r.logger.Warn("failed to reconcile config update",
+					slog.Any("error", err),
+					slog.Duration("retry-after", retryAfter))
+			})
+			r.logger.Info("Cluster configuration watcher closed")
 		})
 	})
 
@@ -95,34 +101,18 @@ func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.Cluster
 	return errs
 }
 
-func (r *clusterReconciler) bgWatchClusterConfiguration(subscription *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]]) {
+func (r *clusterReconciler) bgWatchClusterConfiguration(subscription *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]]) error {
 	for {
+		if err := r.Reconcile(r.ctx, r.runtime.Metadata().GetConfig().UnsafeBorrow()); err != nil {
+			return err
+		}
 		select {
 		case <-r.ctx.Done():
-			return
+			return nil
 		case _, ok := <-subscription.Changed():
 			if !ok {
-				return
+				return nil
 			}
-			r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), subscription)
 		}
 	}
-}
-
-func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, subscription *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]]) {
-	_ = backoff.RetryNotify(func() error {
-		// update the snapshot when we are retrying
-		select {
-		case _, ok := <-subscription.Changed():
-			if ok {
-				snapshot = r.runtime.Metadata().GetConfig().UnsafeBorrow()
-			}
-		default:
-		}
-		return r.Reconcile(r.ctx, snapshot)
-	}, oxiatime.NewBackOffWithInitialInterval(r.ctx, time.Second), func(err error, retryAfter time.Duration) {
-		r.logger.Warn("failed to reconcile config update",
-			slog.Any("error", err),
-			slog.Duration("retry-after", retryAfter))
-	})
 }
