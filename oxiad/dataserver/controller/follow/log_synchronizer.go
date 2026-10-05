@@ -76,6 +76,11 @@ type LogSynchronizer struct {
 	reAckMutex   sync.Mutex
 	reAckOffsets []int64
 
+	// The entries appended to the wal, which the state applier applies
+	// without reading them back. Only while the stream is open: once closed,
+	// the wal entries can get truncated, or replaced by a snapshot.
+	appended *appendedEntries
+
 	writeLatencyHisto metric.LatencyHistogram
 }
 
@@ -99,6 +104,9 @@ func (ls *LogSynchronizer) Close() error {
 	channel.PushNoBlock(ls.finish, context.Canceled)
 
 	ls.waitGroup.Wait()
+	// Free the entries the state applier didn't take: it reads them from the
+	// wal once the stream is closed
+	ls.appended.clear()
 	return nil
 }
 
@@ -200,9 +208,13 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 	// Append the entry asynchronously, passing the previous CRC from the leader.
 	// When the WAL is empty (e.g. after snapshot install), the CRC seeds the chain
 	// so that the follower's CRC matches the leader's.
-	if err := ls.wal.AppendAsyncWithPreviousCrc(req.GetEntry(), req.PreviousEntryCrc); err != nil {
+	entryCrc, err := ls.wal.AppendAsyncWithPreviousCrc(req.GetEntry(), req.PreviousEntryCrc)
+	if err != nil {
 		return err
 	}
+	// The entry is the stream's own: the gRPC codec decodes every message
+	// into new buffers
+	ls.appended.add(req.Entry, entryCrc)
 
 	ls.advertisedCommitOffset.Store(req.CommitOffset)
 	ls.lastAppendedOffset.Store(req.Entry.Offset)
@@ -291,6 +303,7 @@ func NewLogSynchronizer(params LogSynchronizerParams) *LogSynchronizer {
 		wal:                    params.Wal,
 		advertisedCommitOffset: params.AdvertisedCommitOffset,
 		lastAppendedOffset:     params.LastAppendedOffset,
+		appended:               newAppendedEntries(),
 		writeLatencyHisto:      params.WriteLatencyHisto,
 		finish:                 make(chan error, 1),
 	}

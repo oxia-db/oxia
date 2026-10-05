@@ -629,11 +629,12 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	assert.NoError(t, w2.Clear())
 
 	// First entry after clear uses AppendAsyncWithPreviousCrc to seed the CRC chain
-	assert.NoError(t, w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+	crcAt10, err := w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
 		Term:   1,
 		Offset: 10,
 		Value:  []byte("entry-10"),
-	}, &crcAt9))
+	}, &crcAt9)
+	assert.NoError(t, err)
 	assert.NoError(t, w2.Sync(context.Background()))
 
 	for i := 11; i < 20; i++ {
@@ -650,6 +651,9 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	// the WAL that was cleared+reseeded at offset 9.
 	assert.Equal(t, expectedCrc, actualCrc,
 		"CRC chain must match after clear+AppendAsyncWithPreviousCrc")
+	// The append returns the CRC that the WAL chained for the entry
+	assert.Equal(t, w1Crcs[10], crcAt10)
+	assert.Equal(t, w2CrcsAfter[10], crcAt10)
 
 	assert.NoError(t, w1.Close())
 	assert.NoError(t, f1.Close())

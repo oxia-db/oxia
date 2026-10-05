@@ -16,12 +16,14 @@ package follow
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -40,9 +42,9 @@ type stubWal struct {
 
 func (s *stubWal) LastOffset() int64 { return s.synced.Load() }
 
-func (s *stubWal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, _ *uint32) error {
+func (s *stubWal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, _ *uint32) (uint32, error) {
 	s.appended.Store(entry.Offset)
-	return nil
+	return 0, nil
 }
 
 func (s *stubWal) Sync(context.Context) error {
@@ -221,4 +223,66 @@ func TestLogSynchronizer_CommitOffsetAdvertisement(t *testing.T) {
 	// Nothing was appended and no ack was sent
 	assert.EqualValues(t, 0, lastAppendedOffset.Load())
 	assert.Empty(t, stream.Responses)
+}
+
+// The stream keeps each entry it appends with the chained crc that the wal
+// computed for it, which the state applier records in the wal checksum gauge.
+func TestLogSynchronizer_KeepsTheWalCrcOfTheEntries(t *testing.T) {
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir(), SegmentSize: 256})
+	w, err := walFactory.NewWal("test", 0, nil)
+	require.NoError(t, err)
+
+	// As after a snapshot at offset 9: the crc of the leader seeds the chain of
+	// the empty wal
+	lastAppendedOffset := &atomic.Int64{}
+	lastAppendedOffset.Store(9)
+	advertisedCommitOffset := &atomic.Int64{}
+	advertisedCommitOffset.Store(9)
+
+	stream := rpc.NewMockServerReplicateStream()
+	ls := NewLogSynchronizer(LogSynchronizerParams{
+		Log:                    slog.Default(),
+		Namespace:              "test",
+		ShardId:                0,
+		Term:                   1,
+		Wal:                    w,
+		AdvertisedCommitOffset: advertisedCommitOffset,
+		LastAppendedOffset:     lastAppendedOffset,
+		WriteLatencyHisto: metric.NewLatencyHistogram("oxia_test_kept_crc",
+			"test", map[string]any{}),
+		StateApplierCond: make(chan struct{}, 1),
+		Stream:           stream,
+		OnAppend:         func() {},
+	})
+	defer func() {
+		// Unblock the appender goroutine's Recv before closing
+		stream.Cancel()
+		assert.NoError(t, ls.Close())
+		assert.NoError(t, w.Close())
+		assert.NoError(t, walFactory.Close())
+	}()
+
+	// Enough entries to roll over a few segments
+	previousCrc := uint32(1234)
+	for offset := int64(10); offset < 50; offset++ {
+		stream.AddRequest(&proto.Append{
+			Term:                    1,
+			Entry:                   &proto.LogEntry{Term: 1, Offset: offset, Value: []byte(fmt.Sprintf("value-%d", offset))},
+			CommitOffset:            9,
+			PreviousEntryCrc:        &previousCrc,
+			CumulativeAcksSupported: true,
+		})
+		assert.EqualValues(t, offset, stream.GetResponse().Offset)
+	}
+
+	reader, err := w.NewReader(9)
+	require.NoError(t, err)
+	for offset := int64(10); offset < 50; offset++ {
+		_, _, entryCrc, err := reader.ReadNext()
+		require.NoError(t, err)
+		kept, _, ok := ls.appended.take(offset)
+		require.Truef(t, ok, "take of offset %d", offset)
+		assert.Equalf(t, entryCrc, kept.entryCrc, "crc of the entry at offset %d", offset)
+	}
+	assert.NoError(t, reader.Close())
 }
