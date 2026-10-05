@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
@@ -31,7 +30,6 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	k8swatch "k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
@@ -42,8 +40,8 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	oxiatime "github.com/oxia-db/oxia/common/time"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
+	"github.com/oxia-db/oxia/oxiad/common/k8s"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -80,7 +78,7 @@ type Provider[T gproto.Message] struct {
 	ctxCancel context.CancelFunc
 	wg        sync.WaitGroup
 
-	watcher *commonwatch.Watch[provider.Versioned[T]]
+	cache *cache.Cache[provider.Versioned[T]]
 
 	logger *slog.Logger
 }
@@ -114,18 +112,16 @@ func NewProvider[T gproto.Message](
 	}
 
 	m.ctx, m.ctxCancel = context.WithCancel(ctx)
-	initialSnapshot, err := m.loadLatest()
-	if err != nil {
-		return nil, err
-	}
-	m.watcher = commonwatch.New(initialSnapshot)
+	var watch cache.WatchFunc
 	if watchEnabled.Enabled() {
-		m.wg.Go(func() {
-			process.DoWithLabels(m.ctx, map[string]string{
-				"component":     "metadata-provider",
-				"sub-component": "k8s-configmap-watch",
-			}, m.watchLoop)
-		})
+		watch = func(ctx context.Context) (<-chan struct{}, error) {
+			return k8s.WatchConfigMap(ctx, m.kubernetes, m.namespace, m.configMapName)
+		}
+	}
+	m.cache = cache.New(m.ctx, m.load, watch)
+	if m.Load() == nil {
+		_ = m.Close()
+		return nil, m.ctx.Err()
 	}
 
 	m.metadataSizeGauge = metric.NewGauge("oxia_coordinator_metadata_size",
@@ -148,48 +144,30 @@ func NewDefaultClientset() (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(config)
 }
 
-func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
+// load reads the config map.
+func (m *Provider[T]) load(ctx context.Context) (*provider.Versioned[T], error) {
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	err = backoff.RetryNotify(func() error {
-		var getErr error
-		snapshot, getErr = m.loadLatestWithoutLock()
-		return getErr
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn("Failed to read config map metadata, retrying",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration))
-	})
-	return snapshot, err
-}
-
-func (m *Provider[T]) loadLatestWithoutLock() (snapshot provider.Versioned[T], err error) {
-	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
-	defer cancel()
 
 	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.configMapName, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return provider.Versioned[T]{
+			return &provider.Versioned[T]{
 				Value:   m.codec.NewZero(),
 				Version: metadatacommon.NotExists,
 			}, nil
 		}
-		return snapshot, err
+		return nil, err
 	}
 
 	data, ok := cm.Data[m.codec.GetKey()]
 	if !ok {
-		return provider.Versioned[T]{
+		return &provider.Versioned[T]{
 			Value:   m.codec.NewZero(),
 			Version: metadatacommon.NotExists,
 		}, nil
 	}
 
-	version := metadatacommon.Version(cm.ResourceVersion)
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
 	m.metadataSize.Store(int64(len(data)))
@@ -197,13 +175,13 @@ func (m *Provider[T]) loadLatestWithoutLock() (snapshot provider.Versioned[T], e
 	if err != nil {
 		panic(err)
 	}
-	return provider.Versioned[T]{
+	return &provider.Versioned[T]{
 		Value:   value,
-		Version: version,
+		Version: metadatacommon.Version(cm.ResourceVersion),
 	}, nil
 }
 
-func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
+func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned[T], error) {
 	timer := m.storeLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -212,12 +190,12 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 
 	data, err := m.codec.MarshalYAML(snapshot.Value)
 	if err != nil {
-		return metadatacommon.NotExists, err
+		return nil, err
 	}
 	cmData := makeDesiredConfigMap(m.configMapName, m.codec.GetKey(), data, snapshot.Version)
 	desiredBytes, err := json.Marshal(cmData)
 	if err != nil {
-		return metadatacommon.NotExists, err
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(m.ctx, k8sRequestTimeout)
@@ -227,30 +205,29 @@ func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Vers
 	if snapshot.Version == metadatacommon.NotExists {
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Create(ctx, cmData, metav1.CreateOptions{})
 		if k8serrors.IsAlreadyExists(err) {
-			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+			return nil, metadatacommon.ErrBadVersion
 		}
 	} else {
 		if snapshot.Version == "" {
-			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+			return nil, metadatacommon.ErrBadVersion
 		}
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.configMapName, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
 			FieldManager: fieldManager,
 			Force:        gproto.Bool(true),
 		})
 		if k8serrors.IsNotFound(err) || k8serrors.IsConflict(err) {
-			return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+			return nil, metadatacommon.ErrBadVersion
 		}
 	}
 	if err != nil {
-		return metadatacommon.NotExists, err
+		return nil, err
 	}
 	version := metadatacommon.Version(cm.ResourceVersion)
 	m.metadataSize.Store(int64(len(cmData.Data[m.codec.GetKey()])))
-	m.watcher.Publish(provider.Versioned[T]{
+	return &provider.Versioned[T]{
 		Value:   m.codec.Clone(snapshot.Value),
 		Version: version,
-	})
-	return version, nil
+	}, nil
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
@@ -337,59 +314,9 @@ func (m *Provider[T]) GetLeaderName() (string, error) {
 func (m *Provider[T]) Close() error {
 	m.ctxCancel()
 	m.wg.Wait()
+	_ = m.cache.Close()
 	m.logger.Info("Closed metadata provider")
 	return nil
-}
-
-func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
-	return m.watcher
-}
-
-func (m *Provider[T]) watchLoop() {
-	_ = backoff.RetryNotify(func() error {
-		snapshot, err := m.loadLatest()
-		if err != nil {
-			return err
-		}
-		m.watcher.Publish(snapshot)
-		return m.watch()
-	}, oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second), func(err error, duration time.Duration) {
-		m.logger.Warn("K8S config map watch failed, reconnecting",
-			slog.String("k8s-namespace", m.namespace),
-			slog.String("k8s-config-map", m.configMapName),
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration))
-	})
-}
-
-func (m *Provider[T]) watch() error {
-	w, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Watch(
-		m.ctx,
-		metav1.SingleObject(metav1.ObjectMeta{Name: m.configMapName, Namespace: m.namespace}),
-	)
-	if err != nil {
-		return err
-	}
-	defer w.Stop()
-
-	for res := range w.ResultChan() {
-		if res.Type == k8swatch.Error {
-			return errors.Errorf("watch error: %v", res.Object)
-		}
-		if res.Type != k8swatch.Added && res.Type != k8swatch.Modified {
-			continue
-		}
-		snapshot, err := m.loadLatest()
-		if err != nil {
-			return err
-		}
-		m.watcher.Publish(snapshot)
-	}
-
-	if m.ctx.Err() != nil {
-		return nil
-	}
-	return errors.New("K8S config map watch channel closed")
 }
 
 func makeDesiredConfigMap(name, dataKey string, data []byte, version metadatacommon.Version) *corev1.ConfigMap {
@@ -409,4 +336,26 @@ func makeDesiredConfigMap(name, dataKey string, data []byte, version metadatacom
 	}
 
 	return cm
+}
+
+func (m *Provider[T]) Load() *provider.Versioned[T] {
+	return m.cache.Get()
+}
+
+func (m *Provider[T]) Subscribe() *cache.Subscription[provider.Versioned[T]] {
+	return m.cache.Subscribe()
+}
+
+// Store writes the snapshot, then updates the cache: a failed write empties
+// it, since the write may still have been applied. A load of the cache holds
+// the cache lock until it stores its value, so a load that read the snapshot
+// before the write cannot overwrite the cache update.
+func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
+	stored, err := m.write(snapshot)
+	if err != nil {
+		m.cache.Invalidate()
+		return metadatacommon.NotExists, err
+	}
+	m.cache.Set(stored)
+	return stored.Version, nil
 }

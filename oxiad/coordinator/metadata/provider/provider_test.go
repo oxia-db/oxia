@@ -91,7 +91,7 @@ func TestProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newProvider(t)
 
-			snapshot := m.Watch().Load()
+			snapshot := m.Load()
 			res, version := snapshot.Value, snapshot.Version
 			assert.Equal(t, metadatacommon.NotExists, version)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{}, res))
@@ -113,7 +113,7 @@ func TestProvider(t *testing.T) {
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
-			snapshot = m.Watch().Load()
+			snapshot = m.Load()
 			res, version = snapshot.Value, snapshot.Version
 			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{
@@ -214,7 +214,7 @@ func TestProviderConfigResource(t *testing.T) {
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
-			snapshot := m.Watch().Load()
+			snapshot := m.Load()
 			res, version := snapshot.Value, snapshot.Version
 			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(config, res))
@@ -284,6 +284,44 @@ func incrementVersion(metaObj metav1.Object) {
 	metaObj.SetResourceVersion(strconv.FormatUint(i+1, 10))
 }
 
+// A write the API server applies, but whose request then fails, must not
+// leave the provider with the snapshot from before the write: the next write
+// would then use a stale version and fail with ErrBadVersion.
+func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
+	kc := newFake()
+	var failNextPatch atomic.Bool
+	kc.PrependReactor("patch", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if !failNextPatch.CompareAndSwap(true, false) {
+			return false, nil, nil
+		}
+		if _, _, err := k8stesting.ObjectReaction(kc.Tracker())(action); err != nil {
+			return true, nil, err
+		}
+		return true, nil, errors.New("request timed out after the patch was applied")
+	})
+	p, err := kubernetes.NewProvider(t.Context(), kc, "ns", "status", metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, testCoordinatorName)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, p.Close()) }()
+
+	setInstanceID := func(id string) error {
+		_, err := p.Store(provider.Versioned[*proto.ClusterStatus]{
+			Value:   &proto.ClusterStatus{InstanceId: id},
+			Version: p.Load().Version,
+		})
+		return err
+	}
+	require.NoError(t, setInstanceID("first"))
+
+	// The failed write is not stored in the cache: reading the applied value
+	// means the provider reloaded the config map.
+	failNextPatch.Store(true)
+	require.Error(t, setInstanceID("applied"))
+	require.Equal(t, "applied", p.Load().Value.GetInstanceId())
+
+	require.NoError(t, setInstanceID("next"))
+	require.Equal(t, "next", p.Load().Value.GetInstanceId())
+}
+
 // Concurrent optimistic stores: every writer retries on version conflicts,
 // and every update succeeds exactly once. Exercises the provider state
 // synchronization under the race detector.
@@ -296,7 +334,7 @@ func TestProviderConcurrentStores(t *testing.T) {
 			const writers = 4
 			const updatesPerWriter = 10
 
-			initial := p.Watch().Subscribe().Load()
+			initial := p.Load()
 
 			var stored atomic.Int32
 			var wg sync.WaitGroup
@@ -305,9 +343,8 @@ func TestProviderConcurrentStores(t *testing.T) {
 			writerErrs := make(chan error, writers)
 			for i := 0; i < writers; i++ {
 				wg.Go(func() {
-					receiver := p.Watch().Subscribe()
 					for u := 0; u < updatesPerWriter; {
-						snapshot := receiver.Load()
+						snapshot := p.Load()
 						_, err := p.Store(provider.Versioned[*proto.ClusterStatus]{
 							Value:   snapshot.Value,
 							Version: snapshot.Version,
@@ -332,7 +369,7 @@ func TestProviderConcurrentStores(t *testing.T) {
 			}
 
 			assert.EqualValues(t, writers*updatesPerWriter, stored.Load())
-			final := p.Watch().Subscribe().Load()
+			final := p.Load()
 			assert.NotEqual(t, initial.Version, final.Version)
 		})
 	}

@@ -43,11 +43,11 @@ func TestCreateNamespaceStatusAlreadyExists(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 
 	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{ReplicationFactor: 3}))
-	version := statusProvider.Watch().Load().Version
+	version := statusProvider.Load().Version
 	err := metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{ReplicationFactor: 1})
 	require.ErrorIs(t, err, metadatacommon.ErrAlreadyExists)
 	require.Contains(t, err.Error(), "default")
-	require.Equal(t, version, statusProvider.Watch().Load().Version)
+	require.Equal(t, version, statusProvider.Load().Version)
 	status, exists := metadata.GetNamespaceStatus("default")
 	require.True(t, exists)
 	require.EqualValues(t, 3, status.UnsafeBorrow().GetReplicationFactor())
@@ -77,7 +77,7 @@ func TestCreateNamespaceStatusReturnsWriteError(t *testing.T) {
 	require.Equal(t, 1, writes)
 	_, exists := metadata.GetNamespaceStatus("default")
 	require.False(t, exists)
-	require.Equal(t, metadatacommon.NotExists, statusProvider.Watch().Load().Version)
+	require.Equal(t, metadatacommon.NotExists, statusProvider.Load().Version)
 }
 
 func TestCreateNamespaceStatusCanBeRetriedByCaller(t *testing.T) {
@@ -136,7 +136,7 @@ func TestCreateNamespaceStatusReturnsErrorAfterCommit(t *testing.T) {
 	saved, exists := metadata.GetNamespaceStatus("default")
 	require.True(t, exists)
 	require.EqualValues(t, 3, saved.UnsafeBorrow().ReplicationFactor)
-	require.NotEqual(t, metadatacommon.NotExists, statusProvider.Watch().Load().Version)
+	require.NotEqual(t, metadatacommon.NotExists, statusProvider.Load().Version)
 
 	require.ErrorIs(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{}), metadatacommon.ErrAlreadyExists)
 	require.Equal(t, 1, writes)

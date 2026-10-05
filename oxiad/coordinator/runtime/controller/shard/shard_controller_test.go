@@ -78,7 +78,7 @@ func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.Clu
 	}
 
 	dir := t.TempDir()
-	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(metadataProvider.Watch().Load().Value)
+	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(metadataProvider.Load().Value)
 	assert.NoError(t, err)
 	assert.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileStatusName), statusData, 0o600))
 	configData, err := metadatacodec.ClusterConfigCodec.MarshalYAML(clusterConfig)

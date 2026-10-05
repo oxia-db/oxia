@@ -15,12 +15,13 @@
 package memory
 
 import (
+	"context"
 	"sync"
 
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -36,7 +37,8 @@ type Provider[T gproto.Message] struct {
 	version      metadatacommon.Version
 	watchEnabled metadatacommon.WatchMode
 	name         string
-	watch        *commonwatch.Watch[provider.Versioned[T]]
+	ctxCancel    context.CancelFunc
+	cache        *cache.Cache[provider.Versioned[T]]
 }
 
 func (*Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
@@ -53,41 +55,68 @@ func NewProvider[T gproto.Message](
 	watchEnabled metadatacommon.WatchMode,
 	name string,
 ) provider.Provider[T] {
+	ctx, cancel := context.WithCancel(context.Background())
 	p := &Provider[T]{
 		codec:        codec,
 		value:        codec.NewZero(),
 		version:      metadatacommon.NotExists,
 		watchEnabled: watchEnabled,
 		name:         name,
-		watch: commonwatch.New(provider.Versioned[T]{
-			Value:   codec.NewZero(),
-			Version: metadatacommon.NotExists,
-		}),
+		ctxCancel:    cancel,
 	}
+	p.cache = cache.New(ctx, p.load, nil)
 	return p
 }
 
-func (*Provider[T]) Close() error {
-	return nil
+func (m *Provider[T]) load(context.Context) (*provider.Versioned[T], error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return &provider.Versioned[T]{
+		Value:   m.codec.Clone(m.value),
+		Version: m.version,
+	}, nil
 }
 
-func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
+func (m *Provider[T]) Close() error {
+	m.ctxCancel()
+	return m.cache.Close()
+}
+
+func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned[T], error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if snapshot.Version != m.version {
-		return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+		return nil, metadatacommon.ErrBadVersion
 	}
 
 	m.value = m.codec.Clone(snapshot.Value)
 	m.version = metadatacommon.NextVersion(m.version)
-	m.watch.Publish(provider.Versioned[T]{
+	return &provider.Versioned[T]{
 		Value:   m.codec.Clone(m.value),
 		Version: m.version,
-	})
-	return m.version, nil
+	}, nil
 }
 
-func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
-	return m.watch
+func (m *Provider[T]) Load() *provider.Versioned[T] {
+	return m.cache.Get()
+}
+
+func (m *Provider[T]) Subscribe() *cache.Subscription[provider.Versioned[T]] {
+	return m.cache.Subscribe()
+}
+
+// Store writes the snapshot, then updates the cache: a failed write empties
+// it, since the write may still have been applied. The cache is updated after
+// the write releases mu, which loading the cache takes. A load of the cache
+// holds the cache lock until it stores its value, so a load that read the
+// snapshot before the write cannot overwrite the cache update.
+func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
+	stored, err := m.write(snapshot)
+	if err != nil {
+		m.cache.Invalidate()
+		return metadatacommon.NotExists, err
+	}
+	m.cache.Set(stored)
+	return stored.Version, nil
 }

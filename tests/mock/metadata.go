@@ -56,7 +56,7 @@ func PutConfig(
 ) {
 	t.Helper()
 
-	version := configProvider.Watch().Load().Version
+	version := configProvider.Load().Version
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
@@ -74,8 +74,8 @@ func NewMetadataFromProviders(
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, coordoption.DefaultFileStatusName)
 	configPath := filepath.Join(dir, coordoption.DefaultFileConfigName)
-	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, statusProvider.Watch().Load().Value)
-	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, configProvider.Watch().Load().Value)
+	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, statusProvider.Load().Value)
+	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, configProvider.Load().Value)
 	mirrorProviderToFile(t, configPath, metadatacodec.ClusterConfigCodec, configProvider)
 	name, err := statusProvider.GetLeaderName()
 	require.NoError(t, err)
@@ -129,14 +129,18 @@ func mirrorProviderToFile[T interface {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
-	receiver := source.Watch().Subscribe()
+	subscription := source.Subscribe()
 	go func() {
+		defer subscription.Close()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-receiver.Changed():
-				if err := writeSnapshotFile(path, codec, receiver.Load().Value); err != nil {
+			case _, ok := <-subscription.Changed():
+				if !ok {
+					return
+				}
+				if err := writeSnapshotFile(path, codec, subscription.Get().Value); err != nil {
 					panic(err)
 				}
 			}
