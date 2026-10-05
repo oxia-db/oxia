@@ -43,13 +43,7 @@ type Metadata interface {
 	GetSelf() (*commonproto.Coordinator, error)
 	GetLeader() (*commonproto.Coordinator, error)
 	GetInstanceID() (string, error)
-
-	// ReserveShardIDs and the status Update/Delete methods retry until
-	// the write succeeds or the metadata context is canceled. When they give
-	// up, they return an error, or report that nothing was deleted:
-	// the caller must not act as if the write was persisted. The status
-	// updates also fail with ErrNotFound when the namespace or shard is gone.
-	ReserveShardIDs(count uint32) (int64, error)
+	AllocateShardIDs(count uint32) (int64, error)
 
 	// CreateNamespaceStatus attempts one write and returns ErrAlreadyExists
 	// when the namespace already exists, or the write error when creation fails.
@@ -249,22 +243,13 @@ func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return leadershipLost, nil
 }
 
-func (m *coordinatorMetadata) ReserveShardIDs(count uint32) (int64, error) {
+func (m *coordinatorMetadata) AllocateShardIDs(count uint32) (int64, error) {
 	var base int64
-	err := backoff.RetryNotify(func() error {
-		return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
-			base = status.GetShardIdGenerator()
-			status.ShardIdGenerator += int64(count)
-			return status, true, nil
-		})
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to reserve shard ids",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-	if err != nil {
+	if err := m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		base = status.GetShardIdGenerator()
+		status.ShardIdGenerator += int64(count)
+		return status, true, nil
+	}); err != nil {
 		return 0, err
 	}
 	return base, nil

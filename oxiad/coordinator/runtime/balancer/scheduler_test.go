@@ -69,7 +69,7 @@ func (*mockMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 
 func (m *mockMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
-func (*mockMetadata) ReserveShardIDs(uint32) (int64, error) { return 0, nil }
+func (*mockMetadata) AllocateShardIDs(uint32) (int64, error) { return 0, nil }
 
 func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) error {
 	return errors.New("not implemented")

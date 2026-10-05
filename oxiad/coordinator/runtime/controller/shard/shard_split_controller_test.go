@@ -190,7 +190,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase, nsMutators ...func(*pr
 		ShardIdGenerator: 3,
 	}
 
-	baseShardID, err := metadata.ReserveShardIDs(3)
+	baseShardID, err := metadata.AllocateShardIDs(3)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), baseShardID)
 	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, clusterStatus.Namespaces[constant.DefaultNamespace]))
