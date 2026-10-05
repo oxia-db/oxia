@@ -576,8 +576,10 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 	return ch
 }
 
+// rangeScanFromShard passes each record of the shard to onResult, with its
+// secondary key when the scan uses an index, or the error of the scan.
 func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, includeInternalKeys bool, shardId int64, secondaryIndexName *string,
-	ch chan<- GetResult) {
+	onResult func(result GetResult, secondaryIndexKey *string)) {
 	request := &proto.RangeScanRequest{
 		Shard:               &shardId,
 		StartInclusive:      minKeyInclusive,
@@ -591,13 +593,11 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 
 	if err := c.executor.ExecuteRangeScan(retryCtx, request, func(response *proto.RangeScanResponse) {
 		for _, record := range response.Records {
-			ch <- toGetResult(record, "", nil)
+			onResult(toGetResult(record, "", nil), record.SecondaryIndexKey)
 		}
 	}); err != nil {
-		ch <- GetResult{Err: err}
+		onResult(GetResult{Err: err}, nil)
 	}
-
-	close(ch)
 }
 
 func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...RangeScanOption) <-chan GetResult {
@@ -608,19 +608,25 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 		// If the partition key is specified, we only need to make the request to one shard
 		shardId := c.getShardForKey("", opts)
 		go func() {
-			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardId, opts.secondaryIndexName, outCh)
+			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardId, opts.secondaryIndexName,
+				func(result GetResult, _ *string) { outCh <- result })
+			close(outCh)
 		}()
 	} else {
 		// Do the list on all shards and aggregate the responses
 		shardIDs := c.shardManager.GetAll()
-		channels := make([]chan GetResult, len(shardIDs))
+		channels := make([]chan rangeScanResult, len(shardIDs))
 
 		for i, shardId := range shardIDs {
 			shardIdPtr := shardId
-			ch := make(chan GetResult)
+			ch := make(chan rangeScanResult)
 			channels[i] = ch
 			go func() {
-				c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardIdPtr, opts.secondaryIndexName, ch)
+				c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardIdPtr,
+					opts.secondaryIndexName, func(result GetResult, secondaryIndexKey *string) {
+						ch <- rangeScanResult{result, secondaryIndexKey}
+					})
+				close(ch)
 			}()
 		}
 
@@ -640,15 +646,16 @@ func (c *clientImpl) GetSequenceUpdates(ctx context.Context, prefixKey string, o
 }
 
 // We do range scan on all the shards, and we need to always pick the lowest key
-// across all the shards.
-func aggregateAndSortRangeScanAcrossShards(order keyOrder, channels []chan GetResult, outCh chan GetResult) {
+// across all the shards. With an index, the shards return the records in the
+// order of their secondary keys, so we pick the lowest secondary key first.
+func aggregateAndSortRangeScanAcrossShards(order keyOrder, channels []chan rangeScanResult, outCh chan GetResult) {
 	h := &ResultHeap{order: order}
 	heap.Init(h)
 
 	// First make sure we have 1 key from each channel
 	for _, ch := range channels {
-		if gr, ok := <-ch; ok {
-			heap.Push(h, &ResultAndChannel{gr, order.sortKey(gr.Key), ch})
+		if r, ok := <-ch; ok {
+			heap.Push(h, newResultAndChannel(order, r, ch))
 		}
 	}
 
@@ -669,8 +676,8 @@ func aggregateAndSortRangeScanAcrossShards(order keyOrder, channels []chan GetRe
 		}
 
 		// read again from same channel
-		if gr, ok := <-r.ch; ok {
-			heap.Push(h, &ResultAndChannel{gr, order.sortKey(gr.Key), r.ch})
+		if next, ok := <-r.ch; ok {
+			heap.Push(h, newResultAndChannel(order, next, r.ch))
 		}
 	}
 

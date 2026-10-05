@@ -714,6 +714,55 @@ func TestSyncClientImpl_RangeScanKeySorting(t *testing.T) {
 	}
 }
 
+// A range scan with an index and without a partition key goes to every shard,
+// and each shard returns its records in the order of their secondary keys. The
+// client must merge the records of the shards in that order too, not in the
+// order of their primary keys.
+func TestSyncClientImpl_RangeScanUseIndexKeySorting(t *testing.T) {
+	// The secondary keys sort in the opposite order of the primary keys
+	records := []struct{ key, secondaryKey string }{
+		{"p1", "h"}, {"p2", "g"}, {"p3", "f"}, {"p4", "e"},
+		{"p5", "d"}, {"p6", "c"}, {"p7", "b"}, {"p8", "a"},
+	}
+	expected := []string{"p8", "p7", "p6", "p5", "p4", "p3", "p2", "p1"}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = keySorting
+
+			// The records are spread over all the shards
+			shards := map[int64]bool{}
+			for _, record := range records {
+				shards[shardOf(record.key, config.NumShards)] = true
+			}
+			require.Len(t, shards, int(config.NumShards))
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, record := range records {
+				_, _, err = client.Put(t.Context(), record.key, []byte(record.key),
+					oxia.SecondaryIndex("idx", record.secondaryKey))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "a", "z", oxia.UseIndex("idx")) {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, expected, scanned)
+		})
+	}
+}
+
 // shardOf returns the shard of a standalone server that stores the key.
 func shardOf(key string, numShards uint32) int64 {
 	code := hash.Xxh332(key)

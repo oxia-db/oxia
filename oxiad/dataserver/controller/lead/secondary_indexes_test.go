@@ -239,8 +239,10 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	assert.Equal(t, 2, len(results))
 	assert.Equal(t, "/b", *results[0].Key)
 	assert.Equal(t, "1", string(results[0].Value))
+	assert.Equal(t, pb.String("1"), results[0].SecondaryIndexKey)
 	assert.Equal(t, "/c", *results[1].Key)
 	assert.Equal(t, "2", string(results[1].Value))
+	assert.Equal(t, pb.String("2"), results[1].SecondaryIndexKey)
 
 	// Wrong index
 	results, err = scanAll(ctx, lc, &proto.RangeScanRequest{
@@ -753,6 +755,21 @@ func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []string{"/a", "/b"}, keys)
+
+	// A range scan returns the records with their secondary keys, the empty one
+	// included.
+	results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+		Shard:              &shard,
+		StartInclusive:     "",
+		EndExclusive:       "\xff",
+		SecondaryIndexName: pb.String("my-idx"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "/b", *results[0].Key)
+	assert.Equal(t, pb.String(""), results[0].SecondaryIndexKey)
+	assert.Equal(t, "/a", *results[1].Key)
+	assert.Equal(t, pb.String(sneaky), results[1].SecondaryIndexKey)
 
 	// The same keys have to come back through a get on the index.
 	for _, tc := range []struct{ secondaryKey, expectedKey string }{
