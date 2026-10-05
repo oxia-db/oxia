@@ -67,7 +67,7 @@ func (*mockMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return nil, nil //nolint:nilnil
 }
 
-func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
+func (m *mockMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
 func (*mockMetadata) ReserveShardIDs(uint32) (int64, error) { return 0, nil }
 

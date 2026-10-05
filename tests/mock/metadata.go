@@ -103,8 +103,10 @@ func NewMetadataFromProviders(
 func StatusSnapshot(t *testing.T, metadata coordmetadata.Metadata) *proto.ClusterStatus {
 	t.Helper()
 
+	instanceID, err := metadata.GetInstanceID()
+	require.NoError(t, err)
 	status := &proto.ClusterStatus{
-		InstanceId: metadata.GetInstanceID(),
+		InstanceId: instanceID,
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
 	for namespace, namespaceStatus := range metadata.ListNamespaceStatus() {

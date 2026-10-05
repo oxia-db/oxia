@@ -291,7 +291,9 @@ func TestMetadataReloadsOnLeadership(t *testing.T) {
 	require.EqualValues(t, 1, statusReloads.Load())
 	require.EqualValues(t, 1, configReloads.Load())
 	// The status recovery, the first write, came after the reload.
-	require.NotEmpty(t, metadata.GetInstanceID())
+	instanceID, err := metadata.GetInstanceID()
+	require.NoError(t, err)
+	require.NotEmpty(t, instanceID)
 }
 
 // lostLeadershipProvider reports a leadership already lost when it is acquired.
@@ -317,7 +319,9 @@ func TestMetadataStopsTakeoverWhenLeadershipLost(t *testing.T) {
 
 	_, err := metadata.WaitToBecomeLeader()
 	require.Error(t, err)
-	require.Empty(t, metadata.GetInstanceID())
+	instanceID, err := metadata.GetInstanceID()
+	require.NoError(t, err)
+	require.Empty(t, instanceID)
 }
 
 type reloadRecordingConfig struct {
@@ -396,4 +400,27 @@ func TestMetadataGetLeaderReturnsLoadError(t *testing.T) {
 
 	_, err := metadata.GetLeader()
 	require.ErrorContains(t, err, "configuration unavailable")
+}
+
+// loadFailingStatusProvider fails every load of the status.
+type loadFailingStatusProvider struct {
+	provider.Provider[*commonproto.ClusterStatus]
+}
+
+func (loadFailingStatusProvider) Load() (*provider.Versioned[*commonproto.ClusterStatus], error) {
+	return nil, errors.New("status unavailable")
+}
+
+// GetInstanceID reports a status that cannot be loaded, without waiting for
+// it.
+func TestMetadataGetInstanceIDReturnsLoadError(t *testing.T) {
+	statusProvider := loadFailingStatusProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.GetInstanceID()
+	require.ErrorContains(t, err, "status unavailable")
 }
