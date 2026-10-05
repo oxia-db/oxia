@@ -61,7 +61,11 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		}
 	}
 
-	for name := range metadata.ListNamespaceStatus() {
+	status, err := metadata.ListNamespaceStatus()
+	if err != nil {
+		return multierr.Append(errs, err)
+	}
+	for name := range status {
 		if _, exists := metadata.GetNamespace(name); exists {
 			continue
 		}

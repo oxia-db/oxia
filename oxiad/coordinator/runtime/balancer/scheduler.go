@@ -115,7 +115,11 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
 	swapGroup := &sync.WaitGroup{}
-	currentStatus := r.metadata.ListNamespaceStatus()
+	currentStatus, err := r.metadata.ListNamespaceStatus()
+	if err != nil {
+		r.logger.Warn("Failed to rebalance the shard ensembles", slog.Any("error", err))
+		return false
+	}
 	dataServers := r.metadata.ListDataServer()
 	candidates, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
@@ -337,7 +341,8 @@ func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLo
 
 func (r *nodeBasedBalancer) IsBalanced() bool {
 	configNamespaces := r.metadata.ListNamespace()
-	if len(configNamespaces) != len(r.metadata.ListNamespaceStatus()) {
+	status, err := r.metadata.ListNamespaceStatus()
+	if err != nil || len(configNamespaces) != len(status) {
 		return false
 	}
 	for namespace := range configNamespaces {
@@ -346,7 +351,6 @@ func (r *nodeBasedBalancer) IsBalanced() bool {
 		}
 	}
 
-	status := r.metadata.ListNamespaceStatus()
 	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
 	shardsBalanced := r.loadRatioAlgorithm(
@@ -498,7 +502,11 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 func (r *nodeBasedBalancer) rebalanceLeader() {
 	r.checkQuarantineShards()
 
-	status := r.metadata.ListNamespaceStatus()
+	status, err := r.metadata.ListNamespaceStatus()
+	if err != nil {
+		r.logger.Warn("Failed to rebalance the shard leaders", slog.Any("error", err))
+		return
+	}
 	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
 	totalShards, electedShards, nodeLeaders := state.NodeShardLeaders(candidates, status)
 

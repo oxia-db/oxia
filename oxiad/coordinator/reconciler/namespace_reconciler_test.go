@@ -122,12 +122,12 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return nil
 }
 
-func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+func (m *mockNamespaceMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
 	namespaces := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
 	}
-	return namespaces
+	return namespaces, nil
 }
 
 func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
@@ -310,7 +310,11 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for name, existingNamespaceStatus := range m.metadata.ListNamespaceStatus() {
+	existingNamespaceStatuses, err := m.metadata.ListNamespaceStatus()
+	if err != nil {
+		return err
+	}
+	for name, existingNamespaceStatus := range existingNamespaceStatuses {
 		status.Namespaces[name] = existingNamespaceStatus.UnsafeBorrow()
 	}
 	status.Namespaces[name] = namespaceStatus

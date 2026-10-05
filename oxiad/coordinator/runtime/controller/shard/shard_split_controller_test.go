@@ -212,7 +212,9 @@ func loadTestStatus(t *testing.T, metadata coordmetadata.Metadata) *proto.Cluste
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for namespace, namespaceStatus := range metadata.ListNamespaceStatus() {
+	namespaces, err := metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	for namespace, namespaceStatus := range namespaces {
 		status.Namespaces[namespace] = gproto.Clone(namespaceStatus.UnsafeBorrow()).(*proto.NamespaceStatus)
 	}
 	return status

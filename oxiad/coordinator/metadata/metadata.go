@@ -46,7 +46,7 @@ type Metadata interface {
 	AllocateShardIDs(count uint32) (int64, error)
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) error
-	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
+	ListNamespaceStatus() (map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], error)
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
@@ -266,22 +266,16 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 	})
 }
 
-func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
-	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to load the cluster status",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+func (m *coordinatorMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], error) {
+	status, err := m.statusProvider.Load()
 	if err != nil {
-		return map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]{}
+		return nil, err
 	}
 	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.Value.GetNamespaces()))
 	for name, status := range status.Value.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
 	}
-	return namespaces
+	return namespaces, nil
 }
 
 func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {

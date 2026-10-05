@@ -211,6 +211,7 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 	r := &splitTestRuntime{rpc: mockutils.NewRpcProvider()}
 	r.runtime = &runtime{
 		logger: slog.With(slog.String("component", "coordinator")),
+		ctx:    t.Context(),
 		metadata: &recomputingMetadata{
 			Metadata: metadata,
 			afterWrite: func() {
@@ -416,7 +417,8 @@ func TestSplit_RestartPastPointOfNoReturn(t *testing.T) {
 	// The restarted coordinator starts the controllers of the split shards,
 	// then resumes the split, the way New does
 	r.Lock()
-	status := r.metadata.ListNamespaceStatus()
+	status, err := r.metadata.ListNamespaceStatus()
+	require.NoError(t, err)
 	for _, shard := range []int64{splitParentShard, splitLeftChild, splitRightChild} {
 		r.shardControllers[shard] = shardcontroller.NewController(constant.DefaultNamespace, shard,
 			r.namespaceConfigForSplit(constant.DefaultNamespace),
@@ -527,6 +529,7 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *racingMetadata) {
 	racing := &racingMetadata{Metadata: metadata, beforeWrite: func() {}}
 	r := &runtime{
 		logger:           slog.With(slog.String("component", "coordinator")),
+		ctx:              t.Context(),
 		metadata:         racing,
 		rpc:              mockutils.NewRpcProvider(),
 		ensembleSelector: ensemble.NewSelector(),

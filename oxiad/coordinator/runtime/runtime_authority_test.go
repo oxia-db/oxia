@@ -101,6 +101,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 	}))
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
+		ctx:              t.Context(),
 		metadata:         metadata,
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
@@ -157,6 +158,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 	}))
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
+		ctx:              t.Context(),
 		metadata:         metadata,
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}

@@ -75,12 +75,12 @@ func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) error
 	return errors.New("not implemented")
 }
 
-func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+func (m *mockMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
 		statuses[name] = commonobject.Borrow(status)
 	}
-	return statuses
+	return statuses, nil
 }
 
 func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
