@@ -82,36 +82,7 @@ func New[T any](ctx context.Context, load LoadFunc[T], watch WatchFunc) *Cache[T
 	if watch == nil {
 		return c
 	}
-	c.wg.Go(func() { //nolint:contextcheck // runs on the cache context
-		bo := oxiatime.NewBackOff(c.ctx)
-		_ = backoff.RetryNotify(func() error {
-			ctx, cancel := context.WithCancel(c.ctx)
-			defer cancel()
-			changes, err := c.watch(ctx)
-			if err != nil {
-				return err
-			}
-			// Changes made before the watch started were not observed by it.
-			_, _ = c.Reload()
-			for {
-				select {
-				case <-ctx.Done():
-					return nil
-				case _, ok := <-changes:
-					if !ok {
-						return errors.New("watch ended")
-					}
-					// The watch is healthy: a restart starts the backoff over.
-					bo.Reset()
-					_, _ = c.Reload()
-				}
-			}
-		}, bo, func(err error, retryAfter time.Duration) {
-			c.logger.Warn("Watch failed, restarting later",
-				slog.Any("error", err), slog.Duration("retry-after", retryAfter))
-		})
-		c.logger.Info("Cache watcher closed")
-	})
+	c.wg.Go(c.runWatcher)
 	return c
 }
 
@@ -224,6 +195,39 @@ func (c *Cache[T]) reload() (*T, error) {
 		c.logger.Warn("Failed to load, retrying later",
 			slog.Any("error", err), slog.Duration("retry-after", retryAfter))
 	})
+}
+
+// runWatcher runs the watch until the cache closes, reloading the value on
+// each change, and starts a new watch when one fails.
+func (c *Cache[T]) runWatcher() {
+	bo := oxiatime.NewBackOff(c.ctx)
+	_ = backoff.RetryNotify(func() error {
+		ctx, cancel := context.WithCancel(c.ctx)
+		defer cancel()
+		changes, err := c.watch(ctx)
+		if err != nil {
+			return err
+		}
+		// Changes made before the watch started were not observed by it.
+		_, _ = c.Reload()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case _, ok := <-changes:
+				if !ok {
+					return errors.New("watch ended")
+				}
+				// The watch is healthy: a restart starts the backoff over.
+				bo.Reset()
+				_, _ = c.Reload()
+			}
+		}
+	}, bo, func(err error, retryAfter time.Duration) {
+		c.logger.Warn("Watch failed, restarting later",
+			slog.Any("error", err), slog.Duration("retry-after", retryAfter))
+	})
+	c.logger.Info("Cache watcher closed")
 }
 
 // Subscription is notified each time the cache gets a new value from a load
