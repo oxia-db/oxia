@@ -66,11 +66,14 @@ func NewProvider[T gproto.Message](ctx context.Context, r *Raft, codec metadatac
 }
 
 // OnApplied reloads the cache from the applied state, which also covers the
-// entries replicated from another leader.
+// entries replicated from another leader. The cache is emptied before
+// OnApplied returns, so a read once the entry is applied, like after the
+// leadership barrier, loads the applied state instead of the cached one.
 func (mpr *Provider[T]) OnApplied(key string, _ []byte, _ int64) {
 	if mpr.codec.GetKey() != key {
 		return
 	}
+	mpr.cache.Invalidate()
 	channel.PushNoBlock(mpr.changes, struct{}{})
 }
 
