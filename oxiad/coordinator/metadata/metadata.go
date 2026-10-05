@@ -178,24 +178,6 @@ func (m *coordinatorMetadata) Close() error {
 	return nil
 }
 
-func (m *coordinatorMetadata) doStatusRecovery() {
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
-			if status.GetInstanceId() != "" {
-				return status, false, nil
-			}
-			status.InstanceId = uuid.NewString()
-			return status, true, nil
-		})
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to initialize instance id",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-}
-
 func (m *coordinatorMetadata) GetInstanceID() string {
 	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -265,14 +247,23 @@ func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 	if err := m.configProvider.Reload(); err != nil {
 		return nil, fmt.Errorf("failed to reload the cluster configuration: %w", err)
 	}
-	// The reloads can last as long as the store is unavailable: a coordinator
-	// that lost the leadership meanwhile must not write the recovery.
+	// A coordinator that lost the leadership while reloading must not write.
 	select {
 	case <-leadershipLost:
 		return nil, errors.New("lost the leadership while reloading the metadata")
 	default:
 	}
-	m.doStatusRecovery()
+	// Initialize the instance id of a new cluster. The reloads just succeeded,
+	// so a failed write fails the takeover rather than being retried.
+	if err := m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		if status.GetInstanceId() != "" {
+			return status, false, nil
+		}
+		status.InstanceId = uuid.NewString()
+		return status, true, nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to initialize the instance id: %w", err)
+	}
 	return leadershipLost, nil
 }
 

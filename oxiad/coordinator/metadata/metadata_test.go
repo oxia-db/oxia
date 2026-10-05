@@ -337,3 +337,26 @@ func loaded[T gproto.Message](t *testing.T, p provider.Provider[T]) *provider.Ve
 	require.NoError(t, err)
 	return snapshot
 }
+
+// writeFailingStatusProvider fails every status write.
+type writeFailingStatusProvider struct {
+	provider.Provider[*commonproto.ClusterStatus]
+}
+
+func (writeFailingStatusProvider) Store(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
+	return metadataconstant.NotExists, errors.New("store unavailable")
+}
+
+// A takeover whose status recovery fails reports the failure, instead of
+// starting without an instance id.
+func TestMetadataTakeoverFailsWhenRecoveryFails(t *testing.T) {
+	statusProvider := writeFailingStatusProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.WaitToBecomeLeader()
+	require.ErrorContains(t, err, "store unavailable")
+}
