@@ -193,13 +193,7 @@ func (m *coordinatorMetadata) GetInstanceID() string {
 }
 
 func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
-	config, err := backoff.RetryNotifyWithData(m.configProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to load the cluster configuration",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+	config, err := m.configProvider.Load()
 	if err != nil {
 		return nil, err
 	}
