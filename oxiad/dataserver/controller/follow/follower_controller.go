@@ -90,10 +90,11 @@ type FollowerController interface {
 	// a snapshot, the database will be filtered to retain only keys within
 	// the given hash range. WAL entries will also be filtered at apply time.
 	// A child that holds all the records of its parent until the split
-	// completes only records the filter (see filterSplitSnapshot).
+	// completes only records the filter (see filterSplitSnapshot), along with
+	// the range of the parent, if known, for the notifications it inherits.
 	// The range comes with a stream of the parent in the given term, and
 	// only holds in that term: a new term clears it.
-	SetSplitHashRange(hashRange *proto.HashRange, term int64)
+	SetSplitHashRange(hashRange *proto.HashRange, parentHashRange *proto.HashRange, term int64)
 }
 
 type followerController struct {
@@ -138,6 +139,9 @@ type followerController struct {
 	// filterSplitSnapshot). Set by the streams of the parent, and cleared by a
 	// new term.
 	splitHashRange *proto.HashRange
+	// The range of the parent, set with splitHashRange when the coordinator
+	// sent it
+	splitParentHashRange *proto.HashRange
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
@@ -380,6 +384,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	// install its snapshots, as they are. The split filter recorded in the
 	// database tells how it applies the parent's entries it replays later.
 	fc.splitHashRange = nil
+	fc.splitParentHashRange = nil
 
 	dbOption := database.ToDbOption(newTermOptions)
 	fc.db.EnableNotifications(dbOption.NotificationsEnabled)
@@ -571,7 +576,8 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	return fc.processCommittedEntriesLoop(reader, snapshotGeneration, maxInclusive)
 }
 
-func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange, term int64) {
+func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange, parentHashRange *proto.HashRange,
+	term int64) {
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
 	// A stream of another term, e.g. a late one of a parent fenced since,
@@ -580,6 +586,7 @@ func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange, term
 		return
 	}
 	fc.splitHashRange = hashRange
+	fc.splitParentHashRange = parentHashRange
 }
 
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
@@ -694,7 +701,7 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	// If this follower is a split child, filter the snapshot to only retain
 	// keys within the child's hash range.
 	if fc.splitHashRange != nil {
-		if err = filterSplitSnapshot(db, fc.splitHashRange); err != nil {
+		if err = filterSplitSnapshot(db, fc.splitHashRange, fc.splitParentHashRange); err != nil {
 			return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to filter snapshot for split")
 		}
 	}
@@ -720,8 +727,9 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 // until the split completes, and only records the filter, which it applies
 // afterwards (see database.DeferredSplitFilter): the parent accepts as
 // observers only the members of a child that support the features of its
-// term, and every member gets a snapshot of the same term.
-func filterSplitSnapshot(db database.DB, hashRange *proto.HashRange) error {
+// term, and every member gets a snapshot of the same term. The range of the
+// parent, if known, places the notifications that such a child inherits.
+func filterSplitSnapshot(db database.DB, hashRange *proto.HashRange, parentHashRange *proto.HashRange) error {
 	parentTerm, termOptions, err := db.ReadTerm()
 	if err != nil {
 		return err
@@ -731,7 +739,7 @@ func filterSplitSnapshot(db database.DB, hashRange *proto.HashRange) error {
 			MinHash:    hashRange.GetMin(),
 			MaxHash:    hashRange.GetMax(),
 			ParentTerm: parentTerm,
-		})
+		}, parentHashRange)
 	}
 
 	if err = database.FilterDBForSplit(db.RawKV(), hashRange); err != nil {

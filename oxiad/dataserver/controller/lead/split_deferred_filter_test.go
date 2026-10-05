@@ -161,8 +161,8 @@ func TestLeaderController_SplitChildCopiesParent(t *testing.T) {
 
 	// The notifications are those of the parent, but for the shard they are
 	// recorded on
-	parentNotifications := readNotifications(t, parentDb, snapshotOffset+1, status.HeadOffset)
-	childNotifications := readNotifications(t, childDb, snapshotOffset+1, status.HeadOffset)
+	parentNotifications := recordedNotifications(t, parentDb, snapshotOffset+1, status.HeadOffset)
+	childNotifications := recordedNotifications(t, childDb, snapshotOffset+1, status.HeadOffset)
 	assert.Len(t, childNotifications, len(parentNotifications))
 	for offset, expected := range parentNotifications {
 		actual := childNotifications[offset].CloneVT()
@@ -170,6 +170,23 @@ func TestLeaderController_SplitChildCopiesParent(t *testing.T) {
 		actual.Shard = expected.Shard
 		assert.True(t, expected.EqualVT(actual), "notifications at offset %d: parent %v, child %v",
 			offset, expected, actual)
+	}
+
+	// Of those, the child delivers the ones of its records, as the other child
+	// delivers the others
+	delivered := deliveredNotifications(t, childDb, snapshotOffset+1, status.HeadOffset)
+	assert.Len(t, delivered, len(parentNotifications))
+	for offset, parent := range parentNotifications {
+		var expected, actual []string
+		for _, n := range parent.Notifications {
+			if isKeyInRange(n.GetKey(), splitTestChildRange) {
+				expected = append(expected, n.GetKey())
+			}
+		}
+		for _, n := range delivered[offset].GetNotifications() {
+			actual = append(actual, n.GetKey())
+		}
+		assert.Equal(t, expected, actual, "notifications at offset %d", offset)
 	}
 
 	// After the split, the child assigns version ids from where the parent
@@ -209,7 +226,7 @@ func installSplitSnapshot(t *testing.T, rpcClient *rpc.MockRpcClient, kvFactory 
 	require.NoError(t, err)
 	require.NoError(t, childDb.SetDeferredSplitFilter(&database.DeferredSplitFilter{
 		MinHash: splitTestChildRange.Min, MaxHash: splitTestChildRange.Max, ParentTerm: parentTerm,
-	}))
+	}, nil))
 
 	offset, err := childDb.ReadCommitOffset()
 	require.NoError(t, err)
@@ -261,7 +278,36 @@ func applyObserverEntries(t *testing.T, rpcClient *rpc.MockRpcClient, childDb da
 
 // readNotifications returns the notification batches of the database from
 // firstOffset to lastOffset, by offset.
-func readNotifications(t *testing.T, db database.DB, firstOffset, lastOffset int64) map[int64]*proto.NotificationBatch {
+// recordedNotifications returns the notification batches that db recorded,
+// from firstOffset to lastOffset: a split child records those of its parent as
+// they are, and delivers them filtered (see deliveredNotifications).
+func recordedNotifications(t *testing.T, db database.DB,
+	firstOffset, lastOffset int64) map[int64]*proto.NotificationBatch {
+	t.Helper()
+
+	notificationKey := func(offset int64) string {
+		return fmt.Sprintf("%snotifications/%016x", constant.InternalKeyPrefix, offset)
+	}
+	it, err := db.RawKV().RangeScan(notificationKey(firstOffset), notificationKey(lastOffset+1), kvstore.ShowInternalKeys)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, it.Close()) }()
+
+	batches := make(map[int64]*proto.NotificationBatch)
+	for ; it.Valid(); it.Next() {
+		value, err := it.Value()
+		require.NoError(t, err)
+		nb := &proto.NotificationBatch{}
+		require.NoError(t, nb.UnmarshalVT(value))
+		batches[nb.Offset] = nb
+	}
+	require.NoError(t, it.Error())
+	return batches
+}
+
+// deliveredNotifications returns the notification batches that db delivers to
+// its subscribers, from firstOffset to lastOffset.
+func deliveredNotifications(t *testing.T, db database.DB,
+	firstOffset, lastOffset int64) map[int64]*proto.NotificationBatch {
 	t.Helper()
 
 	batches := make(map[int64]*proto.NotificationBatch)
@@ -299,7 +345,7 @@ func newSplitChildDB(t *testing.T, kvFactory kvstore.Factory, shard int64, write
 	require.NoError(t, err)
 	require.NoError(t, db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
 		MinHash: splitTestChildRange.Min, MaxHash: splitTestChildRange.Max, ParentTerm: 1,
-	}))
+	}, nil))
 	return db
 }
 
@@ -566,7 +612,7 @@ func TestSessionDelete_DeferredSplitFilterNotifications(t *testing.T) {
 		WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 
-	notifications := readNotifications(t, db, 2, 3)
+	notifications := recordedNotifications(t, db, 2, 3)
 	var parentDeleted []string
 	for _, n := range notifications[2].GetNotifications() {
 		assert.Equal(t, proto.NotificationType_KEY_DELETED, n.GetValue().GetType())

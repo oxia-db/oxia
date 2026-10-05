@@ -88,11 +88,21 @@ func (f *DeferredSplitFilter) keepsValue(key string, value []byte) bool {
 // again. A parent that is itself the child of an earlier split, seeded with a
 // filtered snapshot, has the SplitFilter of that split, which this child drops:
 // the child gets no entry of the terms it covers.
-func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter) error {
+//
+// The child also records the notifications it delivers of the batches it
+// inherits, with the range of the parent, parentHashRange, if known (see
+// inheritedNotifications).
+func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter, parentHashRange *proto.HashRange) error {
 	value, err := json.Marshal(filter)
 	if err != nil {
 		return err
 	}
+	var inherited inheritedNotifications
+	if parentInherited := d.inheritedNotifications.Load(); parentInherited != nil {
+		inherited = *parentInherited
+	}
+	inherited = inherited.withSplit(splitNotificationsRange(
+		&proto.HashRange{Min: filter.MinHash, Max: filter.MaxHash}, parentHashRange))
 
 	batch := d.kv.NewWriteBatch()
 	defer batch.Close()
@@ -100,6 +110,9 @@ func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter) error {
 		Key:   deferredSplitFilterKey,
 		Value: value,
 	}, now(), NoOpCallback, true, nil, nil); err != nil {
+		return err
+	}
+	if err := d.putInheritedNotifications(batch, inherited); err != nil {
 		return err
 	}
 	if err := batch.Delete(splitFilterKey); err != nil {
@@ -113,6 +126,7 @@ func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter) error {
 	}
 	d.splitFilter.Store(nil)
 	d.deferredSplitFilter.Store(filter)
+	d.inheritedNotifications.Store(&inherited)
 	return nil
 }
 

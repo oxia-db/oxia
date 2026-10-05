@@ -635,7 +635,8 @@ func (lc *leaderController) addObserverFollower(req *proto.AddFollowerRequest) (
 		return &proto.AddFollowerResponse{}, nil
 	}
 
-	if err := lc.addObserver(observerKey, req.FollowerName, req.FollowerHeadEntryId, targetShardId, req.SplitHashRange); err != nil {
+	if err := lc.addObserver(observerKey, req.FollowerName, req.FollowerHeadEntryId, targetShardId,
+		req.SplitHashRange, req.SplitParentHashRange); err != nil {
 		return nil, err
 	}
 
@@ -765,7 +766,7 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 }
 
 func (lc *leaderController) addObserver(observerKey string, follower string, followerHeadEntryId *proto.EntryId,
-	targetShardId int64, splitHashRange *proto.Int32HashRange) error {
+	targetShardId int64, splitHashRange *proto.Int32HashRange, splitParentHashRange *proto.Int32HashRange) error {
 	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, targetShardId, followerHeadEntryId)
 	if err != nil {
 		lc.log.Error(
@@ -783,7 +784,7 @@ func (lc *leaderController) addObserver(observerKey string, follower string, fol
 	// can validate incoming entries. If the parent gets a new election (term
 	// advances), stale entries from old observer cursors are rejected.
 	cursor, err := NewObserverFollowerCursor(follower, lc.term.Load(), lc.namespace, targetShardId,
-		lc.rpcClient, lc.quorumAckTracker, lc.wal, lc.db, followerHeadEntryId.Offset, splitHashRange)
+		lc.rpcClient, lc.quorumAckTracker, lc.wal, lc.db, followerHeadEntryId.Offset, splitHashRange, splitParentHashRange)
 	if err != nil {
 		lc.log.Error(
 			"Failed to create observer follower cursor",
@@ -1470,6 +1471,11 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 	var offsetExclusive int64
 	if req.StartOffsetExclusive != nil {
 		offsetExclusive = *req.StartOffsetExclusive
+		// The subscriber can't get the batches that the retention deleted: its
+		// cursor starts after them, which the first batch tells it
+		if trimmed := lc.db.TrimmedNotificationsOffset(); trimmed >= 0 && trimmed > offsetExclusive {
+			offsetExclusive = trimmed
+		}
 	} else {
 		if qat == nil {
 			lc.RUnlock()
@@ -1526,6 +1532,8 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 					default:
 						notifications, err := lc.db.ReadNextNotifications(ctx, offset+1)
 						if err != nil {
+							// When the retention deleted batches the subscriber hasn't
+							// read, its next subscription tells it
 							cb.OnComplete(err)
 							return
 						}

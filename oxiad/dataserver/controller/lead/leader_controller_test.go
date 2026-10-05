@@ -31,6 +31,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "google.golang.org/protobuf/proto"
 
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
 	"github.com/oxia-db/oxia/common/rpc"
@@ -1890,6 +1891,73 @@ func TestLeaderController_NotificationsResumeEchoesRequestedOffset(t *testing.T)
 	assert.EqualValues(t, 2, nb1.Offset)
 	assert.Equal(t, 1, len(nb1.Notifications))
 	assert.Equal(t, "c", nb1.Notifications[0].GetKey())
+
+	cancel()
+	assert.Eventually(t, func() bool {
+		return adaptor.IsCompleted()
+	}, 10*time.Second, 100*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// TestLeaderController_NotificationsResumeAfterTrimmed checks that a
+// subscription that resumes from an offset after which the retention deleted
+// batches is confirmed after them: that's how the subscriber learns that it
+// missed them.
+func TestLeaderController_NotificationsResumeAfterTrimmed(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+	storageOptions := &option.StorageOptions{}
+	storageOptions.Notification.Retention = commonoption.Duration(300 * time.Millisecond)
+
+	lc, err := NewLeaderController(storageOptions, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	for _, key := range []string{"a", "b", "c"} {
+		_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte("value-" + key)}},
+		})
+		require.NoError(t, err)
+	}
+	require.Eventually(t, func() bool {
+		return lc.(*leaderController).db.TrimmedNotificationsOffset() == 2
+	}, 10*time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	startOffsetExclusive := int64(0)
+	adaptor := concurrent.NewStreamCallbackAdaptor[*proto.EncodedNotificationBatch]()
+	lc.GetNotifications(ctx, &proto.NotificationsRequest{
+		Shard:                shard,
+		StartOffsetExclusive: &startOffsetExclusive,
+	}, adaptor)
+
+	nb0 := decodeNotificationBatch(t, <-adaptor.Ch())
+	assert.EqualValues(t, 2, nb0.Offset)
+	assert.Empty(t, nb0.Notifications)
+
+	// Dispatch then resumes after the deleted batches
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "d", Value: []byte("value-d")}},
+	})
+	require.NoError(t, err)
+	nb1 := decodeNotificationBatch(t, <-adaptor.Ch())
+	assert.EqualValues(t, 3, nb1.Offset)
+	assert.Equal(t, "d", nb1.Notifications[0].GetKey())
 
 	cancel()
 	assert.Eventually(t, func() bool {

@@ -400,6 +400,48 @@ func TestSplitController_ChildrenFencedAtParentTerm(t *testing.T) {
 	}
 }
 
+// TestSplitController_ObserversGetParentRange verifies that the members of the
+// children are added as observers with the hash range of the parent along with
+// their own: a child tells from them which of the notifications of the parent
+// it delivers.
+func TestSplitController_ObserversGetParentRange(t *testing.T) {
+	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
+
+	queueBootstrapResponses(rpcMock)
+	queueCatchUpResponses(rpcMock)
+	queueCutoverResponses(rpcMock)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      statusRes,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+	})
+	defer sc.Close()
+
+	childRanges := map[int64]*proto.Int32HashRange{
+		1: {MinHashInclusive: 0, MaxHashInclusive: 500},
+		2: {MinHashInclusive: 501, MaxHashInclusive: 1000},
+	}
+	for range 6 {
+		r := rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, 5)
+		require.NotNil(t, r)
+		childRange := childRanges[r.GetTargetShard()]
+		require.NotNil(t, childRange, "target shard %d", r.GetTargetShard())
+		assert.Equal(t, childRange.MinHashInclusive, r.GetSplitHashRange().GetMinHashInclusive())
+		assert.Equal(t, childRange.MaxHashInclusive, r.GetSplitHashRange().GetMaxHashInclusive())
+		assert.EqualValues(t, 0, r.GetSplitParentHashRange().GetMinHashInclusive())
+		assert.EqualValues(t, 1000, r.GetSplitParentHashRange().GetMaxHashInclusive())
+	}
+
+	select {
+	case <-listener.completions:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Split did not complete in time")
+	}
+}
+
 // drainNewTermRequests returns all NewTerm requests buffered for a node.
 // Non-blocking: it stops once the channel is momentarily empty, so it must be
 // called after the operation under test has finished sending.

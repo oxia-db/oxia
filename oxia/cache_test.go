@@ -144,6 +144,7 @@ func TestCache_LoadRacingNotification(t *testing.T) {
 		{"modified", &v1, &v2, Notification{Type: KeyModified, Key: "/key"}},
 		{"deleted", &v1, nil, Notification{Type: KeyDeleted, Key: "/key"}},
 		{"range-deleted", &v1, nil, Notification{Type: KeyRangeRangeDeleted, Key: "/a", KeyRangeEnd: "/z"}},
+		{"missed", &v1, &v2, Notification{Type: NotificationsMissed, VersionId: -1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := &recordsClient{records: map[string][]byte{}}

@@ -305,7 +305,7 @@ func (sc *SplitController) runBootstrap() error {
 	// the parent had a new election in the meantime, AddFollower fails with
 	// an invalid-term error and Bootstrap is retried from scratch.
 	for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
-		if err := sc.addChildObservers(childId, parentLeader, parentTerm); err != nil {
+		if err := sc.addChildObservers(childId, parentLeader, parentTerm, parentMeta.GetInt32HashRange()); err != nil {
 			return err
 		}
 	}
@@ -416,9 +416,10 @@ func (sc *SplitController) resetChildMember(childId int64, childTerm int64,
 // follower on the parent leader, so that the parent streams snapshots and WAL
 // entries to each of them: a majority of the child must hold the child's data
 // before the split passes the point of no return (see runCutover). A member
-// that the parent can't reach yet gets them once it is back.
+// that the parent can't reach yet gets them once it is back. The range of the
+// parent tells the child which of the notifications of the parent it delivers.
 func (sc *SplitController) addChildObservers(childId int64, parentLeader *proto.DataServerIdentity,
-	parentTerm int64) error {
+	parentTerm int64, parentHashRange *proto.HashRange) error {
 	childMeta := sc.loadShardMeta(childId)
 	if childMeta == nil || childMeta.Leader == nil {
 		return errors.Errorf("child shard %d has no leader", childId)
@@ -449,6 +450,10 @@ func (sc *SplitController) addChildObservers(childId int64, parentLeader *proto.
 			SplitHashRange: &proto.Int32HashRange{
 				MinHashInclusive: childMeta.GetInt32HashRange().GetMin(),
 				MaxHashInclusive: childMeta.GetInt32HashRange().GetMax(),
+			},
+			SplitParentHashRange: &proto.Int32HashRange{
+				MinHashInclusive: parentHashRange.GetMin(),
+				MaxHashInclusive: parentHashRange.GetMax(),
 			},
 			FollowerFeatures: &proto.FollowerFeatures{Supported: childFeatures},
 		})

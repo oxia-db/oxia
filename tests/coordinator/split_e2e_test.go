@@ -773,6 +773,19 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 // the given rpc provider factory.
 func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ProviderFactory) *splitTestCluster {
 	t.Helper()
+	return setupSplitClusterWithRpcAndShardCount(t, rpcProviderFactory, 1)
+}
+
+// setupSplitClusterWithShardCount is setupSplitCluster, with a namespace of
+// initialShardCount shards.
+func setupSplitClusterWithShardCount(t *testing.T, initialShardCount uint32) *splitTestCluster {
+	t.Helper()
+	return setupSplitClusterWithRpcAndShardCount(t, rpc2.NewRpcProviderFactory(nil), initialShardCount)
+}
+
+func setupSplitClusterWithRpcAndShardCount(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+	initialShardCount uint32) *splitTestCluster {
+	t.Helper()
 
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
@@ -782,19 +795,29 @@ func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ProviderFact
 		sa2.GetNameOrDefault(): s2,
 		sa3.GetNameOrDefault(): s3,
 	}
-	return setupSplitClusterWith(t, rpcProviderFactory, servers, []*proto.DataServerIdentity{sa1, sa2, sa3})
+	return setupSplitClusterWithShards(t, rpcProviderFactory, servers, []*proto.DataServerIdentity{sa1, sa2, sa3},
+		initialShardCount)
 }
 
 // setupSplitClusterWith is setupSplitClusterWithRpc, on the given data servers.
 func setupSplitClusterWith(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
 	servers map[string]*dataserver.Server, addresses []*proto.DataServerIdentity) *splitTestCluster {
 	t.Helper()
+	return setupSplitClusterWithShards(t, rpcProviderFactory, servers, addresses, 1)
+}
+
+// setupSplitClusterWithShards is setupSplitClusterWith, with a namespace of
+// initialShardCount shards.
+func setupSplitClusterWithShards(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+	servers map[string]*dataserver.Server, addresses []*proto.DataServerIdentity,
+	initialShardCount uint32) *splitTestCluster {
+	t.Helper()
 
 	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
-		InitialShardCount: 1,
+		InitialShardCount: initialShardCount,
 	}}, addresses)
 	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
@@ -812,8 +835,16 @@ func setupSplitClusterWith(t *testing.T, rpcProviderFactory rpc2.ProviderFactory
 
 	metadata := coordinatorInstance.Metadata()
 	require.Eventually(t, func() bool {
-		shard := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards[0]
-		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
+		shards := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards
+		if len(shards) != int(initialShardCount) {
+			return false
+		}
+		for _, shard := range shards {
+			if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+				return false
+			}
+		}
+		return true
 	}, 30*time.Second, 100*time.Millisecond)
 	slog.Info("Initial cluster is ready")
 
@@ -1069,6 +1100,217 @@ collectLoop:
 	assert.ErrorIs(t, err, oxia.ErrKeyNotFound)
 
 	slog.Info("Notifications test passed")
+}
+
+// notificationEvent is what a notification reports: the record, its change,
+// and the version the change produced, or -1 for a deletion.
+type notificationEvent struct {
+	key       string
+	eventType oxia.NotificationType
+	versionId int64
+}
+
+// TestCoordinator_ShardSplit_SubscriptionFollowsSplit checks that a
+// subscription created before a split delivers every notification once across
+// it: the notifications of the parent that it hasn't read when the split
+// completes, which both children inherited, and those of the writes to each
+// child afterwards.
+func TestCoordinator_ShardSplit_SubscriptionFollowsSplit(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	checkSubscriptionFollowsSplit(t, c, nil)
+}
+
+// TestCoordinator_ShardSplit_SubscriptionFollowsSplitPartitionKey is
+// TestCoordinator_ShardSplit_SubscriptionFollowsSplit in a namespace of two
+// shards, where the records written to the split shard are placed by a
+// partition key: their keys hash anywhere, inside the range of the shard and
+// outside of it. Each child delivers the notifications it inherited whose key
+// hash is on its side of the split, the ones outside the range of the parent
+// included: the child that reaches neither bound of the hash space tells its
+// side from the range of the parent.
+func TestCoordinator_ShardSplit_SubscriptionFollowsSplitPartitionKey(t *testing.T) {
+	c := setupSplitClusterWithShardCount(t, 2)
+	defer c.close(t)
+
+	parentRange := c.shardStatus(t, 0).Int32HashRange
+	var partitionKey string
+	for i := 0; ; i++ {
+		partitionKey = fmt.Sprintf("partition-key-%d", i)
+		if h := hash.Xxh332(partitionKey); h >= parentRange.Min && h <= parentRange.Max {
+			break
+		}
+	}
+	checkSubscriptionFollowsSplit(t, c, &partitionKey)
+}
+
+// checkSubscriptionFollowsSplit splits shard 0 with a subscription created
+// before, and checks that it delivers the notification of every write once:
+// before the split, while it doesn't read them, during the split, and to both
+// children afterwards. The records written to shard 0 before the split are
+// placed by partitionKey, if not nil.
+func checkSubscriptionFollowsSplit(t *testing.T, c *splitTestCluster, partitionKey *string) {
+	t.Helper()
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	notifications, err := client.GetNotifications()
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, notifications.Close()) }()
+
+	var (
+		mu sync.Mutex
+		// The notifications of the acknowledged writes
+		expected []notificationEvent
+	)
+	record := func(event notificationEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		expected = append(expected, event)
+	}
+	// put and del write the record at key, placed by partitionKey if
+	// partitioned, and record the notification of the write
+	put := func(key string, partitioned bool) bool {
+		var options []oxia.PutOption
+		if partitioned && partitionKey != nil {
+			options = append(options, oxia.PartitionKey(*partitionKey))
+		}
+		putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		_, version, err := client.Put(putCtx, key, []byte(key), options...)
+		if err != nil {
+			return false
+		}
+		eventType := oxia.KeyModified
+		if version.ModificationsCount == 0 {
+			eventType = oxia.KeyCreated
+		}
+		record(notificationEvent{key: key, eventType: eventType, versionId: version.VersionId})
+		return true
+	}
+	del := func(key string, partitioned bool) {
+		var options []oxia.DeleteOption
+		if partitioned && partitionKey != nil {
+			options = append(options, oxia.PartitionKey(*partitionKey))
+		}
+		delCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if err := client.Delete(delCtx, key, options...); err == nil {
+			record(notificationEvent{key: key, eventType: oxia.KeyDeleted, versionId: -1})
+		}
+	}
+
+	received := make(map[notificationEvent]int)
+	allReceived := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, event := range expected {
+			if received[event] == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	// receive reads the notifications until it got all the expected ones, and
+	// then for as long as quiet, to catch duplicates
+	receive := func(timeout time.Duration, quiet time.Duration) {
+		deadline := time.After(timeout)
+		var quietCh <-chan time.Time
+		for {
+			if quietCh == nil && allReceived() {
+				if quiet == 0 {
+					return
+				}
+				quietCh = time.After(quiet)
+			}
+			select {
+			case n := <-notifications.Ch():
+				require.NotNil(t, n, "the subscription was closed")
+				received[notificationEvent{key: n.Key, eventType: n.Type, versionId: n.VersionId}]++
+			case <-quietCh:
+				return
+			case <-deadline:
+				return
+			}
+		}
+	}
+
+	// The subscription reads the notifications of these writes from the parent
+	for i := 0; i < 20; i++ {
+		require.True(t, put(fmt.Sprintf("before-%03d", i), true))
+	}
+	receive(30*time.Second, 0)
+	require.True(t, allReceived(), "notifications before the split")
+
+	// The subscription stops reading: the notifications of these writes fill
+	// its channel, and the flow-control window of its stream, with their long
+	// keys, so that the rest of them are still on the parent when the split
+	// completes, along with those of the writes during the split
+	padding := strings.Repeat("x", 1000)
+	for i := 0; i < 300; i++ {
+		require.True(t, put(fmt.Sprintf("unread-%03d-%s", i, padding), true))
+	}
+	var (
+		stop atomic.Bool
+		wg   sync.WaitGroup
+	)
+	wg.Go(func() {
+		for i := 0; !stop.Load(); i++ {
+			key := fmt.Sprintf("during-%05d", i)
+			if put(key, true) && i%3 == 0 && put(key, true) && i%2 == 0 {
+				del(key, true)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+	c.splitAndWait(t)
+	stop.Store(true)
+	wg.Wait()
+
+	// Writes to both children, of new records and of records of the parent
+	for i := 0; i < 30; i++ {
+		for _, child := range []int64{c.leftChild, c.rightChild} {
+			key := c.childKey(child, fmt.Sprintf("after-%03d", i))
+			require.True(t, put(key, false))
+			if i%3 == 0 {
+				require.True(t, put(key, false))
+			}
+			if i%4 == 0 {
+				del(key, false)
+			}
+		}
+	}
+	for i := 0; i < 20; i += 2 {
+		require.True(t, put(fmt.Sprintf("before-%03d", i), true))
+		del(fmt.Sprintf("before-%03d", i+1), true)
+	}
+
+	receive(60*time.Second, 2*time.Second)
+
+	mu.Lock()
+	defer mu.Unlock()
+	var missing, duplicated []string
+	for _, event := range expected {
+		if received[event] == 0 {
+			missing = append(missing, fmt.Sprintf("%s %v %d", strings.TrimSuffix(event.key, padding),
+				event.eventType, event.versionId))
+		}
+	}
+	for event, count := range received {
+		if count > 1 {
+			duplicated = append(duplicated, fmt.Sprintf("%s %v %d: %d times", strings.TrimSuffix(event.key, padding),
+				event.eventType, event.versionId, count))
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(duplicated)
+	t.Logf("%d notifications expected, %d received, %d missing, %d duplicated",
+		len(expected), len(received), len(missing), len(duplicated))
+	assert.Empty(t, missing, "notifications not received")
+	assert.Empty(t, duplicated, "notifications received more than once")
 }
 
 // ---- Ephemeral records test ----

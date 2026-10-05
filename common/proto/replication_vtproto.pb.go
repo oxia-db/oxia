@@ -290,6 +290,7 @@ func (m *AddFollowerRequest) CloneVT() *AddFollowerRequest {
 	r.Observer = m.Observer
 	r.SplitHashRange = m.SplitHashRange.CloneVT()
 	r.FollowerFeatures = m.FollowerFeatures.CloneVT()
+	r.SplitParentHashRange = m.SplitParentHashRange.CloneVT()
 	if rhs := m.TargetShard; rhs != nil {
 		tmpVal := *rhs
 		r.TargetShard = &tmpVal
@@ -1001,6 +1002,9 @@ func (this *AddFollowerRequest) EqualVT(that *AddFollowerRequest) bool {
 		return false
 	}
 	if !this.FollowerFeatures.EqualVT(that.FollowerFeatures) {
+		return false
+	}
+	if !this.SplitParentHashRange.EqualVT(that.SplitParentHashRange) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -2124,6 +2128,16 @@ func (m *AddFollowerRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.SplitParentHashRange != nil {
+		size, err := m.SplitParentHashRange.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x52
 	}
 	if m.FollowerFeatures != nil {
 		size, err := m.FollowerFeatures.MarshalToSizedBufferVT(dAtA[:i])
@@ -3337,6 +3351,10 @@ func (m *AddFollowerRequest) SizeVT() (n int) {
 	}
 	if m.FollowerFeatures != nil {
 		l = m.FollowerFeatures.SizeVT()
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.SplitParentHashRange != nil {
+		l = m.SplitParentHashRange.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -5578,6 +5596,42 @@ func (m *AddFollowerRequest) UnmarshalVT(dAtA []byte) error {
 				m.FollowerFeatures = &FollowerFeatures{}
 			}
 			if err := m.FollowerFeatures.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SplitParentHashRange", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.SplitParentHashRange == nil {
+				m.SplitParentHashRange = &Int32HashRange{}
+			}
+			if err := m.SplitParentHashRange.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -9425,6 +9479,42 @@ func (m *AddFollowerRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				m.FollowerFeatures = &FollowerFeatures{}
 			}
 			if err := m.FollowerFeatures.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SplitParentHashRange", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.SplitParentHashRange == nil {
+				m.SplitParentHashRange = &Int32HashRange{}
+			}
+			if err := m.SplitParentHashRange.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

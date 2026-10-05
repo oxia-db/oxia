@@ -41,7 +41,15 @@ import (
 const (
 	notificationsPrefix      = constant.InternalKeyPrefix + "notifications"
 	maxNotificationBatchSize = 100
+
+	// The offset of the last notification batch that the retention deleted.
+	trimmedNotificationsKey = constant.InternalKeyPrefix + "trimmed-notifications"
 )
+
+// ErrNotificationsTrimmed is returned by a read of the notification batches
+// from an offset when the retention deleted some of the batches from there on.
+var ErrNotificationsTrimmed = errors.Wrap(constant.ErrResourceUnavailable,
+	"the retention deleted notifications after the requested offset")
 
 var (
 	firstNotificationKey = notificationKey(0)
@@ -245,6 +253,12 @@ type notificationsTracker struct {
 	kv         kvstore.KV
 	log        *slog.Logger
 
+	// The offset of the last batch that the retention deleted, or -1: a reader
+	// that is past it misses none
+	trimmedOffset atomic.Int64
+	// putTrimmedOffset adds the record of trimmedOffset to a batch
+	putTrimmedOffset func(batch kvstore.WriteBatch, offset int64) error
+
 	// The first read creates the cache: until then, which is forever on a
 	// follower, the commits don't pay for it
 	cache   *notificationsCache
@@ -259,12 +273,15 @@ type notificationsTracker struct {
 	readBytesCounter metric.Counter
 }
 
-func newNotificationsTracker(namespace string, shard int64, lastOffset int64, kv kvstore.KV, notificationRetentionTime time.Duration, clock time2.Clock) *notificationsTracker {
+func newNotificationsTracker(namespace string, shard int64, lastOffset int64, trimmedOffset int64,
+	putTrimmedOffset func(batch kvstore.WriteBatch, offset int64) error, kv kvstore.KV,
+	notificationRetentionTime time.Duration, clock time2.Clock) *notificationsTracker {
 	labels := metric.LabelsForShard(namespace, shard)
 	nt := &notificationsTracker{
-		shard:     shard,
-		kv:        kv,
-		waitClose: concurrent.NewWaitGroup(1),
+		shard:            shard,
+		kv:               kv,
+		putTrimmedOffset: putTrimmedOffset,
+		waitClose:        concurrent.NewWaitGroup(1),
 		log: slog.With(
 			slog.String("component", "notifications-tracker"),
 			slog.String("namespace", namespace),
@@ -278,10 +295,29 @@ func newNotificationsTracker(namespace string, shard int64, lastOffset int64, kv
 			"The total size in bytes of notifications reads", metric.Bytes, labels),
 	}
 	nt.lastOffset.Store(lastOffset)
+	nt.trimmedOffset.Store(trimmedOffset)
 	nt.cond = concurrent.NewConditionContext(nt)
 	nt.ctx, nt.cancel = context.WithCancel(context.Background())
-	newNotificationsTrimmer(nt.ctx, namespace, shard, kv, notificationRetentionTime, nt.waitClose, clock, nt.trimmed)
+	newNotificationsTrimmer(nt.ctx, namespace, shard, kv, notificationRetentionTime, nt.waitClose, clock, nt)
 	return nt
+}
+
+// TrimmedOffset returns the offset of the last batch that the retention
+// deleted, or -1.
+func (nt *notificationsTracker) TrimmedOffset() int64 {
+	return nt.trimmedOffset.Load()
+}
+
+// trimming adds to the batch that deletes the batches up to offset, included,
+// the record that they are trimmed, and records it before the batch is
+// committed: a reader that finds them deleted finds them trimmed. It returns
+// the function that reverts it if the batch fails to commit.
+func (nt *notificationsTracker) trimming(batch kvstore.WriteBatch, offset int64) (func(), error) {
+	if err := nt.putTrimmedOffset(batch, offset); err != nil {
+		return nil, err
+	}
+	previous := nt.trimmedOffset.Swap(offset)
+	return func() { nt.trimmedOffset.CompareAndSwap(offset, previous) }, nil
 }
 
 // Caching reports whether the batches get cached, encoded in
@@ -372,6 +408,8 @@ func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startO
 // ReadNextNotifications returns the next retained batches from startOffset
 // onwards, waiting until there is at least one: it never returns an empty
 // result. A negative startOffset reads from the first retained batch, like 0.
+// It fails with ErrNotificationsTrimmed if the retention deleted batches from
+// startOffset on that it would skip.
 func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, startOffset int64) (
 	[]proto.EncodedNotificationBatch, error) {
 	for {
@@ -387,6 +425,13 @@ func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, start
 			// The cache doesn't go back to startOffset
 			if res, notifications, err = nt.scanNotifications(startOffset); err != nil {
 				return nil, err
+			}
+			// Loaded after the scan, which skips the batches it finds trimmed:
+			// the cache holds every batch from where it starts
+			if trimmed := nt.trimmedOffset.Load(); trimmed >= max(startOffset, 0) &&
+				(len(res) == 0 || res[0].Offset > trimmed) {
+				return nil, errors.Wrapf(ErrNotificationsTrimmed, "up to offset %d, reading from offset %d",
+					trimmed, startOffset)
 			}
 		}
 		if len(res) > 0 {

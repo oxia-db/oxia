@@ -1622,7 +1622,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	fc.SetSplitHashRange(&proto.HashRange{
 		Min: 0,
 		Max: 0x7FFFFFFF, // 2147483647
-	}, 1)
+	}, nil, 1)
 
 	// --- Phase 1: Snapshot installation with filtering ---
 	// Prepare a snapshot DB containing keys a..f
@@ -1776,7 +1776,7 @@ func TestFollower_SplitSnapshotFilterSurvivesCrash(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange, 1)
+	fc.SetSplitHashRange(splitTestHashRange, nil, 1)
 	installSplitTestSnapshot(t, fc, 1)
 
 	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
@@ -1815,7 +1815,7 @@ func TestFollower_SplitReplayAfterCrashKeepsFilter(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange, 1)
+	fc.SetSplitHashRange(splitTestHashRange, nil, 1)
 	installSplitTestSnapshot(t, fc, 1)
 
 	stream := rpc.NewMockServerReplicateStream()
@@ -1876,14 +1876,14 @@ func TestFollower_SplitHashRangeEndsAtNewTerm(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange, 1)
+	fc.SetSplitHashRange(splitTestHashRange, nil, 1)
 	installSplitTestSnapshot(t, fc, 1)
 
 	// A late stream of the parent, in the parent's term, doesn't set the range
 	// again either
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange, 1)
+	fc.SetSplitHashRange(splitTestHashRange, nil, 1)
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
@@ -1936,7 +1936,7 @@ func TestFollower_SplitDeferredFilter(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
 	require.NoError(t, err)
-	fc.SetSplitHashRange(splitTestHashRange, 1)
+	fc.SetSplitHashRange(splitTestHashRange, nil, 1)
 	installSplitTestSnapshotWith(t, fc, 1, database.TermOptions{
 		Features: []proto.Feature{proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER},
 	})
@@ -1990,6 +1990,57 @@ func TestFollower_SplitDeferredFilter(t *testing.T) {
 	assert.NoError(t, db.Close())
 	assert.NoError(t, crashedKvFactory.Close())
 	assert.NoError(t, crashedWalFactory.Close())
+}
+
+// A split child that keeps all the records of its parent until the split
+// completes inherits the notifications of the parent, as its sibling does: it
+// delivers those whose key hash is on its side of the split, which the range
+// of the parent tells for a child that reaches neither bound of the hash space.
+// Here the high half of the low half of the hash space delivers, of the keys
+// a..f, those whose hash is above its low bound.
+func TestFollower_SplitDeferredFilterNotifications(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		parentRange *proto.HashRange
+		keys        []string
+	}{
+		{"parent range", &proto.HashRange{Min: 0, Max: 0x7FFFFFFF}, []string{"b", "c", "d", "f"}},
+		// Without it, the child delivers them all, as its sibling does
+		{"no parent range", nil, []string{"a", "b", "c", "d", "e", "f"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, kvFactory.Close()) }()
+			walFactory := newTestWalFactory(t)
+			defer func() { assert.NoError(t, walFactory.Close()) }()
+
+			fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, 0, walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, fc.Close()) }()
+			_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+			require.NoError(t, err)
+			fc.SetSplitHashRange(&proto.HashRange{Min: 0x40000000, Max: 0x7FFFFFFF}, test.parentRange, 1)
+			installSplitTestSnapshotWith(t, fc, 1, database.TermOptions{
+				NotificationsEnabled: true,
+				Features:             []proto.Feature{proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER},
+			})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			batches, err := fc.(*followerController).db.ReadNextNotifications(ctx, 0)
+			require.NoError(t, err)
+			var keys []string
+			for _, batch := range batches {
+				nb := &proto.NotificationBatch{}
+				require.NoError(t, nb.UnmarshalVT(batch.Data))
+				for _, entry := range nb.Notifications {
+					keys = append(keys, entry.GetKey())
+				}
+			}
+			assert.Equal(t, test.keys, keys)
+		})
+	}
 }
 
 // installSplitTestSnapshot installs, at the given term, the snapshot of a shard

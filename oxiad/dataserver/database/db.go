@@ -135,7 +135,14 @@ type DB interface {
 
 	ReadCommitOffset() (int64, error)
 
+	// ReadNextNotifications returns the next notification batches from
+	// startOffset on, waiting until there is one, or ErrNotificationsTrimmed if
+	// the retention deleted some of them. A split child filters the batches it
+	// inherited from its parent (see inheritedNotifications).
 	ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error)
+	// TrimmedNotificationsOffset returns the offset of the last notification
+	// batch that the retention deleted, or -1.
+	TrimmedNotificationsOffset() int64
 	GetSequenceUpdates(prefixKey string) (SequenceWaiter, error)
 
 	UpdateTerm(newTerm int64, options TermOptions) error
@@ -149,7 +156,9 @@ type DB interface {
 
 	// SetDeferredSplitFilter records the deferred filter of a split child, and
 	// flushes the database: the writes that precede it become durable as well.
-	SetDeferredSplitFilter(filter *DeferredSplitFilter) error
+	// The range of the parent, if known, places the notifications that the
+	// child inherits (see inheritedNotifications).
+	SetDeferredSplitFilter(filter *DeferredSplitFilter, parentHashRange *proto.HashRange) error
 	// DeferredSplitFilter returns the deferred filter of a split child that
 	// still holds records outside its hash range, or nil.
 	DeferredSplitFilter() *DeferredSplitFilter
@@ -245,12 +254,23 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		return nil, multierr.Append(err, kv.Close())
 	}
 
+	if err := db.recoverInheritedNotifications(); err != nil {
+		return nil, multierr.Append(err, kv.Close())
+	}
+
 	lastNotificationOffset, err := db.readLastNotificationOffset()
 	if err != nil {
 		return nil, multierr.Append(errors.Wrap(err, "failed to read last notification offset"), kv.Close())
 	}
+	trimmedNotificationsOffset, err := db.readASCIILongOrDefault(trimmedNotificationsKey, constant.I64NegativeOne)
+	if err != nil {
+		return nil, multierr.Append(errors.Wrap(err, "failed to read trimmed notifications offset"), kv.Close())
+	}
 
-	db.notificationsTracker = newNotificationsTracker(namespace, shardId, lastNotificationOffset, kv, notificationRetentionTime, clock)
+	db.notificationsTracker = newNotificationsTracker(namespace, shardId, lastNotificationOffset,
+		trimmedNotificationsOffset, func(batch kvstore.WriteBatch, offset int64) error {
+			return db.addASCIILong(trimmedNotificationsKey, offset, batch, now())
+		}, kv, notificationRetentionTime, clock)
 	return db, nil
 }
 
@@ -266,6 +286,9 @@ type db struct {
 	splitFilter           atomic.Pointer[SplitFilter]
 	deferredSplitFilter   atomic.Pointer[DeferredSplitFilter]
 	sequenceWaiterTracker SequenceWaiterTracker
+
+	// The notification batches that a split child inherited, or nil
+	inheritedNotifications atomic.Pointer[inheritedNotifications]
 
 	putCounter                metric.Counter
 	deleteCounter             metric.Counter
@@ -518,10 +541,16 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 		}
 	}
 	splitFilterCompleted := false
+	var inherited inheritedNotifications
 	if splitFilterStep != nil {
 		var err error
 		if splitFilterCompleted, err = d.applySplitFilter(batch, splitFilterStep, updateOperationCallback); err != nil {
 			return nil, err
+		}
+		if splitFilterCompleted {
+			if inherited, err = d.closeInheritedNotificationsWithFilter(batch, commitOffset); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := batch.Commit(); err != nil {
@@ -534,12 +563,23 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	if splitFilterCompleted {
 		d.deferredSplitFilter.Store(nil)
 	}
+	if inherited != nil {
+		d.inheritedNotifications.Store(&inherited)
+	}
 
 	return meta, nil
 }
 
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
-	return d.processWrite(b, commitOffset, timestamp, updateOperationCallback, d.deferredSplitFilter.Load())
+	splitFilter := d.deferredSplitFilter.Load()
+	if splitFilter != nil {
+		// A write of the child's own terms: the notification batches before
+		// it are its parent's
+		if err := d.closeInheritedNotifications(commitOffset); err != nil {
+			return nil, err
+		}
+	}
+	return d.processWrite(b, commitOffset, timestamp, updateOperationCallback, splitFilter)
 }
 
 func (d *db) processWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64,
@@ -1457,7 +1497,20 @@ func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]pr
 	if !d.notificationsEnabled.Load() {
 		return nil, ErrNotificationsDisabled
 	}
-	return d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
+	batches, err := d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
+	if err != nil {
+		return nil, err
+	}
+	// Loaded after the read: a split child records where the batches it
+	// inherited end before it writes a batch of its own
+	if inherited := d.inheritedNotifications.Load(); inherited != nil {
+		return inherited.filter(batches)
+	}
+	return batches, nil
+}
+
+func (d *db) TrimmedNotificationsOffset() int64 {
+	return d.notificationsTracker.TrimmedOffset()
 }
 
 func ToDbOption(opt *proto.NewTermOptions) TermOptions {

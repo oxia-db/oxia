@@ -245,9 +245,10 @@ func (c *cacheImpl[Value]) handleNotification(n *Notification) {
 	c.RLock()
 	defer c.RUnlock()
 
-	if n.Type == KeyRangeRangeDeleted {
+	if n.Type == KeyRangeRangeDeleted || n.Type == NotificationsMissed {
 		// Ristretto can't list the cached keys between the bounds of the range,
-		// so drop all the cached records
+		// so drop all the cached records. Missed notifications can be of any
+		// record.
 		c.evictAll()
 		return
 	}

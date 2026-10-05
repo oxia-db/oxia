@@ -85,6 +85,9 @@ type followerCursor struct {
 	log            *slog.Logger
 	observer       bool                  // true for split observer cursors
 	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
+	// The range of the parent of a split, for split observer cursors, if the
+	// coordinator sent it
+	splitParentHashRange *proto.Int32HashRange
 
 	snapshotsTransferTime     metric.LatencyHistogram
 	snapshotsStartedCounter   metric.Counter
@@ -181,6 +184,7 @@ func NewObserverFollowerCursor( //nolint:revive
 	db database.DB,
 	ackOffset int64,
 	splitHashRange *proto.Int32HashRange,
+	splitParentHashRange *proto.Int32HashRange,
 ) (FollowerCursor, error) {
 	labels := map[string]any{
 		"namespace": namespace,
@@ -199,6 +203,7 @@ func NewObserverFollowerCursor( //nolint:revive
 		shardId:                 shardId,
 		observer:                true,
 		splitHashRange:          splitHashRange,
+		splitParentHashRange:    splitParentHashRange,
 
 		log: slog.With(
 			slog.String("component", "observer-cursor"),
@@ -337,6 +342,25 @@ func (fc *followerCursor) runOnce() error {
 	return fc.streamEntries()
 }
 
+// withSplitMetadata adds to the metadata of the streams of a split observer
+// cursor the hash range of the child, and the one of the parent if known.
+func (fc *followerCursor) withSplitMetadata(ctx context.Context) context.Context {
+	if fc.splitHashRange == nil {
+		return ctx
+	}
+	ctx = metadata.AppendToOutgoingContext(ctx,
+		constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
+		constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
+	)
+	if fc.splitParentHashRange != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx,
+			constant.MetadataSplitParentHashRangeMin, fmt.Sprintf("%d", fc.splitParentHashRange.MinHashInclusive),
+			constant.MetadataSplitParentHashRangeMax, fmt.Sprintf("%d", fc.splitParentHashRange.MaxHashInclusive),
+		)
+	}
+	return ctx
+}
+
 func (fc *followerCursor) sendSnapshot() error {
 	fc.Lock()
 	defer fc.Unlock()
@@ -348,12 +372,7 @@ func (fc *followerCursor) sendSnapshot() error {
 
 	// Inject split hash range into gRPC metadata so the child follower
 	// can activate split filtering before loading the snapshot.
-	if fc.splitHashRange != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx,
-			constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
-			constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
-		)
-	}
+	ctx = fc.withSplitMetadata(ctx)
 
 	stream, err := fc.replicateStreamProvider.SendSnapshot(ctx, fc.follower, fc.namespace, fc.shardId, fc.term)
 	if err != nil {
@@ -527,12 +546,7 @@ func (fc *followerCursor) streamEntries() error {
 	defer cancel()
 
 	// Inject split hash range for WAL catch-up filtering on the child
-	if fc.splitHashRange != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx,
-			constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
-			constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
-		)
-	}
+	ctx = fc.withSplitMetadata(ctx)
 
 	fc.Lock()
 	var err error

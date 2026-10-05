@@ -215,6 +215,13 @@ message AddFollowerRequest {
   // shard. Absent when the request comes from a coordinator that predates
   // feature-checked joins, in which case the leader skips the validation.
   FollowerFeatures follower_features = 9;
+
+  // For observer followers during shard split: the hash range of the parent
+  // shard. Both children keep the notifications of the parent, and each
+  // delivers those whose key hash is on its side of the split, which a child
+  // tells from the bounds of its range that it shares with the parent. Absent
+  // when the request comes from a coordinator that predates it.
+  optional io.oxia.proto.v1.Int32HashRange split_parent_hash_range = 10;
 }
 
 message FollowerFeatures {

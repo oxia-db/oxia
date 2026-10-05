@@ -286,6 +286,11 @@ const (
 	KeyDeleted
 	// KeyRangeRangeDeleted A range of keys was deleted.
 	KeyRangeRangeDeleted
+	// NotificationsMissed The subscription missed notifications: the server
+	// deleted them, after their retention time, before the subscription could
+	// read them. Any record can have changed without a notification since the
+	// ones received before. Key and KeyRangeEnd are empty.
+	NotificationsMissed
 )
 
 func (n NotificationType) String() string {
@@ -298,6 +303,8 @@ func (n NotificationType) String() string {
 		return "KeyDeleted"
 	case KeyRangeRangeDeleted:
 		return "KeyRangeRangeDeleted"
+	case NotificationsMissed:
+		return "NotificationsMissed"
 	}
 
 	return "Unknown"

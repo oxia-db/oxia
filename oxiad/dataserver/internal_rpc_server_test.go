@@ -256,3 +256,31 @@ func TestReadSplitHashRange(t *testing.T) {
 		assert.Nil(t, hr)
 	})
 }
+
+func TestReadSplitParentHashRange(t *testing.T) {
+	splitMD := func(lo, hi string) metadata.MD {
+		return metadata.New(map[string]string{
+			constant.MetadataSplitHashRangeMin:       "100",
+			constant.MetadataSplitHashRangeMax:       "200",
+			constant.MetadataSplitParentHashRangeMin: lo,
+			constant.MetadataSplitParentHashRangeMax: hi,
+		})
+	}
+
+	// From a coordinator that predates it
+	hr, err := readSplitParentHashRange(metadata.New(map[string]string{
+		constant.MetadataSplitHashRangeMin: "100",
+		constant.MetadataSplitHashRangeMax: "200",
+	}))
+	require.NoError(t, err)
+	assert.Nil(t, hr)
+
+	hr, err = readSplitParentHashRange(splitMD("100", "300"))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(100), hr.GetMin())
+	assert.Equal(t, uint32(300), hr.GetMax())
+
+	hr, err = readSplitParentHashRange(splitMD("300", "100"))
+	require.Error(t, err)
+	assert.Nil(t, hr)
+}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
@@ -230,6 +232,60 @@ func TestAsyncClientImpl_NotificationsClose(t *testing.T) {
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, standaloneServer.Close())
+}
+
+// A subscription that falls behind by more than the retention time misses the
+// notifications that the server deletes meanwhile: it is told, before the
+// notifications that follow them.
+func TestSyncClientImpl_NotificationsMissed(t *testing.T) {
+	config := dataserver.NewTestConfig(t.TempDir())
+	config.DataServerOptions.Storage.Notification.Retention = commonoption.Duration(time.Second)
+	standaloneServer, err := dataserver.NewStandalone(config)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, standaloneServer.Close()) }()
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	notifications, err := client.GetNotifications()
+	require.NoError(t, err)
+
+	// The subscription doesn't read: the notifications of these writes fill its
+	// channel and the flow-control window of its stream, with their long keys,
+	// and the retention deletes the ones still on the server
+	ctx := context.Background()
+	padding := strings.Repeat("x", 1000)
+	for i := 0; i < 1000; i++ {
+		_, _, err := client.Put(ctx, fmt.Sprintf("/unread-%04d-%s", i, padding), []byte("0"))
+		require.NoError(t, err)
+	}
+	time.Sleep(3 * time.Second)
+
+	// It reads the ones it got before, then is told that it missed the others
+	nextNotification := func() *oxia.Notification {
+		select {
+		case n := <-notifications.Ch():
+			require.NotNil(t, n)
+			return n
+		case <-time.After(30 * time.Second):
+			require.FailNow(t, "no notification")
+			return nil
+		}
+	}
+	read := 0
+	for n := nextNotification(); n.Type != oxia.NotificationsMissed; n = nextNotification() {
+		assert.True(t, strings.HasPrefix(n.Key, "/unread-"), n.Key)
+		read++
+	}
+	assert.Less(t, read, 1000)
+
+	// Then it gets the next ones
+	_, version, err := client.Put(ctx, "/after", []byte("0"))
+	require.NoError(t, err)
+	n := nextNotification()
+	assert.Equal(t, "/after", n.Key)
+	assert.Equal(t, version.VersionId, n.VersionId)
 }
 
 func TestAsyncClientImpl_Sessions(t *testing.T) {

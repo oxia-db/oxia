@@ -142,7 +142,7 @@ func (s *sessions) followSplits() {
 		if s.shardManager.Exists(shardId) {
 			continue
 		}
-		successors := s.currentSuccessors(shardId)
+		successors := currentSuccessors(s.shardManager, shardId)
 		cs.Lock()
 		sessionId, established := cs.sessionId, cs.established
 		cs.Unlock()
@@ -166,13 +166,13 @@ func (s *sessions) followSplits() {
 
 // currentSuccessors returns the shards of the shard map that replaced a shard
 // removed from it: the shards that replaced it may have been split in turn.
-func (s *sessions) currentSuccessors(shardId int64) []int64 {
+func currentSuccessors(shardManager internal.ShardManager, shardId int64) []int64 {
 	var current []int64
-	for _, successor := range s.shardManager.GetSuccessors(shardId) {
-		if s.shardManager.Exists(successor) {
+	for _, successor := range shardManager.GetSuccessors(shardId) {
+		if shardManager.Exists(successor) {
 			current = append(current, successor)
 		} else {
-			current = append(current, s.currentSuccessors(successor)...)
+			current = append(current, currentSuccessors(shardManager, successor)...)
 		}
 	}
 	return current
