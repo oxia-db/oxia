@@ -70,6 +70,10 @@ test: build
 	 ./oxiad/...   \
 	 ./tests/...
 
+.PHONY: test-kv
+test-kv:
+	go test -race -timeout 2m ./tests/kvscript/...
+
 lint:
 	#brew install golangci-lint
 	go work edit -json | jq -r '.Use[].DiskPath'  | xargs -I{} golangci-lint run {}/...
