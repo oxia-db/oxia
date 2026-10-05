@@ -26,7 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
@@ -57,13 +57,14 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 		},
 	}
 
-	receiver := r.runtime.Metadata().SubscribeConfig()
-	r.reconcile0(receiver.Load().Value, receiver)
+	subscription := r.runtime.Metadata().SubscribeConfig()
+	r.reconcile0(subscription.Get().Value, subscription)
 
 	r.wg.Go(func() {
+		defer subscription.Close()
 		process.DoWithLabels(reconcilerCtx, map[string]string{
 			"component": "coordinator-reconciler",
-		}, func() { r.bgWatchClusterConfiguration(receiver) })
+		}, func() { r.bgWatchClusterConfiguration(subscription) })
 	})
 
 	return r
@@ -90,23 +91,28 @@ func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.Cluster
 	return nil
 }
 
-func (r *clusterReconciler) bgWatchClusterConfiguration(receiver *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]]) {
+func (r *clusterReconciler) bgWatchClusterConfiguration(subscription *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]]) {
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
-		case <-receiver.Changed():
-			r.reconcile0(receiver.Load().Value, receiver)
+		case _, ok := <-subscription.Changed():
+			if !ok {
+				return
+			}
+			r.reconcile0(subscription.Get().Value, subscription)
 		}
 	}
 }
 
-func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, receiver *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]]) {
+func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, subscription *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]]) {
 	_ = backoff.RetryNotify(func() error {
 		// update the snapshot when we are retrying
 		select {
-		case <-receiver.Changed():
-			snapshot = receiver.Load().Value
+		case _, ok := <-subscription.Changed():
+			if ok {
+				snapshot = subscription.Get().Value
+			}
 		default:
 		}
 		return r.Reconcile(r.ctx, snapshot)

@@ -20,18 +20,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
-	"github.com/cenkalti/backoff/v4"
-	"github.com/fsnotify/fsnotify"
 	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
-	"github.com/oxia-db/oxia/common/process"
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	oxiatime "github.com/oxia-db/oxia/common/time"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
+	commonfile "github.com/oxia-db/oxia/oxiad/common/file"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -54,10 +50,9 @@ type Provider[T gproto.Message] struct {
 
 	ctx       context.Context
 	ctxCancel context.CancelFunc
-	wg        sync.WaitGroup
 
-	watcher *commonwatch.Watch[provider.Versioned[T]]
-	logger  *slog.Logger
+	cache  *cache.Cache[provider.Versioned[T]]
+	logger *slog.Logger
 }
 
 func NewProvider[T gproto.Message](
@@ -86,25 +81,19 @@ func NewProvider[T gproto.Message](
 			return nil, err
 		}
 	}
-	initialSnapshot, err := p.loadLatest()
-	if err != nil {
-		return nil, err
-	}
-	p.watcher = commonwatch.New(initialSnapshot)
+	var watch cache.WatchFunc
 	if watchEnabled.Enabled() {
-		p.wg.Go(func() {
-			process.DoWithLabels(p.ctx, map[string]string{
-				"component":     "metadata-provider",
-				"sub-component": "file-watch",
-			}, p.watchLoop)
-		})
+		watch = func(ctx context.Context) (<-chan struct{}, error) {
+			return commonfile.WatchFile(ctx, p.path)
+		}
 	}
+	p.cache = cache.New(p.ctx, p.load, watch)
 	return p, nil
 }
 
 func (m *Provider[T]) Close() error {
 	m.ctxCancel()
-	m.wg.Wait()
+	_ = m.cache.Close()
 	if !m.lockAcquired {
 		return nil
 	}
@@ -132,17 +121,12 @@ func (m *Provider[T]) GetLeaderName() (string, error) {
 	return m.name, nil
 }
 
-func (m *Provider[T]) loadLatest() (snapshot provider.Versioned[T], err error) {
-	err = backoff.RetryNotify(func() error {
-		var readErr error
-		snapshot, readErr = m.loadLatestOnceLocked()
-		return readErr
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn("Failed to read file metadata, retrying",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration))
-	})
-	return snapshot, err
+func (m *Provider[T]) load(context.Context) (*provider.Versioned[T], error) {
+	snapshot, err := m.loadLatestOnceLocked()
+	if err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
 }
 
 func (m *Provider[T]) loadLatestOnceLocked() (snapshot provider.Versioned[T], err error) {
@@ -180,95 +164,55 @@ func (m *Provider[T]) loadLatestOnceWithoutLock() (snapshot provider.Versioned[T
 	}, nil
 }
 
-func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (newVersion metadatacommon.Version, err error) {
+func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned[T], error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	existingSnapshot, err := m.loadLatestOnceWithoutLock()
 	if err != nil {
-		return metadatacommon.NotExists, err
+		return nil, err
 	}
 	existingVersion := existingSnapshot.Version
 
 	if snapshot.Version != existingVersion {
-		return metadatacommon.NotExists, metadatacommon.ErrBadVersion
+		return nil, metadatacommon.ErrBadVersion
 	}
 
-	newVersion = metadatacommon.NextVersion(existingVersion)
+	newVersion := metadatacommon.NextVersion(existingVersion)
 	newContent, err := m.codec.MarshalYAML(snapshot.Value)
 	if err != nil {
-		return metadatacommon.NotExists, err
+		return nil, err
 	}
 
 	if err := os.WriteFile(m.path, newContent, 0600); err != nil {
-		return metadatacommon.NotExists, err
+		return nil, err
 	}
 	m.version = newVersion
-	m.watcher.Publish(provider.Versioned[T]{
+	return &provider.Versioned[T]{
 		Value:   m.codec.Clone(snapshot.Value),
 		Version: newVersion,
-	})
-
-	return newVersion, nil
+	}, nil
 }
 
-func (m *Provider[T]) Watch() *commonwatch.Watch[provider.Versioned[T]] {
-	return m.watcher
+func (m *Provider[T]) Load() *provider.Versioned[T] {
+	return m.cache.Get()
 }
 
-func (m *Provider[T]) watchLoop() {
-	_ = backoff.RetryNotify(func() error {
-		snapshot, err := m.loadLatest()
-		if err != nil {
-			return err
-		}
-		m.watcher.Publish(snapshot)
-		return m.watchOnce()
-	}, oxiatime.NewBackOffWithInitialInterval(m.ctx, time.Second), func(err error, duration time.Duration) {
-		m.logger.Warn("File metadata watch failed, reconnecting",
-			slog.String("path", m.path),
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration))
-	})
+func (m *Provider[T]) Subscribe() *cache.Subscription[provider.Versioned[T]] {
+	return m.cache.Subscribe()
 }
 
-func (m *Provider[T]) watchOnce() error {
-	watcher, err := fsnotify.NewWatcher()
+// Store writes the snapshot, then updates the cache: a failed write empties
+// it, since the write may still have been applied. The cache is updated after
+// the write releases mu, which loading the cache takes. A load of the cache
+// holds the cache lock until it stores its value, so a load that read the
+// snapshot before the write cannot overwrite the cache update.
+func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
+	stored, err := m.write(snapshot)
 	if err != nil {
-		return err
+		m.cache.Invalidate()
+		return metadatacommon.NotExists, err
 	}
-	defer func() {
-		if err := watcher.Close(); err != nil {
-			m.logger.Warn("Failed to close file metadata watcher", slog.Any("error", err))
-		}
-	}()
-
-	if err := watcher.Add(filepath.Dir(m.path)); err != nil {
-		return err
-	}
-
-	watchedPath := filepath.Clean(m.path)
-	for {
-		select {
-		case <-m.ctx.Done():
-			return nil
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return errors.New("file metadata watcher errors channel closed")
-			}
-			return err
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return errors.New("file metadata watcher events channel closed")
-			}
-			if filepath.Clean(event.Name) == watchedPath &&
-				event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0 {
-				snapshot, err := m.loadLatest()
-				if err != nil {
-					return err
-				}
-				m.watcher.Publish(snapshot)
-			}
-		}
-	}
+	m.cache.Set(stored)
+	return stored.Version, nil
 }

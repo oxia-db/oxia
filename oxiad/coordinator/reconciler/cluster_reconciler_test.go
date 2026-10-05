@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 
@@ -62,9 +62,13 @@ func TestClusterReconcilerRetriesNamespaceCreationErrors(t *testing.T) {
 		runtime:     runtime,
 		reconcilers: []Reconciler{&namespaceReconciler{runtime: runtime}},
 	}
-	receiver := commonwatch.New(provider.Versioned[*proto.ClusterConfiguration]{Value: snapshot}).Subscribe()
+	config := cache.New(ctx, func(context.Context) (*provider.Versioned[*proto.ClusterConfiguration], error) {
+		return &provider.Versioned[*proto.ClusterConfiguration]{Value: snapshot}, nil
+	}, nil)
+	defer func() { require.NoError(t, config.Close()) }()
+	subscription := config.Subscribe()
 
-	reconciler.reconcile0(snapshot, receiver)
+	reconciler.reconcile0(snapshot, subscription)
 
 	require.NoError(t, ctx.Err())
 	require.Equal(t, []string{"healthy", "retry", "retry"}, runtime.attempted)

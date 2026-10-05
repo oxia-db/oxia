@@ -20,7 +20,7 @@ import (
 
 	gproto "google.golang.org/protobuf/proto"
 
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 )
 
@@ -34,6 +34,8 @@ type Versioned[T any] struct {
 type Provider[T gproto.Message] interface {
 	io.Closer
 
+	// Store writes the snapshot if its version matches the stored one, or
+	// fails with ErrBadVersion.
 	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 
 	// WaitToBecomeLeader blocks until this coordinator holds the leadership.
@@ -44,5 +46,10 @@ type Provider[T gproto.Message] interface {
 
 	GetLeaderName() (string, error)
 
-	Watch() *commonwatch.Watch[Versioned[T]]
+	// Load returns the stored snapshot, from the provider's cache.
+	Load() *Versioned[T]
+
+	// Subscribe returns a subscription notified each time the snapshot
+	// changes.
+	Subscribe() *cache.Subscription[Versioned[T]]
 }

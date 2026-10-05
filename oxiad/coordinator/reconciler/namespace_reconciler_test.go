@@ -25,6 +25,7 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -210,11 +211,9 @@ func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterCo
 	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
 }
 
-func (*mockNamespaceMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]] {
-	return commonwatch.New(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   &proto.ClusterConfiguration{},
-		Version: "",
-	}).Subscribe()
+// SubscribeConfig is not used by these tests.
+func (*mockNamespaceMetadata) SubscribeConfig() *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]] {
+	return nil
 }
 
 func (*mockNamespaceMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalancer] {

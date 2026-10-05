@@ -27,7 +27,7 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
@@ -157,11 +157,9 @@ func (m *mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfigura
 	})
 }
 
-func (*mockMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]] {
-	return commonwatch.New(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   &proto.ClusterConfiguration{},
-		Version: "",
-	}).Subscribe()
+// SubscribeConfig is not used by these tests.
+func (*mockMetadata) SubscribeConfig() *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]] {
+	return nil
 }
 
 func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalancer] {

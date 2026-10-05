@@ -166,7 +166,7 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	}))
 	require.Error(t, metadata.DeleteShardStatus("default", 0))
 
-	status := statusProvider.Watch().Load().Value
+	status := statusProvider.Load().Value
 	require.Len(t, status.GetNamespaces(), 1)
 	require.EqualValues(t, 1, status.GetNamespaces()["default"].GetShards()[0].GetTerm())
 	require.NoError(t, metadata.Close())

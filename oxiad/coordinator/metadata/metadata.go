@@ -30,7 +30,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -72,7 +72,7 @@ type Metadata interface {
 	DeleteShardStatus(namespace string, shard int64) error
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
-	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
+	SubscribeConfig() *cache.Subscription[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
 	CreateNamespace(namespace *commonproto.Namespace) error
@@ -129,7 +129,7 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
-	current := m.statusProvider.Watch().Load()
+	current := m.statusProvider.Load()
 	next, changed, err := fn(metadatacodec.ClusterStatusCodec.Clone(current.Value), current.Version)
 	if err != nil || !changed {
 		return err
@@ -149,7 +149,7 @@ func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfigur
 	m.configLock.Lock()
 	defer m.configLock.Unlock()
 
-	current := m.configProvider.Watch().Load()
+	current := m.configProvider.Load()
 	next, err := fn(metadatacodec.ClusterConfigCodec.Clone(current.Value), current.Version)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func (m *coordinatorMetadata) Close() error {
 }
 
 func (m *coordinatorMetadata) doStatusRecovery() {
-	status := m.statusProvider.Watch().Load().Value
+	status := m.statusProvider.Load().Value
 	if status.GetInstanceId() == "" {
 		_ = backoff.RetryNotify(func() error {
 			return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
@@ -194,11 +194,11 @@ func (m *coordinatorMetadata) doStatusRecovery() {
 }
 
 func (m *coordinatorMetadata) GetInstanceID() string {
-	return m.statusProvider.Watch().Load().Value.GetInstanceId()
+	return m.statusProvider.Load().Value.GetInstanceId()
 }
 
 func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
-	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(m.name)
+	coordinator, ok := m.configProvider.Load().Value.GetCoordinator(m.name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", m.name)
 	}
@@ -210,7 +210,7 @@ func (m *coordinatorMetadata) GetLeader() (*commonproto.Coordinator, error) {
 	if err != nil {
 		return nil, err
 	}
-	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(name)
+	coordinator, ok := m.configProvider.Load().Value.GetCoordinator(name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", name)
 	}
@@ -263,7 +263,7 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 }
 
 func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
-	status := m.statusProvider.Watch().Load().Value
+	status := m.statusProvider.Load().Value
 	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.GetNamespaces()))
 	for name, status := range status.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
@@ -272,7 +272,7 @@ func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borr
 }
 
 func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {
-	status := m.statusProvider.Watch().Load().Value
+	status := m.statusProvider.Load().Value
 	namespaceStatus, exists := status.GetNamespaces()[namespace]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
@@ -416,11 +416,11 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) e
 }
 
 func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration] {
-	return commonobject.Borrow(m.configProvider.Watch().Load().Value)
+	return commonobject.Borrow(m.configProvider.Load().Value)
 }
 
-func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]] {
-	return m.configProvider.Watch().Subscribe()
+func (m *coordinatorMetadata) SubscribeConfig() *cache.Subscription[provider.Versioned[*commonproto.ClusterConfiguration]] {
+	return m.configProvider.Subscribe()
 }
 
 func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer] {
