@@ -1,0 +1,86 @@
+# A deletion acknowledged before election remains absent after election.
+# Recreating the key cannot make its previous version valid again.
+
+put key=a value=old create-only save=old
+----
+ok key="a" modifications=0
+
+wait-replicated
+----
+ok
+
+delete key=a expected-version=@old
+----
+ok
+
+assert-record key=a missing
+----
+ok
+
+wait-replicated
+----
+ok
+
+stop-server role=leader key=a save=original-leader
+----
+ok
+
+assert-record key=a missing
+----
+ok
+
+put key=a value=must-not-recreate expected-version=@old
+----
+error: unexpected version id
+
+assert-record key=a missing
+----
+ok
+
+put key=a value=reborn create-only save=reborn
+----
+ok key="a" modifications=0
+
+get key=a save-record=reborn
+----
+key="a" value="reborn" modifications=0
+
+put key=a value=must-not-overwrite expected-version=@old save=reborn
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@reborn
+----
+ok
+
+delete key=a expected-version=@old
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@reborn
+----
+ok
+
+restart-server saved=@original-leader
+----
+ok
+
+wait-replicated
+----
+ok
+
+assert-record key=a unchanged=@reborn
+----
+ok
+
+delete key=a expected-version=@reborn
+----
+ok
+
+assert-record key=a missing
+----
+ok
+
+wait-replicated
+----
+ok

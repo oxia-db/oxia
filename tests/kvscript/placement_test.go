@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/stretchr/testify/require"
 	"github.com/zeebo/xxh3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -43,7 +44,11 @@ func (r *runner) placement(c command) string {
 		c.t.Fatalf("%s: require-override needs a partition argument", c.data.Pos)
 	}
 
-	connection, err := grpc.NewClient(r.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	address := r.address
+	if r.cluster != nil {
+		address = r.cluster.liveAddress()
+	}
+	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		c.t.Fatalf("%s: placement connection failed: %v", c.data.Pos, err)
 	}
@@ -54,7 +59,7 @@ func (r *runner) placement(c command) string {
 	}()
 	rpc := proto.NewOxiaClientClient(connection)
 	assignments := placementAssignments(c, rpc)
-	locations := placementLocations(c, rpc, assignments, keys)
+	locations := placementLocations(c, assignments, keys)
 	used, overridden := checkPlacement(c, assignments, keys, locations)
 	if len(used) < minimum {
 		c.t.Fatalf("%s: placement uses %d shards, need at least %d; locations=%v",
@@ -97,8 +102,8 @@ func placementMinimum(c command, keyCount int) int {
 
 func placementAssignments(c command, rpc proto.OxiaClientClient) []*proto.ShardAssignment {
 	c.t.Helper()
-	// The assignment stream remains open for updates. Only its initial snapshot
-	// is needed in this static standalone topology; cancel it before probing.
+	// Take a fresh assignment snapshot for each probe, including after a cluster
+	// lifecycle barrier. Cancel the stream before reading the advertised leaders.
 	ctx, cancel := context.WithCancel(c.ctx)
 	defer cancel()
 	stream, err := rpc.GetShardAssignments(ctx, &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace})
@@ -122,8 +127,8 @@ func validatePlacementAssignments(c command, assignments []*proto.ShardAssignmen
 	c.t.Helper()
 	seen := make(map[int64]bool, len(assignments))
 	for _, assignment := range assignments {
-		if assignment == nil || assignment.GetInt32HashRange() == nil {
-			c.t.Fatalf("%s: placement assignment has no hash range", c.data.Pos)
+		if assignment == nil || assignment.GetInt32HashRange() == nil || assignment.GetLeader() == "" {
+			c.t.Fatalf("%s: placement assignment has no hash range or leader", c.data.Pos)
 		}
 		if assignment.Shard < 0 || seen[assignment.Shard] {
 			c.t.Fatalf("%s: invalid or duplicate placement shard %d", c.data.Pos, assignment.Shard)
@@ -147,12 +152,12 @@ func validatePlacementAssignments(c command, assignments []*proto.ShardAssignmen
 	}
 }
 
-func placementLocations(c command, rpc proto.OxiaClientClient, assignments []*proto.ShardAssignment,
+func placementLocations(c command, assignments []*proto.ShardAssignment,
 	keys []string) map[string][]int64 {
 	c.t.Helper()
 	locations := make(map[string][]int64, len(keys))
 	for _, assignment := range assignments {
-		responses := probePlacementShard(c, rpc, assignment.Shard, keys)
+		responses := probePlacementLeader(c, assignment, keys)
 		for i, response := range responses {
 			if placementPresent(c, response, keys[i], assignment.Shard) {
 				locations[keys[i]] = append(locations[keys[i]], assignment.Shard)
@@ -160,6 +165,14 @@ func placementLocations(c command, rpc proto.OxiaClientClient, assignments []*pr
 		}
 	}
 	return locations
+}
+
+func probePlacementLeader(c command, assignment *proto.ShardAssignment, keys []string) []*proto.GetResponse {
+	c.t.Helper()
+	connection, err := grpc.NewClient(assignment.Leader, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(c.t, err, "%s: cannot connect to placement leader", c.data.Pos)
+	defer func() { require.NoError(c.t, connection.Close()) }()
+	return probePlacementShard(c, proto.NewOxiaClientClient(connection), assignment.Shard, keys)
 }
 
 func probePlacementShard(c command, rpc proto.OxiaClientClient, shard int64, keys []string) []*proto.GetResponse {

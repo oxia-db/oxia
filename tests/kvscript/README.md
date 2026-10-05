@@ -2,9 +2,10 @@
 
 This suite describes KV operations and their expected results in text files. A
 file is one stateful scenario: commands execute in order against the same
-`oxia.SyncClient` and standalone server. Each file gets fresh storage and dynamic
-ports. The operations go through the real client, gRPC, shard controllers, WAL,
-and Pebble; there is no mock KV implementation.
+`oxia.SyncClient`. Each file gets fresh storage and dynamic ports, using either
+a standalone server or a coordinated three-server RF3 cluster. The operations
+go through the real client, gRPC, shard controllers, WAL, and Pebble; there is no
+mock KV implementation.
 
 ## Why this approach
 
@@ -70,6 +71,9 @@ only a text file, without writing more Go test scaffolding.
 | `delete-range` | `start`, `end` | `partition` | `DeleteRange` |
 | `placement` | `keys` | `partition`, `min-shards`, `require-override` | Independent shard reads |
 | `assert-record` | `key`, either `unchanged` or `missing` | `partition` | `Get` and record assertion |
+| `stop-server` | `role`, `key`, `save` | `partition` | RF3 server stop and election barrier |
+| `restart-server` | `saved` | — | RF3 server restart and topology barrier |
+| `wait-replicated` | — | — | RF3 replica application barrier |
 
 - `create-only` is a bare flag, mapped to `ExpectedRecordNotExists()`.
 - `save=name` stores the successful put/get result's version ID. Use
@@ -101,6 +105,24 @@ only a text file, without writing more Go test scaffolding.
   optional `partition` checks the overridden route, including an empty string.
   `require-override` requires `partition` and verifies that at least one key was
   placed differently from its default route. Shard IDs appear only in diagnostics.
+- `stop-server role=leader key=a save=old` selects the current leader of the
+  key's shard, closes that server, and waits for a different leader at a higher
+  term. `role=follower` selects a follower instead. `partition` changes shard
+  selection exactly as it does for KV commands. Stopping a server can affect
+  several shards; the barrier checks every shard and its surviving replicas.
+- `restart-server saved=@old` restarts the saved server with the same identity,
+  network addresses, WAL, and database directories. It waits for all three
+  members to have a serving leader and followers ready at the current terms.
+  An idle follower can remain fenced until its first append in a new term;
+  `wait-replicated` additionally requires that append to have been accepted.
+  The existing
+  client and saved versions/records remain in use across both commands.
+- `wait-replicated` requires all three servers to be running. It snapshots each
+  leader's quorum commit offset, sends an empty write to advertise that commit
+  to followers, and waits for every replica's database-applied offset to reach
+  the snapshot at the same term. The empty writes create no user records. This
+  verifies application progress; it does not directly compare follower values.
+  A term change or an unmet prerequisite fails the command.
 
 Put results include the returned key and modification count. Get/range results
 also include the quoted value. This preserves spaces and empty values in the
@@ -114,8 +136,12 @@ errors (`key not found`, `unexpected version id`, `invalid options`) have stable
 error output; unexpected transport failures
 and timeouts fail the test even when rewriting expected results. Malformed
 commands, duplicate/unsupported arguments, and unknown version aliases also fail.
-Placement failures and unchanged-record assertion failures are fatal even with
-`-rewrite`. Each command has a five-second deadline.
+Placement failures, record assertion failures, and cluster barrier failures are
+fatal even with `-rewrite`. KV commands have a five-second deadline. Cluster
+commands use a thirty-second context for RPCs and readiness/replication waits;
+synchronous server startup and close are bounded by the overall test timeout.
+Only topology and replication observations are polled; KV failures are never
+retried by the test adapter.
 
 ## Running and extending
 
@@ -123,8 +149,9 @@ From the repository root:
 
 ```sh
 make test-kv
-go test -v -timeout 2m ./tests/kvscript/...
+go test -v -timeout 10m ./tests/kvscript/...
 go test -v ./tests/kvscript/... -run 'TestKVScripts/natural/shards-4/cas$'
+go test -v ./tests/kvscript/... -run 'TestKVClusterScripts/natural/shards-4/follower_catchup$'
 ```
 
 `make test-kv` enables race detection. The suite is also included in the existing
@@ -147,13 +174,29 @@ The sorting-specific cases cover leading, trailing and repeated slashes and path
 depth boundaries. Common failure scenarios compare complete saved records after
 rejected writes/deletes and invalid UTF-8 deletion bounds.
 
-The configurations use one standalone server with a replication factor of one.
-Four shards exercise client routing and aggregation within that server; they do
-not cover multi-node replication or failover. Multishard fixtures assert their
-placement prerequisites rather than assuming that four configured shards are
-enough. The probe observes applied records; it does not establish crash durability.
-Cross-shard
-operations should not be interpreted as a global atomic transaction or snapshot.
+`TestKVScripts` uses one standalone server with replication factor one.
+`TestKVClusterScripts` reruns the same fixtures with RF3, using a real coordinator
+runtime and reconciler plus three data servers, each with separate public/internal
+gRPC endpoints and storage. All components run inside the same Go test process.
+The coordinator uses in-memory metadata; coordinator restart is outside this suite.
+Immutable seed discovery supplies all three server addresses through
+`WithDialResolver`, allowing the same client's assignment stream to reconnect
+when a seed server stops. Advertised leader addresses determine KV routing.
+
+Files in `testdata/cluster/common` add leader failover, follower catch-up, CAS
+across elections, and deletion/recreation across elections, under both sortings
+and one/four shards. `testdata/cluster/multishard` adds complete cross-shard reads
+and scoped deletion across a server stop/restart, with four shards. Every file
+gets its own cluster. Together the two runners execute 174 scenarios: 80 RF1
+and 94 RF3.
+
+Multishard fixtures assert actual placement rather than assuming that four
+configured shards are enough. The probe refreshes assignments and reads each
+shard's advertised leader independently. Server stops are graceful, and replica
+barriers observe database application, so these checks do not establish hard-crash
+or power-loss durability. Cross-shard operations should not be interpreted as a
+global atomic transaction or snapshot. Quorum loss, arbitrary network partitions,
+and concurrent linearizability are outside this suite.
 
 Add a file under the appropriate directory to introduce another scenario. On a
 mismatch, datadriven reports the file, line, command, and expected/actual diff.
@@ -231,14 +274,12 @@ The key adaptations are:
 
 ## Follow-on work
 
-The runner operates on `SyncClient`, so the same command vocabulary can be
-connected to a coordinated cluster by changing the setup. Useful additions are
-secondary-index and sequential-key options, named clients with ephemeral-record
-lifecycle checks, and restart steps for recovery scenarios. Each addition needs
-explicit output and lifecycle rules.
+Useful additions are secondary-index and sequential-key options, named clients
+with ephemeral-record lifecycle checks, and process-level crash/recovery scenarios.
+Each addition needs explicit output and lifecycle rules.
 
 The initial suite verifies sequential KV behavior. Concurrent histories,
-linearizability, replication failures, watch ordering, and interactive terminal
+linearizability, network partitions, watch ordering, and interactive terminal
 editing still require their own test mechanisms; etcd's history model and
 process-expect framework are references for those separate layers.
 

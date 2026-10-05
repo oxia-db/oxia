@@ -34,9 +34,28 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
-const requestTimeout = 5 * time.Second
+const (
+	requestTimeout = 5 * time.Second
+	clusterTimeout = 30 * time.Second
+)
+
+type scriptTopology uint8
+
+const (
+	standaloneTopology scriptTopology = iota
+	replicatedTopology
+)
 
 func TestKVScripts(t *testing.T) {
+	runScripts(t, standaloneTopology)
+}
+
+func TestKVClusterScripts(t *testing.T) {
+	runScripts(t, replicatedTopology)
+}
+
+func runScripts(t *testing.T, topology scriptTopology) {
+	t.Helper()
 	for _, sorting := range []string{"hierarchical", "natural"} {
 		for _, shards := range []uint32{1, 4} {
 			t.Run(fmt.Sprintf("%s/shards-%d", sorting, shards), func(t *testing.T) {
@@ -46,10 +65,16 @@ func TestKVScripts(t *testing.T) {
 				if shards > 1 {
 					dirs = append(dirs, filepath.Join("multishard", "common"), filepath.Join("multishard", sorting))
 				}
+				if topology == replicatedTopology {
+					dirs = append(dirs, filepath.Join("cluster", "common"))
+					if shards > 1 {
+						dirs = append(dirs, filepath.Join("cluster", "multishard"))
+					}
+				}
 				for _, dir := range dirs {
 					datadriven.Walk(t, filepath.Join("testdata", dir), func(t *testing.T, path string) {
 						t.Helper()
-						runner := newRunner(t, shards, keySorting)
+						runner := newRunner(t, shards, keySorting, topology)
 						datadriven.RunTest(t, path, runner.run)
 					})
 				}
@@ -61,11 +86,33 @@ func TestKVScripts(t *testing.T) {
 type runner struct {
 	client   oxia.SyncClient
 	address  string
+	cluster  *scriptCluster
+	servers  map[string]string
 	versions map[string]int64
 	records  map[string]oxia.GetResult
 }
 
-func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType) *runner {
+func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType, topology scriptTopology) *runner {
+	t.Helper()
+	r := &runner{
+		versions: make(map[string]int64), records: make(map[string]oxia.GetResult), servers: make(map[string]string),
+	}
+	options := []oxia.ClientOption{oxia.WithRequestTimeout(requestTimeout)}
+	if topology == replicatedTopology {
+		r.cluster, r.address = newScriptCluster(t, shards, sorting)
+		options = append(options, oxia.WithDialResolver(&seedResolver{addresses: r.cluster.seedAddresses()}))
+		r.address = "kvscript:///" + r.address
+	} else {
+		r.address = newStandalone(t, shards, sorting)
+	}
+	client, err := oxia.NewSyncClient(r.address, options...)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	r.client = client
+	return r
+}
+
+func newStandalone(t *testing.T, shards uint32, sorting proto.KeySortingType) string {
 	t.Helper()
 	config := dataserver.NewTestConfig(t.TempDir())
 	config.NumShards = shards
@@ -74,13 +121,17 @@ func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType) *runne
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
 
-	client, err := oxia.NewSyncClient(server.ServiceAddr(), oxia.WithRequestTimeout(requestTimeout))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	return &runner{
-		client: client, address: server.ServiceAddr(),
-		versions: make(map[string]int64), records: make(map[string]oxia.GetResult),
-	}
+	return server.ServiceAddr()
+}
+
+// Seed discovery stays available when any one server is stopped. The SDK's
+// advertised per-shard leader addresses still control all KV operations.
+type seedResolver struct{ addresses []string }
+
+func (*seedResolver) Scheme() string { return "kvscript" }
+
+func (r *seedResolver) Resolve(_ string, updater oxia.AddressUpdater) {
+	_ = updater(r.addresses)
 }
 
 type command struct {
@@ -91,7 +142,11 @@ type command struct {
 
 func (r *runner) run(t *testing.T, data *datadriven.TestData) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), requestTimeout)
+	timeout := requestTimeout
+	if slices.Contains([]string{"stop-server", "restart-server", "wait-replicated"}, data.Cmd) {
+		timeout = clusterTimeout
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 	c := command{t: t, data: data, ctx: ctx}
 	switch data.Cmd {
@@ -111,10 +166,47 @@ func (r *runner) run(t *testing.T, data *datadriven.TestData) string {
 		return r.placement(c)
 	case "assert-record":
 		return r.assertRecord(c)
+	case "stop-server", "restart-server", "wait-replicated":
+		return r.clusterCommand(c)
 	default:
 		t.Fatalf("%s: unknown command %q", data.Pos, data.Cmd)
 		return ""
 	}
+}
+
+func (r *runner) clusterCommand(c command) string {
+	c.t.Helper()
+	if r.cluster == nil {
+		c.t.Fatalf("%s: %s requires the RF3 cluster runner", c.data.Pos, c.data.Cmd)
+	}
+	switch c.data.Cmd {
+	case "stop-server":
+		c.checkArgs("role", "key", "partition", "save")
+		alias := c.arg("save")
+		if _, exists := r.servers[alias]; exists {
+			c.t.Fatalf("%s: server alias %q already exists", c.data.Pos, alias)
+		}
+		var partition *string
+		if c.data.HasArg("partition") {
+			value := c.arg("partition")
+			partition = &value
+		}
+		r.servers[alias] = r.cluster.stop(c, c.arg("role"), c.arg("key"), partition)
+	case "restart-server":
+		c.checkArgs("saved")
+		alias, ok := strings.CutPrefix(c.arg("saved"), "@")
+		name, exists := r.servers[alias]
+		if !ok || !exists {
+			c.t.Fatalf("%s: saved must reference a stopped server with @name", c.data.Pos)
+		}
+		r.cluster.restart(c, name)
+	case "wait-replicated":
+		c.checkArgs()
+		r.cluster.waitReplicated(c)
+	default:
+		c.t.Fatalf("%s: unknown cluster command %q", c.data.Pos, c.data.Cmd)
+	}
+	return "ok\n"
 }
 
 func (c command) checkArgs(allowed ...string) {
