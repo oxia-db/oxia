@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -47,6 +48,15 @@ func (r *watchedNamespaceRuntime) RecomputeAssignments() {
 	r.recomputations++
 }
 
+type countingBackOff struct {
+	backoff.ZeroBackOff
+	resets int
+}
+
+func (b *countingBackOff) Reset() {
+	b.resets++
+}
+
 func TestClusterReconcilerReturnsReconcileErrorForRetry(t *testing.T) {
 	base := namespaceRuntimeForErrors("retry", "healthy")
 	base.metadata.config = &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{
@@ -70,13 +80,16 @@ func TestClusterReconcilerReturnsReconcileErrorForRetry(t *testing.T) {
 	}, nil)
 	defer func() { require.NoError(t, config.Close()) }()
 	subscription := config.Subscribe()
-	require.EqualError(t, reconciler.bgWatchClusterConfiguration(subscription), "temporary namespace write failure")
+	bo := &countingBackOff{}
+	require.EqualError(t, reconciler.bgWatchClusterConfiguration(subscription, bo), "temporary namespace write failure")
 	require.Equal(t, []string{"healthy", "retry"}, []string{<-runtime.attempts, <-runtime.attempts})
+	require.Zero(t, bo.resets)
 
-	reconciler.wg.Go(func() { require.NoError(t, reconciler.bgWatchClusterConfiguration(subscription)) })
+	reconciler.wg.Go(func() { require.NoError(t, reconciler.bgWatchClusterConfiguration(subscription, bo)) })
 	require.Equal(t, []string{"healthy", "retry"}, []string{<-runtime.attempts, <-runtime.attempts})
 	require.NoError(t, reconciler.Close())
 	require.Equal(t, 2, runtime.recomputations)
+	require.Equal(t, 1, bo.resets)
 	require.Len(t, base.added, 2)
 	for _, name := range []string{"retry", "healthy"} {
 		_, exists := base.metadata.GetNamespaceStatus(name)
