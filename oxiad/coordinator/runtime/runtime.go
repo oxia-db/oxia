@@ -965,6 +965,12 @@ func New(
 	metadata coordmetadata.Metadata,
 	rpcProvider rpc.ProviderFactory,
 ) (Runtime, error) {
+	clusterStatus := metadata.ListNamespaceStatus()
+	insID, err := metadata.GetInstanceID()
+	if err != nil {
+		return nil, err
+	}
+
 	c := &runtime{
 		logger: slog.With(
 			slog.String("component", "coordinator"),
@@ -975,6 +981,7 @@ func New(
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
 		drainingNodes:         make(map[string]dataservercontroller.Controller),
 		metadata:              metadata,
+		insID:                 insID,
 		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
 	}
 
@@ -999,14 +1006,6 @@ func New(
 			return nc.IsStablyRunning(dataServerRecoveryStabilizationWindow)
 		},
 	})
-
-	clusterStatus := c.metadata.ListNamespaceStatus()
-	insID, err := c.metadata.GetInstanceID()
-	if err != nil {
-		c.ctxCancel()
-		return nil, err
-	}
-	c.insID = insID
 
 	c.rpc = rpcProvider(c.insID)
 
