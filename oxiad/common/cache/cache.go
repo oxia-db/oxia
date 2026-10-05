@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -42,11 +43,13 @@ type LoadFunc[T any] func(ctx context.Context) (*T, error)
 // the channel once ctx is done, when the watch session ends or the cache
 // closes, and the watch should then stop. Closing the channel means the watch
 // ended, and the cache starts a new one. A nil WatchFunc is for a source that
-// changes only through Set.
+// changes only through Compute.
 type WatchFunc func(ctx context.Context) (<-chan struct{}, error)
 
-// Cache holds the last value loaded from, or written to, a source. A nil
-// value means the cache has none, and the next Get loads it.
+// Cache holds the last value loaded from, or written to, a source, like a
+// loading cache. When it is empty, at first and after a failed write, the next
+// Get or Compute loads the value, and reports when that load fails. A reload,
+// after a change of the source, keeps the cached value until it succeeds.
 type Cache[T any] struct {
 	// Set once by New.
 	logger *slog.Logger
@@ -55,21 +58,22 @@ type Cache[T any] struct {
 	load   LoadFunc[T]
 	watch  WatchFunc
 
-	// mu guards the fields below it. Get takes the read lock. Set,
-	// Invalidate and the load attempts take the write lock, and an attempt
-	// holds it until it stores its value: a Set or Invalidate after a write to
-	// the source then cannot be overwritten by a load that read the source
-	// before.
-	mu          sync.RWMutex
-	value       *T
+	// value is read without a lock, and only changes under mu. It is nil when
+	// the cache is empty.
+	value atomic.Pointer[T]
+
+	// mu serializes Compute and the loads: a load then cannot store a value
+	// read before a Compute wrote the source. It also guards the fields below
+	// it.
+	mu          sync.Mutex
 	subscribers map[*Subscription[T]]struct{}
 	closed      bool
 
 	wg sync.WaitGroup
 }
 
-// New starts watching the source. The cache has no value until the first load
-// or Set, which a watch session starting also triggers.
+// New starts watching the source. The cache is empty until the first Get,
+// Compute or reload loads the value.
 func New[T any](ctx context.Context, load LoadFunc[T], watch WatchFunc) *Cache[T] {
 	cacheCtx, cancel := context.WithCancel(ctx)
 	c := &Cache[T]{
@@ -80,50 +84,91 @@ func New[T any](ctx context.Context, load LoadFunc[T], watch WatchFunc) *Cache[T
 		watch:       watch,
 		subscribers: map[*Subscription[T]]struct{}{},
 	}
-	if watch == nil {
-		return c
+	if watch != nil {
+		c.wg.Go(c.runWatcher)
 	}
-	c.wg.Go(c.runWatcher)
 	return c
 }
 
-// Get returns the cached value. When the cache is empty, before the first
-// load and after Invalidate, it loads the value, retrying until the cache has
-// one. It never returns nil, except once the cache is closed while empty.
-func (c *Cache[T]) Get() *T {
-	c.mu.RLock()
-	value := c.value
-	c.mu.RUnlock()
-	if value != nil {
-		return value
-	}
-	value, _ = c.Reload()
-	return value
-}
-
-// Set stores a value the caller has written to the source, and notifies the
-// subscribers. value must not be nil: use Invalidate to empty the cache.
-func (c *Cache[T]) Set(value *T) {
-	if value == nil {
-		panic("cache: Set with a nil value, use Invalidate to empty the cache")
+// Get returns the cached value. When the cache is empty, it loads the value,
+// and returns the error of the load if it fails. Concurrent calls wait for
+// the same load.
+func (c *Cache[T]) Get() (*T, error) {
+	if value := c.value.Load(); value != nil {
+		return value, nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.value = value
+	if value := c.value.Load(); value != nil {
+		return value, nil
+	}
+	return c.load0()
+}
+
+// Compute writes a new value to the source through fn, and stores the value
+// fn returns. It loads the value first when the cache is empty. fn runs under
+// the lock that serializes the loads, so no load can store a value read before
+// the write. When fn fails, the write may still have been applied: the cache
+// is emptied, so that the next Get or Compute loads the value.
+func (c *Cache[T]) Compute(fn func(current *T) (*T, error)) (*T, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	current := c.value.Load()
+	if current == nil {
+		var err error
+		if current, err = c.load0(); err != nil {
+			return nil, err
+		}
+	}
+	next, err := fn(current)
+	if err != nil {
+		c.value.Store(nil)
+		return nil, err
+	}
+	c.value.Store(next)
 	for s := range c.subscribers {
 		channel.PushNoBlock(s.changed, struct{}{})
 	}
+	return next, nil
 }
 
-// Invalidate empties the cache, so the next Get loads the value.
-func (c *Cache[T]) Invalidate() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.value = nil
+// Reload loads the value and stores it, retrying until a load succeeds. It
+// fails only if the cache is closed first, which keeps the cached value. Each
+// attempt holds the lock while it loads and stores the value, and the backoff
+// between attempts does not.
+func (c *Cache[T]) Reload() error {
+	return backoff.RetryNotify(func() error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		_, err := c.load0()
+		return err
+	}, oxiatime.NewBackOff(c.ctx), func(err error, retryAfter time.Duration) {
+		c.logger.Warn("Failed to load, retrying later",
+			slog.Any("error", err), slog.Duration("retry-after", retryAfter))
+	})
+}
+
+// load0 loads the value and stores it, for callers holding mu.
+func (c *Cache[T]) load0() (*T, error) {
+	loadCtx, cancel := context.WithTimeout(c.ctx, loadTimeout)
+	defer cancel()
+	value, err := c.load(loadCtx)
+	if err != nil {
+		return nil, err
+	}
+	if value == nil {
+		return nil, errors.New("load returned no value")
+	}
+	c.value.Store(value)
+	for s := range c.subscribers {
+		channel.PushNoBlock(s.changed, struct{}{})
+	}
+	return value, nil
 }
 
 // Subscribe returns a subscription notified after each successful load or
-// Set.
+// Compute.
 func (c *Cache[T]) Subscribe() *Subscription[T] {
 	s := &Subscription[T]{cache: c, changed: make(chan struct{}, 1)}
 	c.mu.Lock()
@@ -154,41 +199,6 @@ func (c *Cache[T]) Close() error {
 	return nil
 }
 
-// Reload loads the value and stores it, retrying until a load succeeds. It
-// only fails once the cache is closed. Each attempt holds the write lock while
-// it loads and stores the value, and the backoff between attempts does not:
-// reads keep the cached value meanwhile.
-func (c *Cache[T]) Reload() (*T, error) {
-	return backoff.RetryNotifyWithData(func() (*T, error) {
-		select {
-		case <-c.ctx.Done():
-			return nil, backoff.Permanent(c.ctx.Err())
-		default:
-		}
-
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		loadCtx, cancel := context.WithTimeout(c.ctx, loadTimeout)
-		defer cancel()
-		value, err := c.load(loadCtx)
-		if err != nil {
-			return nil, err
-		}
-		if value == nil {
-			return nil, errors.New("load returned no value")
-		}
-
-		c.value = value
-		for s := range c.subscribers {
-			channel.PushNoBlock(s.changed, struct{}{})
-		}
-		return value, nil
-	}, oxiatime.NewBackOff(c.ctx), func(err error, retryAfter time.Duration) {
-		c.logger.Warn("Failed to load, retrying later",
-			slog.Any("error", err), slog.Duration("retry-after", retryAfter))
-	})
-}
-
 // runWatcher runs the watch until the cache closes, reloading the value on
 // each change, and starts a new watch when one fails.
 func (c *Cache[T]) runWatcher() {
@@ -201,7 +211,7 @@ func (c *Cache[T]) runWatcher() {
 			return err
 		}
 		// Changes made before the watch started were not observed by it.
-		_, _ = c.Reload()
+		_ = c.Reload()
 		for {
 			select {
 			case <-ctx.Done():
@@ -212,7 +222,7 @@ func (c *Cache[T]) runWatcher() {
 				}
 				// The watch is healthy: a restart starts the backoff over.
 				bo.Reset()
-				_, _ = c.Reload()
+				_ = c.Reload()
 			}
 		}
 	}, bo, func(err error, retryAfter time.Duration) {
@@ -223,22 +233,22 @@ func (c *Cache[T]) runWatcher() {
 }
 
 // Subscription is notified each time the cache gets a new value from a load
-// or a Set.
+// or a Compute.
 type Subscription[T any] struct {
 	cache   *Cache[T]
 	changed chan struct{}
 }
 
-// Changed receives a value after each successful load or Set. Notifications
-// are coalesced: a subscriber that falls behind receives one for several
-// values, and reads the latest with Get. The channel is closed when the
+// Changed receives a value after each successful load or Compute.
+// Notifications are coalesced: a subscriber that falls behind receives one
+// for several values, and reads the latest with Get. The channel is closed when the
 // subscription or the cache is closed.
 func (s *Subscription[T]) Changed() <-chan struct{} {
 	return s.changed
 }
 
 // Get returns the cached value, as Cache.Get.
-func (s *Subscription[T]) Get() *T {
+func (s *Subscription[T]) Get() (*T, error) {
 	return s.cache.Get()
 }
 

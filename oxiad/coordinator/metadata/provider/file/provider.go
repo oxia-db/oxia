@@ -194,7 +194,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 	}, nil
 }
 
-func (m *Provider[T]) Load() *provider.Versioned[T] {
+func (m *Provider[T]) Load() (*provider.Versioned[T], error) {
 	return m.cache.Get()
 }
 
@@ -202,17 +202,19 @@ func (m *Provider[T]) Subscribe() *cache.Subscription[provider.Versioned[T]] {
 	return m.cache.Subscribe()
 }
 
-// Store writes the snapshot, then updates the cache: a failed write empties
-// it, since the write may still have been applied. The cache is updated after
-// the write releases mu, which loading the cache takes. A load of the cache
-// holds the cache lock until it stores its value, so a load that read the
-// snapshot before the write cannot overwrite the cache update.
+// Store writes the snapshot through the cache, so that no load of the cache
+// stores a snapshot read before the write. When the write fails, which it may
+// do after being applied, the next Load or Store reads the stored snapshot.
 func (m *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
-	stored, err := m.write(snapshot)
+	stored, err := m.cache.Compute(func(*provider.Versioned[T]) (*provider.Versioned[T], error) {
+		return m.write(snapshot)
+	})
 	if err != nil {
-		m.cache.Invalidate()
 		return metadatacommon.NotExists, err
 	}
-	m.cache.Set(stored)
 	return stored.Version, nil
+}
+
+func (m *Provider[T]) Reload() error {
+	return m.cache.Reload()
 }

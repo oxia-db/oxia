@@ -19,9 +19,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
@@ -166,7 +168,7 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	}))
 	require.Error(t, metadata.DeleteShardStatus("default", 0))
 
-	status := statusProvider.Load().Value
+	status := loaded(t, statusProvider).Value
 	require.Len(t, status.GetNamespaces(), 1)
 	require.EqualValues(t, 1, status.GetNamespaces()["default"].GetShards()[0].GetTerm())
 	require.NoError(t, metadata.Close())
@@ -250,4 +252,62 @@ func TestMetadataUpdateShardStatusesDeletesEmptiedNamespace(t *testing.T) {
 	_, exists = metadata.GetNamespaceStatus("default")
 	require.False(t, exists)
 	require.NoError(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
+}
+
+// reloadRecordingProvider counts the reloads, and only accepts writes after
+// one, like a provider whose snapshot is outdated until reloaded.
+type reloadRecordingProvider struct {
+	provider.Provider[*commonproto.ClusterStatus]
+	reloads *atomic.Int32
+}
+
+func (p reloadRecordingProvider) Reload() error {
+	p.reloads.Add(1)
+	return p.Provider.Reload()
+}
+
+func (p reloadRecordingProvider) Store(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
+	if p.reloads.Load() == 0 {
+		return metadataconstant.NotExists, metadataconstant.ErrBadVersion
+	}
+	return p.Provider.Store(snapshot)
+}
+
+// A coordinator taking over reloads the snapshots it loaded before the
+// leadership, before its first write.
+func TestMetadataReloadsOnLeadership(t *testing.T) {
+	var statusReloads, configReloads atomic.Int32
+	statusProvider := reloadRecordingProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+		reloads:  &statusReloads,
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	countingConfig := reloadRecordingConfig{Provider: configProvider, reloads: &configReloads}
+	metadata := newMetadata(t.Context(), statusProvider, countingConfig, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.WaitToBecomeLeader()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, statusReloads.Load())
+	require.EqualValues(t, 1, configReloads.Load())
+	// The status recovery, the first write, came after the reload.
+	require.NotEmpty(t, metadata.GetInstanceID())
+}
+
+type reloadRecordingConfig struct {
+	provider.Provider[*commonproto.ClusterConfiguration]
+	reloads *atomic.Int32
+}
+
+func (p reloadRecordingConfig) Reload() error {
+	p.reloads.Add(1)
+	return p.Provider.Reload()
+}
+
+// loaded returns the stored snapshot, failing the test if it cannot be loaded.
+func loaded[T gproto.Message](t *testing.T, p provider.Provider[T]) *provider.Versioned[T] {
+	t.Helper()
+	snapshot, err := p.Load()
+	require.NoError(t, err)
+	return snapshot
 }

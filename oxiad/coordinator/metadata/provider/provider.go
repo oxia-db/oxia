@@ -35,7 +35,8 @@ type Provider[T gproto.Message] interface {
 	io.Closer
 
 	// Store writes the snapshot if its version matches the stored one, or
-	// fails with ErrBadVersion.
+	// fails with ErrBadVersion. A failed write may still have been applied:
+	// the next Load or Store then reads the stored snapshot.
 	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 
 	// WaitToBecomeLeader blocks until this coordinator holds the leadership.
@@ -46,8 +47,14 @@ type Provider[T gproto.Message] interface {
 
 	GetLeaderName() (string, error)
 
-	// Load returns the stored snapshot, from the provider's cache.
-	Load() *Versioned[T]
+	// Load returns the stored snapshot, from the provider's cache. When the
+	// cache is empty, Load reads the snapshot, and returns the error of the
+	// read if it fails.
+	Load() (*Versioned[T], error)
+
+	// Reload loads the stored snapshot into the provider's cache, retrying
+	// until it succeeds. It fails only if the provider closes first.
+	Reload() error
 
 	// Subscribe returns a subscription notified each time the snapshot
 	// changes.

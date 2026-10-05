@@ -107,7 +107,10 @@ func NewGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 		return nil, err
 	}
 
-	metadataFactory, err = coordmetadata.New(parent, options)
+	// The providers retry their loads until they succeed or their context is
+	// canceled: deriving them from the server context lets Close stop those
+	// retries.
+	metadataFactory, err = coordmetadata.New(ctx, options)
 	if err != nil {
 		return nil, err
 	}

@@ -66,14 +66,14 @@ func NewProvider[T gproto.Message](ctx context.Context, r *Raft, codec metadatac
 }
 
 // OnApplied reloads the cache from the applied state, which also covers the
-// entries replicated from another leader. The cache is emptied before
-// OnApplied returns, so a read once the entry is applied, like after the
-// leadership barrier, loads the applied state instead of the cached one.
+// entries replicated from another leader. The reload runs in the background:
+// it cannot run here, since a write holds the cache lock while it waits for
+// raft to apply its entry. A new leader reloads its caches once the entries
+// are applied.
 func (mpr *Provider[T]) OnApplied(key string, _ []byte, _ int64) {
 	if mpr.codec.GetKey() != key {
 		return
 	}
-	mpr.cache.Invalidate()
 	channel.PushNoBlock(mpr.changes, struct{}{})
 }
 
@@ -183,7 +183,7 @@ func (mpr *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Version
 	}, nil
 }
 
-func (mpr *Provider[T]) Load() *provider.Versioned[T] {
+func (mpr *Provider[T]) Load() (*provider.Versioned[T], error) {
 	return mpr.cache.Get()
 }
 
@@ -191,16 +191,19 @@ func (mpr *Provider[T]) Subscribe() *cache.Subscription[provider.Versioned[T]] {
 	return mpr.cache.Subscribe()
 }
 
-// Store writes the snapshot, then updates the cache: a failed write empties
-// it, since the write may still have been applied. A load of the cache holds
-// the cache lock until it stores its value, so a load that read the snapshot
-// before the write cannot overwrite the cache update.
+// Store writes the snapshot through the cache, so that no load of the cache
+// stores a snapshot read before the write. When the write fails, which it may
+// do after being applied, the next Load or Store reads the stored snapshot.
 func (mpr *Provider[T]) Store(snapshot provider.Versioned[T]) (metadatacommon.Version, error) {
-	stored, err := mpr.write(snapshot)
+	stored, err := mpr.cache.Compute(func(*provider.Versioned[T]) (*provider.Versioned[T], error) {
+		return mpr.write(snapshot)
+	})
 	if err != nil {
-		mpr.cache.Invalidate()
 		return metadatacommon.NotExists, err
 	}
-	mpr.cache.Set(stored)
 	return stored.Version, nil
+}
+
+func (mpr *Provider[T]) Reload() error {
+	return mpr.cache.Reload()
 }
