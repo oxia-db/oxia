@@ -15,7 +15,6 @@
 package kvscript
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -30,6 +29,7 @@ import (
 	"github.com/cockroachdb/datadriven"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -85,33 +85,39 @@ func runScripts(t *testing.T, topology scriptTopology) {
 }
 
 type runner struct {
-	client   oxia.SyncClient
-	address  string
-	cluster  *scriptCluster
-	servers  map[string]string
-	versions map[string]int64
-	records  map[string]oxia.GetResult
+	client        oxia.SyncClient
+	clientOptions []oxia.ClientOption
+	clients       map[string]namedClient
+	namespace     string
+	address       string
+	cluster       *scriptCluster
+	servers       map[string]string
+	versions      map[string]int64
+	records       map[string]oxia.GetResult
 }
 
-func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType, topology scriptTopology) *runner {
+func newRunner(t *testing.T, shards uint32, sorting proto.KeySortingType, topology scriptTopology,
+	namespaces ...string,
+) *runner {
 	t.Helper()
 	r := &runner{
 		versions: make(map[string]int64), records: make(map[string]oxia.GetResult), servers: make(map[string]string),
+		clients: make(map[string]namedClient), namespace: constant.DefaultNamespace,
 	}
 	options := []oxia.ClientOption{oxia.WithRequestTimeout(requestTimeout)}
 	if topology == replicatedTopology {
-		r.cluster, r.address = newScriptCluster(t, shards, sorting)
+		r.cluster, r.address = newScriptCluster(t, shards, sorting, namespaces...)
 		resolver := &seedResolver{addresses: r.cluster.seedAddresses()}
 		r.cluster.updateSeeds = resolver.update
 		options = append(options, oxia.WithDialResolver(resolver))
 		r.address = "kvscript:///" + r.address
 	} else {
+		require.Empty(t, namespaces, "extra namespaces require the RF3 cluster runner")
 		r.address = newStandalone(t, shards, sorting)
 	}
-	client, err := oxia.NewSyncClient(r.address, options...)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	r.client = client
+	r.clientOptions = options
+	r.client = r.newClient(t)
+	r.clients["default"] = namedClient{client: r.client, namespace: r.namespace}
 	return r
 }
 
@@ -181,7 +187,12 @@ func (r *runner) run(t *testing.T, data *datadriven.TestData) string {
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 	c := command{t: t, data: data, ctx: ctx}
+	if slices.Contains([]string{"placement", "stop-server", "restart-server", "wait-replicated"}, data.Cmd) {
+		r.requireDefaultNamespace(c)
+	}
 	switch data.Cmd {
+	case "client", "use-client":
+		return r.clientCommand(c)
 	case "put":
 		return r.put(c)
 	case "get":
@@ -253,7 +264,7 @@ func (c command) checkArgs(allowed ...string) {
 		}
 		seen[arg.Key] = true
 		switch arg.Key {
-		case "create-only", "unordered", "require-override", "missing":
+		case "create-only", "unordered", "require-override", "missing", "persistent":
 			arg.ExpectNumVals(c.t, 0)
 		case "keys":
 			if len(arg.Vals) == 0 {
@@ -333,7 +344,7 @@ func (r *runner) saveVersion(c command, version oxia.Version) {
 
 func (r *runner) put(c command) string {
 	c.t.Helper()
-	c.checkArgs("key", "value", "partition", "create-only", "expected-version", "save")
+	c.checkArgs("key", "value", "partition", "create-only", "expected-version", "save", "save-record")
 	key, value := c.arg("key"), c.arg("value")
 	var options []oxia.PutOption
 	if partition := c.partition(); partition != nil {
@@ -353,12 +364,13 @@ func (r *runner) put(c command) string {
 		return c.domainError(err)
 	}
 	r.saveVersion(c, version)
+	r.saveRecord(c, storedKey, []byte(value), version)
 	return fmt.Sprintf("ok key=%q modifications=%d\n", storedKey, version.ModificationsCount)
 }
 
 func (r *runner) get(c command) string {
 	c.t.Helper()
-	c.checkArgs("key", "partition", "comparison", "save", "save-record")
+	c.checkArgs("key", "partition", "comparison", "include-value", "persistent", "save", "save-record")
 	key := c.arg("key")
 	var options []oxia.GetOption
 	if partition := c.partition(); partition != nil {
@@ -376,41 +388,28 @@ func (r *runner) get(c command) string {
 		}
 		options = append(options, comparison)
 	}
+	if c.data.HasArg("include-value") {
+		options = append(options, oxia.IncludeValue(c.boolArg("include-value")))
+	}
 	storedKey, value, version, err := r.client.Get(c.ctx, key, options...)
 	if err != nil {
 		return c.domainError(err)
 	}
 	r.saveVersion(c, version)
-	if c.data.HasArg("save-record") {
-		r.records[c.arg("save-record")] = oxia.GetResult{Key: storedKey, Value: bytes.Clone(value), Version: version}
+	if c.data.HasArg("include-value") && !c.boolArg("include-value") {
+		require.Empty(c.t, value, "%s: metadata-only get returned a value", c.data.Pos)
 	}
+	if c.data.HasArg("persistent") {
+		assertPersistentVersion(c, version)
+	}
+	r.saveRecord(c, storedKey, value, version)
 	return formatRecord(storedKey, value, version)
 }
 
 func (r *runner) assertRecord(c command) string {
 	c.t.Helper()
-	c.checkArgs("key", "partition", "unchanged", "missing")
-	if c.data.HasArg("missing") {
-		if c.data.HasArg("unchanged") {
-			c.t.Fatalf("%s: missing and unchanged cannot be combined", c.data.Pos)
-		}
-		result := r.readRecord(c)
-		require.ErrorIs(c.t, result.Err, oxia.ErrKeyNotFound, "%s: record must be missing", c.data.Pos)
-		return "ok\n"
-	}
-	alias, ok := strings.CutPrefix(c.arg("unchanged"), "@")
-	if !ok {
-		c.t.Fatalf("%s: unchanged must reference a saved record with @name", c.data.Pos)
-	}
-	saved, exists := r.records[alias]
-	if !exists {
-		c.t.Fatalf("%s: unknown saved record %q", c.data.Pos, alias)
-	}
-	result := r.readRecord(c)
-	require.NoError(c.t, result.Err, "%s: cannot read record for unchanged assertion", c.data.Pos)
-	require.Equal(c.t, saved.Key, result.Key, "%s: record key changed", c.data.Pos)
-	require.Equal(c.t, saved.Value, result.Value, "%s: record value changed", c.data.Pos)
-	require.Equal(c.t, saved.Version, result.Version, "%s: record version metadata changed", c.data.Pos)
+	c.checkArgs("key", "partition", "unchanged", "metadata", "updated", "persistent", "missing")
+	r.assertRecordRelations(c)
 	return "ok\n"
 }
 

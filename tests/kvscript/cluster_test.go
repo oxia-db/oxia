@@ -44,11 +44,12 @@ import (
 // These are independent servers, storage directories, and gRPC endpoints in
 // one Go test process. Stopping a node closes it gracefully; it is not a crash.
 type scriptCluster struct {
-	ctx      context.Context
-	nodes    []*scriptNode
-	metadata coordmetadata.Metadata
-	shards   uint32
-	sorting  proto.KeySorting
+	ctx        context.Context
+	nodes      []*scriptNode
+	metadata   coordmetadata.Metadata
+	shards     uint32
+	sorting    proto.KeySorting
+	namespaces []string
 	// Discovery excludes a stopped node after close and includes it only
 	// after its restart and assignment streams are ready.
 	updateSeeds func([]string)
@@ -60,20 +61,23 @@ type scriptNode struct {
 	server   *dataserver.Server
 }
 
-func newScriptCluster(t *testing.T, shards uint32, sorting proto.KeySortingType) (*scriptCluster, string) {
+func newScriptCluster(t *testing.T, shards uint32, sorting proto.KeySortingType,
+	extraNamespaces ...string) (*scriptCluster, string) {
 	t.Helper()
-	cluster := &scriptCluster{ctx: t.Context(), shards: shards, sorting: sorting.ToKeySorting()}
+	cluster := &scriptCluster{ctx: t.Context(), shards: shards, sorting: sorting.ToKeySorting(),
+		namespaces: append([]string{constant.DefaultNamespace}, extraNamespaces...)}
 	identities := make([]*proto.DataServerIdentity, 0, 3)
 	for index := range 3 {
 		node := newScriptNode(t, fmt.Sprintf("node-%d", index+1))
 		cluster.nodes = append(cluster.nodes, node)
 		identities = append(identities, node.identity)
 	}
-	namespace := &proto.Namespace{
-		Name: constant.DefaultNamespace, InitialShardCount: shards, ReplicationFactor: 3,
+	config := &proto.ClusterConfiguration{Servers: identities}
+	for _, name := range cluster.namespaces {
+		namespace := &proto.Namespace{Name: name, InitialShardCount: shards, ReplicationFactor: 3}
+		namespace.SetKeySortingType(sorting)
+		config.Namespaces = append(config.Namespaces, namespace)
 	}
-	namespace.SetKeySortingType(sorting)
-	config := &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{namespace}, Servers: identities}
 	configProvider := mock.NewConfigProvider(t, config)
 	t.Cleanup(func() { require.NoError(t, configProvider.Close()) })
 	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec,
@@ -177,13 +181,16 @@ func (cluster *scriptCluster) health(t *testing.T, live int) string {
 	if count != live {
 		return fmt.Sprintf("live nodes=%d, need %d", count, live)
 	}
-	shards := cluster.snapshot(t)
-	if len(shards) != int(cluster.shards) {
-		return fmt.Sprintf("shards=%d, need %d", len(shards), cluster.shards)
-	}
-	for id, shard := range shards {
-		if reason := cluster.shardHealth(id, shard); reason != "" {
-			return reason
+	status := mock.StatusSnapshot(t, cluster.metadata)
+	for _, namespace := range cluster.namespaces {
+		shards := status.Namespaces[namespace].GetShards()
+		if len(shards) != int(cluster.shards) {
+			return fmt.Sprintf("namespace %s shards=%d, need %d", namespace, len(shards), cluster.shards)
+		}
+		for id, shard := range shards {
+			if reason := cluster.shardHealth(id, shard); reason != "" {
+				return fmt.Sprintf("namespace %s: %s", namespace, reason)
+			}
 		}
 	}
 	return ""
@@ -283,22 +290,25 @@ func (cluster *scriptCluster) waitAssignments(c command) {
 		clients[node.identity.GetNameOrDefault()] = proto.NewOxiaClientClient(connection)
 	}
 	cluster.wait(c, "all live seeds advertise the current shard leaders", func() string {
-		shards := cluster.snapshot(c.t)
-		for name, client := range clients {
-			if reason := cluster.assignmentHealth(c.ctx, client, shards); reason != "" {
-				return fmt.Sprintf("seed %s: %s", name, reason)
+		status := mock.StatusSnapshot(c.t, cluster.metadata)
+		for _, namespace := range cluster.namespaces {
+			shards := status.Namespaces[namespace].GetShards()
+			for name, client := range clients {
+				if reason := cluster.assignmentHealth(c.ctx, client, namespace, shards); reason != "" {
+					return fmt.Sprintf("seed %s namespace %s: %s", name, namespace, reason)
+				}
 			}
 		}
 		return ""
 	})
 }
 
-func (cluster *scriptCluster) assignmentHealth(ctx context.Context, client proto.OxiaClientClient,
+func (cluster *scriptCluster) assignmentHealth(ctx context.Context, client proto.OxiaClientClient, namespace string,
 	shards map[int64]*proto.ShardMetadata) string {
 	probeCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	stream, err := client.GetShardAssignments(probeCtx,
-		&proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace})
+		&proto.ShardAssignmentsRequest{Namespace: namespace})
 	if err != nil {
 		return fmt.Sprintf("assignment stream not ready: %v", err)
 	}
@@ -306,7 +316,7 @@ func (cluster *scriptCluster) assignmentHealth(ctx context.Context, client proto
 	if err != nil {
 		return fmt.Sprintf("assignment snapshot not ready: %v", err)
 	}
-	assignments := response.GetNamespaces()[constant.DefaultNamespace]
+	assignments := response.GetNamespaces()[namespace]
 	if assignments.GetShardKeyRouter() != proto.ShardKeyRouter_XXHASH3 ||
 		assignments.GetKeySorting() != cluster.sorting || len(assignments.GetAssignments()) != len(shards) {
 		return "assignment topology, router, or sorting is not current"

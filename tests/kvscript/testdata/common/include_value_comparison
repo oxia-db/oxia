@@ -1,0 +1,135 @@
+# Omitting values retains the selected key and every Version field.
+# Exercise exact keys, missing query keys, and absent comparison candidates.
+
+put key=a value="first" save-record=a
+----
+ok key="a" modifications=0
+
+put key=c value="\x00\xffmiddle" save-record=c
+----
+ok key="c" modifications=0
+
+put key=e value="last" save-record=e
+----
+ok key="e" modifications=0
+
+get key=c comparison=equal include-value=false persistent save=metadata-version save-record=equal
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@equal persistent
+----
+ok
+
+assert-record key=c unchanged=@c persistent
+----
+ok
+
+get key=c comparison=floor include-value=false persistent save-record=floor
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@floor
+----
+ok
+
+get key=c comparison=ceiling include-value=false persistent save-record=ceiling
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@ceiling
+----
+ok
+
+get key=c comparison=lower include-value=false persistent save-record=lower
+----
+key="a" value="" modifications=0
+
+assert-record key=a metadata=@lower
+----
+ok
+
+get key=c comparison=higher include-value=false persistent save-record=higher
+----
+key="e" value="" modifications=0
+
+assert-record key=e metadata=@higher
+----
+ok
+
+get key=d comparison=equal include-value=false persistent
+----
+error: key not found
+
+get key=d comparison=floor include-value=false persistent save-record=missing-floor
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@missing-floor
+----
+ok
+
+get key=d comparison=ceiling include-value=false persistent save-record=missing-ceiling
+----
+key="e" value="" modifications=0
+
+assert-record key=e metadata=@missing-ceiling
+----
+ok
+
+get key=d comparison=lower include-value=false persistent save-record=missing-lower
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@missing-lower
+----
+ok
+
+get key=d comparison=higher include-value=false persistent save-record=missing-higher
+----
+key="e" value="" modifications=0
+
+assert-record key=e metadata=@missing-higher
+----
+ok
+
+get key=0 comparison=floor include-value=false persistent
+----
+error: key not found
+
+get key=a comparison=lower include-value=false persistent
+----
+error: key not found
+
+get key=z comparison=ceiling include-value=false persistent
+----
+error: key not found
+
+get key=e comparison=higher include-value=false persistent
+----
+error: key not found
+
+# The full value remains available, and the omitted-value version is valid for CAS.
+get key=c include-value=true persistent
+----
+key="c" value="\x00\xffmiddle" modifications=0
+
+put key=c value="updated" expected-version=@metadata-version save-record=updated
+----
+ok key="c" modifications=1
+
+assert-record key=c updated=@c persistent
+----
+ok
+
+assert-record key=c unchanged=@updated persistent
+----
+ok
+
+get key=c comparison=equal include-value=false persistent save-record=updated-metadata
+----
+key="c" value="" modifications=1
+
+assert-record key=c metadata=@updated-metadata persistent
+----
+ok

@@ -63,14 +63,16 @@ only a text file, without writing more Go test scaffolding.
 
 | Command | Required arguments | Optional arguments | API |
 | --- | --- | --- | --- |
-| `put` | `key`, `value` | `create-only`, `expected-version`, `save`, `partition` | `Put` |
-| `get` | `key` | `comparison`, `save`, `save-record`, `partition` | `Get` |
+| `put` | `key`, `value` | `create-only`, `expected-version`, `save`, `save-record`, `partition` | `Put` |
+| `get` | `key` | `comparison`, `include-value`, `persistent`, `save`, `save-record`, `partition` | `Get` |
 | `delete` | `key` | `expected-version`, `partition` | `Delete` |
 | `range` | `start`, `end` | `partition`, `unordered` | `RangeScan` |
 | `list` | `start`, `end` | `partition`, `unordered` | `List` |
 | `delete-range` | `start`, `end` | `partition` | `DeleteRange` |
 | `placement` | `keys` | `partition`, `min-shards`, `require-override` | Independent shard reads |
-| `assert-record` | `key`, either `unchanged` or `missing` | `partition` | `Get` and record assertion |
+| `assert-record` | `key` | `unchanged`, `metadata`, `updated`, `missing`, `persistent`, `partition` | `Get` and record assertion |
+| `client` | `name` | `namespace` | Create and select an independent `SyncClient` |
+| `use-client` | `name` | — | Select an existing client |
 | `stop-server` | `role`, `key`, `save` | `partition` | RF3 server stop and election barrier |
 | `restart-server` | `saved` | — | RF3 server restart and topology barrier |
 | `wait-replicated` | — | — | RF3 replica application barrier |
@@ -81,14 +83,30 @@ only a text file, without writing more Go test scaffolding.
   is also accepted, but aliases avoid assumptions about assigned version IDs.
   Saving to the same name replaces its previous value; failed operations do not
   update aliases.
-- `get ... save-record=name` saves the complete returned record, including its
-  value and all version metadata. `assert-record key=a unchanged=@name` reads it
-  again and requires every field to match. Record aliases are separate from
-  version aliases, and neither absolute IDs nor timestamps enter expected output.
-  `assert-record key=a missing` instead requires a not-found result; it cannot be
-  combined with `unchanged`.
+- `save-record=name` on `put` saves the supplied value and the returned key/version,
+  without issuing another read; on `get` it saves the complete returned record.
+  `assert-record key=a unchanged=@name` requires every field to match, while
+  `metadata=@name` compares the key and all version fields without comparing values.
+  `updated=@name` requires a different opaque version ID, unchanged creation time,
+  and a modification count increment of one. It does not compare timestamp order.
+  `missing` requires a not-found result. Only one relation can be selected.
+  `persistent` checks `Ephemeral=false`, `SessionId=0`, and empty `ClientIdentity`;
+  it can stand alone or accompany a relation other than `missing`.
+  Record aliases are separate from version aliases, and neither absolute IDs nor
+  timestamps enter expected output. Failed operations do not replace record aliases.
+- `client name=observer` creates and selects another client with the same endpoint,
+  request timeout, and discovery resolver. `use-client name=default` selects the
+  original client. Clients share script aliases but have independent SDK state;
+  all are closed during cleanup. Optional `namespace=alpha` selects a configured
+  namespace. Namespace fixtures configure `alpha`, `beta`, and the default namespace.
+  Placement and cluster control commands select records in the default namespace;
+  namespace fixtures use only the KV and client commands.
 - `comparison` accepts `equal` (the default), `floor`, `ceiling`, `lower`, and
   `higher`.
+- `get ... include-value=false` maps to `IncludeValue(false)` and asserts that no
+  value bytes were returned. Key and version metadata remain available; metadata
+  aliases can check their equality with a full read. `true` explicitly requests
+  the value. `get ... persistent` also checks the returned version's persistent fields.
 - `partition` maps to `PartitionKey()`. Supply it consistently on writes and
   reads for keys whose routing is overridden. It selects a shard; it does not
   create a separate namespace or provide tenant isolation.
@@ -99,6 +117,10 @@ only a text file, without writing more Go test scaffolding.
   Without this flag, list output is compared in the original returned order.
 - `range ... unordered` sorts the formatted record lines before comparison,
   retaining duplicates. This checks complete results without requiring an order.
+  The public `RangeScan` ordering guarantee applies when a partition key is supplied
+  and the records were written with that partition key. Global scans should use
+  `unordered` when verifying that contract; their current merge order is not an
+  additional API guarantee.
 - `placement keys=(a,c,e) min-shards=2` reads those keys from every assigned shard
   using an independent gRPC connection and explicit shard IDs. Every key must
   exist on exactly one shard and match the advertised XXHASH3 routing. The
@@ -193,8 +215,25 @@ Files in `testdata/cluster/common` add leader failover, follower catch-up, CAS
 across elections, and deletion/recreation across elections, under both sortings
 and one/four shards. `testdata/cluster/multishard` adds complete cross-shard reads
 and scoped deletion across a server stop/restart, with four shards. Every file
-gets its own cluster. Together the two runners execute 174 scenarios: 80 RF1
-and 94 RF3.
+gets its own cluster. Together the two runners execute 246 scenarios: 112 RF1
+and 134 RF3. Two acknowledged-write fixtures stop the leader immediately after a
+successful Put or Delete, without `wait-replicated` or an intervening KV read.
+They check the returned Put version after election, retain CAS eligibility, and
+verify that deletion and recreation survive another election and node restart.
+
+`TestKVNamespaceScripts` adds four RF3 executions with three configured namespaces,
+under both sortings and one/four shards. Identical record and partition keys remain
+isolated during conditional updates, scoped and global range deletions, and recreation.
+Standalone exposes only the default namespace, so namespace isolation uses a real
+coordinator-backed configuration. The three script runners execute 250 scenarios.
+
+`TestKVConcurrentCAS` uses independent clients and start barriers for Put/Put,
+Put/Delete, and create-only competitions. Both clients first observe the same
+version or absence; exactly one operation must succeed, and the other must report
+a version conflict. Both read the winning record and reject stale versions after
+recreation. RF1/RF3, both sortings, one/four shards, default/partition routing, and
+three rounds per combination give 144 competitions. These bounded races complement
+the sequential fixtures; they are not a general concurrent-history checker.
 
 Multishard fixtures assert actual placement rather than assuming that four
 configured shards are enough. The probe refreshes assignments and reads each
@@ -203,6 +242,40 @@ barriers observe database application, so these checks do not establish hard-cra
 or power-loss durability. Cross-shard operations should not be interpreted as a
 global atomic transaction or snapshot. Quorum loss, arbitrary network partitions,
 and concurrent linearizability are outside this suite.
+
+## Core KV contract coverage
+
+Each row connects a public behavior to executable checks. Scenarios assume a
+healthy configured namespace and consistent routing options unless they explicitly
+stop a replica. Sequential reads start after the preceding mutation completes;
+range checks use a stable dataset rather than asserting a concurrent snapshot.
+
+| Behavior | Observable guarantee checked | Representative checks |
+| --- | --- | --- |
+| Record lifecycle | Exact key/value, overwrite without duplicates, missing delete, recreation resets modifications | `crud`, `etcd_overwrite_same_value`, `etcd_recreate_cycles` |
+| Key/value representation | Empty keys/values, valid Unicode and NUL, distinct Unicode spellings, arbitrary value bytes | `strings`, `utf8_and_empty_keys`, `record_metadata` |
+| Conditional mutations | Valid versions succeed; rejected mutations preserve records; deleted versions stay stale | `cas`, `partition_cas_failure_preserves_record` |
+| Returned metadata | Put/Get full version equality, updates preserve creation time and increment modifications, persistent fields | `record_metadata`, `partition_record_metadata` |
+| Client visibility | Completed writes/deletes are visible to another client using the same namespace and route | `cross_client_visibility`, `partition_cross_client_visibility` |
+| Conditional competition | Exactly one contender succeeds with a shared version or create-only condition | `TestKVConcurrentCAS` |
+| Comparison reads | Equal/floor/ceiling/lower/higher select the expected key; omitting values retains metadata and CAS usability | `comparison`, `include_value_comparison`, partition variants |
+| Range boundaries | Inclusive start, exclusive end, unbounded end, completeness and scoped deletion | `range`, `global_range`, `partition_delete_range`, sorting fixtures |
+| Partition routing | Explicit route selects a shard and co-locates records; it is not namespace isolation | `partition_override`, `partition_collision`, `wrong_partition` |
+| Namespace isolation | Same record/partition keys in different namespaces remain independent through mutation and range deletion | `namespace/isolation` |
+| Internal key boundary | Default scans hide internal records; mixed user/internal deletion bounds are rejected without modifying users | `internal_key_boundaries` |
+| RF3 recovery | Successfully returned records/versions and deletions survive controlled election and restart | `acknowledged_write_failover_*`, existing cluster fixtures |
+
+Version IDs are opaque and meaningful for a given key; tests do not require a global
+revision sequence or compare IDs across records or namespaces. Timestamp checks use
+field equality across API results and preservation on updates, without assuming
+that successive mutations must occur in different milliseconds.
+
+The no-change assertions concern definitive version conflicts and invalid write
+inputs in the listed scenarios. A timeout or connection failure can leave a mutation's
+outcome unknown; this suite fails on those errors rather than assuming no mutation
+occurred. Cross-shard operations do not acquire an atomic global snapshot or transaction.
+The shared scripts currently run through the Go SDK; Java SDK conformance needs an
+adapter and its own execution results.
 
 Add a file under the appropriate directory to introduce another scenario. On a
 mismatch, datadriven reports the file, line, command, and expected/actual diff.
@@ -280,11 +353,11 @@ The key adaptations are:
 
 ## Follow-on work
 
-Useful additions are secondary-index and sequential-key options, named clients
-with ephemeral-record lifecycle checks, and process-level crash/recovery scenarios.
+Useful additions are secondary-index and sequential-key options, ephemeral-record
+lifecycle checks through named clients, and process-level crash/recovery scenarios.
 Each addition needs explicit output and lifecycle rules.
 
-The initial suite verifies sequential KV behavior. Concurrent histories,
+The scripts verify sequential KV behavior and the Go tests add bounded CAS races. Concurrent histories,
 linearizability, network partitions, watch ordering, and interactive terminal
 editing still require their own test mechanisms; etcd's history model and
 process-expect framework are references for those separate layers.

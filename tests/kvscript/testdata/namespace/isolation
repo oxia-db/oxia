@@ -1,0 +1,159 @@
+# Namespace is the isolation boundary; identical keys and partition keys in
+# different namespaces must not make writes or range deletions cross that boundary.
+
+put key=a value=default save-record=default
+----
+ok key="a" modifications=0
+
+client name=alpha namespace=alpha
+----
+ok
+
+put key=a value=alpha-one partition=tenant create-only save=alpha-version save-record=alpha
+----
+ok key="a" modifications=0
+
+put key=b value=alpha-two partition=tenant
+----
+ok key="b" modifications=0
+
+put key=c value=alpha-end partition=tenant save-record=alpha-end
+----
+ok key="c" modifications=0
+
+client name=beta namespace=beta
+----
+ok
+
+get key=a partition=tenant
+----
+error: key not found
+
+put key=a value=beta-one partition=tenant create-only save=beta-version save-record=beta
+----
+ok key="a" modifications=0
+
+put key=b value=beta-two partition=tenant save-record=beta-two
+----
+ok key="b" modifications=0
+
+put key=c value=beta-end partition=tenant save-record=beta-end
+----
+ok key="c" modifications=0
+
+range start="" end="" unordered
+----
+key="a" value="beta-one" modifications=0
+key="b" value="beta-two" modifications=0
+key="c" value="beta-end" modifications=0
+
+use-client name=alpha
+----
+ok
+
+assert-record key=a partition=tenant unchanged=@alpha
+----
+ok
+
+put key=a value=alpha-updated partition=tenant expected-version=@alpha-version save=alpha-updated
+----
+ok key="a" modifications=1
+
+list start="" end="" unordered
+----
+key="a"
+key="b"
+key="c"
+
+delete-range start=a end=c partition=tenant
+----
+ok
+
+assert-record key=a partition=tenant missing
+----
+ok
+
+assert-record key=b partition=tenant missing
+----
+ok
+
+assert-record key=c partition=tenant unchanged=@alpha-end
+----
+ok
+
+use-client name=beta
+----
+ok
+
+assert-record key=a partition=tenant unchanged=@beta
+----
+ok
+
+assert-record key=b partition=tenant unchanged=@beta-two
+----
+ok
+
+assert-record key=c partition=tenant unchanged=@beta-end
+----
+ok
+
+put key=a value=beta-updated partition=tenant expected-version=@beta-version save-record=beta-updated
+----
+ok key="a" modifications=1
+
+use-client name=alpha
+----
+ok
+
+put key=a value=alpha-reborn partition=tenant create-only save-record=alpha-reborn
+----
+ok key="a" modifications=0
+
+put key=a value=must-not-change partition=tenant expected-version=@alpha-updated
+----
+error: unexpected version id
+
+assert-record key=a partition=tenant unchanged=@alpha-reborn
+----
+ok
+
+# A global deletion is global only within the selected namespace.
+delete-range start="" end=""
+----
+ok
+
+range start="" end="" unordered
+----
+(empty)
+
+use-client name=beta
+----
+ok
+
+assert-record key=a partition=tenant unchanged=@beta-updated
+----
+ok
+
+assert-record key=b partition=tenant unchanged=@beta-two
+----
+ok
+
+assert-record key=c partition=tenant unchanged=@beta-end
+----
+ok
+
+delete key=a partition=tenant
+----
+ok
+
+use-client name=default
+----
+ok
+
+assert-record key=a unchanged=@default
+----
+ok
+
+list start="" end="" unordered
+----
+key="a"
