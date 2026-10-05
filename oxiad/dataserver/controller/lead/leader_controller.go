@@ -864,8 +864,13 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	if followerHeadEntryId.Term == wal.InvalidTerm {
 		// There is nothing to truncate in the empty wal of the follower. If it
 		// was seeded from a snapshot, it reports the snapshot's commit offset,
-		// but the wal of the leader doesn't necessarily continue from there:
-		// the follower starts over, like one without any data
+		// and its database holds the committed entries up to it: it gets the
+		// next entries from the wal of the leader, when the leader has them.
+		// Otherwise it starts over, like one without any data, from a snapshot
+		// of the leader, whose installation wipes the data it has.
+		if lc.canStreamAfter(followerHeadEntryId.Offset) {
+			return followerHeadEntryId, nil
+		}
 		return constant2.InvalidEntryId, nil
 	}
 
@@ -919,6 +924,24 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	)
 
 	return tr.HeadEntryId, nil
+}
+
+// canStreamAfter reports whether the leader can bring up to date, with the
+// entries of its wal, a follower whose database holds the committed entries up
+// to offset, and that has no other entry. The leader committed that offset, so
+// its own entries up to it are the same, and its wal must have every entry
+// after it, or the leader must have none.
+func (lc *leaderController) canStreamAfter(offset int64) bool {
+	commitOffset := lc.quorumAckTracker.CommitOffset()
+	if offset == wal.InvalidOffset || offset > commitOffset {
+		return false
+	}
+	walFirstOffset := lc.wal.FirstOffset()
+	if walFirstOffset == wal.InvalidOffset {
+		// The entries of the leader are all in its database
+		return offset == commitOffset
+	}
+	return offset+1 >= walFirstOffset
 }
 
 func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {

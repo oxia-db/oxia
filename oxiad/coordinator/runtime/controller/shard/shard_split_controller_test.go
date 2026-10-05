@@ -218,13 +218,21 @@ func loadTestStatus(t *testing.T, metadata coordmetadata.Metadata) *proto.Cluste
 	return status
 }
 
-// queueChildLeaderResetResponses queues what Bootstrap needs to reset each
-// data server picked as a child leader to an empty copy of the child: the
-// deletion of its copy, and the fence that follows it.
-func queueChildLeaderResetResponses(rpcMock *mockutils.RpcProvider, leaders ...*proto.DataServerIdentity) {
-	for _, leader := range leaders {
-		rpcMock.GetNode(leader).DeleteShardResponse(nil)
-		rpcMock.GetNode(leader).NewTermResponse(-1, -1, nil)
+// queueChildResetResponses queues what Bootstrap needs to reset each fenced
+// member of a child to an empty copy of the child: the deletion of its copy,
+// and the fence that follows it.
+func queueChildResetResponses(rpcMock *mockutils.RpcProvider, members ...*proto.DataServerIdentity) {
+	for _, member := range members {
+		rpcMock.GetNode(member).DeleteShardResponse(nil)
+		rpcMock.GetNode(member).NewTermResponse(-1, -1, nil)
+	}
+}
+
+// queueChildObserverResponses queues what Bootstrap needs to add every member
+// of both children as an observer on the parent leader.
+func queueChildObserverResponses(rpcMock *mockutils.RpcProvider, parentLeader *proto.DataServerIdentity) {
+	for range 6 {
+		rpcMock.GetNode(parentLeader).AddFollowerResponse(nil)
 	}
 }
 
@@ -235,21 +243,25 @@ func queueBootstrapResponses(rpcMock *mockutils.RpcProvider) {
 	rpcMock.GetNode(ls1).NewTermResponse(0, 0, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(0, -1, nil)
 	rpcMock.GetNode(ls3).NewTermResponse(0, -1, nil)
-	// Reset and BecomeLeader for left child
-	queueChildLeaderResetResponses(rpcMock, ls1)
-	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, ls1, ls2, ls3)
 
 	// Fence right child ensemble: rs1 has highest offset -> becomes leader
 	rpcMock.GetNode(rs1).NewTermResponse(0, 0, nil)
 	rpcMock.GetNode(rs2).NewTermResponse(0, -1, nil)
 	rpcMock.GetNode(rs3).NewTermResponse(0, -1, nil)
-	// Reset and BecomeLeader for right child
-	queueChildLeaderResetResponses(rpcMock, rs1)
-	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, rs1, rs2, rs3)
 
-	// AddFollower on parent leader for each child leader (observer)
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil)
+	// AddFollower on parent leader for each member of the children (observer)
+	queueChildObserverResponses(rpcMock, ps1)
+}
+
+// queueChildrenAppliedResponses queues what CatchUp or Cutover need to see that
+// a majority of each child applied the parent's entries up to offset: its
+// leader, the *1 node, and one of its followers.
+func queueChildrenAppliedResponses(rpcMock *mockutils.RpcProvider, offset int64) {
+	for _, member := range []*proto.DataServerIdentity{ls1, ls2, rs1, rs2} {
+		rpcMock.GetNode(member).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, offset, offset)
+	}
 }
 
 // queueCatchUpResponses queues all responses needed for the catch-up phase.
@@ -257,19 +269,17 @@ func queueCatchUpResponses(rpcMock *mockutils.RpcProvider) {
 	// Parent commitOffset as target
 	rpcMock.GetNode(ps1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
 	// Children commitOffset >= target
-	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	queueChildrenAppliedResponses(rpcMock, 105)
 }
 
 // queueCutoverResponses queues all responses needed for the cutover phase.
 func queueCutoverResponses(rpcMock *mockutils.RpcProvider) {
 	// Freeze the parent leader: returns its frozen head offset (the target the
-	// children's head must reach before the parent is fenced).
+	// children must apply before the parent is fenced).
 	rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
 
-	// Children head offset >= frozen parent head, while still observing.
-	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	// The children applied the frozen parent head, while still observing.
+	queueChildrenAppliedResponses(rpcMock, 105)
 
 	// Fence parent ensemble (point of no return, after children caught up)
 	rpcMock.GetNode(ps1).NewTermResponse(5, 105, nil)
@@ -334,9 +344,9 @@ func TestSplitController_FullLifecycle(t *testing.T) {
 }
 
 // TestSplitController_ChildrenFencedAtParentTerm verifies that child shards
-// are fenced and elected at the parent's current term during Bootstrap. The
-// observer cursor that streams parent data to a child runs at the parent's
-// term, and the data server converts the child leader into an observer
+// are fenced at the parent's current term during Bootstrap. The observer
+// cursors that stream parent data to the members of a child run at the
+// parent's term, and the data server converts a member into an observer
 // follower only when the cursor's term matches the child's term: any other
 // term leaves the observer cursor retrying forever and the split stuck in
 // CatchUp.
@@ -373,16 +383,15 @@ func TestSplitController_ChildrenFencedAtParentTerm(t *testing.T) {
 	for _, node := range []*proto.DataServerIdentity{ls1, ls2, ls3} {
 		expectNewTermAt(node, 1)
 	}
-	rpcMock.GetNode(ls1).ExpectBecomeLeaderRequest(t, 1, parentTerm, 3)
 
 	for _, node := range []*proto.DataServerIdentity{rs1, rs2, rs3} {
 		expectNewTermAt(node, 2)
 	}
-	rpcMock.GetNode(rs1).ExpectBecomeLeaderRequest(t, 2, parentTerm, 3)
 
 	// Observers are added on the parent leader at the same term.
-	rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, parentTerm)
-	rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, parentTerm)
+	for range 6 {
+		rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, parentTerm)
+	}
 
 	select {
 	case <-listener.completions:
@@ -638,8 +647,9 @@ func TestSplitController_TimeoutDuringCatchUp(t *testing.T) {
 	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// Queue RemoveObserver responses (abort will call these)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	}
 
 	// Don't queue CatchUp responses -- it will hang and timeout
 
@@ -776,25 +786,19 @@ func TestSplitController_ParentTermChangeDuringCatchUp(t *testing.T) {
 	rpcMock.GetNode(ls1).NewTermResponse(1, 101, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(1, 100, nil)
 	rpcMock.GetNode(ls3).NewTermResponse(1, 100, nil)
-	// Reset and BecomeLeader for left child
-	queueChildLeaderResetResponses(rpcMock, ls1)
-	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, ls1, ls2, ls3)
 
 	rpcMock.GetNode(rs1).NewTermResponse(1, 101, nil)
 	rpcMock.GetNode(rs2).NewTermResponse(1, 100, nil)
 	rpcMock.GetNode(rs3).NewTermResponse(1, 100, nil)
-	// Reset and BecomeLeader for right child
-	queueChildLeaderResetResponses(rpcMock, rs1)
-	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, rs1, rs2, rs3)
 
 	// AddFollower on ps2 (new parent leader)
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
+	queueChildObserverResponses(rpcMock, ps2)
 
 	// CatchUp: parent on ps2, children caught up
 	rpcMock.GetNode(ps2).GetStatusResponse(6, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	queueChildrenAppliedResponses(rpcMock, 105)
 
 	queueCutoverResponses(rpcMock)
 
@@ -839,18 +843,15 @@ func TestSplitController_ParentTermChangeFromFirstTerm(t *testing.T) {
 		rpcMock.GetNode(child[0]).NewTermResponse(0, 101, nil)
 		rpcMock.GetNode(child[1]).NewTermResponse(0, 100, nil)
 		rpcMock.GetNode(child[2]).NewTermResponse(0, 100, nil)
-		queueChildLeaderResetResponses(rpcMock, child[0])
-		rpcMock.GetNode(child[0]).BecomeLeaderResponse(nil)
+		queueChildResetResponses(rpcMock, child...)
 	}
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
+	queueChildObserverResponses(rpcMock, ps2)
 
 	// CatchUp and Cutover on ps2
 	rpcMock.GetNode(ps2).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
 	rpcMock.GetNode(ps2).FreezeShardResponse(105, nil)
 	for range 2 {
-		rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
-		rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+		queueChildrenAppliedResponses(rpcMock, 105)
 	}
 
 	// Finalize
@@ -868,8 +869,9 @@ func TestSplitController_ParentTermChangeFromFirstTerm(t *testing.T) {
 	})
 	defer sc.Close()
 
-	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 1)
-	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 1)
+	for range 6 {
+		rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 1)
+	}
 
 	select {
 	case <-listener.completions:
@@ -926,16 +928,16 @@ func (r *childCallsRecorder) BecomeLeader(ctx context.Context, node *proto.DataS
 }
 
 // A leader election of the parent sends the split back to Bootstrap once the
-// child leaders have data of the parent's earlier term, which makes them the
-// most up-to-date members of their ensembles. Bootstrap must delete their copy
-// before electing them again: the parent sends them a new snapshot, and until
-// its installation wipes their data, they would report offsets that look
-// caught up. The split could pass the point of no return in the meantime, and
-// lose the data when fencing the parent aborts the installation.
-func TestSplitController_BootstrapResetsChildLeadersAfterParentElection(t *testing.T) {
+// members of the children have data of the parent's earlier term. Bootstrap
+// must delete their copy before adding them as observers again: the parent
+// sends them a new snapshot, and until its installation wipes their data, they
+// would report offsets that look caught up. The split could pass the point of
+// no return in the meantime, and lose the data when fencing the parent aborts
+// the installation.
+func TestSplitController_BootstrapResetsChildMembersAfterParentElection(t *testing.T) {
 	rpcMock, statusRes, listener := setupSplitTest(t, proto.SplitPhaseCatchUp)
 
-	// Bootstrap elected ls1 and rs1 in the parent's term 5, and ps2 has been
+	// Bootstrap fenced the children in the parent's term 5, and ps2 has been
 	// elected as the parent's leader in term 6 since
 	status := loadTestStatus(t, statusRes)
 	ns := status.Namespaces[constant.DefaultNamespace]
@@ -951,13 +953,11 @@ func TestSplitController_BootstrapResetsChildLeadersAfterParentElection(t *testi
 
 	for _, child := range [][]*proto.DataServerIdentity{{ls1, ls2, ls3}, {rs1, rs2, rs3}} {
 		rpcMock.GetNode(child[0]).NewTermResponse(5, 105, nil)
-		rpcMock.GetNode(child[1]).NewTermResponse(-1, -1, nil)
-		rpcMock.GetNode(child[2]).NewTermResponse(-1, -1, nil)
-		queueChildLeaderResetResponses(rpcMock, child[0])
-		rpcMock.GetNode(child[0]).BecomeLeaderResponse(nil)
+		rpcMock.GetNode(child[1]).NewTermResponse(5, 103, nil)
+		rpcMock.GetNode(child[2]).NewTermResponse(5, 103, nil)
+		queueChildResetResponses(rpcMock, child...)
 	}
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
+	queueChildObserverResponses(rpcMock, ps2)
 
 	recorder := newChildCallsRecorder(rpcMock)
 	sc := NewSplitController(SplitControllerConfig{
@@ -970,24 +970,22 @@ func TestSplitController_BootstrapResetsChildLeadersAfterParentElection(t *testi
 	})
 	defer sc.Close()
 
-	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
-	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
-	for leader, shard := range map[*proto.DataServerIdentity]int64{ls1: 1, rs1: 2} {
+	for range 6 {
+		rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
+	}
+	for member, shard := range map[*proto.DataServerIdentity]int64{ls1: 1, ls2: 1, ls3: 1, rs1: 2, rs2: 2, rs3: 2} {
 		assert.Equal(t, []string{
 			fmt.Sprintf("NewTerm shard=%d term=6", shard),
 			fmt.Sprintf("DeleteShard shard=%d term=6", shard),
 			fmt.Sprintf("NewTerm shard=%d term=6", shard),
-			fmt.Sprintf("BecomeLeader shard=%d term=6", shard),
-		}, recorder.callsTo(leader), "calls to the leader of child %d", shard)
-	}
-	for _, follower := range []*proto.DataServerIdentity{ls2, ls3, rs2, rs3} {
-		assert.Len(t, recorder.callsTo(follower), 1, "calls to %s", follower.GetPublic())
+		}, recorder.callsTo(member), "calls to %s", member.GetPublic())
 	}
 
 	// Closing the split controller aborts the split, which removes the child
 	// observers from the parent leader
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	}
 }
 
 // --- Child Failure Tests ---
@@ -1000,21 +998,16 @@ func TestSplitController_ChildFencingPartialSuccess(t *testing.T) {
 	rpcMock.GetNode(ls1).NewTermResponse(1, 101, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(1, 100, nil)
 	rpcMock.GetNode(ls3).NewTermResponse(0, 0, errors.New("connection refused"))
-	// Reset and BecomeLeader for left child
-	queueChildLeaderResetResponses(rpcMock, ls1)
-	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, ls1, ls2)
 
 	// Right child: all 3 respond, rs1 has higher offset
 	rpcMock.GetNode(rs1).NewTermResponse(1, 101, nil)
 	rpcMock.GetNode(rs2).NewTermResponse(1, 100, nil)
 	rpcMock.GetNode(rs3).NewTermResponse(1, 100, nil)
-	// Reset and BecomeLeader for right child
-	queueChildLeaderResetResponses(rpcMock, rs1)
-	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, rs1, rs2, rs3)
 
-	// AddFollower on parent for each child
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil)
+	// AddFollower on parent for each member of the children
+	queueChildObserverResponses(rpcMock, ps1)
 
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
@@ -1049,8 +1042,7 @@ func TestSplitController_ParentFencingPartialFailure(t *testing.T) {
 	rpcMock.GetNode(ps3).NewTermResponse(0, 0, errors.New("connection refused"))
 
 	// Children reach final offset
-	rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	queueChildrenAppliedResponses(rpcMock, 105)
 
 	// Re-elect children in clean term
 	rpcMock.GetNode(ls1).NewTermResponse(1, 106, nil)
@@ -1099,6 +1091,10 @@ func TestSplitController_ChildQuorumCommitRetry(t *testing.T) {
 
 	// Right child commits immediately
 	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+
+	// A follower of each child commits too
+	rpcMock.GetNode(ls2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
 
 	// Re-elect children in clean term
 	rpcMock.GetNode(ls1).NewTermResponse(1, 106, nil)
@@ -1153,8 +1149,9 @@ func TestSplitController_ChildLeaderDiesTimesOutAndAborts(t *testing.T) {
 	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// Queue RemoveObserver responses (abort will call these)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	}
 
 	// Simulate dead child leader: GetStatus returns errors
 	rpcMock.GetNode(ps1).GetStatusResponse(5, proto.ServingStatus_LEADER, 100, 100) // parent OK
@@ -1219,17 +1216,21 @@ func TestSplitController_ChildFollowersDeadCommitStalls(t *testing.T) {
 	updateTestStatusShards(t, statusRes, cloned, 0, 1, 2)
 
 	// Queue RemoveObserver responses (abort will call these)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	}
 
 	// Parent status: commitOffset=100
 	rpcMock.GetNode(ps1).GetStatusResponse(5, proto.ServingStatus_LEADER, 100, 100)
 
-	// Child leaders are alive but headOffset advances while commitOffset stays
-	// stuck at -1 (both followers are dead, no quorum ack)
+	// Child leaders are alive and applied the parent's entries, but both their
+	// followers are dead: no majority of a child holds its data
 	for i := 0; i < 10; i++ {
-		rpcMock.GetNode(ls1).GetStatusResponse(1, proto.ServingStatus_LEADER, 100, -1) // headOffset=100, commitOffset=-1
-		rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 100, -1)
+		rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 100, 100)
+		rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 100, 100)
+	}
+	for _, follower := range []*proto.DataServerIdentity{ls2, ls3, rs2, rs3} {
+		rpcMock.FailNode(follower, errors.New("connection refused"))
 	}
 
 	sc := NewSplitController(SplitControllerConfig{
@@ -1305,23 +1306,22 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	rpcMock.GetNode(ls1).NewTermResponse(2, 105, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(2, 106, nil) // ls2 has the data -> stays leader
 	rpcMock.GetNode(ls3).NewTermResponse(2, 105, nil)
-	queueChildLeaderResetResponses(rpcMock, ls2)
-	rpcMock.GetNode(ls2).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, ls1, ls2, ls3)
 
 	rpcMock.GetNode(rs1).NewTermResponse(1, 106, nil) // rs1 has the data -> stays leader
 	rpcMock.GetNode(rs2).NewTermResponse(1, 105, nil)
 	rpcMock.GetNode(rs3).NewTermResponse(1, 105, nil)
-	queueChildLeaderResetResponses(rpcMock, rs1)
-	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, rs1, rs2, rs3)
 
-	// Step 2: AddFollower for the child leaders.
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil) // AddFollower for new left child leader (ls2)
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil) // AddFollower for right child leader (rs1, unchanged)
+	// Step 2: AddFollower for the members of the children.
+	queueChildObserverResponses(rpcMock, ps1)
 
 	// CatchUp (second attempt): parent and children caught up.
 	rpcMock.GetNode(ps1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(ls2).GetStatusResponse(2, proto.ServingStatus_LEADER, 105, 105) // ls2 is now the leader
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(ls2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105) // ls2 is now the leader
+	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
 
 	// Cutover: fence parent
 	rpcMock.GetNode(ps1).NewTermResponse(5, 105, nil)
@@ -1329,8 +1329,10 @@ func TestSplitController_ChildLeaderChangeDuringCatchUp(t *testing.T) {
 	rpcMock.GetNode(ps3).NewTermResponse(5, 105, nil)
 
 	// Cutover: wait for children commit (using current leaders)
-	rpcMock.GetNode(ls2).GetStatusResponse(2, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(1, proto.ServingStatus_LEADER, 105, 105)
+	rpcMock.GetNode(ls2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
 
 	// Cutover: re-elect children in clean term
 	rpcMock.GetNode(ls1).NewTermResponse(2, 105, nil)
@@ -1385,24 +1387,26 @@ func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
 	rpcMock.GetNode(ls1).NewTermResponse(0, 0, nil)
 	rpcMock.GetNode(ls2).NewTermResponse(0, -1, nil)
 	rpcMock.GetNode(ls3).NewTermResponse(0, 0, errors.New("connection refused"))
-	queueChildLeaderResetResponses(rpcMock, ls1)
-	rpcMock.GetNode(ls1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, ls1, ls2)
 
 	// Right child: 2/3 respond, 1 dead.
 	// rs1 has higher offset so pickLeader deterministically chooses it.
 	rpcMock.GetNode(rs1).NewTermResponse(0, 0, nil)
 	rpcMock.GetNode(rs2).NewTermResponse(0, 0, errors.New("connection refused"))
 	rpcMock.GetNode(rs3).NewTermResponse(0, -1, nil)
-	queueChildLeaderResetResponses(rpcMock, rs1)
-	rpcMock.GetNode(rs1).BecomeLeaderResponse(nil)
+	queueChildResetResponses(rpcMock, rs1, rs3)
 
-	// AddFollower on parent for each child
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps1).AddFollowerResponse(nil)
+	// AddFollower on parent for each member of the children
+	queueChildObserverResponses(rpcMock, ps1)
 
-	// Queue CatchUp and Cutover responses for completion
+	// Queue CatchUp and Cutover responses for completion. rs2 is dead: rs3
+	// makes the majority of the right child.
 	queueCatchUpResponses(rpcMock)
 	queueCutoverResponses(rpcMock)
+	rpcMock.FailNode(rs2, errors.New("connection refused"))
+	for range 2 {
+		rpcMock.GetNode(rs3).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	}
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1457,14 +1461,16 @@ func TestSplitController_ChildEnsembleWithoutParentFeature(t *testing.T) {
 	supplier := supportedFeaturesExcept(rs3, proto.Feature_FEATURE_ORDERED_WRITES)
 
 	queueBootstrapResponses(rpcMock)
-	// Every Bootstrap attempt adds the left child as an observer again
-	for range 20 {
+	// Every Bootstrap attempt adds the members of the left child as observers
+	// again
+	for range 60 {
 		rpcMock.GetNode(ps1).AddFollowerResponse(nil)
 	}
 	queueCatchUpResponses(rpcMock)
 	// The abort removes the child observers from the parent leader
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	}
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:                 constant.DefaultNamespace,
@@ -1495,7 +1501,9 @@ func TestSplitController_ChildEnsembleWithoutParentFeature(t *testing.T) {
 
 	// The parent leader checked the features that each child's ensemble
 	// supports: all of them for the left child, the ones of rs3 for the right
-	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5, feature.SupportedFeatures())
+	for range 3 {
+		rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5, feature.SupportedFeatures())
+	}
 	rpcMock.GetNode(ps1).ExpectAddFollowerRequestWithFeatures(t, 0, 5,
 		supplier([]*proto.DataServerIdentity{rs3})[rs3.GetNameOrDefault()])
 
@@ -1561,8 +1569,7 @@ func queueNewTermResponses(rpcMock *mockutils.RpcProvider, nodes ...*proto.DataS
 // point of no return: the parent freeze, and both children reporting its tail.
 func queueCutoverDrainResponses(rpcMock *mockutils.RpcProvider) {
 	rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
-	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
+	queueChildrenAppliedResponses(rpcMock, 105)
 }
 
 // assertSplitCompleted verifies the final status of a completed split: the
@@ -1878,6 +1885,7 @@ func TestSplitController_CutoverWaitsForChildrenToApplyTail(t *testing.T) {
 	rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
 	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 100)
 	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(rs2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -1900,6 +1908,7 @@ func TestSplitController_CutoverWaitsForChildrenToApplyTail(t *testing.T) {
 
 	// Once the left child applied the tail too, the split completes
 	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+	rpcMock.GetNode(ls2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
 	queueNewTermResponses(rpcMock, ps1, ps2, ps3)
 	queueChildrenReelectionResponses(rpcMock)
 	select {
@@ -1910,6 +1919,122 @@ func TestSplitController_CutoverWaitsForChildrenToApplyTail(t *testing.T) {
 		t.Fatal("Split did not complete in time")
 	}
 	assertSplitCompleted(t, metadata, 6, 6)
+}
+
+// Every member of a child's ensemble gets the parent's data as an observer of
+// the parent, so that a majority of the child holds it before the split passes
+// the point of no return. Bootstrap resets each fenced member to an empty
+// copy, and doesn't elect the child: its members get their data from the
+// parent until Finalize elects it.
+func TestSplitController_BootstrapAddsEveryChildMemberAsObserver(t *testing.T) {
+	rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseBootstrap)
+	queueBootstrapResponses(rpcMock)
+
+	sc := NewSplitController(SplitControllerConfig{
+		Namespace:     constant.DefaultNamespace,
+		ParentShardId: 0,
+		Metadata:      metadata,
+		RpcProvider:   rpcMock,
+		EventListener: listener,
+		SplitTimeout:  30 * time.Second,
+	})
+
+	for child, members := range map[int64][]*proto.DataServerIdentity{1: {ls1, ls2, ls3}, 2: {rs1, rs2, rs3}} {
+		for _, member := range members {
+			rpcMock.GetNode(member).ExpectDeleteShardRequest(t, child, 5)
+		}
+	}
+	observers := make(map[int64][]string)
+	for range 6 {
+		if r := rpcMock.GetNode(ps1).ExpectAddFollowerRequest(t, 0, 5); r != nil {
+			assert.True(t, r.Observer)
+			observers[r.GetTargetShard()] = append(observers[r.GetTargetShard()], r.FollowerName)
+		}
+	}
+	assert.ElementsMatch(t, []string{ls1.Internal, ls2.Internal, ls3.Internal}, observers[1])
+	assert.ElementsMatch(t, []string{rs1.Internal, rs2.Internal, rs3.Internal}, observers[2])
+	rpcMock.GetNode(ls1).ExpectNoBecomeLeaderRequest(t)
+	rpcMock.GetNode(rs1).ExpectNoBecomeLeaderRequest(t)
+
+	// Closing the split controller aborts the split, which removes every
+	// observer from the parent leader
+	for range 6 {
+		rpcMock.GetNode(ps1).RemoveObserverResponse(nil)
+	}
+	sc.Close()
+	removed := make(map[int64][]string)
+	for range 6 {
+		if r := rpcMock.GetNode(ps1).ExpectRemoveObserverRequest(t, 0, 5); r != nil {
+			removed[r.TargetShard] = append(removed[r.TargetShard], r.FollowerName)
+		}
+	}
+	assert.ElementsMatch(t, observers[1], removed[1])
+	assert.ElementsMatch(t, observers[2], removed[2])
+}
+
+// The split must not pass the point of no return before a majority of each
+// child holds the parent's data: past it, the parent gets deleted. The child
+// leader must be part of that majority, as Finalize elects it again: its
+// followers can't have entries that it doesn't have.
+func TestSplitController_CutoverWaitsForChildMajority(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The offsets that the leader and the followers of the left child
+		// applied, out of the 105 of the frozen parent
+		leader, followers int64
+	}{
+		{name: "leader only", leader: 105, followers: 100},
+		{name: "followers only", leader: 100, followers: 105},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rpcMock, metadata, listener := setupSplitTest(t, proto.SplitPhaseCutover)
+			setBootstrappedState(t, metadata)
+
+			// The parent is frozen at 105, and the right child applied all of it
+			rpcMock.GetNode(ps1).FreezeShardResponse(105, nil)
+			rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, test.leader)
+			rpcMock.GetNode(ls2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, test.followers)
+			rpcMock.GetNode(ls3).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, test.followers)
+			for _, member := range []*proto.DataServerIdentity{rs1, rs2} {
+				rpcMock.GetNode(member).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+			}
+
+			sc := NewSplitController(SplitControllerConfig{
+				Namespace:     constant.DefaultNamespace,
+				ParentShardId: 0,
+				Metadata:      metadata,
+				RpcProvider:   rpcMock,
+				EventListener: listener,
+				SplitTimeout:  30 * time.Second,
+			})
+			defer sc.Close()
+
+			// Cutover polls the left child again, without passing the point of
+			// no return
+			rpcMock.GetNode(ls1).ExpectGetStatusRequest(t, 1)
+			rpcMock.GetNode(ls1).ExpectGetStatusRequest(t, 1)
+			parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
+			assert.Equal(t, proto.SplitPhaseCutover, parent.GetSplit().GetPhaseOrDefault())
+			for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
+				assert.Empty(t, drainNewTermRequests(rpcMock.GetNode(node)), "NewTerm requests to %s", node.GetPublic())
+			}
+
+			// Once the leader and a follower applied the whole tail, the split
+			// completes
+			rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+			rpcMock.GetNode(ls2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 105, 105)
+			queueNewTermResponses(rpcMock, ps1, ps2, ps3)
+			queueChildrenReelectionResponses(rpcMock)
+			select {
+			case <-listener.completions:
+			case <-listener.aborts:
+				t.Fatal("Split should not have been aborted")
+			case <-time.After(30 * time.Second):
+				t.Fatal("Split did not complete in time")
+			}
+			assertSplitCompleted(t, metadata, 6, 6)
+		})
+	}
 }
 
 // --- Parent Leader Elections Around the Point of No Return ---
@@ -2146,8 +2271,9 @@ func TestSplitController_ParentElectionBeforePointOfNoReturn(t *testing.T) {
 
 	// Closing the split controller aborts the split, which removes the child
 	// observers from the parent leader
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	}
 }
 
 // A leader election of the parent that completed before Cutover starts, e.g.
@@ -2169,8 +2295,7 @@ func TestSplitController_ParentElectionBeforeCutover(t *testing.T) {
 
 	// The children already report the head that ps2 is frozen at
 	rpcMock.GetNode(ps2).FreezeShardResponse(105, nil)
-	rpcMock.GetNode(ls1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
-	rpcMock.GetNode(rs1).GetStatusResponse(5, proto.ServingStatus_LEADER, 105, 105)
+	queueChildrenAppliedResponses(rpcMock, 105)
 
 	// Bootstrap again: the children are fenced at term 6 (the *1 nodes have the
 	// highest offset and stay leaders) and added as observers on ps2
@@ -2178,11 +2303,9 @@ func TestSplitController_ParentElectionBeforeCutover(t *testing.T) {
 		rpcMock.GetNode(child[0]).NewTermResponse(5, 106, nil)
 		rpcMock.GetNode(child[1]).NewTermResponse(5, 105, nil)
 		rpcMock.GetNode(child[2]).NewTermResponse(5, 105, nil)
-		queueChildLeaderResetResponses(rpcMock, child[0])
-		rpcMock.GetNode(child[0]).BecomeLeaderResponse(nil)
+		queueChildResetResponses(rpcMock, child...)
 	}
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
-	rpcMock.GetNode(ps2).AddFollowerResponse(nil)
+	queueChildObserverResponses(rpcMock, ps2)
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -2194,8 +2317,9 @@ func TestSplitController_ParentElectionBeforeCutover(t *testing.T) {
 	})
 	defer sc.Close()
 
-	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
-	rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
+	for range 6 {
+		rpcMock.GetNode(ps2).ExpectAddFollowerRequest(t, 0, 6)
+	}
 
 	// The split did not pass the point of no return: Finalize never fenced the
 	// parent
@@ -2205,8 +2329,9 @@ func TestSplitController_ParentElectionBeforeCutover(t *testing.T) {
 
 	// Closing the split controller aborts the split, which removes the child
 	// observers from the parent leader
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	}
 }
 
 // A leader election of the parent that completes while Bootstrap records the
@@ -2257,6 +2382,7 @@ func TestSplitController_BootstrapKeepsConcurrentParentElection(t *testing.T) {
 
 	// Closing the split controller aborts the split, which removes the child
 	// observers from the parent leader
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
-	rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	for range 6 {
+		rpcMock.GetNode(ps2).RemoveObserverResponse(nil)
+	}
 }
