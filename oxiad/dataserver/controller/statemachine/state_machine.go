@@ -60,11 +60,20 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 			Checksum: meta.Checksum,
 		}, nil
 	case *proto.LogEntryValue_Requests:
+		// A split child that holds all the records of its parent applies the
+		// parent's entries as the parent applied them
+		splitFilter := db.DeferredSplitFilter()
+		parentEntry := splitFilter != nil && entry.Term <= splitFilter.ParentTerm
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
+			var err error
+			if parentEntry {
+				_, err = db.ProcessSplitParentWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback)
+			} else {
+				_, err = db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback)
+			}
 			// A rejected request has no effect, as on the leader, which answered
 			// the client with the error: the entry is applied all the same
-			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil &&
-				!errors.Is(err, database.ErrWriteRejected) {
+			if err != nil && !errors.Is(err, database.ErrWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}

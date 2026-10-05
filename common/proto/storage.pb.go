@@ -328,6 +328,7 @@ type ControlRequest struct {
 	//
 	//	*ControlRequest_FeatureEnable
 	//	*ControlRequest_RecordChecksum
+	//	*ControlRequest_SplitFilter
 	Value         isControlRequest_Value `protobuf_oneof:"value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -388,6 +389,15 @@ func (x *ControlRequest) GetRecordChecksum() *RecordChecksumRequest {
 	return nil
 }
 
+func (x *ControlRequest) GetSplitFilter() *SplitFilterRequest {
+	if x != nil {
+		if x, ok := x.Value.(*ControlRequest_SplitFilter); ok {
+			return x.SplitFilter
+		}
+	}
+	return nil
+}
+
 type isControlRequest_Value interface {
 	isControlRequest_Value()
 }
@@ -400,9 +410,15 @@ type ControlRequest_RecordChecksum struct {
 	RecordChecksum *RecordChecksumRequest `protobuf:"bytes,2,opt,name=record_checksum,json=recordChecksum,proto3,oneof"`
 }
 
+type ControlRequest_SplitFilter struct {
+	SplitFilter *SplitFilterRequest `protobuf:"bytes,3,opt,name=split_filter,json=splitFilter,proto3,oneof"`
+}
+
 func (*ControlRequest_FeatureEnable) isControlRequest_Value() {}
 
 func (*ControlRequest_RecordChecksum) isControlRequest_Value() {}
+
+func (*ControlRequest_SplitFilter) isControlRequest_Value() {}
 
 type FeatureEnableRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -484,6 +500,63 @@ func (*RecordChecksumRequest) Descriptor() ([]byte, []int) {
 	return file_storage_proto_rawDescGZIP(), []int{6}
 }
 
+// SplitFilterRequest is a step of the deferred split filter of a split child,
+// which holds all the records of its parent until it deletes the ones outside
+// its hash range: it deletes those among the records at keys, with their
+// secondary index entries and session shadow keys. The last step is complete:
+// the child holds no record outside its hash range any longer.
+type SplitFilterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keys          []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	Complete      bool                   `protobuf:"varint,2,opt,name=complete,proto3" json:"complete,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SplitFilterRequest) Reset() {
+	*x = SplitFilterRequest{}
+	mi := &file_storage_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SplitFilterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SplitFilterRequest) ProtoMessage() {}
+
+func (x *SplitFilterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_storage_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SplitFilterRequest.ProtoReflect.Descriptor instead.
+func (*SplitFilterRequest) Descriptor() ([]byte, []int) {
+	return file_storage_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SplitFilterRequest) GetKeys() []string {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *SplitFilterRequest) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
 var file_storage_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.MessageOptions)(nil),
@@ -530,14 +603,18 @@ const file_storage_proto_rawDesc = "" +
 	"\x0fcontrol_request\x18\x02 \x01(\v2\x15.proto.ControlRequestH\x00R\x0econtrolRequest:\x04\xa8\xa6\x1f\x01B\a\n" +
 	"\x05value\"G\n" +
 	"\rWriteRequests\x126\n" +
-	"\x06writes\x18\x01 \x03(\v2\x1e.io.oxia.proto.v1.WriteRequestR\x06writes\"\xa8\x01\n" +
+	"\x06writes\x18\x01 \x03(\v2\x1e.io.oxia.proto.v1.WriteRequestR\x06writes\"\xe8\x01\n" +
 	"\x0eControlRequest\x12D\n" +
 	"\x0efeature_enable\x18\x01 \x01(\v2\x1b.proto.FeatureEnableRequestH\x00R\rfeatureEnable\x12G\n" +
-	"\x0frecord_checksum\x18\x02 \x01(\v2\x1c.proto.RecordChecksumRequestH\x00R\x0erecordChecksumB\a\n" +
+	"\x0frecord_checksum\x18\x02 \x01(\v2\x1c.proto.RecordChecksumRequestH\x00R\x0erecordChecksum\x12>\n" +
+	"\fsplit_filter\x18\x03 \x01(\v2\x19.proto.SplitFilterRequestH\x00R\vsplitFilterB\a\n" +
 	"\x05value\"H\n" +
 	"\x14FeatureEnableRequest\x120\n" +
 	"\bfeatures\x18\x01 \x03(\x0e2\x14.replication.FeatureR\bfeatures\"\x17\n" +
-	"\x15RecordChecksumRequest:>\n" +
+	"\x15RecordChecksumRequest\"D\n" +
+	"\x12SplitFilterRequest\x12\x12\n" +
+	"\x04keys\x18\x01 \x03(\tR\x04keys\x12\x1a\n" +
+	"\bcomplete\x18\x02 \x01(\bR\bcomplete:>\n" +
 	"\amempool\x12\x1f.google.protobuf.MessageOptions\x18\xe5\xf4\x03 \x01(\bR\amempool\x88\x01\x01B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (
@@ -552,7 +629,7 @@ func file_storage_proto_rawDescGZIP() []byte {
 	return file_storage_proto_rawDescData
 }
 
-var file_storage_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_storage_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_storage_proto_goTypes = []any{
 	(*StorageEntry)(nil),                // 0: proto.StorageEntry
 	(*SessionMetadata)(nil),             // 1: proto.SessionMetadata
@@ -561,25 +638,27 @@ var file_storage_proto_goTypes = []any{
 	(*ControlRequest)(nil),              // 4: proto.ControlRequest
 	(*FeatureEnableRequest)(nil),        // 5: proto.FeatureEnableRequest
 	(*RecordChecksumRequest)(nil),       // 6: proto.RecordChecksumRequest
-	(*SecondaryIndex)(nil),              // 7: io.oxia.proto.v1.SecondaryIndex
-	(*WriteRequest)(nil),                // 8: io.oxia.proto.v1.WriteRequest
-	(Feature)(0),                        // 9: replication.Feature
-	(*descriptorpb.MessageOptions)(nil), // 10: google.protobuf.MessageOptions
+	(*SplitFilterRequest)(nil),          // 7: proto.SplitFilterRequest
+	(*SecondaryIndex)(nil),              // 8: io.oxia.proto.v1.SecondaryIndex
+	(*WriteRequest)(nil),                // 9: io.oxia.proto.v1.WriteRequest
+	(Feature)(0),                        // 10: replication.Feature
+	(*descriptorpb.MessageOptions)(nil), // 11: google.protobuf.MessageOptions
 }
 var file_storage_proto_depIdxs = []int32{
-	7,  // 0: proto.StorageEntry.secondary_indexes:type_name -> io.oxia.proto.v1.SecondaryIndex
+	8,  // 0: proto.StorageEntry.secondary_indexes:type_name -> io.oxia.proto.v1.SecondaryIndex
 	3,  // 1: proto.LogEntryValue.requests:type_name -> proto.WriteRequests
 	4,  // 2: proto.LogEntryValue.control_request:type_name -> proto.ControlRequest
-	8,  // 3: proto.WriteRequests.writes:type_name -> io.oxia.proto.v1.WriteRequest
+	9,  // 3: proto.WriteRequests.writes:type_name -> io.oxia.proto.v1.WriteRequest
 	5,  // 4: proto.ControlRequest.feature_enable:type_name -> proto.FeatureEnableRequest
 	6,  // 5: proto.ControlRequest.record_checksum:type_name -> proto.RecordChecksumRequest
-	9,  // 6: proto.FeatureEnableRequest.features:type_name -> replication.Feature
-	10, // 7: proto.mempool:extendee -> google.protobuf.MessageOptions
-	8,  // [8:8] is the sub-list for method output_type
-	8,  // [8:8] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	7,  // [7:8] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	7,  // 6: proto.ControlRequest.split_filter:type_name -> proto.SplitFilterRequest
+	10, // 7: proto.FeatureEnableRequest.features:type_name -> replication.Feature
+	11, // 8: proto.mempool:extendee -> google.protobuf.MessageOptions
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	8,  // [8:9] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_storage_proto_init() }
@@ -597,6 +676,7 @@ func file_storage_proto_init() {
 	file_storage_proto_msgTypes[4].OneofWrappers = []any{
 		(*ControlRequest_FeatureEnable)(nil),
 		(*ControlRequest_RecordChecksum)(nil),
+		(*ControlRequest_SplitFilter)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -604,7 +684,7 @@ func file_storage_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_storage_proto_rawDesc), len(file_storage_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 1,
 			NumServices:   0,
 		},

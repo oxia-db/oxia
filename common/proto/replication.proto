@@ -83,6 +83,11 @@ enum Feature {
   // and an invalid put, e.g. overflowing the sequence, gets the
   // INVALID_ARGUMENT status instead of rejecting the whole write request
   FEATURE_SEQUENCE_KEY_VALIDATION = 8;
+  // A split child copies all the data of its parent, instead of filtering the
+  // parent's snapshot and log entries to its hash range, and deletes the
+  // records outside its hash range once the split completes. A child does so
+  // when the term of its parent pins the feature
+  FEATURE_SPLIT_DEFERRED_FILTER = 9;
 }
 
 message GetInfoRequest {

@@ -161,6 +161,7 @@ func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*s
 	if err != nil {
 		return nil, err
 	}
+	it = keptIndexEntries(db, it)
 
 	it.SeekGE(secondaryIndexRangeBound(indexPrefix, start))
 	listIt := &secondaryIndexListIterator{it: it, db: db, end: secondaryIndexRangeBound(indexPrefix, end)}
@@ -340,6 +341,7 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 	if err != nil {
 		return "", "", err
 	}
+	it = keptIndexEntries(db, it)
 
 	defer func() { _ = it.Close() }()
 

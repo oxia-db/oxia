@@ -1918,9 +1918,90 @@ func TestFollower_SplitHashRangeEndsAtNewTerm(t *testing.T) {
 // keeps a, b, c and e (see TestFollower_SplitHashRangeFiltering).
 var splitTestHashRange = &proto.HashRange{Min: 0, Max: 0x7FFFFFFF}
 
+// A split child seeded by a parent whose term pins
+// FEATURE_SPLIT_DEFERRED_FILTER keeps all the records of the parent, and applies
+// the parent's entries as the parent did, with the records of the other child:
+// a conditional write on one of them takes a version id, as on the parent. Its
+// reads skip these records, and it records the filter it applies once the
+// split completes, which survives a crash.
+func TestFollower_SplitDeferredFilter(t *testing.T) {
+	var shardId int64
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+	walDir := t.TempDir()
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: walDir})
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+	fc.SetSplitHashRange(splitTestHashRange, 1)
+	installSplitTestSnapshotWith(t, fc, 1, database.TermOptions{
+		Features: []proto.Feature{proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER},
+	})
+
+	fci := fc.(*followerController)
+	expectedFilter := &database.DeferredSplitFilter{
+		MinHash: splitTestHashRange.Min, MaxHash: splitTestHashRange.Max, ParentTerm: 1,
+	}
+	assert.Equal(t, expectedFilter, fci.db.DeferredSplitFilter())
+	assert.Nil(t, fci.db.SplitFilter())
+	assertSplitTestKeys(t, fci.db, map[string]string{
+		"a": "snapshot-a", "b": "snapshot-b", "c": "snapshot-c", "e": "snapshot-e",
+	})
+	keys, complete, err := fci.db.SplitFilterKeys(nil)
+	require.NoError(t, err)
+	assert.True(t, complete)
+	assert.Equal(t, []string{"d", "f"}, keys)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+	// "d" was written at offset 3, with version 3
+	stream.AddRequest(createWriteAppend(t, 1, 6, &proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: "d", Value: []byte("wal-d"), ExpectedVersionId: pb.Int64(3)},
+	}}, wal.InvalidOffset))
+	stream.AddRequest(createAddRequest(t, 1, 7, map[string]string{"a": "wal-a"}, 7))
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 7
+	}, 10*time.Second, 10*time.Millisecond)
+	res, err := fci.db.Get(&proto.GetRequest{Key: "a"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 7, res.GetVersion().GetVersionId())
+	assertSplitTestKeys(t, fci.db, map[string]string{
+		"a": "wal-a", "b": "snapshot-b", "c": "snapshot-c", "e": "snapshot-e",
+	})
+
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+
+	db, err := database.NewDB(constant.DefaultNamespace, shardId, crashedKvFactory, proto.KeySortingType_UNKNOWN,
+		1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	assert.Equal(t, expectedFilter, db.DeferredSplitFilter())
+	assertSplitTestKeys(t, db, map[string]string{
+		"a": "snapshot-a", "b": "snapshot-b", "c": "snapshot-c", "e": "snapshot-e",
+	})
+	assert.NoError(t, db.Close())
+	assert.NoError(t, crashedKvFactory.Close())
+	assert.NoError(t, crashedWalFactory.Close())
+}
+
 // installSplitTestSnapshot installs, at the given term, the snapshot of a shard
 // holding the keys a..f, written at the offsets 0..5.
 func installSplitTestSnapshot(t *testing.T, fc FollowerController, term int64) {
+	t.Helper()
+	installSplitTestSnapshotWith(t, fc, term, database.TermOptions{})
+}
+
+// installSplitTestSnapshotWith is installSplitTestSnapshot, with the options of
+// the term of the shard that sends the snapshot.
+func installSplitTestSnapshotWith(t *testing.T, fc FollowerController, term int64, termOptions database.TermOptions) {
 	t.Helper()
 
 	parentKvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1934,7 +2015,7 @@ func installSplitTestSnapshot(t *testing.T, fc FollowerController, term int64) {
 		}, int64(i), 0, database.NoOpCallback)
 		require.NoError(t, err)
 	}
-	require.NoError(t, parentDb.UpdateTerm(term, database.TermOptions{}))
+	require.NoError(t, parentDb.UpdateTerm(term, termOptions))
 	snapshot, err := parentDb.Snapshot()
 	require.NoError(t, err)
 

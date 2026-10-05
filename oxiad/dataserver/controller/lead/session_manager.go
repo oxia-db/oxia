@@ -596,13 +596,12 @@ func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notific
 			return err
 		}
 	}
-	// delete the ephemeral key
-	if err := batch.Delete(key); err != nil {
-		return err
-	}
-	// add ephemeral key to notification
+	// add ephemeral key to notification, while the record is in the batch: a
+	// split child doesn't notify the deletion of a record outside its hash
+	// range, which it reads to tell
 	if notification != nil {
 		notification.Deleted(key)
 	}
-	return nil
+	// delete the ephemeral key
+	return batch.Delete(key)
 }

@@ -69,6 +69,7 @@ const (
 	termKey                = constant.InternalKeyPrefix + "term"
 	termOptionsKey         = termKey + "-options"
 	splitFilterKey         = constant.InternalKeyPrefix + "split-filter"
+	deferredSplitFilterKey = constant.InternalKeyPrefix + "split-deferred-filter"
 )
 
 type UpdateOperationCallback interface {
@@ -111,6 +112,10 @@ type DB interface {
 	ResetChecksum()
 
 	ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
+	// ProcessSplitParentWrite applies a write request of the parent of a split
+	// child as the parent applied it (see DeferredSplitFilter)
+	ProcessSplitParentWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64,
+		updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error)
 	ProcessControlRequest(controlRequest *proto.ControlRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*Meta, error)
 
 	Get(request *proto.GetRequest) (*proto.GetResponse, error)
@@ -141,6 +146,16 @@ type DB interface {
 	SetSplitFilter(filter *SplitFilter) error
 	// SplitFilter returns the filter recorded by SetSplitFilter, or nil.
 	SplitFilter() *SplitFilter
+
+	// SetDeferredSplitFilter records the deferred filter of a split child, and
+	// flushes the database: the writes that precede it become durable as well.
+	SetDeferredSplitFilter(filter *DeferredSplitFilter) error
+	// DeferredSplitFilter returns the deferred filter of a split child that
+	// still holds records outside its hash range, or nil.
+	DeferredSplitFilter() *DeferredSplitFilter
+	// SplitFilterKeys returns the keys of the next records that the deferred
+	// split filter drops, after the key after, and whether they're the last.
+	SplitFilterKeys(after *string) (keys []string, complete bool, err error)
 
 	Snapshot() (kvstore.Snapshot, error)
 
@@ -226,6 +241,10 @@ func NewDB(namespace string, shardId int64, factory kvstore.Factory,
 		return nil, multierr.Append(err, kv.Close())
 	}
 
+	if err := db.recoverDeferredSplitFilter(); err != nil {
+		return nil, multierr.Append(err, kv.Close())
+	}
+
 	lastNotificationOffset, err := db.readLastNotificationOffset()
 	if err != nil {
 		return nil, multierr.Append(errors.Wrap(err, "failed to read last notification offset"), kv.Close())
@@ -245,6 +264,7 @@ type db struct {
 	notificationsEnabled  atomic.Bool
 	enabledFeatures       sync.Map
 	splitFilter           atomic.Pointer[SplitFilter]
+	deferredSplitFilter   atomic.Pointer[DeferredSplitFilter]
 	sequenceWaiterTracker SequenceWaiterTracker
 
 	putCounter                metric.Counter
@@ -318,9 +338,13 @@ type sequenceUpdate struct {
 	key       string
 }
 
+// applyWriteRequest applies b to the batch. A split child that still holds
+// records outside its hash range passes its deferred filter, splitFilter, for
+// the writes of its own terms, which don't see those records.
 func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 	baseVersionId *atomic.Int64, commitOffset int64, timestamp uint64,
-	updateOperationCallback UpdateOperationCallback) (*Notifications, *proto.WriteResponse, []sequenceUpdate, error) {
+	updateOperationCallback UpdateOperationCallback,
+	splitFilter *DeferredSplitFilter) (*Notifications, *proto.WriteResponse, []sequenceUpdate, error) {
 	res := &proto.WriteResponse{}
 	// Room for all the responses: unlike make, Grow keeps a list nil when the
 	// request has no operation of its kind
@@ -337,12 +361,19 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 		// Room for one notification per operation, the common case
 		notifications = newNotifications(d.shardId, commitOffset, timestamp,
 			len(b.Puts)+len(b.Deletes)+len(b.DeleteRanges))
+		notifications.notifiedDeletion = notifiedDeletion(batch, splitFilter)
 	}
 	var sequenceUpdates []sequenceUpdate
 
 	d.putCounter.Add(len(b.Puts))
 	d.deleteCounter.Add(len(b.Deletes))
 	d.deleteRangesCounter.Add(len(b.DeleteRanges))
+
+	if splitFilter != nil {
+		if err := d.dropFilteredRecords(batch, b, splitFilter, updateOperationCallback); err != nil {
+			return nil, nil, nil, err
+		}
+	}
 
 	nextWriteOp := nextWriteOpByType
 	if d.IsFeatureEnabled(proto.Feature_FEATURE_ORDERED_WRITES) {
@@ -449,12 +480,14 @@ func featureFlagKey(f proto.Feature) string {
 	return fmt.Sprintf("%s/%010d", featureFlagKeyPrefix, f)
 }
 
-func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64, _ UpdateOperationCallback) (*Meta, error) {
+func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64, timestamp uint64,
+	updateOperationCallback UpdateOperationCallback) (*Meta, error) {
 	meta := &Meta{
 		Checksum: new(d.ReadChecksum()),
 	}
 
 	var featuresToEnable []proto.Feature
+	var splitFilterStep *proto.SplitFilterRequest
 	controlValue := cmd.GetValue()
 	switch v := controlValue.(type) {
 	case *proto.ControlRequest_FeatureEnable:
@@ -467,6 +500,8 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 		}
 	case *proto.ControlRequest_RecordChecksum:
 		// Recognized no-op. Checksum is already in meta.
+	case *proto.ControlRequest_SplitFilter:
+		splitFilterStep = v.SplitFilter
 	default:
 		return nil, errors.Errorf("unknown control request type %T", controlValue)
 	}
@@ -482,6 +517,13 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 			return nil, err
 		}
 	}
+	splitFilterCompleted := false
+	if splitFilterStep != nil {
+		var err error
+		if splitFilterCompleted, err = d.applySplitFilter(batch, splitFilterStep, updateOperationCallback); err != nil {
+			return nil, err
+		}
+	}
 	if err := batch.Commit(); err != nil {
 		return nil, err
 	}
@@ -489,11 +531,19 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	for _, f := range featuresToEnable {
 		d.enabledFeatures.Store(f, true)
 	}
+	if splitFilterCompleted {
+		d.deferredSplitFilter.Store(nil)
+	}
 
 	return meta, nil
 }
 
 func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64, updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
+	return d.processWrite(b, commitOffset, timestamp, updateOperationCallback, d.deferredSplitFilter.Load())
+}
+
+func (d *db) processWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64,
+	updateOperationCallback UpdateOperationCallback, splitFilter *DeferredSplitFilter) (*proto.WriteResponse, error) {
 	timer := d.batchWriteLatencyHisto.Timer()
 	defer timer.Done()
 
@@ -504,7 +554,7 @@ func (d *db) ProcessWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 	defer batch.Close()
 
 	notifications, res, sequenceUpdates, err := d.applyWriteRequest(b, batch, baseVersionId, commitOffset, timestamp,
-		updateOperationCallback)
+		updateOperationCallback, splitFilter)
 	if isRejectedWrite(err) {
 		return nil, d.rejectWrite(err, commitOffset, timestamp)
 	}
@@ -650,6 +700,9 @@ func (d *db) Get(request *proto.GetRequest) (*proto.GetResponse, error) {
 
 	d.getCounter.Add(1)
 	d.readOpsTotal.Add(1)
+	if splitFilter := d.deferredSplitFilter.Load(); splitFilter != nil {
+		return d.getKept(request, splitFilter)
+	}
 	return applyGet(d.kv, request)
 }
 
@@ -691,8 +744,19 @@ func (d *db) List(request *proto.ListRequest) (kvstore.KeyIterator, error) {
 	d.listCounter.Add(1)
 	d.readOpsTotal.Add(1)
 
-	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive,
-		kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys})
+	opts := kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys}
+	if splitFilter := d.deferredSplitFilter.Load(); splitFilter != nil {
+		it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive, opts)
+		if err != nil {
+			return nil, err
+		}
+		return &listIterator{
+			KeyIterator: newKeptRecordsIterator(it, splitFilter),
+			timer:       d.listLatencyHisto.Timer(),
+		}, nil
+	}
+
+	it, err := d.kv.KeyRangeScan(request.StartInclusive, request.EndExclusive, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -758,6 +822,9 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 		kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys})
 	if err != nil {
 		return nil, err
+	}
+	if splitFilter := d.deferredSplitFilter.Load(); splitFilter != nil {
+		it = newKeptRecordsIterator(it, splitFilter)
 	}
 
 	return &rangeScanIterator{
@@ -1255,6 +1322,16 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
 	}
 
+	res, err := newGetResponse(getReq, key, value)
+	if err = multierr.Append(err, closer.Close()); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// newGetResponse returns the response to getReq that found the record at key,
+// whose entry is value.
+func newGetResponse(getReq *proto.GetRequest, key string, value []byte) (*proto.GetResponse, error) {
 	var se *proto.StorageEntry
 	var deserializeErr error
 	if getReq.IncludeValue {
@@ -1268,9 +1345,8 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 		defer se.ReturnToVTPool()
 		deserializeErr = DeserializeMetadata(value, se)
 	}
-
-	if err = multierr.Append(deserializeErr, closer.Close()); err != nil {
-		return nil, err
+	if deserializeErr != nil {
+		return nil, deserializeErr
 	}
 
 	res := &proto.GetResponse{

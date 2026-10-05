@@ -527,6 +527,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		}
 	}
 	lc.proposeOrphanedEphemeralsDeleteLocked(ctx, orphanedEphemerals)
+	lc.startDeferredSplitFilter(lc.termCtx, term)
 	return nil
 }
 
@@ -616,6 +617,10 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 }
 
 func (lc *leaderController) addObserverFollower(req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	if req.SplitHashRange != nil && lc.db.DeferredSplitFilter() != nil {
+		return nil, errSplitFilterPending
+	}
+
 	// Use target_shard if set (for split observers), otherwise use the parent shard ID
 	targetShardId := lc.shardId
 	if req.TargetShard != nil {
@@ -1150,11 +1155,21 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 // write lock, so none of its writes can be appended once it is stopped.
 func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
 	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
-	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
+	response, err := lc.proposeBlock(ctx, closed, func(offset int64) statemachine.Proposal {
+		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
+	})
+	return response.WriteResponse, err
+}
+
+// proposeBlock proposes the proposal built by proposalSupplier and waits for
+// its result, like writeBlock.
+func (lc *leaderController) proposeBlock(ctx context.Context, closed <-chan struct{},
+	proposalSupplier func(offset int64) statemachine.Proposal) (statemachine.ApplyResponse, error) {
+	res := make(chan *entity.TWithError[statemachine.ApplyResponse], 1)
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
-		res <- &entity.TWithError[*proto.WriteResponse]{Err: nil, T: response.WriteResponse}
+		res <- &entity.TWithError[statemachine.ApplyResponse]{Err: nil, T: response}
 	}, func(err error) {
-		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
+		res <- &entity.TWithError[statemachine.ApplyResponse]{Err: err}
 	})
 
 	lc.RLock()
@@ -1163,13 +1178,11 @@ func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct
 	case <-closed:
 		err = constant.ErrNodeIsNotLeader
 	default:
-		err = lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
-			return statemachine.NewWriteProposal(offset, requestSupplier(offset))
-		}, deferPropose)
+		err = lc.proposeLocked(ctx, proposalSupplier, deferPropose)
 	}
 	lc.RUnlock()
 	if err != nil {
-		return nil, err
+		return statemachine.ApplyResponse{}, err
 	}
 
 	response := <-res

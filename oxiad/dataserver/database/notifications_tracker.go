@@ -59,6 +59,9 @@ type Notifications struct {
 	// Their keys can alias the WAL entry that the write was decoded from:
 	// nothing may keep them past the write.
 	pending []pendingNotification
+	// When set, Deleted notifies the deletion of a record only if it reports
+	// true for its key (see DeferredSplitFilter)
+	notifiedDeletion func(key string) bool
 }
 
 // pendingNotification is a notification recorded by Notifications.add, held
@@ -158,8 +161,15 @@ func (n *Notifications) Modified(key string, versionId, modificationsCount int64
 	})
 }
 
+// Deleted notifies the deletion of the record at key. A split child that still
+// holds records outside its hash range reads it from the batch, to skip the
+// ones it doesn't hold for its clients: the caller notifies the deletion before
+// deleting a record that the child may not keep.
 func (n *Notifications) Deleted(key string) {
 	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
+		return
+	}
+	if n.notifiedDeletion != nil && !n.notifiedDeletion(key) {
 		return
 	}
 	n.add(key, &proto.Notification{

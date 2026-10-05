@@ -66,6 +66,7 @@ message ControlRequest {
   oneof value {
     FeatureEnableRequest feature_enable = 1;
     RecordChecksumRequest record_checksum = 2;
+    SplitFilterRequest split_filter = 3;
   }
 }
 
@@ -74,3 +75,13 @@ message FeatureEnableRequest {
 }
 
 message RecordChecksumRequest {}
+
+// SplitFilterRequest is a step of the deferred split filter of a split child,
+// which holds all the records of its parent until it deletes the ones outside
+// its hash range: it deletes those among the records at keys, with their
+// secondary index entries and session shadow keys. The last step is complete:
+// the child holds no record outside its hash range any longer.
+message SplitFilterRequest {
+  repeated string keys = 1;
+  bool complete = 2;
+}

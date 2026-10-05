@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,6 +89,8 @@ type FollowerController interface {
 	// SetSplitHashRange marks this follower as a split child. After loading
 	// a snapshot, the database will be filtered to retain only keys within
 	// the given hash range. WAL entries will also be filtered at apply time.
+	// A child that holds all the records of its parent until the split
+	// completes only records the filter (see filterSplitSnapshot).
 	// The range comes with a stream of the parent in the given term, and
 	// only holds in that term: a new term clears it.
 	SetSplitHashRange(hashRange *proto.HashRange, term int64)
@@ -130,8 +133,10 @@ type followerController struct {
 
 	// splitHashRange, when non-nil, indicates this follower is a child shard
 	// in a split. The snapshot will be filtered after loading, and WAL entries
-	// will be filtered at state machine apply time. Set by the streams of the
-	// parent, and cleared by a new term.
+	// will be filtered at state machine apply time, unless the child holds all
+	// the records of its parent until the split completes (see
+	// filterSplitSnapshot). Set by the streams of the parent, and cleared by a
+	// new term.
 	splitHashRange *proto.HashRange
 }
 
@@ -372,8 +377,8 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	// The split range only holds in the parent's term. A node that still
 	// observes the parent gets it again with the next stream, while one that
 	// stays a follower of the child must apply the child's entries, and
-	// install its snapshots, as they are. The parent's entries it replays
-	// later are filtered with the split filter recorded in the database.
+	// install its snapshots, as they are. The split filter recorded in the
+	// database tells how it applies the parent's entries it replays later.
 	fc.splitHashRange = nil
 
 	dbOption := database.ToDbOption(newTermOptions)
@@ -496,7 +501,9 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 			return nil
 		}
 		var resp statemachine.ApplyResponse
-		if fc.splitHashRange != nil {
+		// A split child that holds all the records of its parent applies the
+		// parent's entries as they are (see database.DeferredSplitFilter)
+		if fc.splitHashRange != nil && fc.db.DeferredSplitFilter() == nil {
 			resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
 				lead.WrapperUpdateOperationCallback, fc.splitHashRange)
 		} else {
@@ -687,23 +694,8 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	// If this follower is a split child, filter the snapshot to only retain
 	// keys within the child's hash range.
 	if fc.splitHashRange != nil {
-		if err = database.FilterDBForSplit(db.RawKV(), fc.splitHashRange); err != nil {
+		if err = filterSplitSnapshot(db, fc.splitHashRange); err != nil {
 			return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to filter snapshot for split")
-		}
-		// FilterDBForSplit deletes the checksum key (it's invalid after
-		// filtering), so reset the in-memory cached checksum state.
-		db.ResetChecksum()
-		// Record the filter too, for the parent's entries that the child
-		// applies other than as the follower of the parent, e.g. when it
-		// replays them after a restart. Recording it flushes the database,
-		// which runs without the Pebble WAL: once acked, the filtered snapshot
-		// must survive a crash, as the parent doesn't send it again.
-		if err = db.SetSplitFilter(&database.SplitFilter{
-			MinHash:    fc.splitHashRange.GetMin(),
-			MaxHash:    fc.splitHashRange.GetMax(),
-			ParentTerm: rawTerm,
-		}); err != nil {
-			return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to record split filter")
 		}
 	}
 
@@ -720,6 +712,44 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		slog.Int64("commit-offset", rawCommitOffset),
 	)
 	return nil
+}
+
+// filterSplitSnapshot filters the snapshot of its parent that a split child
+// installed to the child's hash range. When the term of the parent pins
+// FEATURE_SPLIT_DEFERRED_FILTER, the child keeps all the records of its parent
+// until the split completes, and only records the filter, which it applies
+// afterwards (see database.DeferredSplitFilter): the parent accepts as
+// observers only the members of a child that support the features of its
+// term, and every member gets a snapshot of the same term.
+func filterSplitSnapshot(db database.DB, hashRange *proto.HashRange) error {
+	parentTerm, termOptions, err := db.ReadTerm()
+	if err != nil {
+		return err
+	}
+	if slices.Contains(termOptions.Features, proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER) {
+		return db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
+			MinHash:    hashRange.GetMin(),
+			MaxHash:    hashRange.GetMax(),
+			ParentTerm: parentTerm,
+		})
+	}
+
+	if err = database.FilterDBForSplit(db.RawKV(), hashRange); err != nil {
+		return err
+	}
+	// FilterDBForSplit deletes the checksum key (it's invalid after
+	// filtering), so reset the in-memory cached checksum state.
+	db.ResetChecksum()
+	// Record the filter too, for the parent's entries that the child
+	// applies other than as the follower of the parent, e.g. when it
+	// replays them after a restart. Recording it flushes the database,
+	// which runs without the Pebble WAL: once acked, the filtered snapshot
+	// must survive a crash, as the parent doesn't send it again.
+	return db.SetSplitFilter(&database.SplitFilter{
+		MinHash:    hashRange.GetMin(),
+		MaxHash:    hashRange.GetMax(),
+		ParentTerm: parentTerm,
+	})
 }
 
 func (fc *followerController) loadSnapshotChunks(loader kvstore.SnapshotLoader, firstChunk *proto.SnapshotChunk, stream proto.OxiaLogReplication_SendSnapshotServer) (int64, error) {
