@@ -42,7 +42,7 @@ type Metadata interface {
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
 	GetSelf() (*commonproto.Coordinator, error)
 	GetLeader() (*commonproto.Coordinator, error)
-	GetInstanceID() string
+	GetInstanceID() (string, error)
 
 	// ReserveShardIDs and the status Update/Delete methods retry until
 	// the write succeeds or the metadata context is canceled. When they give
@@ -178,18 +178,12 @@ func (m *coordinatorMetadata) Close() error {
 	return nil
 }
 
-func (m *coordinatorMetadata) GetInstanceID() string {
-	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to load the cluster status",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+func (m *coordinatorMetadata) GetInstanceID() (string, error) {
+	status, err := m.statusProvider.Load()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return status.Value.GetInstanceId()
+	return status.Value.GetInstanceId(), nil
 }
 
 func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {

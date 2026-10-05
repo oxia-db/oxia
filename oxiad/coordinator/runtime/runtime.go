@@ -1001,7 +1001,12 @@ func New(
 	})
 
 	clusterStatus := c.metadata.ListNamespaceStatus()
-	c.insID = c.metadata.GetInstanceID()
+	insID, err := c.metadata.GetInstanceID()
+	if err != nil {
+		c.ctxCancel()
+		return nil, err
+	}
+	c.insID = insID
 
 	c.rpc = rpcProvider(c.insID)
 

@@ -91,7 +91,7 @@ type mockNamespaceMetadata struct {
 
 func (*mockNamespaceMetadata) Close() error { return nil }
 
-func (m *mockNamespaceMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
+func (m *mockNamespaceMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
 func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) (int64, error) {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
