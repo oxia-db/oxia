@@ -57,8 +57,10 @@ func New(ctx context.Context, coordinatorRuntime runtime.Runtime) Reconciler {
 		},
 	}
 
+	// The subscription signals the changes, and GetConfig reads the
+	// configuration, retrying its load if needed.
 	subscription := r.runtime.Metadata().SubscribeConfig()
-	r.reconcile0(subscription.Get().Value, subscription)
+	r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), subscription)
 
 	r.wg.Go(func() {
 		defer subscription.Close()
@@ -100,7 +102,7 @@ func (r *clusterReconciler) bgWatchClusterConfiguration(subscription *cache.Subs
 			if !ok {
 				return
 			}
-			r.reconcile0(subscription.Get().Value, subscription)
+			r.reconcile0(r.runtime.Metadata().GetConfig().UnsafeBorrow(), subscription)
 		}
 	}
 }
@@ -111,7 +113,7 @@ func (r *clusterReconciler) reconcile0(snapshot *proto.ClusterConfiguration, sub
 		select {
 		case _, ok := <-subscription.Changed():
 			if ok {
-				snapshot = subscription.Get().Value
+				snapshot = r.runtime.Metadata().GetConfig().UnsafeBorrow()
 			}
 		default:
 		}

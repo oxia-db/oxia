@@ -56,7 +56,7 @@ func PutConfig(
 ) {
 	t.Helper()
 
-	version := configProvider.Load().Version
+	version := Load(t, configProvider).Version
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
@@ -74,8 +74,8 @@ func NewMetadataFromProviders(
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, coordoption.DefaultFileStatusName)
 	configPath := filepath.Join(dir, coordoption.DefaultFileConfigName)
-	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, statusProvider.Load().Value)
-	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, configProvider.Load().Value)
+	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, Load(t, statusProvider).Value)
+	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, Load(t, configProvider).Value)
 	mirrorProviderToFile(t, configPath, metadatacodec.ClusterConfigCodec, configProvider)
 	name, err := statusProvider.GetLeaderName()
 	require.NoError(t, err)
@@ -140,7 +140,11 @@ func mirrorProviderToFile[T interface {
 				if !ok {
 					return
 				}
-				if err := writeSnapshotFile(path, codec, subscription.Get().Value); err != nil {
+				snapshot, err := subscription.Get()
+				if err != nil {
+					continue
+				}
+				if err := writeSnapshotFile(path, codec, snapshot.Value); err != nil {
 					panic(err)
 				}
 			}

@@ -15,6 +15,7 @@
 package provider_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
 	"path/filepath"
@@ -22,14 +23,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -91,7 +95,7 @@ func TestProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newProvider(t)
 
-			snapshot := m.Load()
+			snapshot := loaded(t, m)
 			res, version := snapshot.Value, snapshot.Version
 			assert.Equal(t, metadatacommon.NotExists, version)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{}, res))
@@ -113,7 +117,7 @@ func TestProvider(t *testing.T) {
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
-			snapshot = m.Load()
+			snapshot = loaded(t, m)
 			res, version = snapshot.Value, snapshot.Version
 			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(&proto.ClusterStatus{
@@ -214,7 +218,7 @@ func TestProviderConfigResource(t *testing.T) {
 			assert.NoError(t, err)
 			assert.EqualValues(t, metadatacommon.Version("0"), newVersion)
 
-			snapshot := m.Load()
+			snapshot := loaded(t, m)
 			res, version := snapshot.Value, snapshot.Version
 			assert.EqualValues(t, metadatacommon.Version("0"), version)
 			assert.True(t, gproto.Equal(config, res))
@@ -260,10 +264,44 @@ func k8sResourceVersionSupport(tracker k8stesting.ObjectTracker) k8stesting.Reac
 
 			incrementVersion(objMeta)
 			return false, action.GetObject(), nil
+		case k8stesting.PatchActionImpl:
+			return applyConfigMapPatch(tracker, action)
 		}
 
 		return false, nil, nil
 	}
+}
+
+// applyConfigMapPatch applies a server-side apply patch of a config map like
+// the API server: the resource version in the patch must match the stored
+// one, and a successful patch advances it.
+func applyConfigMapPatch(tracker k8stesting.ObjectTracker, action k8stesting.PatchActionImpl) (bool, runtime.Object, error) {
+	if action.GetPatchType() != types.ApplyPatchType {
+		return false, nil, nil
+	}
+	var desired corev1.ConfigMap
+	if err := json.Unmarshal(action.GetPatch(), &desired); err != nil {
+		return true, nil, err
+	}
+	gvr := action.GetResource()
+	existing, err := tracker.Get(gvr, action.GetNamespace(), action.GetName())
+	if err != nil {
+		return true, nil, err
+	}
+	configMap, ok := existing.(*corev1.ConfigMap)
+	if !ok {
+		return true, nil, errors.New("not a config map")
+	}
+	if desired.GetResourceVersion() != configMap.GetResourceVersion() {
+		return true, nil, k8serrors.NewConflict(gvr.GroupResource(), action.GetName(), errors.New("conflict"))
+	}
+	configMap = configMap.DeepCopy()
+	configMap.Data = desired.Data
+	incrementVersion(configMap)
+	if err := tracker.Update(gvr, configMap, action.GetNamespace()); err != nil {
+		return true, nil, err
+	}
+	return true, configMap, nil
 }
 
 func accessor(obj runtime.Object) metav1.Object {
@@ -294,7 +332,7 @@ func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
 		if !failNextPatch.CompareAndSwap(true, false) {
 			return false, nil, nil
 		}
-		if _, _, err := k8stesting.ObjectReaction(kc.Tracker())(action); err != nil {
+		if _, _, err := k8sResourceVersionSupport(kc.Tracker())(action); err != nil {
 			return true, nil, err
 		}
 		return true, nil, errors.New("request timed out after the patch was applied")
@@ -306,20 +344,30 @@ func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
 	setInstanceID := func(id string) error {
 		_, err := p.Store(provider.Versioned[*proto.ClusterStatus]{
 			Value:   &proto.ClusterStatus{InstanceId: id},
-			Version: p.Load().Version,
+			Version: loaded(t, p).Version,
 		})
 		return err
 	}
 	require.NoError(t, setInstanceID("first"))
+	before := loaded(t, p).Version
 
 	// The failed write is not stored in the cache: reading the applied value
-	// means the provider reloaded the config map.
+	// and version means the provider reloaded the config map.
 	failNextPatch.Store(true)
 	require.Error(t, setInstanceID("applied"))
-	require.Equal(t, "applied", p.Load().Value.GetInstanceId())
+	stored, err := kc.CoreV1().ConfigMaps("ns").Get(t.Context(), "status", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return loaded(t, p).Value.GetInstanceId() == "applied" }, 5*time.Second, 10*time.Millisecond)
+	after := loaded(t, p)
+	require.Equal(t, metadatacommon.Version(stored.ResourceVersion), after.Version)
+	require.NotEqual(t, before, after.Version)
+
+	// A write with the version from before the failed one is rejected.
+	_, err = p.Store(provider.Versioned[*proto.ClusterStatus]{Value: &proto.ClusterStatus{InstanceId: "stale"}, Version: before})
+	require.ErrorIs(t, err, metadatacommon.ErrBadVersion)
 
 	require.NoError(t, setInstanceID("next"))
-	require.Equal(t, "next", p.Load().Value.GetInstanceId())
+	require.Equal(t, "next", loaded(t, p).Value.GetInstanceId())
 }
 
 // Concurrent optimistic stores: every writer retries on version conflicts,
@@ -334,7 +382,7 @@ func TestProviderConcurrentStores(t *testing.T) {
 			const writers = 4
 			const updatesPerWriter = 10
 
-			initial := p.Load()
+			initial := loaded(t, p)
 
 			var stored atomic.Int32
 			var wg sync.WaitGroup
@@ -344,8 +392,12 @@ func TestProviderConcurrentStores(t *testing.T) {
 			for i := 0; i < writers; i++ {
 				wg.Go(func() {
 					for u := 0; u < updatesPerWriter; {
-						snapshot := p.Load()
-						_, err := p.Store(provider.Versioned[*proto.ClusterStatus]{
+						snapshot, err := p.Load()
+						if err != nil {
+							writerErrs <- err
+							return
+						}
+						_, err = p.Store(provider.Versioned[*proto.ClusterStatus]{
 							Value:   snapshot.Value,
 							Version: snapshot.Version,
 						})
@@ -369,8 +421,16 @@ func TestProviderConcurrentStores(t *testing.T) {
 			}
 
 			assert.EqualValues(t, writers*updatesPerWriter, stored.Load())
-			final := p.Load()
+			final := loaded(t, p)
 			assert.NotEqual(t, initial.Version, final.Version)
 		})
 	}
+}
+
+// loaded returns the stored snapshot, failing the test if it cannot be loaded.
+func loaded[T gproto.Message](t *testing.T, p provider.Provider[T]) *provider.Versioned[T] {
+	t.Helper()
+	snapshot, err := p.Load()
+	require.NoError(t, err)
+	return snapshot
 }

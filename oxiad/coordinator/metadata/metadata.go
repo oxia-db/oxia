@@ -129,7 +129,10 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
-	current := m.statusProvider.Load()
+	current, err := m.statusProvider.Load()
+	if err != nil {
+		return err
+	}
 	next, changed, err := fn(metadatacodec.ClusterStatusCodec.Clone(current.Value), current.Version)
 	if err != nil || !changed {
 		return err
@@ -149,7 +152,10 @@ func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfigur
 	m.configLock.Lock()
 	defer m.configLock.Unlock()
 
-	current := m.configProvider.Load()
+	current, err := m.configProvider.Load()
+	if err != nil {
+		return err
+	}
 	next, err := fn(metadatacodec.ClusterConfigCodec.Clone(current.Value), current.Version)
 	if err != nil {
 		return err
@@ -173,32 +179,49 @@ func (m *coordinatorMetadata) Close() error {
 }
 
 func (m *coordinatorMetadata) doStatusRecovery() {
-	status := m.statusProvider.Load().Value
-	if status.GetInstanceId() == "" {
-		_ = backoff.RetryNotify(func() error {
-			return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
-				if status.GetInstanceId() != "" {
-					return status, false, nil
-				}
-				status.InstanceId = uuid.NewString()
-				return status, true, nil
-			})
-		}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-			m.logger.Warn(
-				"failed to initialize instance id",
-				slog.Any("error", err),
-				slog.Duration("retry-after", duration),
-			)
+	_ = backoff.RetryNotify(func() error {
+		return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+			if status.GetInstanceId() != "" {
+				return status, false, nil
+			}
+			status.InstanceId = uuid.NewString()
+			return status, true, nil
 		})
-	}
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to initialize instance id",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
 }
 
 func (m *coordinatorMetadata) GetInstanceID() string {
-	return m.statusProvider.Load().Value.GetInstanceId()
+	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return ""
+	}
+	return status.Value.GetInstanceId()
 }
 
 func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
-	coordinator, ok := m.configProvider.Load().Value.GetCoordinator(m.name)
+	config, err := backoff.RetryNotifyWithData(m.configProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster configuration",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+	coordinator, ok := config.Value.GetCoordinator(m.name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", m.name)
 	}
@@ -210,7 +233,17 @@ func (m *coordinatorMetadata) GetLeader() (*commonproto.Coordinator, error) {
 	if err != nil {
 		return nil, err
 	}
-	coordinator, ok := m.configProvider.Load().Value.GetCoordinator(name)
+	config, err := backoff.RetryNotifyWithData(m.configProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster configuration",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+	coordinator, ok := config.Value.GetCoordinator(name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", name)
 	}
@@ -224,6 +257,21 @@ func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
 	}
 	m.logger.Info("This coordinator is now leader")
+	// The snapshots were loaded before the leadership, and the previous
+	// leader may have changed them since.
+	if err := m.statusProvider.Reload(); err != nil {
+		return nil, fmt.Errorf("failed to reload the cluster status: %w", err)
+	}
+	if err := m.configProvider.Reload(); err != nil {
+		return nil, fmt.Errorf("failed to reload the cluster configuration: %w", err)
+	}
+	// The reloads can last as long as the store is unavailable: a coordinator
+	// that lost the leadership meanwhile must not write the recovery.
+	select {
+	case <-leadershipLost:
+		return nil, errors.New("lost the leadership while reloading the metadata")
+	default:
+	}
 	m.doStatusRecovery()
 	return leadershipLost, nil
 }
@@ -263,17 +311,35 @@ func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonp
 }
 
 func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
-	status := m.statusProvider.Load().Value
-	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.GetNamespaces()))
-	for name, status := range status.GetNamespaces() {
+	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]{}
+	}
+	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.Value.GetNamespaces()))
+	for name, status := range status.Value.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
 	}
 	return namespaces
 }
 
 func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {
-	status := m.statusProvider.Load().Value
-	namespaceStatus, exists := status.GetNamespaces()[namespace]
+	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
+	}
+	namespaceStatus, exists := status.Value.GetNamespaces()[namespace]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
 	}
@@ -416,7 +482,17 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) e
 }
 
 func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration] {
-	return commonobject.Borrow(m.configProvider.Load().Value)
+	config, err := backoff.RetryNotifyWithData(m.configProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster configuration",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.ClusterConfiguration]{}
+	}
+	return commonobject.Borrow(config.Value)
 }
 
 func (m *coordinatorMetadata) SubscribeConfig() *cache.Subscription[provider.Versioned[*commonproto.ClusterConfiguration]] {

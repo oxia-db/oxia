@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	hashicorpraft "github.com/hashicorp/raft"
 	"github.com/stretchr/testify/require"
@@ -28,30 +29,46 @@ import (
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 )
 
-// A read once an entry is applied, like after the leadership barrier, sees
-// the applied state, not the state cached before.
-func TestProviderLoadSeesAppliedEntry(t *testing.T) {
+// An applied entry reaches the cache in the background through OnApplied, and
+// right away through Reload, which a new leader runs once the entries are
+// applied.
+func TestProviderCacheFollowsAppliedEntries(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	r := &Raft{logger: logger, sc: newStateContainer(logger, nil)}
 	p, ok := NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled).(*Provider[*commonproto.ClusterStatus])
 	require.True(t, ok)
 	defer func() { require.NoError(t, p.Close()) }()
 	r.sc.interceptor = p
-	require.Empty(t, p.Load().Value.GetInstanceId())
+	require.Empty(t, loadedValue(t, p).GetInstanceId())
 
-	for i, id := range []string{"first", "second", "third"} {
+	apply := func(version int64, id string) {
+		t.Helper()
 		state, err := metadatacodec.ClusterStatusCodec.MarshalJSON(&commonproto.ClusterStatus{InstanceId: id})
 		require.NoError(t, err)
 		data, err := json.Marshal(raftOpCmd{
 			Key:             metadatacodec.ClusterStatusCodec.GetKey(),
 			NewState:        state,
-			ExpectedVersion: int64(i) - 1,
+			ExpectedVersion: version,
 		})
 		require.NoError(t, err)
 		res, ok := r.sc.Apply(&hashicorpraft.Log{Data: data}).(*applyResult)
 		require.True(t, ok)
 		require.True(t, res.changeApplied)
-
-		require.Equal(t, id, p.Load().Value.GetInstanceId())
 	}
+
+	apply(-1, "first")
+	require.Eventually(t, func() bool { return loadedValue(t, p).GetInstanceId() == "first" }, 5*time.Second, 10*time.Millisecond)
+
+	// Without the background reload, Reload still loads the applied entry.
+	r.sc.interceptor = nil
+	apply(0, "second")
+	require.NoError(t, p.Reload())
+	require.Equal(t, "second", loadedValue(t, p).GetInstanceId())
+}
+
+func loadedValue(t *testing.T, p *Provider[*commonproto.ClusterStatus]) *commonproto.ClusterStatus {
+	t.Helper()
+	snapshot, err := p.Load()
+	require.NoError(t, err)
+	return snapshot.Value
 }

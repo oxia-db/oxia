@@ -108,7 +108,9 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase, nsMutators ...func(*pr
 		Servers:    []*proto.DataServerIdentity{ps1, ps2, ps3},
 	}
 	dir := t.TempDir()
-	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(metaProvider.Load().Value)
+	snapshot, err := metaProvider.Load()
+	require.NoError(t, err)
+	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(snapshot.Value)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileStatusName), statusData, 0o600))
 	configData, err := metadatacodec.ClusterConfigCodec.MarshalYAML(clusterConfig)

@@ -586,7 +586,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		InitialShardCount: 2,
 		ReplicationFactor: 1,
 	})
-	version := configProvider.Load().Version
+	version := mock.Load(t, configProvider).Version
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
@@ -663,7 +663,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	// Remove s1
 	clusterConfig.Servers = clusterConfig.Servers[1:]
 
-	version := configProvider.Load().Version
+	version := mock.Load(t, configProvider).Version
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
@@ -744,7 +744,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	}
 	clusterConfig.Servers = d
 
-	version := configProvider.Load().Version
+	version := mock.Load(t, configProvider).Version
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
@@ -827,7 +827,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 	}
 
 	clusterConfig.Servers = clusterServer
-	version := configProvider.Load().Version
+	version := mock.Load(t, configProvider).Version
 	_, err = configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
