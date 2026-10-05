@@ -396,12 +396,11 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 	return nil
 }
 
-func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
+func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) error {
 	t.Lock()
 	if err := t.appendAsync0(entry, nil); err != nil {
 		t.Unlock()
-		callback(0, err)
-		return
+		return err
 	}
 	entryCrc := t.currentSegment.LastCrc()
 	t.Unlock()
@@ -412,6 +411,7 @@ func (t *wal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32
 	t.doSync(func(err error) {
 		callback(entryCrc, err)
 	})
+	return nil
 }
 
 func (t *wal) rolloverSegment() error {

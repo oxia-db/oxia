@@ -385,9 +385,9 @@ type heldSyncWal struct {
 	factory *heldSyncWalFactory
 }
 
-func (w *heldSyncWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
+func (w *heldSyncWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) error {
 	held := w.factory.held.Load()
-	w.Wal.AppendAndSync(entry, func(entryCrc uint32, err error) {
+	return w.Wal.AppendAndSync(entry, func(entryCrc uint32, err error) {
 		if held != nil {
 			<-*held
 		}
@@ -486,12 +486,12 @@ type heldAppendWal struct {
 	factory *heldAppendWalFactory
 }
 
-func (w *heldAppendWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
+func (w *heldAppendWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) error {
 	if held := w.factory.held.Load(); held != nil {
 		w.factory.stalled <- struct{}{}
 		<-*held
 	}
-	w.Wal.AppendAndSync(entry, callback)
+	return w.Wal.AppendAndSync(entry, callback)
 }
 
 // A write stalled in the wal append, like one waiting for room in a full sync
@@ -2339,6 +2339,89 @@ func TestLeaderController_Write(t *testing.T) {
 
 	assert.EqualValues(t, 2, lc.Term())
 	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// A write that doesn't fit in a wal segment fails without being appended. Its
+// offset must go to the next write: the wal only takes the entry that follows
+// its last one, so a skipped offset would fail every write after it.
+func TestLeaderController_WriteLargerThanWalSegment(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	assert.NoError(t, err)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+		FollowerMaps:      nil,
+	})
+	assert.NoError(t, err)
+
+	// The segments of the test wal are 128 KiB
+	largeWrite := &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{{
+			Key:   "large",
+			Value: make([]byte, 256*1024)}},
+	}
+
+	// As the first write of the shard
+	_, err = lc.WriteBlock(context.Background(), largeWrite)
+	assert.ErrorIs(t, err, wal.ErrSegmentFull)
+
+	res1, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{{
+			Key:   "a",
+			Value: []byte("value-a")}},
+	})
+	assert.NoError(t, err)
+	assert.EqualValues(t, 1, len(res1.Puts))
+	assert.Equal(t, proto.Status_OK, res1.Puts[0].Status)
+
+	// And after other entries
+	_, err = lc.WriteBlock(context.Background(), largeWrite)
+	assert.ErrorIs(t, err, wal.ErrSegmentFull)
+
+	res2, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{{
+			Key:   "b",
+			Value: []byte("value-b")}},
+	})
+	assert.NoError(t, err)
+	assert.EqualValues(t, 1, len(res2.Puts))
+	assert.Equal(t, proto.Status_OK, res2.Puts[0].Status)
+
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+		Shard: &shard,
+		Gets:  []*proto.GetRequest{{Key: "large"}, {Key: "a", IncludeValue: true}, {Key: "b", IncludeValue: true}},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, len(results))
+	assert.Equal(t, proto.Status_KEY_NOT_FOUND, results[0].Status)
+	assert.Equal(t, []byte("value-a"), results[1].Value)
+	assert.Equal(t, []byte("value-b"), results[2].Value)
+
+	// The two writes took the offsets 0 and 1
+	fr2, err := lc.NewTerm(&proto.NewTermRequest{
+		Shard: shard,
+		Term:  2,
+	})
+	assert.NoError(t, err)
+	AssertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 1}, fr2.HeadEntryId)
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())

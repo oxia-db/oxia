@@ -98,7 +98,10 @@ type Wal interface {
 	// The operation is perfomed in background and the callback is
 	// triggered when it's completed. The entryCrc parameter in the callback
 	// is the chained CRC of the WAL after appending this entry.
-	AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error))
+	// It returns an error when the entry can't be appended, e.g. because it
+	// doesn't fit in a segment: the log is left without the entry, and the
+	// callback is not invoked.
+	AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) error
 
 	// Sync flushes all the entries in the wal to disk
 	Sync(ctx context.Context) error

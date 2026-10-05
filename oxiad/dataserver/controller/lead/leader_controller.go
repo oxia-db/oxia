@@ -1328,7 +1328,17 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
 			}))
 	}
-	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
+	logEntry := &proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}
+	if err := walLog.AppendAndSync(logEntry, deferDbWrite); err != nil {
+		// The entry is not in the wal, e.g. because it doesn't fit in a
+		// segment. Give its offset back: the wal only takes the entry that
+		// follows its last one, so it would reject every proposal after a
+		// skipped offset, until the term ends.
+		tracker.ReleaseOffset(newOffset)
+		timer.DoneCtx(ctx)
+		lc.waitGroup.Done()
+		return errors.Wrap(err, "oxia: failed to append to wal")
+	}
 	return nil
 }
 
