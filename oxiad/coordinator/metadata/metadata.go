@@ -45,8 +45,6 @@ type Metadata interface {
 	GetInstanceID() (string, error)
 	AllocateShardIDs(count uint32) (int64, error)
 
-	// CreateNamespaceStatus attempts one write and returns ErrAlreadyExists
-	// when the namespace already exists, or the write error when creation fails.
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) error
 	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
