@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -373,6 +374,91 @@ func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
 // Concurrent optimistic stores: every writer retries on version conflicts,
 // and every update succeeds exactly once. Exercises the provider state
 // synchronization under the race detector.
+// A configuration source that disappears after the provider read it does not
+// load as an empty configuration, which would make the coordinator delete
+// every namespace: the provider keeps the last one until the source returns.
+func TestProviderKeepsConfigWhenSourceDisappears(t *testing.T) {
+	configWith := func(namespace string) *proto.ClusterConfiguration {
+		return &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{{Name: namespace}}}
+	}
+	type source struct {
+		provider provider.Provider[*proto.ClusterConfiguration]
+		remove   func()
+		restore  func(config *proto.ClusterConfiguration)
+	}
+	sources := map[string]func(t *testing.T) source{
+		"configmap": func(t *testing.T) source {
+			t.Helper()
+			kc := newFake()
+			p, err := kubernetes.NewProvider(t.Context(), kc, "ns", "config", metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, testCoordinatorName)
+			require.NoError(t, err)
+			return source{
+				provider: p,
+				remove: func() {
+					require.NoError(t, kc.CoreV1().ConfigMaps("ns").Delete(t.Context(), "config", metav1.DeleteOptions{}))
+				},
+				restore: func(config *proto.ClusterConfiguration) {
+					data, err := metadatacodec.ClusterConfigCodec.MarshalYAML(config)
+					require.NoError(t, err)
+					_, err = kc.CoreV1().ConfigMaps("ns").Create(t.Context(), &corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{Name: "config"},
+						Data:       map[string]string{metadatacodec.ClusterConfigCodec.GetKey(): string(data)},
+					}, metav1.CreateOptions{})
+					require.NoError(t, err)
+				},
+			}
+		},
+		"file": func(t *testing.T) source {
+			t.Helper()
+			path := filepath.Join(t.TempDir(), "config")
+			p, err := file.NewProvider(t.Context(), path, metadatacodec.ClusterConfigCodec, metadatacommon.WatchDisabled, testCoordinatorName)
+			require.NoError(t, err)
+			return source{
+				provider: p,
+				remove:   func() { require.NoError(t, os.Remove(path)) },
+				restore: func(config *proto.ClusterConfiguration) {
+					data, err := metadatacodec.ClusterConfigCodec.MarshalYAML(config)
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(path, data, 0600))
+				},
+			}
+		},
+	}
+	for name, newSource := range sources {
+		t.Run(name, func(t *testing.T) {
+			s := newSource(t)
+			defer func() { assert.NoError(t, s.provider.Close()) }()
+
+			// A source that was never written loads as an empty configuration.
+			require.Empty(t, loaded(t, s.provider).Value.GetNamespaces())
+			_, err := s.provider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+				Value:   configWith("first"),
+				Version: loaded(t, s.provider).Version,
+			})
+			require.NoError(t, err)
+
+			s.remove()
+			reloaded := make(chan error, 1)
+			go func() { reloaded <- s.provider.Reload() }()
+			select {
+			case err := <-reloaded:
+				t.Fatalf("reload completed without the source: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+			require.Equal(t, "first", loaded(t, s.provider).Value.GetNamespaces()[0].GetName())
+
+			s.restore(configWith("second"))
+			select {
+			case err := <-reloaded:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("reload did not complete once the source returned")
+			}
+			require.Equal(t, "second", loaded(t, s.provider).Value.GetNamespaces()[0].GetName())
+		})
+	}
+}
+
 func TestProviderConcurrentStores(t *testing.T) {
 	for name, newProvider := range providers {
 		t.Run(name, func(t *testing.T) {

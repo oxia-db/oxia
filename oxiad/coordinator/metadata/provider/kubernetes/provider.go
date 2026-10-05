@@ -69,6 +69,11 @@ type Provider[T gproto.Message] struct {
 	name          string
 	leaderElector atomic.Pointer[leaderelection.LeaderElector]
 
+	// existed is set once the config map was read or written. A missing
+	// config map is then an error rather than an empty snapshot: an empty
+	// configuration would make the coordinator delete every namespace.
+	existed atomic.Bool
+
 	metadataSize      atomic.Int64
 	getLatencyHisto   metric.LatencyHistogram
 	storeLatencyHisto metric.LatencyHistogram
@@ -145,24 +150,29 @@ func (m *Provider[T]) load(ctx context.Context) (*provider.Versioned[T], error) 
 	timer := m.getLatencyHisto.Timer()
 	defer timer.Done()
 
+	var (
+		data  string
+		found bool
+	)
 	cm, err := m.kubernetes.CoreV1().ConfigMaps(m.namespace).Get(ctx, m.configMapName, metav1.GetOptions{})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return &provider.Versioned[T]{
-				Value:   m.codec.NewZero(),
-				Version: metadatacommon.NotExists,
-			}, nil
-		}
+	switch {
+	case err == nil:
+		data, found = cm.Data[m.codec.GetKey()]
+	case !k8serrors.IsNotFound(err):
 		return nil, err
+	default:
+		// The config map does not exist.
 	}
-
-	data, ok := cm.Data[m.codec.GetKey()]
-	if !ok {
+	if !found {
+		if m.existed.Load() {
+			return nil, errors.Errorf("config map %s/%s has no %q data anymore", m.namespace, m.configMapName, m.codec.GetKey())
+		}
 		return &provider.Versioned[T]{
 			Value:   m.codec.NewZero(),
 			Version: metadatacommon.NotExists,
 		}, nil
 	}
+	m.existed.Store(true)
 
 	slog.Debug("Get metadata successful",
 		slog.String("version", cm.ResourceVersion))
@@ -219,6 +229,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 		return nil, err
 	}
 	version := metadatacommon.Version(cm.ResourceVersion)
+	m.existed.Store(true)
 	m.metadataSize.Store(int64(len(cmData.Data[m.codec.GetKey()])))
 	return &provider.Versioned[T]{
 		Value:   m.codec.Clone(snapshot.Value),

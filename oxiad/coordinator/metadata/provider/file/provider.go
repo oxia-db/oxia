@@ -47,6 +47,10 @@ type Provider[T gproto.Message] struct {
 	watchEnabled metadatacommon.WatchMode
 	version      metadatacommon.Version
 	name         string
+	// existed is set once the file was read or written. A missing or empty
+	// file is then an error rather than an empty snapshot: an empty
+	// configuration would make the coordinator delete every namespace.
+	existed bool
 
 	ctx       context.Context
 	ctxCancel context.CancelFunc
@@ -138,22 +142,19 @@ func (m *Provider[T]) loadLatestOnceLocked() (snapshot provider.Versioned[T], er
 
 func (m *Provider[T]) loadLatestOnceWithoutLock() (snapshot provider.Versioned[T], err error) {
 	content, err := os.ReadFile(m.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return provider.Versioned[T]{
-				Value:   m.codec.NewZero(),
-				Version: metadatacommon.NotExists,
-			}, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return snapshot, err
 	}
-
 	if len(content) == 0 {
+		if m.existed {
+			return snapshot, errors.Errorf("metadata file %s is missing or empty", m.path)
+		}
 		return provider.Versioned[T]{
 			Value:   m.codec.NewZero(),
 			Version: metadatacommon.NotExists,
 		}, nil
 	}
+	m.existed = true
 	value, err := m.codec.UnmarshalYAML(content)
 	if err != nil {
 		panic(err)
@@ -188,6 +189,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 		return nil, err
 	}
 	m.version = newVersion
+	m.existed = true
 	return &provider.Versioned[T]{
 		Value:   m.codec.Clone(snapshot.Value),
 		Version: newVersion,
