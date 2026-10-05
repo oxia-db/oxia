@@ -59,8 +59,8 @@ func (m *namespaceReadHookMetadata) GetNamespaceStatus(name string) (commonobjec
 // reporting an ambiguous write error, or a competing namespace creation.
 type committingNamespaceMetadata struct {
 	coordmetadata.Metadata
-	err          error
-	saved        *proto.NamespaceStatus
+	err         error
+	saved       *proto.NamespaceStatus
 	allocations int
 }
 
