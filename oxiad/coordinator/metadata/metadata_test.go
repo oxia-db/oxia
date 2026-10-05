@@ -383,3 +383,17 @@ func TestMetadataGetSelfReturnsLoadError(t *testing.T) {
 	_, err := metadata.GetSelf()
 	require.ErrorContains(t, err, "configuration unavailable")
 }
+
+// GetLeader reports a configuration that cannot be loaded, without waiting
+// for it.
+func TestMetadataGetLeaderReturnsLoadError(t *testing.T) {
+	statusProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, "coordinator")
+	configProvider := loadFailingConfigProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "coordinator"),
+	}
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "coordinator")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.GetLeader()
+	require.ErrorContains(t, err, "configuration unavailable")
+}
