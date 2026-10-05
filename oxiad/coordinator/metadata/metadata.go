@@ -265,6 +265,13 @@ func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 	if err := m.configProvider.Reload(); err != nil {
 		return nil, fmt.Errorf("failed to reload the cluster configuration: %w", err)
 	}
+	// The reloads can last as long as the store is unavailable: a coordinator
+	// that lost the leadership meanwhile must not write the recovery.
+	select {
+	case <-leadershipLost:
+		return nil, errors.New("lost the leadership while reloading the metadata")
+	default:
+	}
 	m.doStatusRecovery()
 	return leadershipLost, nil
 }

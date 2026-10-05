@@ -294,6 +294,32 @@ func TestMetadataReloadsOnLeadership(t *testing.T) {
 	require.NotEmpty(t, metadata.GetInstanceID())
 }
 
+// lostLeadershipProvider reports a leadership already lost when it is acquired.
+type lostLeadershipProvider struct {
+	provider.Provider[*commonproto.ClusterStatus]
+}
+
+func (lostLeadershipProvider) WaitToBecomeLeader() (<-chan struct{}, error) {
+	lost := make(chan struct{})
+	close(lost)
+	return lost, nil
+}
+
+// A coordinator that loses the leadership while it reloads the metadata does
+// not write the status recovery.
+func TestMetadataStopsTakeoverWhenLeadershipLost(t *testing.T) {
+	statusProvider := lostLeadershipProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.WaitToBecomeLeader()
+	require.Error(t, err)
+	require.Empty(t, metadata.GetInstanceID())
+}
+
 type reloadRecordingConfig struct {
 	provider.Provider[*commonproto.ClusterConfiguration]
 	reloads *atomic.Int32
