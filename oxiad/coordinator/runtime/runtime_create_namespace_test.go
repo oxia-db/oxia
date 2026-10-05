@@ -253,6 +253,46 @@ func (namespaceEnsembleSelector) Select(ctx *ensemble.Context) ([]string, error)
 	return ctx.Candidates.Values(), nil
 }
 
+// failingEnsembleSelector selects the candidates for the first shards, then
+// fails.
+type failingEnsembleSelector struct {
+	succeeding int
+	calls      *int
+}
+
+func (s failingEnsembleSelector) Select(ctx *ensemble.Context) ([]string, error) {
+	*s.calls++
+	if *s.calls > s.succeeding {
+		return nil, errors.New("not enough data servers")
+	}
+	return ctx.Candidates.Values(), nil
+}
+
+// A namespace whose ensemble cannot be selected for one of its shards is not
+// created, rather than created without that shard.
+func TestCreateNamespaceFailsWhenEnsembleSelectionFails(t *testing.T) {
+	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
+	namespace := &proto.Namespace{Name: "default", InitialShardCount: 2, ReplicationFactor: 1}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers:    []*proto.DataServerIdentity{server},
+		Namespaces: []*proto.Namespace{namespace},
+	})
+	calls := 0
+	c := &runtime{
+		ctx:              t.Context(),
+		logger:           slog.Default(),
+		metadata:         metadata,
+		ensembleSelector: failingEnsembleSelector{succeeding: 1, calls: &calls},
+		shardControllers: make(map[int64]shardcontroller.Controller),
+	}
+
+	require.ErrorContains(t, c.CreateNamespace(namespace.Name, namespace), "not enough data servers")
+	require.Equal(t, 2, calls)
+	require.Empty(t, c.shardControllers)
+	_, exists := metadata.GetNamespaceStatus(namespace.Name)
+	require.False(t, exists)
+}
+
 func TestCreateNamespaceHandlesStatusErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
