@@ -234,6 +234,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 
 	log := slog.With(
 		slog.String("component", "pebble"),
+		slog.String("namespace", namespace),
 		slog.Int64("shard", shardId),
 	)
 	pbOptions := &pebble.Options{
