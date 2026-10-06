@@ -92,7 +92,8 @@ func TestClusterReconcilerReturnsReconcileErrorForRetry(t *testing.T) {
 	require.Equal(t, 1, bo.resets)
 	require.Len(t, base.added, 2)
 	for _, name := range []string{"retry", "healthy"} {
-		_, exists := base.metadata.GetNamespaceStatus(name)
+		_, exists, err := base.metadata.GetNamespaceStatus(name)
+		require.NoError(t, err)
 		require.True(t, exists)
 	}
 }

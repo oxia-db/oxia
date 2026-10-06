@@ -346,7 +346,7 @@ func (r *nodeBasedBalancer) IsBalanced() bool {
 		return false
 	}
 	for namespace := range configNamespaces {
-		if _, exists := r.metadata.GetNamespaceStatus(namespace); !exists {
+		if _, exists, err := r.metadata.GetNamespaceStatus(namespace); err != nil || !exists {
 			return false
 		}
 	}

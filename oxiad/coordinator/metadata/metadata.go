@@ -47,7 +47,7 @@ type Metadata interface {
 
 	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) error
 	ListNamespaceStatus() (map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], error)
-	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
+	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool, error)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
@@ -278,22 +278,16 @@ func (m *coordinatorMetadata) ListNamespaceStatus() (map[string]commonobject.Bor
 	return namespaces, nil
 }
 
-func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {
-	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to load the cluster status",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
+func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool, error) {
+	status, err := m.statusProvider.Load()
 	if err != nil {
-		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false, err
 	}
 	namespaceStatus, exists := status.Value.GetNamespaces()[namespace]
 	if !exists {
-		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false, nil
 	}
-	return commonobject.Borrow(namespaceStatus), true
+	return commonobject.Borrow(namespaceStatus), true, nil
 }
 
 func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus] {
@@ -329,11 +323,21 @@ func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Bo
 }
 
 func (m *coordinatorMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool) {
-	namespaceStatus, exists := m.GetNamespaceStatus(namespace)
+	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
+	}
+	namespaceStatus, exists := status.Value.GetNamespaces()[namespace]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
 	}
-	shardStatus, exists := namespaceStatus.UnsafeBorrow().GetShards()[shard]
+	shardStatus, exists := namespaceStatus.GetShards()[shard]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
 	}

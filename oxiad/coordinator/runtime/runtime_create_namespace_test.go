@@ -46,13 +46,13 @@ type namespaceReadHookMetadata struct {
 	afterRead func()
 }
 
-func (m *namespaceReadHookMetadata) GetNamespaceStatus(name string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
-	status, exists := m.Metadata.GetNamespaceStatus(name)
+func (m *namespaceReadHookMetadata) GetNamespaceStatus(name string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
+	status, exists, err := m.Metadata.GetNamespaceStatus(name)
 	if hook := m.afterRead; hook != nil {
 		m.afterRead = nil
 		hook()
 	}
-	return status, exists
+	return status, exists, err
 }
 
 // committingNamespaceMetadata persists through the real metadata store before
@@ -77,6 +77,32 @@ func (m *committingNamespaceMetadata) CreateNamespaceStatus(name string, status 
 		return err
 	}
 	return m.err
+}
+
+type namespaceReadFailingMetadata struct {
+	*committingNamespaceMetadata
+	err error
+}
+
+func (m *namespaceReadFailingMetadata) GetNamespaceStatus(string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
+	return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, m.err
+}
+
+func TestCreateNamespaceReturnsStatusReadError(t *testing.T) {
+	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
+	namespace := &proto.Namespace{Name: "default", InitialShardCount: 2, ReplicationFactor: 1}
+	readErr := errors.New("status unavailable")
+	allocating := &committingNamespaceMetadata{
+		Metadata: newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers:    []*proto.DataServerIdentity{server},
+			Namespaces: []*proto.Namespace{namespace},
+		}),
+	}
+	c := newNamespaceRuntimeForCreation(t, &namespaceReadFailingMetadata{committingNamespaceMetadata: allocating, err: readErr})
+
+	require.ErrorIs(t, c.CreateNamespace(namespace.Name, namespace), readErr)
+	require.Zero(t, allocating.allocations)
+	require.Empty(t, c.shardControllers)
 }
 
 func newNamespaceRuntimeForCreation(t *testing.T, metadata coordmetadata.Metadata) *runtime {
@@ -111,7 +137,8 @@ func TestCreateNamespaceRepairsCommittedWrite(t *testing.T) {
 
 	require.ErrorIs(t, c.CreateNamespace(namespace.Name, namespace), storeErr)
 	require.Empty(t, c.shardControllers)
-	saved, exists := metadata.GetNamespaceStatus(namespace.Name)
+	saved, exists, err := metadata.GetNamespaceStatus(namespace.Name)
+	require.NoError(t, err)
 	require.True(t, exists)
 	require.Len(t, saved.UnsafeBorrow().Shards, 2)
 	require.Equal(t, 1, metadata.allocations)
@@ -289,7 +316,8 @@ func TestCreateNamespaceFailsWhenEnsembleSelectionFails(t *testing.T) {
 	require.ErrorContains(t, c.CreateNamespace(namespace.Name, namespace), "not enough data servers")
 	require.Equal(t, 2, calls)
 	require.Empty(t, c.shardControllers)
-	_, exists := metadata.GetNamespaceStatus(namespace.Name)
+	_, exists, err := metadata.GetNamespaceStatus(namespace.Name)
+	require.NoError(t, err)
 	require.False(t, exists)
 }
 
@@ -323,7 +351,8 @@ func TestCreateNamespaceHandlesStatusErrors(t *testing.T) {
 			require.NotNil(t, metadata.proposed)
 			require.Len(t, metadata.proposed.Shards, 1)
 			require.Empty(t, c.shardControllers)
-			_, exists := metadata.GetNamespaceStatus(namespace.Name)
+			_, exists, err := metadata.GetNamespaceStatus(namespace.Name)
+			require.NoError(t, err)
 			require.False(t, exists)
 		})
 	}

@@ -130,12 +130,12 @@ func (m *mockNamespaceMetadata) ListNamespaceStatus() (map[string]commonobject.B
 	return namespaces, nil
 }
 
-func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
 	status, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, nil
 	}
-	return commonobject.Borrow(status), true
+	return commonobject.Borrow(status), true, nil
 }
 
 func (m *mockNamespaceMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool) {
@@ -296,7 +296,11 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
-	if _, exists := m.metadata.GetNamespaceStatus(name); exists {
+	_, exists, err := m.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
+	if exists {
 		return m.initShardControllers(name)
 	}
 	baseShardID, err := m.metadata.AllocateShardIDs(namespaceConfig.GetInitialShardCount())
@@ -344,7 +348,10 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 }
 
 func (m *mockNamespaceRuntime) initShardControllers(name string) error {
-	namespaceStatus, exists := m.metadata.GetNamespaceStatus(name)
+	namespaceStatus, exists, err := m.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
 	if !exists {
 		return metadatacommon.ErrConflict
 	}
