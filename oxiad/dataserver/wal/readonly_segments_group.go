@@ -196,7 +196,11 @@ func (r *readOnlySegmentsGroup) PollHighestSegment() (object.RefCount[ReadOnlySe
 	r.allSegments.Remove(offset)
 	segment, found := r.openSegments.Get(offset)
 	if found {
-		return segment.Acquire(), nil
+		// Hand the cache reference over to the caller: the truncation deletes
+		// or rewrites the segment, and a cached object would keep serving the
+		// offsets appended again afterwards, closed or through its stale index
+		r.openSegments.Remove(offset)
+		return segment, nil
 	}
 
 	roSegment, err := newReadOnlySegment(r.basePath, offset)
