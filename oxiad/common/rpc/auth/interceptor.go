@@ -78,15 +78,11 @@ func NewGrpcAuthenticationDelegator(provider AuthenticationProvider) (*GrpcAuthe
 }
 
 func validateTokenWithContext(ctx context.Context, provider AuthenticationProvider) (string, error) {
-	meta, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return "", ErrMetadataFetchFailed
-	}
 	peerMeta, ok := peer.FromContext(ctx)
 	if !ok {
 		return "", ErrMetadataFetchFailed
 	}
-	val := meta.Get(MetadataAuthorizationKey)
+	val := metadata.ValueFromIncomingContext(ctx, MetadataAuthorizationKey)
 	if len(val) < 1 {
 		slog.Debug("Receive empty token from the client",
 			slog.String("peer", peerMeta.Addr.String()))

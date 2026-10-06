@@ -16,15 +16,19 @@ package auth
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/oauth2-proxy/mockoidc"
 	"github.com/stretchr/testify/assert"
@@ -430,6 +434,78 @@ func TestOIDCProvider_Authenticate_Errors(t *testing.T) {
 
 		_, err = provider.Authenticate(context.Background(), signedToken)
 		assert.ErrorIs(t, err, ErrUnknownIssuer)
+	})
+}
+
+// countingKeySet counts the signature checks of the key set it wraps.
+type countingKeySet struct {
+	oidc.KeySet
+	verifications atomic.Int32
+}
+
+func (k *countingKeySet) VerifySignature(ctx context.Context, token string) ([]byte, error) {
+	k.verifications.Add(1)
+	return k.KeySet.VerifySignature(ctx, token)
+}
+
+// TestOIDCProvider_Authenticate_Cache tests that a verified token is not
+// verified again until its cache entry expires, and that a rejected token is
+// not cached.
+func TestOIDCProvider_Authenticate_Cache(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	issuer := "https://issuer.example.com"
+	keySet := &countingKeySet{KeySet: &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&privateKey.PublicKey}}}
+	provider := &OIDCProvider{
+		providers: map[string]*ProviderWithVerifier{
+			issuer: {
+				verifier:         oidc.NewVerifier(issuer, keySet, &oidc.Config{SkipClientIDCheck: true}),
+				userNameClaim:    DefaultUserNameCalm,
+				allowedAudiences: parseAllowedAudiences("audience"),
+			},
+		},
+	}
+	signToken := func(audience string, expiry time.Time) string {
+		token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, &jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{audience},
+			ExpiresAt: jwt.NewNumericDate(expiry),
+			Issuer:    issuer,
+			Subject:   "user",
+		}).SignedString(privateKey)
+		require.NoError(t, err)
+		return token
+	}
+
+	t.Run("verified once", func(t *testing.T) {
+		keySet.verifications.Store(0)
+		token := signToken("audience", time.Now().Add(time.Hour))
+		for range 3 {
+			userName, err := provider.Authenticate(context.Background(), token)
+			require.NoError(t, err)
+			assert.Equal(t, "user", userName)
+		}
+		assert.EqualValues(t, 1, keySet.verifications.Load())
+	})
+
+	t.Run("cached until the token expires", func(t *testing.T) {
+		expiry := time.Now().Add(30 * time.Second).Truncate(time.Second)
+		token := signToken("audience", expiry)
+		_, err := provider.Authenticate(context.Background(), token)
+		require.NoError(t, err)
+
+		entry := provider.verifiedTokens.entries[sha256.Sum256([]byte(token))]
+		assert.True(t, entry.expiry.Equal(expiry))
+	})
+
+	t.Run("rejected token not cached", func(t *testing.T) {
+		keySet.verifications.Store(0)
+		token := signToken("other-audience", time.Now().Add(time.Hour))
+		for range 2 {
+			_, err := provider.Authenticate(context.Background(), token)
+			assert.ErrorIs(t, err, ErrForbiddenAudience)
+		}
+		assert.EqualValues(t, 2, keySet.verifications.Load())
 	})
 }
 
