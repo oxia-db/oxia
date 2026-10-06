@@ -15,6 +15,7 @@
 package wal
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -44,6 +45,90 @@ func (p *mockedCommitOffsetProvider) CommitOffset() int64 {
 	return p.commitOffset.Load()
 }
 
+func (*mockedCommitOffsetProvider) FlushDatabase() error {
+	return nil
+}
+
+type flushingCommitOffsetProvider struct {
+	mockedCommitOffsetProvider
+	flush func() error
+}
+
+func (p *flushingCommitOffsetProvider) FlushDatabase() error {
+	return p.flush()
+}
+
+// The database can hold the entries of the segments to delete in memory only:
+// the trimming flushes it first, and deletes no segment when the flush fails.
+func TestWalTrimmerFlushesDatabaseBeforeDeletingSegments(t *testing.T) {
+	options := &FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		Retention:   2 * time.Millisecond,
+		SegmentSize: 1024,
+	}
+	segmentsPath := walPath(options.BaseWalDir, constant.DefaultNamespace, 1)
+
+	clock := &time2.MockedClock{}
+	commitOffsetProvider := &flushingCommitOffsetProvider{}
+	commitOffsetProvider.commitOffset.Store(math.MaxInt64)
+	flushes := atomic.Int64{}
+	failFlush := atomic.Bool{}
+	commitOffsetProvider.flush = func() error {
+		flushes.Add(1)
+		segments, err := listAllSegments(segmentsPath)
+		assert.NoError(t, err)
+		assert.Contains(t, segments, int64(0))
+		if failFlush.Load() {
+			return errors.New("failed to flush")
+		}
+		return nil
+	}
+
+	w, err := newWal(constant.DefaultNamespace, 1, options, commitOffsetProvider, clock, 10*time.Millisecond)
+	require.NoError(t, err)
+
+	for i := int64(0); i < 100; i++ {
+		require.NoError(t, w.Append(&proto.LogEntry{
+			Term:      0,
+			Offset:    i,
+			Value:     []byte(fmt.Sprintf("%d", i)),
+			Timestamp: uint64(i),
+		}))
+	}
+	segments, err := listAllSegments(segmentsPath)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(segments), 3)
+	secondSegment := segments[1]
+
+	// Trimming the first segment partially deletes none, and doesn't flush
+	clock.Set(secondSegment + 1)
+	assert.Eventually(t, func() bool {
+		return w.FirstOffset() == secondSegment-1
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.Zero(t, flushes.Load())
+
+	// Trimming past it deletes it once the flush succeeds
+	failFlush.Store(true)
+	clock.Set(secondSegment + 2)
+	assert.Eventually(t, func() bool {
+		return flushes.Load() > 1
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.EqualValues(t, secondSegment-1, w.FirstOffset())
+	segments, err = listAllSegments(segmentsPath)
+	require.NoError(t, err)
+	assert.Contains(t, segments, int64(0))
+
+	failFlush.Store(false)
+	assert.Eventually(t, func() bool {
+		return w.FirstOffset() == secondSegment
+	}, 10*time.Second, 10*time.Millisecond)
+	segments, err = listAllSegments(segmentsPath)
+	require.NoError(t, err)
+	assert.NotContains(t, segments, int64(0))
+
+	assert.NoError(t, w.Close())
+}
+
 // hookedCommitOffsetProvider runs a hook from the next CommitOffset call: the
 // trimming makes it once it computed the trim offset on the wal entries.
 type hookedCommitOffsetProvider struct {
@@ -64,9 +149,9 @@ type hookedSegmentsGroup struct {
 	hook func()
 }
 
-func (g *hookedSegmentsGroup) TrimSegments(offset int64) error {
+func (g *hookedSegmentsGroup) TrimSegments(offset int64, beforeDelete func() error) error {
 	g.hook()
-	return g.ReadOnlySegmentsGroup.TrimSegments(offset)
+	return g.ReadOnlySegmentsGroup.TrimSegments(offset, beforeDelete)
 }
 
 // A follower clears its wal when it installs a snapshot, and truncates it for a

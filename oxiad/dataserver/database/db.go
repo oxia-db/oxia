@@ -131,6 +131,10 @@ type DB interface {
 
 	ReadCommitOffset() (int64, error)
 
+	// Flush makes the writes to the database durable: it runs without a WAL of
+	// its own, so it loses the writes since its last flush in a crash.
+	Flush() error
+
 	ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error)
 	GetSequenceUpdates(prefixKey string) (SequenceWaiter, error)
 
@@ -792,6 +796,10 @@ func (d *db) CompareKeys(a, b string) int {
 
 func (d *db) ReadCommitOffset() (int64, error) {
 	return d.readASCIILongOrDefault(commitOffsetKey, constant.I64NegativeOne)
+}
+
+func (d *db) Flush() error {
+	return d.kv.Flush()
 }
 
 func (d *db) readLastVersionId() (int64, error) {

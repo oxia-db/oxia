@@ -267,10 +267,11 @@ func (t *wal) FirstOffset() int64 {
 }
 
 // trim moves the first offset to firstOffset, and deletes the segments that end
-// before the one holding it. The trimmer computes firstOffset without holding
-// the lock, on the entries of the given generation: once Clear or TruncateLog
-// dropped them, it must not apply to the entries the wal holds instead.
-func (t *wal) trim(firstOffset int64, generation int64) error {
+// before the one holding it, calling beforeDelete first. The trimmer computes
+// firstOffset without holding the lock, on the entries of the given generation:
+// once Clear or TruncateLog dropped them, it must not apply to the entries the
+// wal holds instead.
+func (t *wal) trim(firstOffset int64, generation int64, beforeDelete func() error) error {
 	t.RLock()
 	segments := t.readOnlySegments
 	dropped := t.generation.Load() != generation
@@ -279,7 +280,7 @@ func (t *wal) trim(firstOffset int64, generation int64) error {
 		return nil
 	}
 
-	if err := segments.TrimSegments(firstOffset); err != nil {
+	if err := segments.TrimSegments(firstOffset, beforeDelete); err != nil {
 		return err
 	}
 

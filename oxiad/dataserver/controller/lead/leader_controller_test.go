@@ -18,9 +18,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -446,6 +448,101 @@ func TestLeaderController_FreezeCoversAcceptedWrites(t *testing.T) {
 		require.FailNow(t, "the freeze did not return")
 	}
 	assert.NoError(t, <-written)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// The head entry that a new term reports is what the coordinator elects the
+// next leader by, and what that leader truncates the followers to. A write
+// appended to the wal before the new term can still wait for its sync: the
+// head must cover it. Otherwise the entry gets synced past the head that the
+// new term found, and the next leadership on this node gives its offset to a
+// new entry, which the wal rejects.
+func TestLeaderController_NewTermWaitsForPendingSyncs(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &heldSyncWalFactory{Factory: wal.NewWalFactory(&wal.FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	write := func(key string) {
+		lc.Write(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte("value-" + key)}},
+		}, concurrent.NewOnce(func(*proto.WriteResponse) {}, func(error) {}))
+	}
+
+	// The write "a" is synced, and its callback holds the sync goroutine of
+	// the wal: the write "b" is appended, and not synced until the release
+	release := walFactory.holdSyncs()
+	write("a")
+	require.Eventually(t, func() bool {
+		return lc.(*leaderController).wal.LastOffset() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+	write("b")
+
+	newTerm := make(chan *proto.NewTermResponse, 1)
+	go func() {
+		res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+		assert.NoError(t, err)
+		newTerm <- res
+	}()
+	assert.Never(t, func() bool { return len(newTerm) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the new term did not wait for the sync of the write")
+
+	release()
+	select {
+	case res := <-newTerm:
+		AssertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 1}, res.GetHeadEntryId())
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the new term did not return")
+	}
+
+	// The next leadership appends after the entries of the old term, and
+	// applies them
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              2,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "c", Value: []byte("value-c")}},
+	})
+	require.NoError(t, err)
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+		Shard: &shard,
+		Gets: []*proto.GetRequest{
+			{Key: "a", IncludeValue: true},
+			{Key: "b", IncludeValue: true},
+			{Key: "c", IncludeValue: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+	for i, key := range []string{"a", "b", "c"} {
+		assert.Equal(t, proto.Status_OK, results[i].Status, "key %s", key)
+		assert.Equal(t, []byte("value-"+key), results[i].Value, "key %s", key)
+	}
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -1779,6 +1876,125 @@ func TestLeaderController_RetriesFailedApplyPastWalRetention(t *testing.T) {
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
+}
+
+// The leader applies the entries to its database, which runs without the Pebble
+// WAL: they are durable only once the database gets flushed. Past the
+// retention, the trimming deletes the WAL segments of the applied entries: after
+// a crash, the database must still hold them, as the leader can't apply them
+// again.
+func TestLeaderController_CrashAfterWalTrim(t *testing.T) {
+	var shard int64 = 1
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+	clock := &time2.MockedClock{}
+	walOptions := wal.FactoryOptions{
+		BaseWalDir:           t.TempDir(),
+		SegmentSize:          4 * 1024,
+		Clock:                clock,
+		TrimmerCheckInterval: 10 * time.Millisecond,
+	}
+	walFactory := wal.NewWalFactory(&walOptions)
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 1, ReplicationFactor: 1})
+	require.NoError(t, err)
+
+	// The puts fill a few WAL segments, and a small part of a database memtable
+	value := []byte(strings.Repeat("v", 500))
+	var gets []*proto.GetRequest
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("key-%02d", i)
+		_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: value}},
+		})
+		require.NoError(t, err)
+		gets = append(gets, &proto.GetRequest{Key: key})
+	}
+
+	// Hours later, the trimming deletes the segments of the first entries
+	clock.Set(time.Now().Add(2 * time.Hour).UnixMilli())
+	leaderWal := lc.(*leaderController).wal
+	require.Eventually(t, func() bool {
+		return leaderWal.FirstOffset() == 19
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The leader crashes, restarts from what was on disk, and gets elected again
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walOptions)
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+
+	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		crashedWalFactory, crashedKvFactory, nil)
+	require.NoError(t, err)
+	assert.Positive(t, lc.(*leaderController).wal.FirstOffset())
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 1})
+	require.NoError(t, err)
+
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{Shard: &shard, Gets: gets})
+	require.NoError(t, err)
+	for i, res := range results {
+		assert.Equalf(t, proto.Status_OK, res.Status, "key-%02d", i)
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, crashedKvFactory.Close())
+	assert.NoError(t, crashedWalFactory.Close())
+}
+
+// crashImage copies the data directories of a running shard, and returns the
+// factories to open the copies with, using walOptions apart from the directory:
+// the copies hold what a crash of the node would leave on disk. The database
+// runs without the Pebble WAL, so they miss the database writes that are still
+// in the memtable.
+func crashImage(t *testing.T, kvDataDir string, walOptions wal.FactoryOptions) (kvstore.Factory, wal.Factory) {
+	t.Helper()
+
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	copyRunningDir(t, kvDataDir, kvOptions.DataDir)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+
+	crashedWalDir := t.TempDir()
+	copyRunningDir(t, walOptions.BaseWalDir, crashedWalDir)
+	walOptions.BaseWalDir = crashedWalDir
+	return kvFactory, wal.NewWalFactory(&walOptions)
+}
+
+// copyRunningDir copies the files in src to dst. Pebble deletes its obsolete
+// files in the background: a file that is gone by the time it is copied is
+// skipped, as a crash right after its deletion would leave it.
+func copyRunningDir(t *testing.T, src string, dst string) {
+	t.Helper()
+
+	require.NoError(t, filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, relPath), 0755)
+		}
+		content, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, relPath), content, 0644)
+	}))
 }
 
 // decodeNotificationBatch decodes a batch the leader sends, as the clients do.
