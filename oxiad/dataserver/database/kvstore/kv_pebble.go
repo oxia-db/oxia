@@ -225,8 +225,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 	for i := 1; i < len(levelOptions); i++ {
 		levelOptions[i] = pebble.LevelOptions{
 			BlockSize: 64 * 1024,
+			// Snappy rather than zstd: compactions take half the CPU, and a
+			// block cache miss decompresses faster, for about a quarter more
+			// disk space
 			Compression: func() *sstable.CompressionProfile {
-				return sstable.GoodCompression
+				return sstable.SnappyCompression
 			},
 			FilterPolicy: bloom.FilterPolicy(10),
 		}
