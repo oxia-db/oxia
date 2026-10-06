@@ -232,7 +232,11 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 }
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
-	if _, exists := c.metadata.GetNamespaceStatus(name); exists {
+	_, exists, err := c.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
+	if exists {
 		return c.initShardControllers(name, namespaceConfig)
 	}
 
@@ -281,7 +285,10 @@ func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Names
 
 	// Shard deletion removes status before removing its controller from the
 	// map. Read under the runtime lock to avoid reviving a deleted shard.
-	namespaceStatus, exists := c.metadata.GetNamespaceStatus(name)
+	namespaceStatus, exists, err := c.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
 	if !exists {
 		return fmt.Errorf("%w: namespace %q status disappeared during controller initialization",
 			metadatacommon.ErrConflict, name)

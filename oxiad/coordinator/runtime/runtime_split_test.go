@@ -611,7 +611,8 @@ func TestInitiateSplit_FailsIfParentElectionStarts(t *testing.T) {
 	assertElectionKept(t, metadata, splitParentShard, election)
 	parent, _ := metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)
 	assert.Nil(t, parent.UnsafeBorrow().GetSplit())
-	namespace, _ := metadata.GetNamespaceStatus(constant.DefaultNamespace)
+	namespace, _, err := metadata.GetNamespaceStatus(constant.DefaultNamespace)
+	require.NoError(t, err)
 	assert.Len(t, namespace.UnsafeBorrow().GetShards(), 2)
 
 	r.RLock()

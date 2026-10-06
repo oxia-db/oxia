@@ -48,7 +48,8 @@ func TestCreateNamespaceStatusAlreadyExists(t *testing.T) {
 	require.ErrorIs(t, err, metadatacommon.ErrAlreadyExists)
 	require.Contains(t, err.Error(), "default")
 	require.Equal(t, version, loaded(t, statusProvider).Version)
-	status, exists := metadata.GetNamespaceStatus("default")
+	status, exists, err := metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.True(t, exists)
 	require.EqualValues(t, 3, status.UnsafeBorrow().GetReplicationFactor())
 }
@@ -75,7 +76,8 @@ func TestCreateNamespaceStatusReturnsWriteError(t *testing.T) {
 	require.ErrorIs(t, err, storeErr)
 	require.NotErrorIs(t, err, metadatacommon.ErrAlreadyExists)
 	require.Equal(t, 1, writes)
-	_, exists := metadata.GetNamespaceStatus("default")
+	_, exists, err := metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.False(t, exists)
 	require.Equal(t, metadatacommon.NotExists, loaded(t, statusProvider).Version)
 }
@@ -102,12 +104,14 @@ func TestCreateNamespaceStatusCanBeRetriedByCaller(t *testing.T) {
 	err := metadata.CreateNamespaceStatus("default", namespaceStatus)
 	require.ErrorIs(t, err, storeErr)
 	require.Equal(t, 1, writes)
-	_, exists := metadata.GetNamespaceStatus("default")
+	_, exists, err := metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.False(t, exists)
 
 	require.NoError(t, metadata.CreateNamespaceStatus("default", namespaceStatus))
 	require.Equal(t, 2, writes)
-	status, exists := metadata.GetNamespaceStatus("default")
+	status, exists, err := metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.True(t, exists)
 	require.EqualValues(t, 3, status.UnsafeBorrow().GetReplicationFactor())
 }
@@ -133,7 +137,8 @@ func TestCreateNamespaceStatusReturnsErrorAfterCommit(t *testing.T) {
 
 	err := metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{ReplicationFactor: 3})
 	require.ErrorIs(t, err, storeErr)
-	saved, exists := metadata.GetNamespaceStatus("default")
+	saved, exists, err := metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.True(t, exists)
 	require.EqualValues(t, 3, saved.UnsafeBorrow().ReplicationFactor)
 	require.NotEqual(t, metadatacommon.NotExists, loaded(t, statusProvider).Version)

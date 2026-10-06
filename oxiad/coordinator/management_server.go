@@ -403,7 +403,11 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 	}
 
 	namespaceStatus := &proto.NamespaceStatus{}
-	if borrowedStatus, found := runtime.Metadata().GetNamespaceStatus(req.Namespace); found {
+	borrowedStatus, found, err := runtime.Metadata().GetNamespaceStatus(req.Namespace)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to get namespace %q: %v", req.Namespace, err)
+	}
+	if found {
 		if status := borrowedStatus.UnsafeBorrow(); status != nil {
 			namespaceStatus = status
 		}
