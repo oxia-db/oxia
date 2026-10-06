@@ -124,6 +124,8 @@ func (t *trimmer) run() {
 }
 
 func (t *trimmer) doTrim() error {
+	// Taken before reading the entries that the trim offset gets computed on
+	generation := t.wal.generation.Load()
 	t.log.Debug(
 		"Starting wal trimming",
 		slog.Int64("first-offset", t.wal.FirstOffset()),
@@ -167,7 +169,7 @@ func (t *trimmer) doTrim() error {
 	// The deleted segments only hold entries up to the commit offset, which are
 	// applied to the database: flushing it before the deletion makes them
 	// durable
-	err = t.wal.trim(trimOffset, t.commitOffsetProvider.FlushDatabase)
+	err = t.wal.trim(trimOffset, generation, t.commitOffsetProvider.FlushDatabase)
 	if err != nil {
 		return errors.Wrap(err, "failed to trim wal")
 	}
