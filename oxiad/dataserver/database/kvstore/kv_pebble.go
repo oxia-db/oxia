@@ -23,6 +23,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,6 +224,11 @@ type Pebble struct {
 	batchSizeHisto  metric.Histogram
 	batchCountHisto metric.Histogram
 
+	memTableStalls  metric.Counter
+	l0Stalls        metric.Counter
+	writeStallTime  metric.Counter
+	writeStallStart atomic.Int64
+
 	kvTrap *KvTrap
 }
 
@@ -233,6 +239,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
+	stallLabels := func(reason string) map[string]any {
+		l := metric.LabelsForShard(namespace, shardId)
+		l["reason"] = reason
+		return l
+	}
 	pb := &Pebble{
 		ctx:       ctx,
 		cancel:    cancelFunc,
@@ -263,6 +274,13 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 			"The size in bytes for a given batch", labels),
 		batchCountHisto: metric.NewCountHistogram("oxia_server_kv_batch_count",
 			"The number of operations in a given batch", labels),
+
+		memTableStalls: metric.NewCounter("oxia_server_kv_pebble_write_stalls",
+			"The number of times Pebble stopped the writes", "count", stallLabels("memtable")),
+		l0Stalls: metric.NewCounter("oxia_server_kv_pebble_write_stalls",
+			"The number of times Pebble stopped the writes", "count", stallLabels("l0")),
+		writeStallTime: metric.NewCounter("oxia_server_kv_pebble_write_stall_time",
+			"The time during which Pebble kept the writes stopped", metric.Milliseconds, labels),
 	}
 
 	var err error
@@ -307,6 +325,8 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		FS:           vfs.Default,
 		DisableWAL:   !factory.options.UseWAL,
 		Logger:       &pebbleLogger{log},
+		// Pebble fills in the events left out, as it does without a listener
+		EventListener: pb.writeStallListener(),
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
@@ -373,6 +393,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 			"The estimated number of bytes that need to be compacted",
 			metric.Bytes, labels, func() int64 {
 				return int64(pb.dbMetrics().Compact.EstimatedDebt)
+			}),
+		metric.NewGauge("oxia_server_kv_pebble_l0_sublevels",
+			"The number of sublevels in L0: Pebble stops the writes at 12",
+			"count", labels, func() int64 {
+				return int64(pb.dbMetrics().Levels[0].Sublevels)
 			}),
 		metric.NewGauge("oxia_server_kv_pebble_flush_total",
 			"The total number of db flushes",
@@ -441,6 +466,28 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 	}
 
 	return pb, nil
+}
+
+// writeStallListener counts the write stalls of the db, and the time they
+// last. Pebble stops the writes when its memtables are full while the previous
+// one is still being flushed, or when L0 has too many sublevels.
+func (p *Pebble) writeStallListener() *pebble.EventListener {
+	return &pebble.EventListener{
+		WriteStallBegin: func(info pebble.WriteStallBeginInfo) {
+			p.writeStallStart.Store(time.Now().UnixNano())
+			// "L0 file count limit exceeded" or "memtable count limit reached"
+			if strings.HasPrefix(info.Reason, "L0") {
+				p.l0Stalls.Inc()
+			} else {
+				p.memTableStalls.Inc()
+			}
+		},
+		WriteStallEnd: func() {
+			if start := p.writeStallStart.Swap(0); start != 0 {
+				p.writeStallTime.Add(int(time.Since(time.Unix(0, start)).Milliseconds()))
+			}
+		},
+	}
 }
 
 func (p *Pebble) Close() error {
