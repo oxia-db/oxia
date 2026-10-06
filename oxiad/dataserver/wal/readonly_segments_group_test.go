@@ -51,7 +51,7 @@ func TestReadOnlySegmentsGroupTrimSegments(t *testing.T) {
 		err = os.Remove(filepath.Join(walBasePath, "0.txnx"))
 		assert.NoError(t, err)
 
-		err = readOnlySegments.TrimSegments(6)
+		err = readOnlySegments.TrimSegments(6, func() error { return nil })
 		assert.NoError(t, err)
 	})
 }

@@ -32,7 +32,10 @@ type ReadOnlySegmentsGroup interface {
 
 	Get(offset int64) (object.RefCount[ReadOnlySegment], error)
 
-	TrimSegments(offset int64) error
+	// TrimSegments deletes the segments that end before the one holding offset.
+	// When there are any, it calls beforeDelete first, and deletes none if it
+	// fails.
+	TrimSegments(offset int64, beforeDelete func() error) error
 
 	GetLastCrc(baseOffset int64) (uint32, error)
 
@@ -134,24 +137,21 @@ func (r *readOnlySegmentsGroup) Get(offset int64) (object.RefCount[ReadOnlySegme
 	return res, nil
 }
 
-func (r *readOnlySegmentsGroup) TrimSegments(offset int64) error {
-	r.Lock()
-	defer r.Unlock()
-
-	// Find the segment that ends before the trim offset
-	segmentToKeep := offset
-	if node, found := r.allSegments.Floor(offset); found {
-		segmentToKeep = node.Key
-	}
-
-	var cutoffSegment int64
-	var node *redblacktree.Node[int64, bool]
-	var found bool
-	if node, found = r.allSegments.Floor(segmentToKeep - 1); !found {
+func (r *readOnlySegmentsGroup) TrimSegments(offset int64, beforeDelete func() error) error {
+	cutoffSegment, found := r.cutoffSegment(offset)
+	if !found {
 		return nil
 	}
 
-	cutoffSegment = node.Key
+	// Without holding the lock, so that the readers of the segments don't wait
+	// for beforeDelete
+	if err := beforeDelete(); err != nil {
+		return err
+	}
+
+	r.Lock()
+	defer r.Unlock()
+
 	var err error
 	for _, s := range r.allSegments.Keys() {
 		if s > cutoffSegment {
@@ -181,6 +181,25 @@ func (r *readOnlySegmentsGroup) TrimSegments(offset int64) error {
 	}
 
 	return err
+}
+
+// cutoffSegment returns the base offset of the last segment that ends before
+// the one holding offset.
+func (r *readOnlySegmentsGroup) cutoffSegment(offset int64) (int64, bool) {
+	r.Lock()
+	defer r.Unlock()
+
+	// Find the segment that ends before the trim offset
+	segmentToKeep := offset
+	if node, found := r.allSegments.Floor(offset); found {
+		segmentToKeep = node.Key
+	}
+
+	node, found := r.allSegments.Floor(segmentToKeep - 1)
+	if !found {
+		return 0, false
+	}
+	return node.Key, true
 }
 
 func (r *readOnlySegmentsGroup) PollHighestSegment() (object.RefCount[ReadOnlySegment], error) {

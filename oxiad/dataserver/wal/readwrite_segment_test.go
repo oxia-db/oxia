@@ -127,6 +127,10 @@ func (c ConfigurableCommitOffsetProvider) CommitOffset() int64 {
 	return c.commitOffset
 }
 
+func (ConfigurableCommitOffsetProvider) FlushDatabase() error {
+	return nil
+}
+
 func TestReadWriteSegment_BrokenUncommittedData_ErrOffsetOutOfBounds(t *testing.T) {
 	commitOffsetProvider := ConfigurableCommitOffsetProvider{}
 

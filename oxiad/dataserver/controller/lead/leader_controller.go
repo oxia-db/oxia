@@ -1646,6 +1646,13 @@ func (lc *leaderController) CommitOffset() int64 {
 	return lc.dbCommitOffset.Load()
 }
 
+// FlushDatabase is called by the WAL trimming as well, and doesn't take the
+// leader lock either: the database is opened before the WAL, and closed after
+// it.
+func (lc *leaderController) FlushDatabase() error {
+	return lc.db.Flush()
+}
+
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	lc.RLock()
 	defer lc.RUnlock()

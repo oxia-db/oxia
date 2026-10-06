@@ -452,7 +452,7 @@ func TestTrim(t *testing.T) {
 	assert.EqualValues(t, 0, w.FirstOffset())
 	assert.EqualValues(t, 99, w.LastOffset())
 
-	assert.NoError(t, w.(*wal).trim(50))
+	assert.NoError(t, w.(*wal).trim(50, func() error { return nil }))
 
 	assert.EqualValues(t, 50, w.FirstOffset())
 	assert.EqualValues(t, 99, w.LastOffset())

@@ -261,12 +261,14 @@ func (t *wal) FirstOffset() int64 {
 	return t.firstOffset.Load()
 }
 
-func (t *wal) trim(firstOffset int64) error {
+// trim moves the first offset to firstOffset, and deletes the segments that end
+// before the one holding it, calling beforeDelete first.
+func (t *wal) trim(firstOffset int64, beforeDelete func() error) error {
 	if firstOffset <= t.firstOffset.Load() {
 		return nil
 	}
 
-	if err := t.readOnlySegments.TrimSegments(firstOffset); err != nil {
+	if err := t.readOnlySegments.TrimSegments(firstOffset, beforeDelete); err != nil {
 		return err
 	}
 

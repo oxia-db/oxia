@@ -180,17 +180,6 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 	}
 	commitOffset := &atomic.Int64{}
 	commitOffset.Store(rawCommitOffset)
-
-	writeAheadLog, err := wf.NewWal(namespace, shardId, wal.NewCommitOffsetObserver(commitOffset))
-	if err != nil {
-		return nil, multierr.Append(err, db.Close())
-	}
-	lastAppendedOffset := &atomic.Int64{}
-	lastAppendedOffset.Store(writeAheadLog.LastOffset())
-
-	if lastAppendedOffset.Load() == constant.I64NegativeOne {
-		lastAppendedOffset.Store(rawCommitOffset)
-	}
 	advertisedCommitOffset := &atomic.Int64{}
 	advertisedCommitOffset.Store(rawCommitOffset)
 
@@ -215,8 +204,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		term:                   term,
 		commitOffset:           commitOffset,
 		advertisedCommitOffset: advertisedCommitOffset,
-		lastAppendedOffset:     lastAppendedOffset,
-		wal:                    writeAheadLog,
+		lastAppendedOffset:     &atomic.Int64{},
 		db:                     db,
 		stateApplierCond:       make(chan struct{}, 1),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
@@ -225,6 +213,17 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 			"The current DB checksum value", "count", metric.LabelsForShard(namespace, shardId)),
 		walChecksumGauge: metric.NewSyncGauge("oxia_dataserver_wal_checksum",
 			"The current WAL checksum value", "count", metric.LabelsForShard(namespace, shardId)),
+	}
+
+	// The WAL trimming gets the commit offset from the follower, which flushes
+	// the database for it
+	if fc.wal, err = wf.NewWal(namespace, shardId, fc); err != nil {
+		cancel()
+		return nil, multierr.Append(err, db.Close())
+	}
+	fc.lastAppendedOffset.Store(fc.wal.LastOffset())
+	if fc.lastAppendedOffset.Load() == constant.I64NegativeOne {
+		fc.lastAppendedOffset.Store(rawCommitOffset)
 	}
 
 	if rawTerm != constant.I64NegativeOne {
@@ -287,6 +286,18 @@ func (fc *followerController) Term() int64 {
 
 func (fc *followerController) CommitOffset() int64 {
 	return fc.commitOffset.Load()
+}
+
+// FlushDatabase is called by the WAL trimming, while Close can hold the lock
+// and wait for the WAL to close: it doesn't wait for the lock. When a writer
+// holds it or waits for it, like a snapshot install or Close, the trimming
+// deletes no segment, and retries later.
+func (fc *followerController) FlushDatabase() error {
+	if !fc.rwMutex.TryRLock() {
+		return errors.Wrap(constant.ErrResourceConflict, "the follower is busy")
+	}
+	defer fc.rwMutex.RUnlock()
+	return fc.db.Flush()
 }
 
 func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
