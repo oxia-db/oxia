@@ -109,6 +109,8 @@ type OIDCProvider struct {
 	allowedAudiences map[string]string
 
 	providers map[string]*ProviderWithVerifier
+
+	verifiedTokens tokenCache
 }
 
 func (*OIDCProvider) AcceptParamType() string {
@@ -119,6 +121,10 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	token, ok := param.(string)
 	if !ok {
 		return "", ErrUnMatchedAuthenticationParamType
+	}
+	now := time.Now()
+	if userName, ok := p.verifiedTokens.get(token, now); ok {
+		return userName, nil
 	}
 	tokenParts := strings.Split(token, ".")
 	if len(tokenParts) != 3 {
@@ -180,6 +186,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	if !audienceAllowed {
 		return "", ErrForbiddenAudience
 	}
+	p.verifiedTokens.put(token, userName, idToken.Expiry, now)
 	return userName, nil
 }
 
