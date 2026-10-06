@@ -17,9 +17,12 @@ package kvstore
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/cockroachdb/pebble/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
@@ -108,4 +111,69 @@ func TestPebbleReadWriteOpsMetrics(t *testing.T) {
 	assert.EqualValues(t, 5, readCounter("oxia_server_kv_read_ops")-readsBefore)
 	assert.EqualValues(t, 4, readCounter("oxia_server_kv_read")-readBytesBefore)
 	assert.EqualValues(t, 5, readHistogramCount("oxia_server_kv_read_latency")-readLatencyBefore)
+}
+
+func TestPebbleWriteStallMetrics(t *testing.T) {
+	previous := metric.GetMeter()
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	metric.SetMeter(provider.Meter("test"))
+	defer metric.SetMeter(previous)
+
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer factory.Close()
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+	require.NoError(t, err)
+	defer kv.Close()
+
+	// A flush adds a sublevel to L0. The gauges cache the db metrics for a
+	// while: nothing may read them before the flush
+	wb := kv.NewWriteBatch()
+	require.NoError(t, wb.Put("a", []byte("0")))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+	require.NoError(t, kv.Flush())
+
+	// A stall of each kind, through a listener on the counters of the db
+	listener := kv.(*Pebble).writeStallListener()
+	listener.WriteStallBegin(pebble.WriteStallBeginInfo{Reason: "memtable count limit reached"})
+	time.Sleep(20 * time.Millisecond)
+	listener.WriteStallEnd()
+	listener.WriteStallBegin(pebble.WriteStallBeginInfo{Reason: "L0 file count limit exceeded"})
+	listener.WriteStallEnd()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+	// value sums the points of the metric, of the given reason if not empty
+	value := func(name string, reason string) int64 {
+		var total int64
+		for _, scope := range rm.ScopeMetrics {
+			for _, m := range scope.Metrics {
+				if m.Name != name {
+					continue
+				}
+				var points []metricdata.DataPoint[int64]
+				switch data := m.Data.(type) {
+				case metricdata.Sum[int64]:
+					points = data.DataPoints
+				case metricdata.Gauge[int64]:
+					points = data.DataPoints
+				default:
+					require.Failf(t, "unexpected data", "%s: %#v", name, m.Data)
+				}
+				for _, dp := range points {
+					if v, ok := dp.Attributes.Value(attribute.Key("reason")); reason == "" || ok && v.AsString() == reason {
+						total += dp.Value
+					}
+				}
+			}
+		}
+		return total
+	}
+
+	assert.EqualValues(t, 1, value("oxia_server_kv_pebble_write_stalls", "memtable"))
+	assert.EqualValues(t, 1, value("oxia_server_kv_pebble_write_stalls", "l0"))
+	assert.GreaterOrEqual(t, value("oxia_server_kv_pebble_write_stall_time", ""), int64(20))
+	assert.EqualValues(t, 1, value("oxia_server_kv_pebble_l0_sublevels", ""))
 }
