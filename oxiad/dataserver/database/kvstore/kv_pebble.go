@@ -23,6 +23,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -244,7 +245,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		Logger:     &pebbleLogger{log},
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
+
+		CompactionConcurrencyRange: compactionConcurrencyRange,
 	}
+	// Add a compaction every 2 sublevels of L0, rather than every 10
+	pbOptions.Experimental.L0CompactionConcurrency = 2
 
 	pebbleConv := newPebbleDbConversion(log, pb.dbPath, pb.kvTrap)
 	if err := pebbleConv.checkConvertDB(pb.keyEncoder); err != nil {
@@ -372,6 +377,14 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 	}
 
 	return pb, nil
+}
+
+// compactionConcurrencyRange lets a shard run more compactions at once when
+// its L0 builds up. Pebble runs one at a time by default, which a shard under
+// a steady write load can saturate: L0 then grows until Pebble stops the
+// writes. As CockroachDB does, it goes up to 3, keeping a core for the rest.
+func compactionConcurrencyRange() (lower, upper int) {
+	return 1, max(1, min(runtime.GOMAXPROCS(0)-1, 3))
 }
 
 func (p *Pebble) Close() error {
