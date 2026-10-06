@@ -23,6 +23,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -68,10 +69,32 @@ var (
 	}
 )
 
+const (
+	// memTableSize is the Pebble default, set explicitly because the memtable
+	// slots of the cache are sized after it.
+	memTableSize = 4 * 1024 * 1024
+
+	// memTableSlotSize is the cache space that the memtables of a shard
+	// reserve once they have grown to full size: the mutable memtable, and
+	// the flushed one that Pebble keeps to recycle.
+	memTableSlotSize = 2 * memTableSize
+
+	// maxMemTableSlots is how many open shards get the space of their
+	// memtables on top of the configured cache size. A free slot costs no
+	// memory. Past that many shards, the memtables of the others take their
+	// space from the blocks.
+	maxMemTableSlots = 1024
+)
+
 type PebbleFactory struct {
 	dataDir string
 	cache   *pebble.Cache
 	options *FactoryOptions
+
+	// memTableSlots holds the release of the placeholder reservation of each
+	// free memtable slot
+	memTableSlotsLock sync.Mutex
+	memTableSlots     []func()
 
 	gaugeCacheSize metric.Gauge
 }
@@ -82,11 +105,22 @@ func NewPebbleKVFactory(options *FactoryOptions) (Factory, error) {
 	}
 	options.EnsureDefaults()
 
-	blockCache := pebble.NewCache(options.CacheSizeMB * 1024 * 1024)
+	// Pebble reserves the memory of the memtables in the block cache, so that
+	// the cache bounds both. The shards share the cache: with enough of them,
+	// their memtables would leave no room for the blocks. So the cache gets a
+	// slot for the memtables of each shard on top of the configured size, and
+	// each free slot is held by a placeholder reservation, which a shard
+	// releases while it is open. The blocks keep the configured size.
+	blockCache := pebble.NewCache(options.CacheSizeMB*1024*1024 + maxMemTableSlots*memTableSlotSize)
+	memTableSlots := make([]func(), maxMemTableSlots)
+	for i := range memTableSlots {
+		memTableSlots[i] = blockCache.Reserve(memTableSlotSize)
+	}
 
 	pf := &PebbleFactory{
-		dataDir: options.DataDir,
-		options: options,
+		dataDir:       options.DataDir,
+		options:       options,
+		memTableSlots: memTableSlots,
 
 		// Share a single cache instance across the databases for all the shards
 		cache: blockCache,
@@ -116,6 +150,28 @@ func (p *PebbleFactory) Close() error {
 	p.gaugeCacheSize.Unregister()
 	p.cache.Unref()
 	return nil
+}
+
+// takeMemTableSlot releases a placeholder reservation, to make room for the
+// memtables of a shard. It returns false when every slot is taken.
+func (p *PebbleFactory) takeMemTableSlot() bool {
+	p.memTableSlotsLock.Lock()
+	defer p.memTableSlotsLock.Unlock()
+	n := len(p.memTableSlots)
+	if n == 0 {
+		return false
+	}
+	p.memTableSlots[n-1]()
+	p.memTableSlots = p.memTableSlots[:n-1]
+	return true
+}
+
+// returnMemTableSlot holds a slot with a placeholder reservation again, once
+// the memtables of the shard that had it are freed.
+func (p *PebbleFactory) returnMemTableSlot() {
+	p.memTableSlotsLock.Lock()
+	defer p.memTableSlotsLock.Unlock()
+	p.memTableSlots = append(p.memTableSlots, p.cache.Reserve(memTableSlotSize))
 }
 
 func (p *PebbleFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
@@ -148,6 +204,7 @@ type Pebble struct {
 	db              *pebble.DB
 	snapshotCounter atomic.Int64
 	writeOptions    *pebble.WriteOptions
+	memTableSlot    bool
 
 	keyEncoder compare.Encoder
 
@@ -237,11 +294,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		slog.Int64("shard", shardId),
 	)
 	pbOptions := &pebble.Options{
-		Cache:      factory.cache,
-		Levels:     levelOptions,
-		FS:         vfs.Default,
-		DisableWAL: !factory.options.UseWAL,
-		Logger:     &pebbleLogger{log},
+		Cache:        factory.cache,
+		MemTableSize: memTableSize,
+		Levels:       levelOptions,
+		FS:           vfs.Default,
+		DisableWAL:   !factory.options.UseWAL,
+		Logger:       &pebbleLogger{log},
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
@@ -255,8 +313,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		return nil, errors.Wrap(err, "failed to create marker")
 	}
 
+	pb.memTableSlot = factory.takeMemTableSlot()
 	db, err := pebble.Open(pb.dbPath, pbOptions)
 	if err != nil {
+		if pb.memTableSlot {
+			factory.returnMemTableSlot()
+		}
 		return nil, errors.Wrapf(err, "failed to open database at %s", pb.dbPath)
 	}
 
@@ -387,7 +449,11 @@ func (p *Pebble) Close() error {
 		if err := p.db.Flush(); err != nil {
 			return err
 		}
-		return p.db.Close()
+		err := p.db.Close()
+		if p.memTableSlot {
+			p.factory.returnMemTableSlot()
+		}
+		return err
 	}
 }
 
