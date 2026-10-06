@@ -131,6 +131,8 @@ func (t *trimmer) run() {
 }
 
 func (t *trimmer) doTrim() error {
+	// Taken before reading the entries that the trim offset gets computed on
+	generation := t.wal.generation.Load()
 	t.log.Debug(
 		"Starting wal trimming",
 		slog.Int64("first-offset", t.wal.FirstOffset()),
@@ -171,7 +173,7 @@ func (t *trimmer) doTrim() error {
 		trimOffset = commitOffset
 	}
 
-	err = t.wal.trim(trimOffset)
+	err = t.wal.trim(trimOffset, generation)
 	if err != nil {
 		return errors.Wrap(err, "failed to trim wal")
 	}
