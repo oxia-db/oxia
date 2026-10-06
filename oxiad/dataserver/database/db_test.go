@@ -288,6 +288,36 @@ func TestDBSameKeyMutations(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDBGetClientIdentity(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "k",
+		Value:            []byte("v"),
+		PartitionKey:     pb.String("pk"),
+		ClientIdentity:   pb.String("client-1"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "s"}},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
+
+	withValue, err := db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, "v", string(withValue.Value))
+	assert.Equal(t, "client-1", withValue.Version.GetClientIdentity())
+
+	withoutValue, err := db.Get(&proto.GetRequest{Key: "k"})
+	assert.NoError(t, err)
+	assert.Nil(t, withoutValue.Value)
+	assert.Equal(t, "client-1", withoutValue.Version.GetClientIdentity())
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDBList(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)

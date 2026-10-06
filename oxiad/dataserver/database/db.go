@@ -15,6 +15,7 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1255,34 +1256,39 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
 	}
 
-	var se *proto.StorageEntry
-	var deserializeErr error
-	if getReq.IncludeValue {
-		// If we need to return the value we cannot pool the objects, because
-		// the Value slice would be returned to pool
-		se = &proto.StorageEntry{}
-		deserializeErr = Deserialize(value, se)
+	// The unmarshal aliases value: copy out only the fields the response
+	// returns, and drop the partition key and secondary indexes uncopied
+	se := proto.StorageEntryFromVTPool()
+	deserializeErr := se.UnmarshalVTUnsafe(value)
+
+	var res *proto.GetResponse
+	if deserializeErr == nil {
+		res = &proto.GetResponse{
+			Version: &proto.Version{
+				VersionId:          se.VersionId,
+				ModificationsCount: se.ModificationsCount,
+				CreatedTimestamp:   se.CreationTimestamp,
+				ModifiedTimestamp:  se.ModificationTimestamp,
+				SessionId:          se.SessionId,
+			},
+		}
+		if getReq.IncludeValue {
+			res.Value = bytes.Clone(se.Value)
+		}
+		if se.ClientIdentity != nil {
+			ci := strings.Clone(*se.ClientIdentity)
+			res.Version.ClientIdentity = &ci
+		}
 	} else {
-		// Metadata-only read: skip copying the value that would be dropped
-		se = proto.StorageEntryFromVTPool()
-		defer se.ReturnToVTPool()
-		deserializeErr = DeserializeMetadata(value, se)
+		deserializeErr = errors.Wrap(deserializeErr, "failed to Deserialize storage entry")
 	}
+
+	// The pool keeps the Value capacity, which must not alias the read buffer
+	se.Value = nil
+	se.ReturnToVTPool()
 
 	if err = multierr.Append(deserializeErr, closer.Close()); err != nil {
 		return nil, err
-	}
-
-	res := &proto.GetResponse{
-		Value: se.Value,
-		Version: &proto.Version{
-			VersionId:          se.VersionId,
-			ModificationsCount: se.ModificationsCount,
-			CreatedTimestamp:   se.CreationTimestamp,
-			ModifiedTimestamp:  se.ModificationTimestamp,
-			SessionId:          se.SessionId,
-			ClientIdentity:     se.ClientIdentity,
-		},
 	}
 
 	if getReq.ComparisonType != proto.KeyComparisonType_EQUAL {
