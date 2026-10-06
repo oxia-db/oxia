@@ -385,9 +385,9 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	fc.term.Store(newTerm)
 	fc.status.Store(int32(proto.ServingStatus_FENCED))
 
-	// The stream closed above can leave entries appended to the wal and not
-	// synced yet, while the head is read from the last synced entry: wait for
-	// their sync, so that the head covers every entry of the wal
+	// A closed stream of the leader can leave entries appended to the wal and
+	// not synced yet, while the head is read from the last synced entry: wait
+	// for their sync, so that the head covers every entry of the wal
 	if err = fc.wal.Sync(fc.ctx); err != nil {
 		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "wal sync failed")
 	}
