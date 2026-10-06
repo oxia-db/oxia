@@ -20,13 +20,19 @@ import (
 	"log/slog"
 	"sync"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
+
+// errShardHasNoLeader replaces connecting to the empty leader address of a shard that has no leader, e.g.
+// while one is being elected. As an Unavailable status, it is retried by the batches.
+var errShardHasNoLeader = status.Error(codes.Unavailable, "oxia: shard has no leader")
 
 type Executor interface {
 	ExecuteWrite(ctx context.Context, request *proto.WriteRequest, leaderHint *proto.LeaderHint) (*proto.WriteResponse, error)
@@ -107,6 +113,9 @@ func (e *executorImpl) rpc(shardId *int64, hint *proto.LeaderHint) (proto.OxiaCl
 		} else {
 			target = e.ServiceAddress
 		}
+	}
+	if target == "" {
+		return nil, errShardHasNoLeader
 	}
 
 	client, err := e.ClientPool.GetClientRpc(target)
