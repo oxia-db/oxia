@@ -15,6 +15,7 @@
 package lead
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -109,9 +110,11 @@ func TestSecondaryIndexGetReadFailure(t *testing.T) {
 	db, dataDir := newReadErrorsTestDB(t)
 
 	// Entry "0" stays readable, entry "5" goes into the unreadable sstable
-	putKeys(t, db.RawKV(), secondaryIndexKey("/a", &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "0"}))
+	putKeys(t, db.RawKV(), secondaryIndexKey(url.PathEscape("/a"),
+		&proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "0"}))
 	require.NoError(t, db.RawKV().Flush())
-	putKeys(t, db.RawKV(), secondaryIndexKey("/b", &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "5"}))
+	putKeys(t, db.RawKV(), secondaryIndexKey(url.PathEscape("/b"),
+		&proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "5"}))
 	flushIntoUnreadableSST(t, db.RawKV(), dataDir)
 
 	for _, comparisonType := range []proto.KeyComparisonType{proto.KeyComparisonType_EQUAL, proto.KeyComparisonType_FLOOR} {

@@ -17,6 +17,7 @@ package lead
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -51,15 +52,15 @@ func (wrapperUpdateCallback) OnDeleteWithEntry(batch kvstore.WriteBatch, notific
 	return secondaryIndexesUpdateCallback.OnDeleteWithEntry(batch, notifications, key, value, features)
 }
 
-func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *database.Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error) {
+func (wrapperUpdateCallback) OnPut(batch kvstore.WriteBatch, notifications *database.Notifications, req *proto.PutRequest, se *proto.StorageEntry, features feature.Checker) (proto.Status, error) {
 	// First update the session
-	status, err := sessionManagerUpdateOperationCallback.OnPut(batch, notifications, req, se)
+	status, err := sessionManagerUpdateOperationCallback.OnPut(batch, notifications, req, se, features)
 	if err != nil || status != proto.Status_OK {
 		return status, err
 	}
 
 	// Check secondary indexes
-	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se)
+	return secondaryIndexesUpdateCallback.OnPut(batch, notifications, req, se, features)
 }
 
 var WrapperUpdateOperationCallback database.UpdateOperationCallback = &wrapperUpdateCallback{}
@@ -81,10 +82,15 @@ func (secondaryIndexesUpdateCallbackS) ValidatePut(request *proto.PutRequest, fe
 	return proto.Status_OK
 }
 
-func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (secondaryIndexesUpdateCallbackS) OnPut(batch kvstore.WriteBatch, _ *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry, features feature.Checker) (proto.Status, error) {
 	if existingEntry != nil {
-		// TODO: We might want to check if there are indexes that did not change
-		// between the existing and the new record.
+		if features.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED) {
+			return proto.Status_OK, updateSecondaryIndexes(batch, request.Key, existingEntry.SecondaryIndexes,
+				request.SecondaryIndexes)
+		}
+		// Without the feature, the entries are all deleted and written again,
+		// as by the servers that don't support it: the write batch feeds the DB
+		// checksum, which must be the same on every replica
 		if err := deleteSecondaryIndexes(batch, request.Key, existingEntry); err != nil {
 			return proto.Status_KEY_NOT_FOUND, err
 		}
@@ -99,16 +105,23 @@ func (secondaryIndexesUpdateCallbackS) OnDeleteWithEntry(batch kvstore.WriteBatc
 
 const secondaryIdxSeparator = "\x01"
 const secondaryIdxRangePrefixFormat = secondaryIdxKeyPrefix + "/%s/%s"
-const secondaryIdxFormat = secondaryIdxRangePrefixFormat + secondaryIdxSeparator + "%s"
 
-func secondaryIndexKey(primaryKey string, si *proto.SecondaryIndex) string {
-	return fmt.Sprintf(secondaryIdxFormat, si.IndexName, si.SecondaryKey, url.PathEscape(primaryKey))
+// secondaryIdxNameSeparator separates the index name and the secondary key in
+// the key of an index entry.
+const secondaryIdxNameSeparator = "/"
+
+// secondaryIndexKey returns the key of the entry of a secondary index of the
+// record whose key, escaped with url.PathEscape, is escapedPrimaryKey.
+func secondaryIndexKey(escapedPrimaryKey string, si *proto.SecondaryIndex) string {
+	return secondaryIdxKeyPrefix + "/" + si.IndexName + secondaryIdxNameSeparator + si.SecondaryKey +
+		secondaryIdxSeparator + escapedPrimaryKey
 }
 
 func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existingEntry *proto.StorageEntry) error {
 	if len(existingEntry.SecondaryIndexes) > 0 {
+		escapedPrimaryKey := url.PathEscape(primaryKey)
 		for _, si := range existingEntry.SecondaryIndexes {
-			if err := batch.Delete(secondaryIndexKey(primaryKey, si)); err != nil {
+			if err := batch.Delete(secondaryIndexKey(escapedPrimaryKey, si)); err != nil {
 				return err
 			}
 		}
@@ -134,8 +147,73 @@ var emptyValue []byte
 
 func writeSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, secondaryIndexes []*proto.SecondaryIndex) error {
 	if len(secondaryIndexes) > 0 {
+		escapedPrimaryKey := url.PathEscape(primaryKey)
 		for _, si := range secondaryIndexes {
-			if err := batch.Put(secondaryIndexKey(primaryKey, si), emptyValue); err != nil {
+			if err := batch.Put(secondaryIndexKey(escapedPrimaryKey, si), emptyValue); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// secondaryIndexEntry identifies the entry that a secondary index gives a
+// record: two indexes of the record give it the same entry when they have the
+// same secondaryIndexEntry.
+type secondaryIndexEntry struct {
+	indexName    string
+	secondaryKey string
+}
+
+func newSecondaryIndexEntry(si *proto.SecondaryIndex) secondaryIndexEntry {
+	// Index names could have a '/' before
+	// FEATURE_SECONDARY_INDEX_NAME_VALIDATION. The entry key of such an index
+	// is the one of the index named by the part of the name before the first
+	// '/', with a secondary key that starts with the rest of the name
+	if indexName, rest, found := strings.Cut(si.IndexName, secondaryIdxNameSeparator); found {
+		return secondaryIndexEntry{indexName: indexName, secondaryKey: rest + secondaryIdxNameSeparator + si.SecondaryKey}
+	}
+	return secondaryIndexEntry{indexName: si.IndexName, secondaryKey: si.SecondaryKey}
+}
+
+// updateSecondaryIndexes updates the index entries of a record that a put
+// overwrites, from its existing indexes to the updated ones. The entries of the
+// indexes that the record keeps are already there: it deletes the entries of
+// the indexes it drops, then writes the ones of the indexes it adds.
+func updateSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string,
+	existing, updated []*proto.SecondaryIndex) error {
+	if slices.EqualFunc(existing, updated, func(a, b *proto.SecondaryIndex) bool {
+		return a.IndexName == b.IndexName && a.SecondaryKey == b.SecondaryKey
+	}) {
+		// The usual overwrite: the record keeps all its indexes
+		return nil
+	}
+
+	// A map, rather than a scan of the other indexes for each one, keeps the
+	// work linear in the number of indexes of the record
+	const (
+		inExisting = 1 << iota
+		inUpdated
+	)
+	entries := make(map[secondaryIndexEntry]uint8)
+	for _, si := range existing {
+		entries[newSecondaryIndexEntry(si)] |= inExisting
+	}
+	for _, si := range updated {
+		entries[newSecondaryIndexEntry(si)] |= inUpdated
+	}
+
+	escapedPrimaryKey := url.PathEscape(primaryKey)
+	for _, si := range existing {
+		if entries[newSecondaryIndexEntry(si)]&inUpdated == 0 {
+			if err := batch.Delete(secondaryIndexKey(escapedPrimaryKey, si)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, si := range updated {
+		if entries[newSecondaryIndexEntry(si)]&inExisting == 0 {
+			if err := batch.Put(secondaryIndexKey(escapedPrimaryKey, si), emptyValue); err != nil {
 				return err
 			}
 		}

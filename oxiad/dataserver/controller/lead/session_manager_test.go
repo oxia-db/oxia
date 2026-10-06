@@ -177,7 +177,8 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 
 	writeBatch := mockWriteBatch{}
 
-	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, nil)
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, nil,
+		testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	assert.Equal(t, len(writeBatch), 0)
@@ -195,7 +196,8 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionId:             &sessionId,
 	}
 
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, se)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, noSessionPutRequest, se,
+		testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	_, oldKeyFound := writeBatch[SessionKey(SessionId(sessionId))+"a"]
@@ -208,7 +210,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionKey(SessionId(sessionId)):           []byte{},
 	}
 
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se, testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	_, oldKeyFound = writeBatch[SessionKey(SessionId(sessionId-1))+"a"]
@@ -217,7 +219,8 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.False(t, newKeyFound)
 
 	writeBatch = mockWriteBatch{}
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil,
+		testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
 
@@ -243,7 +246,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionId: &sessionId,
 	}
 
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se, testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
 	_, closer, err := writeBatch.Get(ShadowKey(SessionId(sessionId-1), "a/b/c"))
@@ -254,13 +257,14 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	writeBatch = mockWriteBatch{
 		SessionKey(SessionId(sessionId)): expectedErr,
 	}
-	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil, testFeatureChecker{})
 	assert.ErrorIs(t, err, expectedErr)
 
 	writeBatch = mockWriteBatch{
 		SessionKey(SessionId(sessionId)): []byte{},
 	}
-	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	status, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil,
+		testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, status)
 	sessionShadowKey := ShadowKey(SessionId(sessionId), "a/b/c")
@@ -272,7 +276,7 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 		SessionKey(SessionId(sessionId)): []byte{},
 		sessionShadowKey:                 expectedErr,
 	}
-	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil)
+	_, err = sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, nil, testFeatureChecker{})
 	assert.ErrorIs(t, err, expectedErr)
 }
 
@@ -1138,7 +1142,7 @@ func TestSessionManager_DeleteEphemeralRecord(t *testing.T) {
 	}}})
 	assert.NoError(t, err)
 	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
-	assert.True(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
+	assert.True(t, keyExists(t, lc, secondaryIndexKey(url.PathEscape("/a"), secondaryIndex)))
 
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
 		Shard:   &shardId,
@@ -1147,7 +1151,7 @@ func TestSessionManager_DeleteEphemeralRecord(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, keyExists(t, lc, "/a"))
 	assert.False(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
-	assert.False(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
+	assert.False(t, keyExists(t, lc, secondaryIndexKey(url.PathEscape("/a"), secondaryIndex)))
 
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: []*proto.PutRequest{{
 		Key:   "/a",
@@ -1370,7 +1374,8 @@ func TestSession_PutWithExpiredSession(t *testing.T) {
 		SessionId: &newSessionId,
 	}
 
-	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se)
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, sessionPutRequest, se,
+		testFeatureChecker{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_SESSION_DOES_NOT_EXIST, status)
 
@@ -1466,7 +1471,8 @@ func TestSplitChild_RecordInternalKeysFollowPartitionKey(t *testing.T) {
 
 		owner := hash.Xxh332(partitionKey) >= child.Min && hash.Xxh332(partitionKey) <= child.Max
 		for _, record := range records {
-			for _, key := range []string{record, secondaryIndexKey(record, index), ShadowKey(sessionId, record)} {
+			indexKey := secondaryIndexKey(url.PathEscape(record), index)
+			for _, key := range []string{record, indexKey, ShadowKey(sessionId, record)} {
 				_, _, closer, err := db.RawKV().Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
 				if assert.Equal(t, owner, err == nil, "key %q, child %v", key, child) && err == nil {
 					assert.NoError(t, closer.Close())

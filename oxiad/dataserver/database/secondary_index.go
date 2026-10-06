@@ -16,7 +16,7 @@ package database
 
 import (
 	"net/url"
-	"regexp"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -28,14 +28,6 @@ const (
 	idxSeparator = "\x01"
 )
 
-// The index name and the secondary key are stored as the client supplied them,
-// so both can be empty and the secondary key can contain the separator. Only
-// the primary key is URL-escaped, and that escaping never emits a separator, so
-// the last one is the field boundary.
-var secondaryIndexKeyRegex = regexp.MustCompile(
-	"(?s)^" + idxKeyPrefix + "/[^/]*/(.*)" + idxSeparator + "([^" + idxSeparator + "]*)$",
-)
-
 // ErrInvalidSecondaryIndexKey indicates that a key does not use the persisted
 // secondary index key format.
 var ErrInvalidSecondaryIndexKey = errors.New("oxia db: failed to parse secondary index key")
@@ -43,11 +35,22 @@ var ErrInvalidSecondaryIndexKey = errors.New("oxia db: failed to parse secondary
 // ParseSecondaryIndexKey extracts the primary and secondary keys from a
 // persisted secondary index entry.
 func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string, err error) {
-	matches := secondaryIndexKeyRegex.FindStringSubmatch(key)
-	if len(matches) != 3 {
+	entry, found := strings.CutPrefix(key, idxKeyPrefix+"/")
+	if !found {
 		return "", "", ErrInvalidSecondaryIndexKey
 	}
 
-	primaryKey, err = url.PathUnescape(matches[2])
-	return primaryKey, matches[1], err
+	// The index name and the secondary key are stored as the client supplied
+	// them, so both can be empty and the secondary key can contain the
+	// separator. The index name ends at the first '/'. Only the primary key is
+	// URL-escaped, and that escaping never emits a separator, so the last one
+	// is the field boundary.
+	indexNameEnd := strings.IndexByte(entry, '/')
+	separator := strings.LastIndex(entry, idxSeparator)
+	if indexNameEnd < 0 || separator < indexNameEnd {
+		return "", "", ErrInvalidSecondaryIndexKey
+	}
+
+	primaryKey, err = url.PathUnescape(entry[separator+1:])
+	return primaryKey, entry[indexNameEnd+1 : separator], err
 }

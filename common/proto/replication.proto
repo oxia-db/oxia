@@ -83,6 +83,11 @@ enum Feature {
   // and an invalid put, e.g. overflowing the sequence, gets the
   // INVALID_ARGUMENT status instead of rejecting the whole write request
   FEATURE_SEQUENCE_KEY_VALIDATION = 8;
+  // A put that overwrites a record deletes only the secondary index entries
+  // of the indexes that it drops, and writes only the ones of the indexes that
+  // it adds, instead of deleting and writing again all the entries of the
+  // record
+  FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED = 9;
 }
 
 message GetInfoRequest {

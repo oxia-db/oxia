@@ -75,7 +75,7 @@ const (
 type UpdateOperationCallback interface {
 	// ValidatePut must not mutate the request or database state.
 	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
-	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
+	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry, features featurepkg.Checker) (proto.Status, error)
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry, features featurepkg.Checker) error
 }
 
@@ -1001,7 +1001,7 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	versionId := wal.InvalidOffset
 	if !internal {
-		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
+		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se, d)
 		if err != nil {
 			return err
 		}

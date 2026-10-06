@@ -16,10 +16,12 @@ package lead
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -89,6 +91,7 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 type testFeatureChecker struct {
 	secondaryIndexNameValidation   bool
 	ephemeralCleanupNaturalSorting bool
+	secondaryIndexSkipUnchanged    bool
 }
 
 func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
@@ -97,6 +100,8 @@ func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
 		return f.secondaryIndexNameValidation
 	case proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING:
 		return f.ephemeralCleanupNaturalSorting
+	case proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED:
+		return f.secondaryIndexSkipUnchanged
 	default:
 		return false
 	}
@@ -872,6 +877,89 @@ func TestSecondaryIndices_SessionEnd(t *testing.T) {
 			assert.NoError(t, kvFactory.Close())
 			assert.NoError(t, walFactory.Close())
 		})
+	}
+}
+
+// With FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED, a put that overwrites a record
+// deletes only the index entries of the indexes that it drops, and writes only
+// the ones of the indexes that it adds. Without the feature, it deletes and
+// writes again all the entries, as the servers that don't support the feature
+// do. Either way, the record ends up with the entries of its new indexes.
+func TestSecondaryIndices_OverwriteSkipsUnchangedEntries(t *testing.T) {
+	a := &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "a"}
+	b := &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "b"}
+	c := &proto.SecondaryIndex{IndexName: "other-idx", SecondaryKey: "a"}
+	// Index names could have a '/' before
+	// FEATURE_SECONDARY_INDEX_NAME_VALIDATION: these two indexes give a record
+	// the same entry
+	slashInName := &proto.SecondaryIndex{IndexName: "x/y", SecondaryKey: "z"}
+	slashInKey := &proto.SecondaryIndex{IndexName: "x", SecondaryKey: "y/z"}
+
+	for _, tc := range []struct {
+		name     string
+		existing []*proto.SecondaryIndex
+		updated  []*proto.SecondaryIndex
+		// The write batch operations of the overwrite with the feature
+		operations int
+	}{
+		{name: "same indexes", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{a, c}},
+		{name: "reordered", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{c, a}},
+		{name: "changed", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{b, c}, operations: 2},
+		{name: "dropped", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{c}, operations: 1},
+		{name: "added", existing: []*proto.SecondaryIndex{c}, updated: []*proto.SecondaryIndex{a, c}, operations: 1},
+		{name: "all dropped", existing: []*proto.SecondaryIndex{a, c}, operations: 2},
+		{name: "duplicate", existing: []*proto.SecondaryIndex{a, a}, updated: []*proto.SecondaryIndex{a}},
+		{name: "same entry", existing: []*proto.SecondaryIndex{slashInName}, updated: []*proto.SecondaryIndex{slashInKey}},
+		{
+			name:     "same entry kept",
+			existing: []*proto.SecondaryIndex{slashInName, slashInKey},
+			updated:  []*proto.SecondaryIndex{slashInKey},
+		},
+	} {
+		for _, skipUnchanged := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/feature=%v", tc.name, skipUnchanged), func(t *testing.T) {
+				kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				defer kvFactory.Close()
+				kv, err := kvFactory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+				require.NoError(t, err)
+				defer kv.Close()
+
+				features := testFeatureChecker{secondaryIndexSkipUnchanged: skipUnchanged}
+				put := func(existingEntry *proto.StorageEntry, indexes []*proto.SecondaryIndex) int {
+					batch := kv.NewWriteBatch()
+					defer batch.Close()
+					request := &proto.PutRequest{Key: "/record", SecondaryIndexes: indexes}
+					status, err := secondaryIndexesUpdateCallback.OnPut(batch, nil, request, existingEntry, features)
+					require.NoError(t, err)
+					require.Equal(t, proto.Status_OK, status)
+					operations := batch.Count()
+					require.NoError(t, batch.Commit())
+					return operations
+				}
+
+				put(nil, tc.existing)
+				operations := put(&proto.StorageEntry{SecondaryIndexes: tc.existing}, tc.updated)
+				if skipUnchanged {
+					assert.Equal(t, tc.operations, operations)
+				} else {
+					assert.Equal(t, len(tc.existing)+len(tc.updated), operations)
+				}
+
+				var expected []string
+				for _, si := range tc.updated {
+					expected = append(expected, "__oxia/idx/"+si.IndexName+"/"+si.SecondaryKey+"\x01%2Frecord")
+				}
+				it, err := kv.KeyPrefixIterator(secondaryIdxKeyPrefix + "/")
+				require.NoError(t, err)
+				var entries []string
+				for it.SeekGE(secondaryIdxKeyPrefix + "/"); it.Valid(); it.Next() {
+					entries = append(entries, it.Key())
+				}
+				require.NoError(t, it.Close())
+				assert.ElementsMatch(t, expected, entries)
+			})
+		}
 	}
 }
 

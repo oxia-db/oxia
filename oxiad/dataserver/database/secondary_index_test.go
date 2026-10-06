@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oxia-db/oxia/common/constant"
 )
 
 func TestParseSecondaryIndexKey(t *testing.T) {
@@ -54,6 +56,18 @@ func TestParseSecondaryIndexKey(t *testing.T) {
 			expectedPrimary:   primaryKey,
 			expectedSecondary: "first\nsecond",
 		},
+		{
+			name:              "slash in secondary key",
+			indexKey:          idxKeyPrefix + "/index/first/second" + idxSeparator + url.PathEscape(primaryKey),
+			expectedPrimary:   primaryKey,
+			expectedSecondary: "first/second",
+		},
+		{
+			name:              "separator in index name",
+			indexKey:          idxKeyPrefix + "/in" + idxSeparator + "dex/secondary" + idxSeparator + url.PathEscape(primaryKey),
+			expectedPrimary:   primaryKey,
+			expectedSecondary: "secondary",
+		},
 	}
 
 	for _, tc := range tests {
@@ -67,9 +81,18 @@ func TestParseSecondaryIndexKey(t *testing.T) {
 }
 
 func TestParseSecondaryIndexKeyRejectsMalformedKey(t *testing.T) {
-	_, _, err := ParseSecondaryIndexKey(idxKeyPrefix + "/index/secondary")
-	assert.ErrorIs(t, err, ErrInvalidSecondaryIndexKey)
+	for _, key := range []string{
+		idxKeyPrefix + "/index/secondary",
+		// The only separator is in the index name
+		idxKeyPrefix + "/in" + idxSeparator + "dex/secondary",
+		// No '/' ends the index name
+		idxKeyPrefix + "/index" + idxSeparator + "primary",
+		constant.InternalKeyPrefix + "session/index/secondary" + idxSeparator + "primary",
+	} {
+		_, _, err := ParseSecondaryIndexKey(key)
+		assert.ErrorIs(t, err, ErrInvalidSecondaryIndexKey, key)
+	}
 
-	_, _, err = ParseSecondaryIndexKey(idxKeyPrefix + "/index/secondary" + idxSeparator + "%zz")
+	_, _, err := ParseSecondaryIndexKey(idxKeyPrefix + "/index/secondary" + idxSeparator + "%zz")
 	assert.Error(t, err)
 }
