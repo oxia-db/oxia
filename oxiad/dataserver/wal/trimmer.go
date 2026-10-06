@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -35,18 +34,12 @@ const (
 
 type CommitOffsetProvider interface {
 	CommitOffset() int64
-}
 
-type CommitOffsetObserver struct {
-	commitOffset *atomic.Int64
-}
-
-func (o *CommitOffsetObserver) CommitOffset() int64 {
-	return o.commitOffset.Load()
-}
-
-func NewCommitOffsetObserver(offset *atomic.Int64) CommitOffsetProvider {
-	return &CommitOffsetObserver{commitOffset: offset}
+	// FlushDatabase makes durable the entries applied to the database. The
+	// database runs without a WAL of its own: after a crash, it only holds the
+	// entries applied before its last flush, and applies the next ones again
+	// from the WAL. The trimming flushes it before deleting their segments.
+	FlushDatabase() error
 }
 
 type Trimmer interface {
@@ -171,7 +164,10 @@ func (t *trimmer) doTrim() error {
 		trimOffset = commitOffset
 	}
 
-	err = t.wal.trim(trimOffset)
+	// The deleted segments only hold entries up to the commit offset, which are
+	// applied to the database: flushing it before the deletion makes them
+	// durable
+	err = t.wal.trim(trimOffset, t.commitOffsetProvider.FlushDatabase)
 	if err != nil {
 		return errors.Wrap(err, "failed to trim wal")
 	}

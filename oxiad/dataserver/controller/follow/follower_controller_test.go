@@ -1780,7 +1780,7 @@ func TestFollower_SplitSnapshotFilterSurvivesCrash(t *testing.T) {
 	fc.SetSplitHashRange(splitTestHashRange, 1)
 	installSplitTestSnapshot(t, fc, 1)
 
-	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, wal.FactoryOptions{BaseWalDir: walDir})
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
@@ -1832,7 +1832,7 @@ func TestFollower_SplitReplayAfterCrashKeepsFilter(t *testing.T) {
 	expected := map[string]string{"a": "wal-a", "b": "snapshot-b", "c": "wal-c", "e": "snapshot-e"}
 	assertSplitTestKeys(t, fc.(*followerController).db, expected)
 
-	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walDir)
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, wal.FactoryOptions{BaseWalDir: walDir})
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
@@ -1963,11 +1963,94 @@ func installSplitTestSnapshot(t *testing.T, fc FollowerController, term int64) {
 	assert.NoError(t, parentKvFactory.Close())
 }
 
+// The follower applies the entries to its database, which runs without the
+// Pebble WAL: they are durable only once the database gets flushed. Past the
+// retention, the trimming deletes the WAL segments of the applied entries: after
+// a crash, the database must still hold them, as the follower can't apply them
+// again.
+func TestFollower_CrashAfterWalTrim(t *testing.T) {
+	var shardId int64
+	kvOptions := kvstore.NewFactoryOptionsForTest(t)
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvOptions)
+	require.NoError(t, err)
+	clock := &time2.MockedClock{}
+	walOptions := wal.FactoryOptions{
+		BaseWalDir:           t.TempDir(),
+		SegmentSize:          4 * 1024,
+		Clock:                clock,
+		TrimmerCheckInterval: 10 * time.Millisecond,
+	}
+	walFactory := wal.NewWalFactory(&walOptions)
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId,
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+	// The entries fill a few WAL segments, and a small part of a database
+	// memtable
+	value := strings.Repeat("v", 500)
+	for offset := int64(0); offset <= 20; offset++ {
+		stream.AddRequest(createAddRequest(t, 1, offset, map[string]string{fmt.Sprintf("key-%02d", offset): value}, offset-1))
+	}
+	require.Eventually(t, func() bool {
+		return fc.CommitOffset() == 19
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// Hours later, the trimming deletes the segments of the first entries
+	clock.Set((2 * time.Hour).Milliseconds())
+	followerWal := fc.(*followerController).wal
+	require.Eventually(t, func() bool {
+		return followerWal.FirstOffset() == 19
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The follower crashes, and restarts from what was on disk
+	crashedKvFactory, crashedWalFactory := crashImage(t, kvOptions.DataDir, walOptions)
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+
+	fc, err = NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId,
+		crashedWalFactory, crashedKvFactory, nil)
+	require.NoError(t, err)
+	assert.Positive(t, fc.(*followerController).wal.FirstOffset())
+	assert.EqualValues(t, 19, fc.CommitOffset())
+
+	// It applies the entries of the next term
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	stream = rpc.NewMockServerReplicateStream()
+	go func() {
+		_ = fc.AppendEntries(stream)
+		stream.Cancel()
+	}()
+	stream.AddRequest(createAddRequest(t, 2, 21, map[string]string{"key-21": value}, 21))
+	assert.Eventually(t, func() bool {
+		return fc.CommitOffset() == 21
+	}, 10*time.Second, 10*time.Millisecond)
+	for offset := 0; offset <= 21; offset++ {
+		res, err := fc.(*followerController).db.Get(&proto.GetRequest{Key: fmt.Sprintf("key-%02d", offset)})
+		require.NoError(t, err)
+		assert.Equalf(t, proto.Status_OK, res.Status, "key-%02d", offset)
+	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, crashedKvFactory.Close())
+	assert.NoError(t, crashedWalFactory.Close())
+}
+
 // crashImage copies the data directories of a running shard, and returns the
-// factories to open the copies with: the copies hold what a crash of the node
-// would leave on disk. The database runs without the Pebble WAL, so they miss
-// the database writes that are still in the memtable.
-func crashImage(t *testing.T, kvDataDir string, walDir string) (kvstore.Factory, wal.Factory) {
+// factories to open the copies with, using walOptions apart from the directory:
+// the copies hold what a crash of the node would leave on disk. The database
+// runs without the Pebble WAL, so they miss the database writes that are still
+// in the memtable.
+func crashImage(t *testing.T, kvDataDir string, walOptions wal.FactoryOptions) (kvstore.Factory, wal.Factory) {
 	t.Helper()
 
 	kvOptions := kvstore.NewFactoryOptionsForTest(t)
@@ -1976,8 +2059,9 @@ func crashImage(t *testing.T, kvDataDir string, walDir string) (kvstore.Factory,
 	require.NoError(t, err)
 
 	crashedWalDir := t.TempDir()
-	copyRunningDir(t, walDir, crashedWalDir)
-	return kvFactory, wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: crashedWalDir})
+	copyRunningDir(t, walOptions.BaseWalDir, crashedWalDir)
+	walOptions.BaseWalDir = crashedWalDir
+	return kvFactory, wal.NewWalFactory(&walOptions)
 }
 
 // copyRunningDir copies the files in src to dst. Pebble deletes its obsolete
