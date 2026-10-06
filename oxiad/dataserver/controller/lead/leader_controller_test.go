@@ -452,6 +452,101 @@ func TestLeaderController_FreezeCoversAcceptedWrites(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// The head entry that a new term reports is what the coordinator elects the
+// next leader by, and what that leader truncates the followers to. A write
+// appended to the wal before the new term can still wait for its sync: the
+// head must cover it. Otherwise the entry gets synced past the head that the
+// new term found, and the next leadership on this node gives its offset to a
+// new entry, which the wal rejects.
+func TestLeaderController_NewTermWaitsForPendingSyncs(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &heldSyncWalFactory{Factory: wal.NewWalFactory(&wal.FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	write := func(key string) {
+		lc.Write(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte("value-" + key)}},
+		}, concurrent.NewOnce(func(*proto.WriteResponse) {}, func(error) {}))
+	}
+
+	// The write "a" is synced, and its callback holds the sync goroutine of
+	// the wal: the write "b" is appended, and not synced until the release
+	release := walFactory.holdSyncs()
+	write("a")
+	require.Eventually(t, func() bool {
+		return lc.(*leaderController).wal.LastOffset() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+	write("b")
+
+	newTerm := make(chan *proto.NewTermResponse, 1)
+	go func() {
+		res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+		assert.NoError(t, err)
+		newTerm <- res
+	}()
+	assert.Never(t, func() bool { return len(newTerm) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the new term did not wait for the sync of the write")
+
+	release()
+	select {
+	case res := <-newTerm:
+		AssertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 1}, res.GetHeadEntryId())
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the new term did not return")
+	}
+
+	// The next leadership appends after the entries of the old term, and
+	// applies them
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              2,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "c", Value: []byte("value-c")}},
+	})
+	require.NoError(t, err)
+	results, err := readAll(context.Background(), lc, &proto.ReadRequest{
+		Shard: &shard,
+		Gets: []*proto.GetRequest{
+			{Key: "a", IncludeValue: true},
+			{Key: "b", IncludeValue: true},
+			{Key: "c", IncludeValue: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+	for i, key := range []string{"a", "b", "c"} {
+		assert.Equal(t, proto.Status_OK, results[i].Status, "key %s", key)
+		assert.Equal(t, []byte("value-"+key), results[i].Value, "key %s", key)
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 // heldAppendWalFactory creates wals whose appends stall while appends are held,
 // on the goroutine of the caller: like an append waiting for room in a full
 // sync queue.
