@@ -187,7 +187,7 @@ func (d *db) putInheritedNotifications(batch kvstore.WriteBatch, in inheritedNot
 	return d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   inheritedNotificationsKey,
 		Value: value,
-	}, now(), NoOpCallback, true, nil, nil)
+	}, now(), NoOpCallback, true, nil, nil, nil)
 }
 
 // closeInheritedNotifications records that the batches that the child inherited

@@ -116,20 +116,6 @@ func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existin
 	return nil
 }
 
-// deleteKeySecondaryIndexes deletes the secondary indexes of the record at key,
-// which it reads from the record's entry.
-func deleteKeySecondaryIndexes(batch kvstore.WriteBatch, key string) error {
-	se, err := database.GetStorageEntryMetadata(batch, key)
-	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
-			return nil
-		}
-		return err
-	}
-	defer se.ReturnToVTPool()
-	return deleteSecondaryIndexes(batch, key, se)
-}
-
 var emptyValue []byte
 
 func writeSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, secondaryIndexes []*proto.SecondaryIndex) error {
@@ -157,14 +143,18 @@ func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*s
 	// key sorting, they are not contiguous: they are grouped by level, and other
 	// internal keys sort between the groups, like the entries of other indexes
 	// and the session shadow keys. A range across levels would include them.
+	// The split filter is loaded before the iterator, which holds the entries
+	// of the time it's created (see database.DB.RangeScan).
+	splitFilter := db.DeferredSplitFilter()
 	it, err := db.ListPrefix(indexPrefix)
 	if err != nil {
 		return nil, err
 	}
-	it = keptIndexEntries(db, it)
+	endBound := secondaryIndexRangeBound(indexPrefix, end)
+	it = keptIndexEntries(db, splitFilter, it, endBound)
 
 	it.SeekGE(secondaryIndexRangeBound(indexPrefix, start))
-	listIt := &secondaryIndexListIterator{it: it, db: db, end: secondaryIndexRangeBound(indexPrefix, end)}
+	listIt := &secondaryIndexListIterator{it: it, db: db, end: endBound}
 	listIt.stopAtEnd()
 	return listIt, nil
 }
@@ -337,11 +327,14 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 	// The iterator only visits the entries of the index. With the hierarchical
 	// key sorting, they are not contiguous: they are grouped by level, and other
 	// internal keys, like the entries of other indexes, sort between the groups.
+	// The split filter is loaded before the iterator, which holds the entries
+	// of the time it's created (see database.DB.RangeScan).
+	splitFilter := db.DeferredSplitFilter()
 	it, err := db.KeyPrefixIterator(indexPrefix)
 	if err != nil {
 		return "", "", err
 	}
-	it = keptIndexEntries(db, it)
+	it = keptIndexEntries(db, splitFilter, it, secondaryGetSkipEnd(indexPrefix, req))
 
 	defer func() { _ = it.Close() }()
 
@@ -418,4 +411,20 @@ func doSecondaryGet(db database.DB, req *proto.GetRequest) (primaryKey string, s
 
 	// The walk ran out of entries of the requested index without finding a match
 	return "", "", nil
+}
+
+// secondaryGetSkipEnd returns the entry of the index at indexPrefix up to which
+// a get of req looks for an entry of a record that a split child keeps (see
+// keptIndexEntries). An EQUAL or FLOOR get finds an entry of the secondary key
+// of the request, or one before, so it stops after the entries of the key: they
+// end in the separator, with the escaped primary key, which has no '/', and
+// sort before the key followed by the byte after the separator in either key
+// sorting. The other gets go as far as they need.
+func secondaryGetSkipEnd(indexPrefix string, req *proto.GetRequest) string {
+	switch req.ComparisonType {
+	case proto.KeyComparisonType_EQUAL, proto.KeyComparisonType_FLOOR:
+		return indexPrefix + req.Key + "\x02"
+	default:
+		return ""
+	}
 }

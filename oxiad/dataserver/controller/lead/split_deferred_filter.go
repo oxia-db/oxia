@@ -113,80 +113,79 @@ func (lc *leaderController) splitFilterQuorum(term int64, offset int64) (held bo
 	return holders > int(lc.replicationFactor)/2, true
 }
 
+// The bounds of a step of the deferred split filter, which every replica of the
+// shard applies like a write: the number of records it goes through, and the
+// size of their entries, which it reads.
+const (
+	splitFilterStepRecords = 1000
+	splitFilterStepBytes   = 4 * 1024 * 1024
+)
+
 // applyDeferredSplitFilter deletes, through the log, the records that the shard
-// holds outside its hash range since its split: each step deletes a batch of
-// them, and the next one starts once it's applied. The reads of the shard, and
+// holds outside its hash range since its split: each step goes through a batch
+// of records, from where the previous one stopped, and the next one starts once
+// it's applied, until one reaches the last record. The reads of the shard, and
 // its writes, skip these records until then. It stops when the node stops
-// leading the term, ctx: the leader of a later term starts over.
+// leading the term, ctx: the leader of a later term goes on from there.
 func (lc *leaderController) applyDeferredSplitFilter(ctx context.Context, term int64) {
 	log := lc.log.With(slog.Int64("term", term))
 	log.Info("Deleting the records outside the hash range of the shard, held since its split")
 
 	bo := time2.NewBackOff(ctx)
-	var after *string
-	deleted := 0
+	// backoff.Retry does it before use: the intervals are 0 until then
+	bo.Reset()
 	for {
-		keys, complete, err := lc.splitFilterStep(ctx, term, after)
-		if err != nil {
-			retryAfter := bo.NextBackOff()
-			if retryAfter == backoff.Stop {
-				log.Info("Stopped deleting the records outside the hash range of the shard", slog.Any("error", err))
-				return
-			}
-			log.Warn(
-				"Failed to delete records outside the hash range of the shard, retrying",
-				slog.Any("error", err),
-				slog.Duration("retry-after", retryAfter),
-			)
-			select {
-			case <-ctx.Done():
-			case <-time.After(retryAfter):
-			}
-			continue
-		}
-		bo.Reset()
-
-		deleted += len(keys)
-		if complete {
-			log.Info("Deleted the records outside the hash range of the shard", slog.Int("count", deleted))
+		pending, leading := lc.splitFilterPending(term)
+		if !leading {
+			log.Info("Stopped deleting the records outside the hash range of the shard")
 			return
 		}
-		after = &keys[len(keys)-1]
-	}
-}
+		if !pending {
+			log.Info("Deleted the records outside the hash range of the shard")
+			return
+		}
 
-// splitFilterStep proposes the next step of the deferred split filter, that
-// deletes the records after the key after, and waits for it to be applied. It
-// returns the keys of the records, and whether it was the last step.
-func (lc *leaderController) splitFilterStep(ctx context.Context, term int64, after *string) ([]string, bool, error) {
-	keys, complete, err := lc.splitFilterKeys(term, after)
-	if err != nil {
-		return nil, false, err
-	}
-	_, err = lc.proposeBlock(ctx, ctx.Done(), func(offset int64) statemachine.Proposal {
-		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
-			Value: &proto.ControlRequest_SplitFilter{
-				SplitFilter: &proto.SplitFilterRequest{Keys: keys, Complete: complete},
-			},
+		_, err := lc.proposeBlock(ctx, ctx.Done(), func(offset int64) statemachine.Proposal {
+			return statemachine.NewControlProposal(offset, &proto.ControlRequest{
+				Value: &proto.ControlRequest_SplitFilter{
+					SplitFilter: &proto.SplitFilterRequest{
+						MaxRecords: splitFilterStepRecords,
+						MaxBytes:   splitFilterStepBytes,
+					},
+				},
+			})
 		})
-	})
-	return keys, complete, err
+		if err == nil {
+			bo.Reset()
+			continue
+		}
+		retryAfter := bo.NextBackOff()
+		if retryAfter == backoff.Stop {
+			log.Info("Stopped deleting the records outside the hash range of the shard", slog.Any("error", err))
+			return
+		}
+		log.Warn(
+			"Failed to delete records outside the hash range of the shard, retrying",
+			slog.Any("error", err),
+			slog.Duration("retry-after", retryAfter),
+		)
+		select {
+		case <-ctx.Done():
+		case <-time.After(retryAfter):
+		}
+	}
 }
 
-// splitFilterKeys reads the keys of the next step of the deferred split filter,
-// like a read: only while the node leads the term, and before close can close
-// the database.
-func (lc *leaderController) splitFilterKeys(term int64, after *string) ([]string, bool, error) {
+// splitFilterPending reports whether the shard still holds records outside its
+// hash range since its split, and whether the node still leads the term: close
+// clears the database.
+func (lc *leaderController) splitFilterPending(term int64) (pending bool, leading bool) {
 	lc.RLock()
+	defer lc.RUnlock()
 	if lc.status != proto.ServingStatus_LEADER || lc.term.Load() != term {
-		lc.RUnlock()
-		return nil, false, constant.ErrNodeIsNotLeader
+		return false, false
 	}
-	lc.waitGroup.Add(1)
-	lc.RUnlock()
-	defer lc.waitGroup.Done()
-
-	return lc.db.SplitFilterKeys(after)
+	return lc.db.DeferredSplitFilter() != nil, true
 }
 
 // errSplitFilterPending rejects a split of a shard that still holds records of
@@ -199,37 +198,40 @@ var errSplitFilterPending = errors.Wrap(constant.ErrResourceUnavailable,
 
 // keptIndexEntries returns an iterator over the entries of a secondary index,
 // it, that skips the entries of the records that the shard holds but doesn't
-// keep: the records of a split child outside its hash range, until it deletes
-// them. On any other shard, it returns it.
-func keptIndexEntries(db database.DB, it kvstore.KeyIterator) kvstore.KeyIterator {
-	if db.DeferredSplitFilter() == nil {
+// keep, by filter, the deferred split filter of the shard when it created it:
+// the records of a split child outside its hash range, until it deletes them.
+// It doesn't skip the entries from end on, if not empty, which the reads of the
+// index don't go past. On any other shard, filter is nil, and it returns it.
+func keptIndexEntries(db database.DB, filter *database.DeferredSplitFilter, it kvstore.KeyIterator,
+	end string) kvstore.KeyIterator {
+	if filter == nil {
 		return it
 	}
-	return &keptIndexEntriesIterator{KeyIterator: it, db: db}
+	return &keptIndexEntriesIterator{KeyIterator: it, db: db, filter: filter, end: end}
 }
 
 type keptIndexEntriesIterator struct {
 	kvstore.KeyIterator
-	db  database.DB
-	err error
+	db     database.DB
+	filter *database.DeferredSplitFilter
+	end    string
+	err    error
 }
 
-// skip moves the iterator with next until it reaches an entry of a record that
-// the shard keeps, and reports whether it did. An entry that can't be parsed
-// is kept: the reads of the index handle it.
+// skip moves the iterator with next until it reaches an entry that the shard
+// keeps, or the end, and reports whether it did.
 func (it *keptIndexEntriesIterator) skip(next func() bool) bool {
 	for it.KeyIterator.Valid() {
-		primaryKey, _, err := database.ParseSecondaryIndexKey(it.Key())
-		if err != nil {
+		key := it.Key()
+		if it.end != "" && it.db.CompareKeys(key, it.end) >= 0 {
 			return true
 		}
-		// The Get of a split child doesn't find a record it doesn't keep
-		res, err := it.db.Get(&proto.GetRequest{Key: primaryKey})
+		kept, err := it.db.KeepsIndexEntry(it.filter, key)
 		if err != nil {
 			it.err = err
 			return false
 		}
-		if res.Status == proto.Status_OK {
+		if kept {
 			return true
 		}
 		next()

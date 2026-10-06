@@ -276,8 +276,6 @@ func applyObserverEntries(t *testing.T, rpcClient *rpc.MockRpcClient, childDb da
 	}
 }
 
-// readNotifications returns the notification batches of the database from
-// firstOffset to lastOffset, by offset.
 // recordedNotifications returns the notification batches that db recorded,
 // from firstOffset to lastOffset: a split child records those of its parent as
 // they are, and delivers them filtered (see deliveredNotifications).
@@ -632,13 +630,173 @@ func TestSessionDelete_DeferredSplitFilterNotifications(t *testing.T) {
 	}
 	assert.ElementsMatch(t, expected, deleted)
 
-	// All the ephemeral records of the session are gone
-	keys, complete, err := db.SplitFilterKeys(nil)
-	require.NoError(t, err)
-	assert.True(t, complete)
+	// All the ephemeral records of the sessions are gone
 	for _, put := range write.Puts {
 		if put.SessionId != nil {
-			assert.NotContains(t, keys, put.Key)
+			_, _, closer, err := db.RawKV().Get(put.Key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
+			if err == nil {
+				assert.NoError(t, closer.Close())
+			}
+			assert.ErrorIs(t, err, kvstore.ErrKeyNotFound, put.Key)
 		}
 	}
+}
+
+// hookedPrefixDB runs a hook once the next iterator over a prefix is created,
+// and counts the checks of the entries of the secondary indexes.
+type hookedPrefixDB struct {
+	database.DB
+	afterPrefixIterator  func()
+	keepsIndexEntryCalls int
+}
+
+func (db *hookedPrefixDB) hook() {
+	if hook := db.afterPrefixIterator; hook != nil {
+		db.afterPrefixIterator = nil
+		hook()
+	}
+}
+
+func (db *hookedPrefixDB) ListPrefix(prefix string) (kvstore.KeyIterator, error) {
+	it, err := db.DB.ListPrefix(prefix)
+	db.hook()
+	return it, err
+}
+
+func (db *hookedPrefixDB) KeyPrefixIterator(prefix string) (kvstore.KeyIterator, error) {
+	it, err := db.DB.KeyPrefixIterator(prefix)
+	db.hook()
+	return it, err
+}
+
+func (db *hookedPrefixDB) KeepsIndexEntry(filter *database.DeferredSplitFilter, indexKey string) (bool, error) {
+	db.keepsIndexEntryCalls++
+	return db.DB.KeepsIndexEntry(filter, indexKey)
+}
+
+// The queries of a secondary index that start before the last step of the
+// deferred split filter skip the entries that the step deletes, which their
+// iterators still hold.
+func TestSecondaryIndexes_DeferredSplitFilterRacingLastStep(t *testing.T) {
+	idx := "idx"
+	for _, query := range []string{"list", "floor"} {
+		t.Run(query, func(t *testing.T) {
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, kvFactory.Close()) }()
+			left, right := splitKeys(splitTestChildRange)
+			write := splitChildRecords(5, left, right)
+			child := newSplitChildDB(t, kvFactory, 2, write)
+			defer func() { assert.NoError(t, child.Close()) }()
+
+			db := &hookedPrefixDB{DB: child, afterPrefixIterator: func() {
+				_, err := child.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
+					SplitFilter: &proto.SplitFilterRequest{MaxRecords: uint32(len(write.Puts))},
+				}}, 2, 0, WrapperUpdateOperationCallback)
+				require.NoError(t, err)
+				require.Nil(t, child.DeferredSplitFilter())
+			}}
+
+			if query == "list" {
+				it, err := newSecondaryIndexListIterator(&proto.ListRequest{
+					SecondaryIndexName: &idx, StartInclusive: "sec-", EndExclusive: "sec-~",
+				}, db)
+				require.NoError(t, err)
+				var listed []string
+				for ; it.Valid(); it.Next() {
+					listed = append(listed, it.Key())
+				}
+				require.NoError(t, it.Close())
+				assert.ElementsMatch(t, left, listed)
+				return
+			}
+
+			// The entries of sec-05 and sec-06 are those of the other child: the
+			// floor is the entry of sec-04
+			res, err := secondaryIndexGet(&proto.GetRequest{
+				Key: "sec-06", SecondaryIndexName: &idx, ComparisonType: proto.KeyComparisonType_FLOOR,
+			}, db)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, res.Status)
+			assert.Equal(t, "sec-04", res.GetSecondaryIndexKey())
+			assert.Equal(t, left[4], res.GetKey())
+		})
+	}
+}
+
+// A query of a secondary index skips the entry of a record that a write of the
+// child replaced, without the entry, since the query started.
+func TestSecondaryIndexes_DeferredSplitFilterReplacedRecord(t *testing.T) {
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	left, right := splitKeys(splitTestChildRange)
+	child := newSplitChildDB(t, kvFactory, 2, splitChildRecords(5, left, right))
+	defer func() { assert.NoError(t, child.Close()) }()
+
+	// The record of the other child with the only entry of sec-05 becomes a
+	// record of the child, with no secondary index
+	db := &hookedPrefixDB{DB: child, afterPrefixIterator: func() {
+		_, err := child.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key: right[0], Value: []byte("child"), PartitionKey: &left[0],
+		}}}, 2, 0, WrapperUpdateOperationCallback)
+		require.NoError(t, err)
+	}}
+	idx := "idx"
+	it, err := newSecondaryIndexListIterator(&proto.ListRequest{
+		SecondaryIndexName: &idx, StartInclusive: "sec-05", EndExclusive: "sec-06",
+	}, db)
+	require.NoError(t, err)
+	var listed []string
+	for ; it.Valid(); it.Next() {
+		listed = append(listed, it.Key())
+	}
+	require.NoError(t, it.Close())
+	assert.Empty(t, listed)
+}
+
+// The queries of a secondary index of a split child don't check the entries
+// past the end of the query, and the checks don't count as reads.
+func TestSecondaryIndexes_DeferredSplitFilterQueryEnd(t *testing.T) {
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	// An entry of the child, followed by many of the other child
+	left, right := splitKeysWith("key-%d", splitTestChildRange, 100)
+	write := &proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key: left[0], Value: []byte("v"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "a"}},
+	}}}
+	for i, key := range right {
+		write.Puts = append(write.Puts, &proto.PutRequest{Key: key, Value: []byte("v"),
+			SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: fmt.Sprintf("b-%03d", i)}}})
+	}
+	child := newSplitChildDB(t, kvFactory, 2, write)
+	defer func() { assert.NoError(t, child.Close()) }()
+	db := &hookedPrefixDB{DB: child}
+	idx := "idx"
+
+	readOps := child.Stats().GetReadOpsTotal()
+	it, err := newSecondaryIndexListIterator(&proto.ListRequest{
+		SecondaryIndexName: &idx, StartInclusive: "a", EndExclusive: "b",
+	}, db)
+	require.NoError(t, err)
+	var listed []string
+	for ; it.Valid(); it.Next() {
+		listed = append(listed, it.Key())
+	}
+	require.NoError(t, it.Close())
+	assert.Equal(t, []string{left[0]}, listed)
+	assert.Equal(t, 1, db.keepsIndexEntryCalls)
+	assert.Equal(t, readOps+1, child.Stats().GetReadOpsTotal())
+
+	db.keepsIndexEntryCalls = 0
+	for _, comparison := range []proto.KeyComparisonType{
+		proto.KeyComparisonType_EQUAL, proto.KeyComparisonType_FLOOR,
+	} {
+		res, err := secondaryIndexGet(&proto.GetRequest{Key: "a", SecondaryIndexName: &idx, ComparisonType: comparison},
+			db)
+		require.NoError(t, err)
+		assert.Equal(t, left[0], res.GetKey(), comparison)
+	}
+	assert.Equal(t, 2, db.keepsIndexEntryCalls)
 }

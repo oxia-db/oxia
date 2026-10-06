@@ -337,4 +337,7 @@ message ShardStats {
   uint64 db_size_bytes = 1;
   uint64 read_ops_total = 2;
   uint64 write_ops_total = 3;
+  // The shard is a split child that still holds records of its parent outside
+  // its hash range: it can't be split until it deletes them
+  bool split_filter_pending = 4;
 }

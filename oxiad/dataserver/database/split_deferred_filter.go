@@ -16,10 +16,13 @@ package database
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
+	"unsafe"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/hash"
@@ -27,24 +30,20 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 )
 
-// The bounds of a step of the deferred split filter (see SplitFilterKeys).
-// Vars, not consts, so tests can shrink them.
-var (
-	splitFilterMaxKeys  = 1000
-	splitFilterMaxBytes = 1024 * 1024
-)
-
 // DeferredSplitFilter is the filter of a split child seeded with all the data
 // of its parent, in the parent's term ParentTerm: the child keeps the records
 // whose hash is in [MinHash, MaxHash], and deletes the others once the split
-// completes, through its log (see SplitFilterKeys). Until then:
+// completes, through its log, in steps (see proto.SplitFilterRequest). Until
+// then:
 //   - The child applies the entries of its parent, of the terms up to
 //     ParentTerm, as the parent applied them (see DB.ProcessSplitParentWrite):
 //     their outcome, like the version ids they assign, can depend on the
 //     records of the other child.
 //   - Its reads skip the records it doesn't keep, and so do the writes of its
-//     own terms, for which the records don't exist: they drop one before they
-//     touch it.
+//     own terms, for which the records don't exist: they drop one they find.
+//
+// Cursor is where the next step starts, as a key of the store (see
+// kvstore.KV.Scan): the child keeps all the records before it.
 //
 // Only a split child holds such a filter, until it deleted those records: none
 // of what it does runs on any other shard.
@@ -52,34 +51,74 @@ type DeferredSplitFilter struct {
 	MinHash    uint32
 	MaxHash    uint32
 	ParentTerm int64
+	Cursor     []byte `json:",omitempty"`
 }
 
 // keeps reports whether the child keeps the record at key, whose entry is se:
 // the hash of its partition key places it, if it has one, or the hash of its
-// key, as the clients route their requests.
+// key, as the clients route their requests. An internal key, like the key of a
+// session, isn't a record, and is kept.
 func (f *DeferredSplitFilter) keeps(key string, se *proto.StorageEntry) bool {
-	var h uint32
-	if se.PartitionKey != nil {
-		h = hash.Xxh332(*se.PartitionKey)
-	} else {
-		h = hash.Xxh332(key)
+	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
+		return true
 	}
+	if se.PartitionKey != nil {
+		return f.keepsHash(hash.Xxh332(*se.PartitionKey))
+	}
+	return f.keepsHash(hash.Xxh332(key))
+}
+
+func (f *DeferredSplitFilter) keepsHash(h uint32) bool {
 	return h >= f.MinHash && h <= f.MaxHash
 }
 
 // keepsValue reports whether the child keeps the record at key, whose entry is
-// value. An internal key isn't a record, and is kept. A record that can't be
-// deserialized is placed by its key, as FilterDBForSplit places it.
+// value, which it reads the partition key of without decoding it. An internal
+// key isn't a record, and is kept. A record whose entry can't be read is placed
+// by its key, as FilterDBForSplit places it.
 func (f *DeferredSplitFilter) keepsValue(key string, value []byte) bool {
 	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
 		return true
 	}
-	se := proto.StorageEntryFromVTPool()
-	defer se.ReturnToVTPool()
-	if err := DeserializeMetadata(value, se); err != nil {
-		se.ResetVT()
+	partitionKey, found := entryPartitionKey(value)
+	if !found {
+		return f.keepsHash(hash.Xxh332(key))
 	}
-	return f.keeps(key, se)
+	// The hash doesn't keep the string: it can alias the entry
+	return f.keepsHash(hash.Xxh332(unsafe.String(unsafe.SliceData(partitionKey), len(partitionKey))))
+}
+
+var storageEntryPartitionKeyField = (&proto.StorageEntry{}).ProtoReflect().Descriptor().Fields().
+	ByName("partition_key").Number()
+
+// entryPartitionKey returns the partition key of an encoded storage entry,
+// without decoding the entry, and whether it has one, which it doesn't when the
+// entry can't be read either.
+func entryPartitionKey(entry []byte) ([]byte, bool) {
+	var partitionKey []byte
+	found := false
+	for len(entry) > 0 {
+		number, wireType, n := protowire.ConsumeTag(entry)
+		if n < 0 {
+			return nil, false
+		}
+		entry = entry[n:]
+		if number == storageEntryPartitionKeyField && wireType == protowire.BytesType {
+			value, n := protowire.ConsumeBytes(entry)
+			if n < 0 {
+				return nil, false
+			}
+			// The last one wins, as when decoding the entry
+			partitionKey, found = value, true
+			entry = entry[n:]
+			continue
+		}
+		if n = protowire.ConsumeFieldValue(number, wireType, entry); n < 0 {
+			return nil, false
+		}
+		entry = entry[n:]
+	}
+	return partitionKey, found
 }
 
 // SetDeferredSplitFilter records the deferred filter of a split child, seeded
@@ -93,10 +132,6 @@ func (f *DeferredSplitFilter) keepsValue(key string, value []byte) bool {
 // inherits, with the range of the parent, parentHashRange, if known (see
 // inheritedNotifications).
 func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter, parentHashRange *proto.HashRange) error {
-	value, err := json.Marshal(filter)
-	if err != nil {
-		return err
-	}
 	var inherited inheritedNotifications
 	if parentInherited := d.inheritedNotifications.Load(); parentInherited != nil {
 		inherited = *parentInherited
@@ -106,10 +141,7 @@ func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter, parentHashRange
 
 	batch := d.kv.NewWriteBatch()
 	defer batch.Close()
-	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
-		Key:   deferredSplitFilterKey,
-		Value: value,
-	}, now(), NoOpCallback, true, nil, nil); err != nil {
+	if err := d.putDeferredSplitFilter(batch, filter); err != nil {
 		return err
 	}
 	if err := d.putInheritedNotifications(batch, inherited); err != nil {
@@ -128,6 +160,17 @@ func (d *db) SetDeferredSplitFilter(filter *DeferredSplitFilter, parentHashRange
 	d.deferredSplitFilter.Store(filter)
 	d.inheritedNotifications.Store(&inherited)
 	return nil
+}
+
+func (d *db) putDeferredSplitFilter(batch kvstore.WriteBatch, filter *DeferredSplitFilter) error {
+	value, err := json.Marshal(filter)
+	if err != nil {
+		return err
+	}
+	return d.applyPut(batch, nil, nil, &proto.PutRequest{
+		Key:   deferredSplitFilterKey,
+		Value: value,
+	}, now(), NoOpCallback, true, nil, nil, nil)
 }
 
 func (d *db) DeferredSplitFilter() *DeferredSplitFilter {
@@ -159,157 +202,134 @@ func (d *db) ProcessSplitParentWrite(b *proto.WriteRequest, commitOffset int64, 
 	return d.processWrite(b, commitOffset, timestamp, updateOperationCallback, nil)
 }
 
-// dropFilteredRecords drops the records that the child doesn't keep at the keys
-// of the puts and the deletes of a write of the child's own terms, before it
-// applies: the write must not find them. The write can't add any such record:
-// the clients send the child the requests on its records only.
-func (d *db) dropFilteredRecords(batch kvstore.WriteBatch, b *proto.WriteRequest, filter *DeferredSplitFilter,
-	updateOperationCallback UpdateOperationCallback) error {
-	for _, put := range b.Puts {
-		if err := d.dropFilteredRecord(batch, put.Key, filter, updateOperationCallback); err != nil {
-			return err
-		}
-	}
-	for _, del := range b.Deletes {
-		if err := d.dropFilteredRecord(batch, del.Key, filter, updateOperationCallback); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// dropFilteredRecord deletes the record at key if the child doesn't keep it,
-// with its secondary index entries and its session shadow key, and without a
-// notification: for the child, the record doesn't exist.
-func (d *db) dropFilteredRecord(batch kvstore.WriteBatch, key string, filter *DeferredSplitFilter,
-	updateOperationCallback UpdateOperationCallback) error {
-	if strings.HasPrefix(key, constant.InternalKeyPrefix) {
-		return nil
-	}
-	se, err := GetStorageEntryMetadata(batch, key)
-	if errors.Is(err, kvstore.ErrKeyNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
+// filterEntry returns se, the entry of the record at key that a write of the
+// child's own terms found, or nil if the child doesn't keep the record: it then
+// drops the record, with its secondary index entries and its session shadow
+// key, and without a notification, as for the write the record doesn't exist.
+func (d *db) filterEntry(batch kvstore.WriteBatch, key string, se *proto.StorageEntry, filter *DeferredSplitFilter,
+	updateOperationCallback UpdateOperationCallback) (*proto.StorageEntry, error) {
+	if filter.keeps(key, se) {
+		return se, nil
 	}
 	defer se.ReturnToVTPool()
-	if filter.keeps(key, se) {
-		return nil
-	}
 	if err := updateOperationCallback.OnDeleteWithEntry(batch, nil, key, se, d); err != nil {
-		return err
+		return nil, err
+	}
+	return nil, batch.Delete(key)
+}
+
+// dropFilteredRecord drops the record at key, whose entry is value, that the
+// child doesn't keep, with its secondary index entries and its session shadow
+// key, as filterEntry does. A record whose entry can't be read is dropped with
+// no internal key, as FilterDBForSplit drops it.
+func (d *db) dropFilteredRecord(batch kvstore.WriteBatch, key string, value []byte,
+	updateOperationCallback UpdateOperationCallback) error {
+	se := proto.StorageEntryFromVTPool()
+	defer se.ReturnToVTPool()
+	if DeserializeMetadata(value, se) == nil {
+		if err := updateOperationCallback.OnDeleteWithEntry(batch, nil, key, se, d); err != nil {
+			return err
+		}
 	}
 	return batch.Delete(key)
 }
 
-// notifiedDeletion returns the filter of the deletions that a write of the
-// child's own terms notifies, or nil without a deferred split filter: it
-// doesn't notify the deletion of a record that the child doesn't keep, like an
-// ephemeral record of the other child when their session ends. The record is
-// read from the batch, where it must still be: a deletion recorded once the
-// record is gone is notified.
-func notifiedDeletion(batch kvstore.WriteBatch, filter *DeferredSplitFilter) func(key string) bool {
-	if filter == nil {
-		return nil
-	}
-	return func(key string) bool {
-		se, err := GetStorageEntryMetadata(batch, key)
-		if err != nil {
-			return true
-		}
-		defer se.ReturnToVTPool()
-		return filter.keeps(key, se)
-	}
-}
-
-// applySplitFilter applies a step of the deferred split filter: it drops the
-// records at the keys of the request that the child doesn't keep, and with the
-// last step, the filter itself. It reports whether the filter completed.
-func (d *db) applySplitFilter(batch kvstore.WriteBatch, req *proto.SplitFilterRequest,
-	updateOperationCallback UpdateOperationCallback) (bool, error) {
+// applySplitFilter applies a step of the deferred split filter: it goes through
+// the records from the cursor of the filter on, up to the bounds of the step
+// (see proto.SplitFilterRequest), and drops the ones the child doesn't keep.
+// Every replica applies the step to the same records, and drops the same ones.
+// It returns the filter as the step leaves it: with the cursor after the last
+// record it went through, or nil once it went through the last one, which
+// ends the filter.
+func (d *db) applySplitFilter(batch kvstore.WriteBatch, step *proto.SplitFilterRequest,
+	updateOperationCallback UpdateOperationCallback) (*DeferredSplitFilter, error) {
 	filter := d.deferredSplitFilter.Load()
 	if filter == nil {
-		// The filter completed already, e.g. with the steps of an earlier
-		// leader of the child
-		return false, nil
+		// The filter ended already, e.g. with the steps of an earlier leader
+		return nil, nil //nolint:nilnil
 	}
-	for _, key := range req.Keys {
-		if err := d.dropFilteredRecord(batch, key, filter, updateOperationCallback); err != nil {
-			return false, err
+
+	maxRecords := max(step.MaxRecords, 1)
+	var records uint32
+	var size uint64
+	next, err := d.kv.Scan(filter.Cursor, func(key string, value []byte) (bool, error) {
+		records++
+		size += uint64(len(value))
+		if !filter.keepsValue(key, value) {
+			if err := d.dropFilteredRecord(batch, key, value, updateOperationCallback); err != nil {
+				return false, err
+			}
 		}
-	}
-	if !req.Complete {
-		return false, nil
-	}
-	return true, batch.Delete(deferredSplitFilterKey)
-}
-
-// SplitFilterKeys returns, in the order of the shard, the keys of the records
-// that the deferred split filter drops, after the key after, or from the first
-// record if it's nil: the keys of a step of the filter, up to splitFilterMaxKeys
-// of them and splitFilterMaxBytes bytes. complete reports that no such record
-// follows them.
-func (d *db) SplitFilterKeys(after *string) (keys []string, complete bool, err error) {
-	filter := d.deferredSplitFilter.Load()
-	if filter == nil {
-		return nil, true, nil
-	}
-
-	start := ""
-	if after != nil {
-		start = *after
-	}
-	it, err := d.kv.RangeScan(start, "", kvstore.NoInternalKeys)
+		return records < maxRecords && (step.MaxBytes == 0 || size < uint64(step.MaxBytes)), nil
+	})
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if after != nil && it.Valid() && it.Key() == *after {
-		it.Next()
+	if next == nil {
+		return nil, batch.Delete(deferredSplitFilterKey)
+	}
+	updated := *filter
+	updated.Cursor = next
+	return &updated, d.putDeferredSplitFilter(batch, &updated)
+}
+
+// KeepsIndexEntry reports whether a split child with the deferred filter keeps
+// the entry of a secondary index at indexKey: it keeps the record of the
+// entry, and the record still has the entry. The reads of an index skip the
+// other entries, until the child deletes them with their records.
+func (d *db) KeepsIndexEntry(filter *DeferredSplitFilter, indexKey string) (bool, error) {
+	primaryKey, _, err := ParseSecondaryIndexKey(indexKey)
+	if err != nil {
+		// Not an entry of an index: the reads of the index handle it
+		return true, nil
+	}
+	_, value, closer, err := d.kv.Get(primaryKey, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
+	if errors.Is(err, kvstore.ErrKeyNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
 	}
 
-	size := 0
-	for ; it.Valid(); it.Next() {
-		key := it.Key()
-		value, err := it.Value()
-		if err != nil {
-			return nil, false, multierr.Append(err, it.Close())
-		}
-		if filter.keepsValue(key, value) {
-			continue
-		}
-		keys = append(keys, key)
-		size += len(key)
-		if len(keys) >= splitFilterMaxKeys || size >= splitFilterMaxBytes {
-			return keys, false, it.Close()
+	kept := filter.keepsValue(primaryKey, value)
+	se := proto.StorageEntryFromVTPool()
+	defer se.ReturnToVTPool()
+	if !kept || DeserializeMetadata(value, se) != nil {
+		// The entries of a record that can't be read can't be told: the reads
+		// of the index handle it, as on any other shard
+		return kept, closer.Close()
+	}
+	if err := closer.Close(); err != nil {
+		return false, err
+	}
+	escapedKey := url.PathEscape(primaryKey)
+	for _, si := range se.SecondaryIndexes {
+		if secondaryIndexEntryKey(escapedKey, si) == indexKey {
+			return true, nil
 		}
 	}
-
-	// The iteration also stops when a read fails
-	err = multierr.Append(it.Error(), it.Close())
-	return keys, err == nil, err
+	return false, nil
 }
 
 // getKept is Get on a split child that holds records it doesn't keep: the
 // record it returns is the closest to the key of the request, by its
 // comparison, among the ones the child keeps.
 func (d *db) getKept(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*proto.GetResponse, error) {
-	switch getReq.ComparisonType {
-	case proto.KeyComparisonType_EQUAL:
+	if getReq.ComparisonType == proto.KeyComparisonType_EQUAL {
 		return d.getKeptEqual(getReq, filter)
-	case proto.KeyComparisonType_FLOOR:
-		// The record at the key, or the closest one below it
-		if res, err := d.getKeptEqual(getReq, filter); err != nil || res.Status == proto.Status_OK {
-			return res, err
-		}
-		return d.getKeptBelow(getReq, filter)
-	case proto.KeyComparisonType_LOWER:
-		return d.getKeptBelow(getReq, filter)
-	case proto.KeyComparisonType_CEILING, proto.KeyComparisonType_HIGHER:
-		return d.getKeptAbove(getReq, filter)
-	default:
-		return nil, errors.Errorf("unsupported comparison type: %v", getReq.ComparisonType)
 	}
+
+	it, err := d.kv.Seek(getReq.Key, kvstore.ComparisonType(getReq.ComparisonType))
+	if errors.Is(err, kvstore.ErrKeyNotFound) {
+		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
+	} else if err != nil {
+		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
+	}
+	next := it.Next
+	if getReq.ComparisonType == proto.KeyComparisonType_FLOOR || getReq.ComparisonType == proto.KeyComparisonType_LOWER {
+		next = it.Prev
+	}
+	return getKeptClosest(it, getReq, filter, next)
 }
 
 func (d *db) getKeptEqual(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*proto.GetResponse, error) {
@@ -330,34 +350,6 @@ func (d *db) getKeptEqual(getReq *proto.GetRequest, filter *DeferredSplitFilter)
 		return nil, err
 	}
 	return res, nil
-}
-
-// getKeptBelow returns the closest record below the key of the request that
-// the child keeps.
-func (d *db) getKeptBelow(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*proto.GetResponse, error) {
-	if getReq.Key == "" {
-		// Nothing sorts below the empty key
-		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
-	}
-	it, err := d.kv.RangeScan("", getReq.Key, kvstore.NoInternalKeys)
-	if err != nil {
-		return nil, err
-	}
-	it.SeekLT(getReq.Key)
-	return getKeptClosest(it, getReq, filter, it.Prev)
-}
-
-// getKeptAbove returns the closest record above the key of the request, or at
-// it for a CEILING, that the child keeps.
-func (d *db) getKeptAbove(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*proto.GetResponse, error) {
-	it, err := d.kv.RangeScan(getReq.Key, "", kvstore.NoInternalKeys)
-	if err != nil {
-		return nil, err
-	}
-	if getReq.ComparisonType == proto.KeyComparisonType_HIGHER && it.Valid() && it.Key() == getReq.Key {
-		it.Next()
-	}
-	return getKeptClosest(it, getReq, filter, it.Next)
 }
 
 // getKeptClosest returns the first record that the child keeps, from the
@@ -402,15 +394,19 @@ func newKeptRecordsIterator(it kvstore.KeyValueIterator, filter *DeferredSplitFi
 }
 
 // skip moves the iterator with next until it reaches a record that the child
-// keeps, and reports whether it did.
+// keeps, or an internal key, and reports whether it did.
 func (it *keptRecordsIterator) skip(next func() bool) bool {
 	for it.KeyValueIterator.Valid() {
+		key := it.Key()
+		if strings.HasPrefix(key, constant.InternalKeyPrefix) {
+			return true
+		}
 		value, err := it.Value()
 		if err != nil {
 			it.err = err
 			return false
 		}
-		if it.filter.keepsValue(it.Key(), value) {
+		if it.filter.keepsValue(key, value) {
 			return true
 		}
 		next()

@@ -279,6 +279,11 @@ func (m *Monitor) shardCandidate(key shardKey, meta *proto.ShardMetadata,
 	if stats == nil {
 		return candidate{}, false
 	}
+	// A split child that still holds records of its parent outside its hash
+	// range can't be split until it deletes them, and its size counts them
+	if stats.GetSplitFilterPending() {
+		return candidate{}, false
+	}
 
 	ratio := m.computeOvershoot(key, meta.Leader, stats, autoSplit, now)
 	if ratio <= 1.0 {

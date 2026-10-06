@@ -232,12 +232,8 @@ func (m *SplitFilterRequest) CloneVT() *SplitFilterRequest {
 		return (*SplitFilterRequest)(nil)
 	}
 	r := new(SplitFilterRequest)
-	r.Complete = m.Complete
-	if rhs := m.Keys; rhs != nil {
-		tmpContainer := make([]string, len(rhs))
-		copy(tmpContainer, rhs)
-		r.Keys = tmpContainer
-	}
+	r.MaxRecords = m.MaxRecords
+	r.MaxBytes = m.MaxBytes
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -589,16 +585,10 @@ func (this *SplitFilterRequest) EqualVT(that *SplitFilterRequest) bool {
 	} else if this == nil || that == nil {
 		return false
 	}
-	if len(this.Keys) != len(that.Keys) {
+	if this.MaxRecords != that.MaxRecords {
 		return false
 	}
-	for i, vx := range this.Keys {
-		vy := that.Keys[i]
-		if vx != vy {
-			return false
-		}
-	}
-	if this.Complete != that.Complete {
+	if this.MaxBytes != that.MaxBytes {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1090,24 +1080,15 @@ func (m *SplitFilterRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.Complete {
-		i--
-		if m.Complete {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
+	if m.MaxBytes != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.MaxBytes))
 		i--
 		dAtA[i] = 0x10
 	}
-	if len(m.Keys) > 0 {
-		for iNdEx := len(m.Keys) - 1; iNdEx >= 0; iNdEx-- {
-			i -= len(m.Keys[iNdEx])
-			copy(dAtA[i:], m.Keys[iNdEx])
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Keys[iNdEx])))
-			i--
-			dAtA[i] = 0xa
-		}
+	if m.MaxRecords != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.MaxRecords))
+		i--
+		dAtA[i] = 0x8
 	}
 	return len(dAtA) - i, nil
 }
@@ -1376,14 +1357,11 @@ func (m *SplitFilterRequest) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if len(m.Keys) > 0 {
-		for _, s := range m.Keys {
-			l = len(s)
-			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-		}
+	if m.MaxRecords != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.MaxRecords))
 	}
-	if m.Complete {
-		n += 2
+	if m.MaxBytes != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.MaxBytes))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -2354,10 +2332,10 @@ func (m *SplitFilterRequest) UnmarshalVT(dAtA []byte) error {
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Keys", wireType)
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxRecords", wireType)
 			}
-			var stringLen uint64
+			m.MaxRecords = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -2367,29 +2345,16 @@ func (m *SplitFilterRequest) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				m.MaxRecords |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Keys = append(m.Keys, string(dAtA[iNdEx:postIndex]))
-			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Complete", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxBytes", wireType)
 			}
-			var v int
+			m.MaxBytes = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -2399,12 +2364,11 @@ func (m *SplitFilterRequest) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				v |= int(b&0x7F) << shift
+				m.MaxBytes |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			m.Complete = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -3401,10 +3365,10 @@ func (m *SplitFilterRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Keys", wireType)
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxRecords", wireType)
 			}
-			var stringLen uint64
+			m.MaxRecords = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -3414,33 +3378,16 @@ func (m *SplitFilterRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				m.MaxRecords |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			var stringValue string
-			if intStringLen > 0 {
-				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
-			}
-			m.Keys = append(m.Keys, stringValue)
-			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Complete", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxBytes", wireType)
 			}
-			var v int
+			m.MaxBytes = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return protohelpers.ErrIntOverflow
@@ -3450,12 +3397,11 @@ func (m *SplitFilterRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				v |= int(b&0x7F) << shift
+				m.MaxBytes |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			m.Complete = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

@@ -387,21 +387,43 @@ func TestDeferredSplitFilter_ChildWrites(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, proto.Status_KEY_NOT_FOUND, res.Deletes[0].Status)
 
-	// Both records of the parent are gone: the filter has none of them left
-	// to delete
-	keys, complete, err := db.SplitFilterKeys(nil)
-	require.NoError(t, err)
-	assert.True(t, complete)
-	assert.NotContains(t, keys, created.key)
-	assert.NotContains(t, keys, deleted.key)
-	assert.Len(t, keys, len(dropped)-2)
+	// Both records of the parent are gone, and the others are still there
+	held := heldKeys(t, db)
+	assert.Contains(t, held, created.key)
+	assert.NotContains(t, held, deleted.key)
+	assert.Len(t, held, len(records)-1)
 }
 
-func TestDeferredSplitFilter_Steps(t *testing.T) {
-	maxKeys := splitFilterMaxKeys
-	splitFilterMaxKeys = 3
-	defer func() { splitFilterMaxKeys = maxKeys }()
+// heldKeys returns the keys of the records that the database holds, whether it
+// keeps them or not, in the order of the shard.
+func heldKeys(t *testing.T, db DB) []string {
+	t.Helper()
+	it, err := db.RawKV().KeyRangeScan("", "", kvstore.NoInternalKeys)
+	require.NoError(t, err)
+	var keys []string
+	for ; it.Valid(); it.Next() {
+		keys = append(keys, it.Key())
+	}
+	require.NoError(t, it.Close())
+	return keys
+}
 
+// applySplitFilterStep applies a step of the deferred split filter that goes
+// through up to maxRecords records.
+func applySplitFilterStep(t *testing.T, db DB, offset int64, maxRecords uint32) {
+	t.Helper()
+	_, err := db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
+		SplitFilter: &proto.SplitFilterRequest{MaxRecords: maxRecords},
+	}}, offset, 0, NoOpCallback)
+	require.NoError(t, err)
+}
+
+// TestDeferredSplitFilter_Steps checks that each step of the deferred split
+// filter goes through the next records, from where the previous one stopped,
+// after a restart too, and deletes the ones the child doesn't keep, until a
+// step reaches the last record.
+func TestDeferredSplitFilter_Steps(t *testing.T) {
+	const stepRecords = 5
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, factory.Close()) }()
@@ -411,91 +433,228 @@ func TestDeferredSplitFilter_Steps(t *testing.T) {
 	records := deferredSplitRecords(t, "key-%03d")
 	putDeferredSplitRecords(t, db, records)
 	setLeftChildFilter(t, db)
-
-	var expected []string
+	all := make([]string, 0, len(records))
 	for _, record := range records {
-		if !record.kept {
-			expected = append(expected, record.key)
-		}
+		all = append(all, record.key)
 	}
-	slices.SortFunc(expected, db.CompareKeys)
-	require.Greater(t, len(expected), 2*splitFilterMaxKeys)
+	slices.SortFunc(all, db.CompareKeys)
+	kept := keptKeys(db, records)
+	assert.True(t, db.Stats().GetSplitFilterPending())
 
-	var steps [][]string
-	var after *string
 	offset := int64(100)
-	for {
-		keys, complete, err := db.SplitFilterKeys(after)
-		require.NoError(t, err)
-		assert.LessOrEqual(t, len(keys), splitFilterMaxKeys)
-		steps = append(steps, keys)
-		_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
-			SplitFilter: &proto.SplitFilterRequest{Keys: keys, Complete: complete},
-		}}, offset, 0, NoOpCallback)
-		require.NoError(t, err)
+	for step := 1; db.DeferredSplitFilter() != nil; step++ {
+		require.LessOrEqual(t, step, (len(all)+stepRecords-1)/stepRecords, "too many steps")
+		applySplitFilterStep(t, db, offset, stepRecords)
 		offset++
-		if complete {
-			break
+
+		// The step deleted the records that the child doesn't keep among the
+		// ones it went through, and only them
+		var expected []string
+		for i, key := range all {
+			if i >= step*stepRecords || slices.Contains(kept, key) {
+				expected = append(expected, key)
+			}
 		}
-		assert.NotNil(t, db.DeferredSplitFilter())
-		after = &keys[len(keys)-1]
+		assert.Equal(t, expected, heldKeys(t, db), "step %d", step)
+
+		if step == 2 {
+			filter := db.DeferredSplitFilter()
+			require.NotNil(t, filter)
+			assert.NotEmpty(t, filter.Cursor)
+			require.NoError(t, db.Close())
+			db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, time.Hour,
+				time2.SystemClock)
+			require.NoError(t, err)
+			assert.Equal(t, filter, db.DeferredSplitFilter())
+		}
 	}
-	assert.Equal(t, expected, slices.Concat(steps...))
-	assert.Nil(t, db.DeferredSplitFilter())
+	assert.Equal(t, kept, heldKeys(t, db))
+	assert.False(t, db.Stats().GetSplitFilterPending())
 
 	commitOffset, err := db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.Equal(t, offset-1, commitOffset)
 
-	// A step applied once the filter completed has no effect
-	_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
-		SplitFilter: &proto.SplitFilterRequest{Keys: []string{records[0].key}, Complete: true},
-	}}, offset, 0, NoOpCallback)
-	require.NoError(t, err)
+	// A step applied once the filter ended has no effect
+	applySplitFilterStep(t, db, offset, stepRecords)
+	assert.Nil(t, db.DeferredSplitFilter())
+	assert.Equal(t, kept, heldKeys(t, db))
 
 	require.NoError(t, db.Close())
 	db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, time.Hour, time2.SystemClock)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, db.Close()) }()
 	assert.Nil(t, db.DeferredSplitFilter())
-	for _, record := range records {
-		_, _, closer, err := db.RawKV().Get(record.key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
-		if record.kept {
-			if assert.NoError(t, err, record.key) {
-				assert.NoError(t, closer.Close())
-			}
-		} else {
-			assert.ErrorIs(t, err, kvstore.ErrKeyNotFound, record.key)
-		}
-	}
+	assert.Equal(t, kept, heldKeys(t, db))
 }
 
-// TestDeferredSplitFilter_StepSkipsKeptRecords checks that a step doesn't delete
-// a record that a write of the child replaced since the leader read its key.
-func TestDeferredSplitFilter_StepSkipsKeptRecords(t *testing.T) {
+// TestDeferredSplitFilter_StepBytes checks that a step stops after the record
+// whose entry takes the entries it went through to its bytes.
+func TestDeferredSplitFilter_StepBytes(t *testing.T) {
+	db := newDeferredSplitTestDB(t, proto.KeySortingType_NATURAL)
+	records := deferredSplitRecords(t, "key-%03d")
+	putDeferredSplitRecords(t, db, records)
+	setLeftChildFilter(t, db)
+
+	step := func(offset int64, maxBytes uint32) {
+		t.Helper()
+		_, err := db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
+			SplitFilter: &proto.SplitFilterRequest{MaxRecords: uint32(len(records)), MaxBytes: maxBytes},
+		}}, offset, 0, NoOpCallback)
+		require.NoError(t, err)
+	}
+
+	// Each step goes through a single record
+	step(100, 1)
+	step(101, 1)
+	held := heldKeys(t, db)
+	all := make([]string, 0, len(records))
+	for _, record := range records {
+		all = append(all, record.key)
+	}
+	slices.SortFunc(all, db.CompareKeys)
+	kept := keptKeys(db, records)
+	for _, key := range all[2:] {
+		assert.Contains(t, held, key)
+	}
+	for _, key := range all[:2] {
+		assert.Equal(t, slices.Contains(kept, key), slices.Contains(held, key), key)
+	}
+	require.NotNil(t, db.DeferredSplitFilter())
+
+	// Without a size bound, the step goes through all the others
+	step(102, 0)
+	assert.Nil(t, db.DeferredSplitFilter())
+	assert.Equal(t, kept, heldKeys(t, db))
+}
+
+// TestDeferredSplitFilter_StepsHierarchicalKeys checks that a step goes on from
+// the key where the previous one stopped as the store holds it: with the
+// hierarchical key sorting, a key with a raw 0xff byte doesn't keep its
+// position once decoded.
+func TestDeferredSplitFilter_StepsHierarchicalKeys(t *testing.T) {
+	left, right := splitRanges()
+	db := newDeferredSplitTestDB(t, proto.KeySortingType_HIERARCHICAL)
+	// The first key, of the first level, decodes to "a//b", of the second one
+	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: "a\xff/b", Value: []byte("kept"), PartitionKey: partitionKeyIn(t, left)},
+		{Key: "b/x", Value: []byte("other"), PartitionKey: partitionKeyIn(t, right)},
+		{Key: "c/y", Value: []byte("other"), PartitionKey: partitionKeyIn(t, right)},
+	}}, 0, 0, NoOpCallback)
+	require.NoError(t, err)
+	setLeftChildFilter(t, db)
+
+	for offset := int64(100); db.DeferredSplitFilter() != nil; offset++ {
+		require.Less(t, offset, int64(103), "too many steps")
+		applySplitFilterStep(t, db, offset, 1)
+	}
+	res, err := db.Get(&proto.GetRequest{Key: "a\xff/b", IncludeValue: true})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("kept"), res.Value)
+	assert.Len(t, heldKeys(t, db), 1)
+}
+
+// TestDeferredSplitFilter_StepKeepsChildRecords checks that a step doesn't
+// delete the record that a write of the child put at the key of a record the
+// child didn't keep.
+func TestDeferredSplitFilter_StepKeepsChildRecords(t *testing.T) {
 	left, _ := splitRanges()
 	db := newDeferredSplitTestDB(t, proto.KeySortingType_NATURAL)
 	records := deferredSplitRecords(t, "key-%03d")
 	putDeferredSplitRecords(t, db, records)
 	setLeftChildFilter(t, db)
 
-	keys, complete, err := db.SplitFilterKeys(nil)
-	require.NoError(t, err)
-	require.True(t, complete)
-
-	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
-		Key: keys[0], Value: []byte("child"), PartitionKey: partitionKeyIn(t, left),
+	var replaced string
+	for _, record := range records {
+		if !record.kept {
+			replaced = record.key
+			break
+		}
+	}
+	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key: replaced, Value: []byte("child"), PartitionKey: partitionKeyIn(t, left),
 	}}}, 100, 0, NoOpCallback)
 	require.NoError(t, err)
 
-	_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
-		SplitFilter: &proto.SplitFilterRequest{Keys: keys, Complete: true},
-	}}, 101, 0, NoOpCallback)
-	require.NoError(t, err)
+	applySplitFilterStep(t, db, 101, uint32(len(records)))
 	assert.Nil(t, db.DeferredSplitFilter())
 
-	res, err := db.Get(&proto.GetRequest{Key: keys[0], IncludeValue: true})
+	res, err := db.Get(&proto.GetRequest{Key: replaced, IncludeValue: true})
 	require.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, res.Status)
 	assert.Equal(t, []byte("child"), res.Value)
+}
+
+// TestDeferredSplitFilter_UnreadableRecord checks that a record whose entry
+// can't be read is placed by its key, and that a step drops it if the child
+// doesn't keep it.
+func TestDeferredSplitFilter_UnreadableRecord(t *testing.T) {
+	left, right := splitRanges()
+	db := newDeferredSplitTestDB(t, proto.KeySortingType_NATURAL)
+	keptKey, otherKey := keyInRange(t, "kept-%d", left), keyInRange(t, "other-%d", right)
+	batch := db.RawKV().NewWriteBatch()
+	for _, key := range []string{keptKey, otherKey} {
+		// A truncated tag
+		require.NoError(t, batch.Put(key, []byte{0xff, 0xff}))
+	}
+	require.NoError(t, batch.Commit())
+	require.NoError(t, batch.Close())
+	setLeftChildFilter(t, db)
+
+	it, err := db.List(&proto.ListRequest{})
+	require.NoError(t, err)
+	var listed []string
+	for ; it.Valid(); it.Next() {
+		listed = append(listed, it.Key())
+	}
+	require.NoError(t, it.Close())
+	assert.Equal(t, []string{keptKey}, listed)
+
+	applySplitFilterStep(t, db, 100, 10)
+	assert.Nil(t, db.DeferredSplitFilter())
+	assert.Equal(t, []string{keptKey}, heldKeys(t, db))
+}
+
+// hookedRangeScanKV runs a hook once the next RangeScan created its iterator.
+type hookedRangeScanKV struct {
+	kvstore.KV
+	afterRangeScan func()
+}
+
+func (kv *hookedRangeScanKV) RangeScan(lowerBound, upperBound string, opts kvstore.IteratorOpts) (
+	kvstore.KeyValueIterator, error) {
+	it, err := kv.KV.RangeScan(lowerBound, upperBound, opts)
+	if hook := kv.afterRangeScan; hook != nil {
+		kv.afterRangeScan = nil
+		hook()
+	}
+	return it, err
+}
+
+// TestDeferredSplitFilter_RangeScanRacingLastStep checks that a range scan that
+// starts before the last step of the deferred split filter skips the records
+// that the step deletes, which its iterator still holds.
+func TestDeferredSplitFilter_RangeScanRacingLastStep(t *testing.T) {
+	child := newDeferredSplitTestDB(t, proto.KeySortingType_NATURAL)
+	records := deferredSplitRecords(t, "key-%03d")
+	putDeferredSplitRecords(t, child, records)
+	setLeftChildFilter(t, child)
+	kept := keptKeys(child, records)
+
+	d := child.(*db)
+	d.kv = &hookedRangeScanKV{KV: d.kv, afterRangeScan: func() {
+		applySplitFilterStep(t, child, 100, uint32(len(records)))
+	}}
+
+	it, err := child.RangeScan(&proto.RangeScanRequest{})
+	require.NoError(t, err)
+	require.Nil(t, child.DeferredSplitFilter(), "the last step didn't run")
+	var scanned []string
+	for ; it.Valid(); it.Next() {
+		res, err := it.Value()
+		require.NoError(t, err)
+		scanned = append(scanned, res.GetKey())
+	}
+	require.NoError(t, it.Close())
+	assert.Equal(t, kept, scanned)
 }

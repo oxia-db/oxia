@@ -247,18 +247,18 @@ func TestDB_InheritedNotificationsFilterCompletion(t *testing.T) {
 		MinHash: right.Min, MaxHash: right.Max, ParentTerm: 1,
 	}, &proto.HashRange{Min: 0, Max: math.MaxUint32}))
 
-	filterKeys, complete, err := db.SplitFilterKeys(nil)
-	require.NoError(t, err)
-	require.True(t, complete)
-	_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
-		SplitFilter: &proto.SplitFilterRequest{Keys: filterKeys, Complete: true},
-	}}, 1, 0, NoOpCallback)
-	require.NoError(t, err)
-	require.Nil(t, db.DeferredSplitFilter())
+	// The steps of the filter, one record each, without any write of the child
+	offset := int64(1)
+	for ; db.DeferredSplitFilter() != nil; offset++ {
+		_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
+			SplitFilter: &proto.SplitFilterRequest{MaxRecords: 1},
+		}}, offset, 0, NoOpCallback)
+		require.NoError(t, err)
+	}
 
-	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, right)), 2, 0, NoOpCallback)
+	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, right)), offset, 0, NoOpCallback)
 	require.NoError(t, err)
-	assert.Equal(t, map[int64][]string{0: keys[2:], 2: keys}, readNotifiedKeys(t, db, 0))
+	assert.Equal(t, map[int64][]string{0: keys[2:], offset: keys}, readNotifiedKeys(t, db, 0))
 }
 
 // TestDB_InheritedNotificationsChildOfChild splits the high child of a split
