@@ -2930,3 +2930,106 @@ func TestFollower_AppliesEntriesReplacedAfterTruncate(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+// heldSyncWalFactory creates wals whose syncs wait while the syncs are held,
+// like on a slow disk: the entries appended meanwhile are not synced yet.
+type heldSyncWalFactory struct {
+	wal.Factory
+	held atomic.Pointer[chan struct{}]
+}
+
+func (f *heldSyncWalFactory) NewWal(namespace string, shard int64,
+	provider wal.CommitOffsetProvider) (wal.Wal, error) {
+	w, err := f.Factory.NewWal(namespace, shard, provider)
+	if err != nil {
+		return nil, err
+	}
+	return &heldSyncWal{Wal: w, factory: f}, nil
+}
+
+// holdSyncs holds back the syncs, until release is called.
+func (f *heldSyncWalFactory) holdSyncs() (release func()) {
+	held := make(chan struct{})
+	f.held.Store(&held)
+	return func() {
+		f.held.Store(nil)
+		close(held)
+	}
+}
+
+type heldSyncWal struct {
+	wal.Wal
+	factory *heldSyncWalFactory
+}
+
+func (w *heldSyncWal) Sync(ctx context.Context) error {
+	if held := w.factory.held.Load(); held != nil {
+		select {
+		case <-*held:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return w.Wal.Sync(ctx)
+}
+
+// The head entry that a new term reports is what the coordinator elects the
+// next leader by, and what that leader truncates the followers to. The stream
+// of the old leader can leave entries appended to the wal and not synced yet:
+// the head must cover them. Otherwise a new leader that doesn't have them
+// doesn't truncate them either, and the follower takes the entries that the
+// new leader sends at those offsets for duplicates, and acks them.
+func TestFollower_NewTermWaitsForPendingSyncs(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := &heldSyncWalFactory{Factory: wal.NewWalFactory(&wal.FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})}
+
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId,
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+	require.NoError(t, err)
+
+	stream := rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled by the new term below
+		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		stream.Cancel()
+	}()
+	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0"}, wal.InvalidOffset))
+	assert.EqualValues(t, 0, stream.GetResponse().Offset)
+
+	// The entry 1 is appended, and not synced when the new term comes
+	release := walFactory.holdSyncs()
+	stream.AddRequest(createAddRequest(t, 1, 1, map[string]string{"a": "1"}, wal.InvalidOffset))
+	require.Eventually(t, func() bool {
+		st, err := fc.GetStatus(&proto.GetStatusRequest{})
+		return err == nil && st.HeadOffset == 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	newTerm := make(chan *proto.NewTermResponse, 1)
+	go func() {
+		res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+		assert.NoError(t, err)
+		newTerm <- res
+	}()
+	assert.Never(t, func() bool { return len(newTerm) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the new term did not wait for the sync of the entry")
+
+	release()
+	select {
+	case res := <-newTerm:
+		assertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 1}, res.GetHeadEntryId())
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the new term did not return")
+	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
