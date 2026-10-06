@@ -15,7 +15,6 @@
 package auth
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"testing"
 	"time"
@@ -25,48 +24,48 @@ import (
 
 func TestTokenCache(t *testing.T) {
 	now := time.Now()
-	key := sha256.Sum256([]byte("token"))
+	token := "token"
 
 	t.Run("empty", func(t *testing.T) {
 		c := &tokenCache{}
-		_, ok := c.get(key, now)
+		_, ok := c.get(token, now)
 		assert.False(t, ok)
 	})
 
 	t.Run("expires with the token", func(t *testing.T) {
 		c := &tokenCache{}
-		c.put(key, "user", now.Add(10*time.Second), now)
+		c.put(token, "user", now.Add(10*time.Second), now)
 
-		userName, ok := c.get(key, now.Add(10*time.Second-time.Nanosecond))
+		userName, ok := c.get(token, now.Add(10*time.Second-time.Nanosecond))
 		assert.True(t, ok)
 		assert.Equal(t, "user", userName)
 
-		_, ok = c.get(key, now.Add(10*time.Second))
+		_, ok = c.get(token, now.Add(10*time.Second))
 		assert.False(t, ok)
 	})
 
 	t.Run("expires after the max ttl", func(t *testing.T) {
 		c := &tokenCache{}
-		c.put(key, "user", now.Add(time.Hour), now)
+		c.put(token, "user", now.Add(time.Hour), now)
 
-		userName, ok := c.get(key, now.Add(tokenCacheMaxTTL-time.Nanosecond))
+		userName, ok := c.get(token, now.Add(tokenCacheMaxTTL-time.Nanosecond))
 		assert.True(t, ok)
 		assert.Equal(t, "user", userName)
 
-		_, ok = c.get(key, now.Add(tokenCacheMaxTTL))
+		_, ok = c.get(token, now.Add(tokenCacheMaxTTL))
 		assert.False(t, ok)
 	})
 
 	t.Run("bounded", func(t *testing.T) {
 		c := &tokenCache{}
 		for i := range tokenCacheMaxEntries {
-			c.put(sha256.Sum256(fmt.Appendf(nil, "token-%d", i)), "user", now.Add(time.Hour), now)
+			c.put(fmt.Sprintf("token-%d", i), "user", now.Add(time.Hour), now)
 		}
 		assert.Len(t, c.entries, tokenCacheMaxEntries)
 
-		c.put(key, "user", now.Add(time.Hour), now)
+		c.put(token, "user", now.Add(time.Hour), now)
 		assert.Len(t, c.entries, 1)
-		_, ok := c.get(key, now)
+		_, ok := c.get(token, now)
 		assert.True(t, ok)
 	})
 }

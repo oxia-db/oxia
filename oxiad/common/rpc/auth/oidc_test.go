@@ -19,7 +19,6 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -494,7 +493,7 @@ func TestOIDCProvider_Authenticate_Cache(t *testing.T) {
 		_, err := provider.Authenticate(context.Background(), token)
 		require.NoError(t, err)
 
-		entry := provider.verifiedTokens.entries[sha256.Sum256([]byte(token))]
+		entry := provider.verifiedTokens.entries[token]
 		assert.True(t, entry.expiry.Equal(expiry))
 	})
 

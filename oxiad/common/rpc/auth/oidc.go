@@ -17,7 +17,6 @@ package auth
 import (
 	"context"
 	"crypto"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -123,9 +122,8 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	if !ok {
 		return "", ErrUnMatchedAuthenticationParamType
 	}
-	cacheKey := sha256.Sum256([]byte(token))
 	now := time.Now()
-	if userName, ok := p.verifiedTokens.get(cacheKey, now); ok {
+	if userName, ok := p.verifiedTokens.get(token, now); ok {
 		return userName, nil
 	}
 	tokenParts := strings.Split(token, ".")
@@ -188,7 +186,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	if !audienceAllowed {
 		return "", ErrForbiddenAudience
 	}
-	p.verifiedTokens.put(cacheKey, userName, idToken.Expiry, now)
+	p.verifiedTokens.put(token, userName, idToken.Expiry, now)
 	return userName, nil
 }
 

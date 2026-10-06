@@ -15,7 +15,6 @@
 package auth
 
 import (
-	"crypto/sha256"
 	"sync"
 	"time"
 )
@@ -35,17 +34,18 @@ type tokenCacheEntry struct {
 }
 
 // tokenCache remembers the tokens that passed the verification, so that the
-// RPCs carrying the same token skip the signature check. The entries are keyed
-// by the SHA-256 digest of the token, and the cache does not keep the tokens.
+// RPCs carrying the same token skip the signature check. It is keyed by the
+// token itself: a digest would cost more than the rest of the lookup, and the
+// request metadata already keeps the token in memory.
 type tokenCache struct {
 	mu      sync.RWMutex
-	entries map[[sha256.Size]byte]tokenCacheEntry
+	entries map[string]tokenCacheEntry
 }
 
 // get returns the user name of a cached token, unless its entry expired.
-func (c *tokenCache) get(key [sha256.Size]byte, now time.Time) (string, bool) {
+func (c *tokenCache) get(token string, now time.Time) (string, bool) {
 	c.mu.RLock()
-	entry, ok := c.entries[key]
+	entry, ok := c.entries[token]
 	c.mu.RUnlock()
 	if !ok || !now.Before(entry.expiry) {
 		return "", false
@@ -55,14 +55,14 @@ func (c *tokenCache) get(key [sha256.Size]byte, now time.Time) (string, bool) {
 
 // put caches a verified token until its expiry, and for tokenCacheMaxTTL at
 // most. A full cache is emptied first.
-func (c *tokenCache) put(key [sha256.Size]byte, userName string, expiry, now time.Time) {
+func (c *tokenCache) put(token, userName string, expiry, now time.Time) {
 	if maxExpiry := now.Add(tokenCacheMaxTTL); expiry.After(maxExpiry) {
 		expiry = maxExpiry
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.entries == nil || len(c.entries) >= tokenCacheMaxEntries {
-		c.entries = make(map[[sha256.Size]byte]tokenCacheEntry)
+		c.entries = make(map[string]tokenCacheEntry)
 	}
-	c.entries[key] = tokenCacheEntry{userName: userName, expiry: expiry}
+	c.entries[token] = tokenCacheEntry{userName: userName, expiry: expiry}
 }
