@@ -502,13 +502,15 @@ func (*RecordChecksumRequest) Descriptor() ([]byte, []int) {
 
 // SplitFilterRequest is a step of the deferred split filter of a split child,
 // which holds all the records of its parent until it deletes the ones outside
-// its hash range: it deletes those among the records at keys, with their
-// secondary index entries and session shadow keys. The last step is complete:
-// the child holds no record outside its hash range any longer.
+// its hash range: each replica goes through its records, from where the
+// previous step stopped, and deletes the ones outside the hash range, with
+// their secondary index entries and session shadow keys. It stops after
+// max_records records, or once their entries reach max_bytes, if set. The step
+// that reaches the last record ends the filter.
 type SplitFilterRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keys          []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
-	Complete      bool                   `protobuf:"varint,2,opt,name=complete,proto3" json:"complete,omitempty"`
+	MaxRecords    uint32                 `protobuf:"varint,1,opt,name=max_records,json=maxRecords,proto3" json:"max_records,omitempty"`
+	MaxBytes      uint32                 `protobuf:"varint,2,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -543,18 +545,18 @@ func (*SplitFilterRequest) Descriptor() ([]byte, []int) {
 	return file_storage_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *SplitFilterRequest) GetKeys() []string {
+func (x *SplitFilterRequest) GetMaxRecords() uint32 {
 	if x != nil {
-		return x.Keys
+		return x.MaxRecords
 	}
-	return nil
+	return 0
 }
 
-func (x *SplitFilterRequest) GetComplete() bool {
+func (x *SplitFilterRequest) GetMaxBytes() uint32 {
 	if x != nil {
-		return x.Complete
+		return x.MaxBytes
 	}
-	return false
+	return 0
 }
 
 var file_storage_proto_extTypes = []protoimpl.ExtensionInfo{
@@ -611,10 +613,11 @@ const file_storage_proto_rawDesc = "" +
 	"\x05value\"H\n" +
 	"\x14FeatureEnableRequest\x120\n" +
 	"\bfeatures\x18\x01 \x03(\x0e2\x14.replication.FeatureR\bfeatures\"\x17\n" +
-	"\x15RecordChecksumRequest\"D\n" +
-	"\x12SplitFilterRequest\x12\x12\n" +
-	"\x04keys\x18\x01 \x03(\tR\x04keys\x12\x1a\n" +
-	"\bcomplete\x18\x02 \x01(\bR\bcomplete:>\n" +
+	"\x15RecordChecksumRequest\"R\n" +
+	"\x12SplitFilterRequest\x12\x1f\n" +
+	"\vmax_records\x18\x01 \x01(\rR\n" +
+	"maxRecords\x12\x1b\n" +
+	"\tmax_bytes\x18\x02 \x01(\rR\bmaxBytes:>\n" +
 	"\amempool\x12\x1f.google.protobuf.MessageOptions\x18\xe5\xf4\x03 \x01(\bR\amempool\x88\x01\x01B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (

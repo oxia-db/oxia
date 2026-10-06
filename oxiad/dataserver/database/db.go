@@ -153,9 +153,10 @@ type DB interface {
 	// DeferredSplitFilter returns the deferred filter of a split child that
 	// still holds records outside its hash range, or nil.
 	DeferredSplitFilter() *DeferredSplitFilter
-	// SplitFilterKeys returns the keys of the next records that the deferred
-	// split filter drops, after the key after, and whether they're the last.
-	SplitFilterKeys(after *string) (keys []string, complete bool, err error)
+	// KeepsIndexEntry reports whether a split child with the deferred filter
+	// keeps the entry of a secondary index at indexKey: the reads of an index
+	// skip the entries of the records it doesn't keep.
+	KeepsIndexEntry(filter *DeferredSplitFilter, indexKey string) (bool, error)
 
 	Snapshot() (kvstore.Snapshot, error)
 
@@ -313,9 +314,10 @@ func (d *db) Close() error {
 
 func (d *db) Stats() *proto.ShardStats {
 	return &proto.ShardStats{
-		DbSizeBytes:   d.kv.DiskSpaceUsage(),
-		ReadOpsTotal:  d.readOpsTotal.Load(),
-		WriteOpsTotal: d.writeOpsTotal.Load(),
+		DbSizeBytes:        d.kv.DiskSpaceUsage(),
+		ReadOpsTotal:       d.readOpsTotal.Load(),
+		WriteOpsTotal:      d.writeOpsTotal.Load(),
+		SplitFilterPending: d.deferredSplitFilter.Load() != nil,
 	}
 }
 
@@ -361,19 +363,13 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 		// Room for one notification per operation, the common case
 		notifications = newNotifications(d.shardId, commitOffset, timestamp,
 			len(b.Puts)+len(b.Deletes)+len(b.DeleteRanges))
-		notifications.notifiedDeletion = notifiedDeletion(batch, splitFilter)
+		notifications.splitFilter = splitFilter
 	}
 	var sequenceUpdates []sequenceUpdate
 
 	d.putCounter.Add(len(b.Puts))
 	d.deleteCounter.Add(len(b.Deletes))
 	d.deleteRangesCounter.Add(len(b.DeleteRanges))
-
-	if splitFilter != nil {
-		if err := d.dropFilteredRecords(batch, b, splitFilter, updateOperationCallback); err != nil {
-			return nil, nil, nil, err
-		}
-	}
 
 	nextWriteOp := nextWriteOpByType
 	if d.IsFeatureEnabled(proto.Feature_FEATURE_ORDERED_WRITES) {
@@ -387,7 +383,7 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 			prefixKey := b.Puts[p].Key
 			pr := &putResponses[p]
 			if err := d.applyPut(batch, baseVersionId, notifications, b.Puts[p], timestamp, updateOperationCallback,
-				false, pr, &versions[p]); err != nil {
+				false, pr, &versions[p], splitFilter); err != nil {
 				return nil, nil, nil, err
 			}
 			if pr.Key != nil {
@@ -397,7 +393,8 @@ func (d *db) applyWriteRequest(b *proto.WriteRequest, batch kvstore.WriteBatch,
 			p++
 		case writeOpDelete:
 			delRes := &deleteResponses[dl]
-			if err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback, delRes); err != nil {
+			if err := d.applyDelete(batch, notifications, b.Deletes[dl], updateOperationCallback, delRes,
+				splitFilter); err != nil {
 				return nil, nil, nil, err
 			}
 			res.Deletes = append(res.Deletes, delRes)
@@ -517,10 +514,10 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 			return nil, err
 		}
 	}
-	splitFilterCompleted := false
+	var splitFilter *DeferredSplitFilter
 	if splitFilterStep != nil {
 		var err error
-		if splitFilterCompleted, err = d.applySplitFilter(batch, splitFilterStep, updateOperationCallback); err != nil {
+		if splitFilter, err = d.applySplitFilter(batch, splitFilterStep, updateOperationCallback); err != nil {
 			return nil, err
 		}
 	}
@@ -531,8 +528,10 @@ func (d *db) ProcessControlRequest(cmd *proto.ControlRequest, commitOffset int64
 	for _, f := range featuresToEnable {
 		d.enabledFeatures.Store(f, true)
 	}
-	if splitFilterCompleted {
-		d.deferredSplitFilter.Store(nil)
+	if splitFilterStep != nil {
+		// Only once committed: the reads that find no filter must find none of
+		// the records it deleted
+		d.deferredSplitFilter.Store(splitFilter)
 	}
 
 	return meta, nil
@@ -691,7 +690,7 @@ func (d *db) addASCIILong(key string, value int64, batch kvstore.WriteBatch, tim
 		Key:               key,
 		Value:             asciiValue,
 		ExpectedVersionId: nil,
-	}, timestamp, NoOpCallback, true, nil, nil)
+	}, timestamp, NoOpCallback, true, nil, nil, nil)
 }
 
 func (d *db) Get(request *proto.GetRequest) (*proto.GetResponse, error) {
@@ -818,12 +817,15 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 	d.rangeScanCounter.Add(1)
 	d.readOpsTotal.Add(1)
 
+	// Loaded before the iterator, which holds the records of the time it's
+	// created: the filter goes once its last step deleted the records
+	splitFilter := d.deferredSplitFilter.Load()
 	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive,
 		kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys})
 	if err != nil {
 		return nil, err
 	}
-	if splitFilter := d.deferredSplitFilter.Load(); splitFilter != nil {
+	if splitFilter != nil {
 		it = newKeptRecordsIterator(it, splitFilter)
 	}
 
@@ -965,7 +967,7 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termKey,
 		Value: []byte(fmt.Sprintf("%d", newTerm)),
-	}, now(), NoOpCallback, true, nil, nil); err != nil {
+	}, now(), NoOpCallback, true, nil, nil, nil); err != nil {
 		return err
 	}
 
@@ -976,7 +978,7 @@ func (d *db) UpdateTerm(newTerm int64, options TermOptions) error {
 	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   termOptionsKey,
 		Value: serOptions,
-	}, now(), NoOpCallback, true, nil, nil); err != nil {
+	}, now(), NoOpCallback, true, nil, nil, nil); err != nil {
 		return err
 	}
 
@@ -1023,13 +1025,15 @@ func (d *db) ReadTerm() (term int64, options TermOptions, err error) {
 
 // applyPut applies putReq to the batch and writes its response to pr. A put
 // that succeeds gets version in its response, filled with the new version of
-// the record. An internal put has no response: pr and version are nil.
+// the record. An internal put has no response: pr and version are nil. A split
+// child that still holds records outside its hash range passes its deferred
+// filter, splitFilter (see checkExpectedVersionId).
 //
 //nolint:revive
 func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, notifications *Notifications,
 	putReq *proto.PutRequest, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback, internal bool,
-	pr *proto.PutResponse, version *proto.Version) error {
+	pr *proto.PutResponse, version *proto.Version, splitFilter *DeferredSplitFilter) error {
 	if status := updateOperationCallback.ValidatePut(putReq, d); status != proto.Status_OK {
 		pr.Status = status
 		return nil
@@ -1043,7 +1047,8 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 			putReq.Key = newKey
 		}
 	} else if !internal {
-		se, err = checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId)
+		se, err = d.checkExpectedVersionId(batch, putReq.Key, putReq.ExpectedVersionId, splitFilter,
+			updateOperationCallback)
 	}
 
 	switch {
@@ -1160,8 +1165,9 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 }
 
 func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications, delReq *proto.DeleteRequest,
-	updateOperationCallback UpdateOperationCallback, res *proto.DeleteResponse) error {
-	se, err := checkExpectedVersionId(batch, delReq.Key, delReq.ExpectedVersionId)
+	updateOperationCallback UpdateOperationCallback, res *proto.DeleteResponse, splitFilter *DeferredSplitFilter) error {
+	se, err := d.checkExpectedVersionId(batch, delReq.Key, delReq.ExpectedVersionId, splitFilter,
+		updateOperationCallback)
 	if se != nil {
 		defer se.ReturnToVTPool()
 	}
@@ -1396,8 +1402,18 @@ func GetStorageEntryMetadata(batch kvstore.WriteBatch, key string) (*proto.Stora
 	return se, nil
 }
 
-func checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersionId *int64) (*proto.StorageEntry, error) {
+// checkExpectedVersionId returns the entry of the record at key, if any, once
+// it checked that the record has the expected version id. A split child that
+// still holds records outside its hash range passes its deferred filter,
+// splitFilter: a record it doesn't keep doesn't exist (see filterEntry).
+func (d *db) checkExpectedVersionId(batch kvstore.WriteBatch, key string, expectedVersionId *int64,
+	splitFilter *DeferredSplitFilter, updateOperationCallback UpdateOperationCallback) (*proto.StorageEntry, error) {
 	se, err := GetStorageEntryMetadata(batch, key)
+	if err == nil && splitFilter != nil {
+		if se, err = d.filterEntry(batch, key, se, splitFilter, updateOperationCallback); err == nil && se == nil {
+			err = kvstore.ErrKeyNotFound
+		}
+	}
 	if err != nil {
 		if errors.Is(err, kvstore.ErrKeyNotFound) {
 			if expectedVersionId == nil || *expectedVersionId == -1 {

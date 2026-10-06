@@ -2441,7 +2441,7 @@ func TestApplyPutDetachesRequestValue(t *testing.T) {
 		err := d.applyPut(batch, &atomic.Int64{}, nil, &proto.PutRequest{
 			Key:   "key",
 			Value: payload[:len("value")],
-		}, 0, NoOpCallback, false, &proto.PutResponse{}, &proto.Version{})
+		}, 0, NoOpCallback, false, &proto.PutResponse{}, &proto.Version{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, batch.Close())
 

@@ -1986,8 +1986,11 @@ type ShardStats struct {
 	DbSizeBytes   uint64                 `protobuf:"varint,1,opt,name=db_size_bytes,json=dbSizeBytes,proto3" json:"db_size_bytes,omitempty"`
 	ReadOpsTotal  uint64                 `protobuf:"varint,2,opt,name=read_ops_total,json=readOpsTotal,proto3" json:"read_ops_total,omitempty"`
 	WriteOpsTotal uint64                 `protobuf:"varint,3,opt,name=write_ops_total,json=writeOpsTotal,proto3" json:"write_ops_total,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// The shard is a split child that still holds records of its parent outside
+	// its hash range: it can't be split until it deletes them
+	SplitFilterPending bool `protobuf:"varint,4,opt,name=split_filter_pending,json=splitFilterPending,proto3" json:"split_filter_pending,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ShardStats) Reset() {
@@ -2039,6 +2042,13 @@ func (x *ShardStats) GetWriteOpsTotal() uint64 {
 		return x.WriteOpsTotal
 	}
 	return 0
+}
+
+func (x *ShardStats) GetSplitFilterPending() bool {
+	if x != nil {
+		return x.SplitFilterPending
+	}
+	return false
 }
 
 var File_replication_proto protoreflect.FileDescriptor
@@ -2162,12 +2172,13 @@ const file_replication_proto_rawDesc = "" +
 	"shardStats\x12>\n" +
 	"\rterm_features\x18\x06 \x01(\v2\x19.replication.TermFeaturesR\ftermFeatures\"@\n" +
 	"\fTermFeatures\x120\n" +
-	"\bfeatures\x18\x01 \x03(\x0e2\x14.replication.FeatureR\bfeatures\"~\n" +
+	"\bfeatures\x18\x01 \x03(\x0e2\x14.replication.FeatureR\bfeatures\"\xb0\x01\n" +
 	"\n" +
 	"ShardStats\x12\"\n" +
 	"\rdb_size_bytes\x18\x01 \x01(\x04R\vdbSizeBytes\x12$\n" +
 	"\x0eread_ops_total\x18\x02 \x01(\x04R\freadOpsTotal\x12&\n" +
-	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal*\xfe\x02\n" +
+	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal\x120\n" +
+	"\x14split_filter_pending\x18\x04 \x01(\bR\x12splitFilterPending*\xfe\x02\n" +
 	"\aFeature\x12\x13\n" +
 	"\x0fFEATURE_UNKNOWN\x10\x00\x12\x17\n" +
 	"\x13FEATURE_DB_CHECKSUM\x10\x01\x12+\n" +

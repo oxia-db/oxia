@@ -593,6 +593,82 @@ func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (
 	return &PebbleIterator{p, pbit, skipper}, nil
 }
 
+func (p *Pebble) Seek(key string, comparisonType ComparisonType) (KeyValueIterator, error) {
+	p.readCount.Inc()
+	k := p.keyEncoder.Encode(key)
+	var lower, upper []byte
+	switch comparisonType {
+	case ComparisonCeiling, ComparisonHigher:
+		lower = k
+	case ComparisonFloor:
+		// The smallest key above k
+		upper = append(bytes.Clone(k), 0)
+	case ComparisonLower:
+		if len(k) == 0 {
+			// Nothing sorts below the empty key, and it can't be the upper
+			// bound either (see getLower)
+			return nil, ErrKeyNotFound
+		}
+		upper = k
+	default:
+		return nil, errors.Errorf("unsupported comparison type: %v", comparisonType)
+	}
+
+	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, NoInternalKeys, lower, upper))
+	if err != nil {
+		return nil, err
+	}
+	it := &PebbleIterator{p, pbit, newInternalRegionSkipper(p.keyEncoder, NoInternalKeys)}
+	switch comparisonType {
+	case ComparisonCeiling:
+		_ = pbit.First() && it.skipper.forward(pbit)
+	case ComparisonHigher:
+		// The lower bound is inclusive: step over the key itself
+		if pbit.First() && it.skipper.forward(pbit) && bytes.Equal(pbit.Key(), k) {
+			it.Next()
+		}
+	default:
+		_ = pbit.Last() && it.skipper.backward(pbit)
+	}
+	return it, nil
+}
+
+func (p *Pebble) Scan(start []byte, visit func(key string, value []byte) (bool, error)) ([]byte, error) {
+	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, NoInternalKeys, start, nil))
+	if err != nil {
+		return nil, err
+	}
+	skipper := newInternalRegionSkipper(p.keyEncoder, NoInternalKeys)
+	for valid := pbit.First() && skipper.forward(pbit); valid; valid = pbit.Next() && skipper.forward(pbit) {
+		value, err := pbit.ValueAndErr()
+		if err != nil {
+			return nil, multierr.Append(err, pbit.Close())
+		}
+		more, err := visit(p.keyEncoder.Decode(pbit.Key()), value)
+		if err != nil {
+			return nil, multierr.Append(err, pbit.Close())
+		}
+		if more {
+			continue
+		}
+		// The smallest key above the last one visited, if that wasn't the last
+		next := append(bytes.Clone(pbit.Key()), 0)
+		if !pbit.Next() || !skipper.forward(pbit) {
+			next = nil
+		}
+		// The iteration also stops when a read fails
+		if err := multierr.Append(pbit.Error(), pbit.Close()); err != nil {
+			return nil, err
+		}
+		return next, nil
+	}
+
+	if err := multierr.Append(pbit.Error(), pbit.Close()); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 func (p *Pebble) CompareKeys(a, b string) int {
 	return bytes.Compare(p.keyEncoder.Encode(a), p.keyEncoder.Encode(b))
 }

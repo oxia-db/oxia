@@ -78,10 +78,12 @@ message RecordChecksumRequest {}
 
 // SplitFilterRequest is a step of the deferred split filter of a split child,
 // which holds all the records of its parent until it deletes the ones outside
-// its hash range: it deletes those among the records at keys, with their
-// secondary index entries and session shadow keys. The last step is complete:
-// the child holds no record outside its hash range any longer.
+// its hash range: each replica goes through its records, from where the
+// previous step stopped, and deletes the ones outside the hash range, with
+// their secondary index entries and session shadow keys. It stops after
+// max_records records, or once their entries reach max_bytes, if set. The step
+// that reaches the last record ends the filter.
 message SplitFilterRequest {
-  repeated string keys = 1;
-  bool complete = 2;
+  uint32 max_records = 1;
+  uint32 max_bytes = 2;
 }

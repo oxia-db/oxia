@@ -1950,10 +1950,12 @@ func TestFollower_SplitDeferredFilter(t *testing.T) {
 	assertSplitTestKeys(t, fci.db, map[string]string{
 		"a": "snapshot-a", "b": "snapshot-b", "c": "snapshot-c", "e": "snapshot-e",
 	})
-	keys, complete, err := fci.db.SplitFilterKeys(nil)
-	require.NoError(t, err)
-	assert.True(t, complete)
-	assert.Equal(t, []string{"d", "f"}, keys)
+	// The records of the other child are still there
+	for _, key := range []string{"d", "f"} {
+		_, _, closer, err := fci.db.RawKV().Get(key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
+		require.NoError(t, err, key)
+		assert.NoError(t, closer.Close())
+	}
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
