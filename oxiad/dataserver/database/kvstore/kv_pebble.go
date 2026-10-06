@@ -213,9 +213,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		return nil, err
 	}
 
+	// A point read that misses the block cache reads and decompresses a whole
+	// block: 16 KiB blocks cost a fraction of the 64 KiB ones, and take about
+	// the same disk space
 	levelOptions := [7]pebble.LevelOptions{}
 	levelOptions[0] = pebble.LevelOptions{
-		BlockSize: 64 * 1024,
+		BlockSize: 16 * 1024,
 		Compression: func() *sstable.CompressionProfile {
 			return sstable.NoCompression
 		},
@@ -224,7 +227,7 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 
 	for i := 1; i < len(levelOptions); i++ {
 		levelOptions[i] = pebble.LevelOptions{
-			BlockSize: 64 * 1024,
+			BlockSize: 16 * 1024,
 			Compression: func() *sstable.CompressionProfile {
 				return sstable.GoodCompression
 			},
