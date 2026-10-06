@@ -325,10 +325,13 @@ func (t *wal) AppendAsync(entry *proto.LogEntry) error {
 	return t.appendAsync0(entry, nil)
 }
 
-func (t *wal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error {
+func (t *wal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) (uint32, error) {
 	t.Lock()
 	defer t.Unlock()
-	return t.appendAsync0(entry, previousCrc)
+	if err := t.appendAsync0(entry, previousCrc); err != nil {
+		return 0, err
+	}
+	return t.currentSegment.LastCrc(), nil
 }
 
 func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {

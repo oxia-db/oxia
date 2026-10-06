@@ -3190,8 +3190,9 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 				value, err := pb.Marshal(wrapInLogEntryValue(wr))
 				require.NoError(t, err)
 				if test.walFirstOffset != wal.InvalidOffset && i >= test.walFirstOffset {
-					require.NoError(t, walObject.AppendAsyncWithPreviousCrc(
-						&proto.LogEntry{Term: 1, Offset: i, Value: value}, &previousCrc))
+					_, err = walObject.AppendAsyncWithPreviousCrc(
+						&proto.LogEntry{Term: 1, Offset: i, Value: value}, &previousCrc)
+					require.NoError(t, err)
 				}
 				_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
 				require.NoError(t, err)
