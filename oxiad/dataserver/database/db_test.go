@@ -698,7 +698,7 @@ type failingCallback struct {
 	err error
 }
 
-func (c *failingCallback) OnPut(kvstore.WriteBatch, *Notifications, *proto.PutRequest, *proto.StorageEntry) (proto.Status, error) {
+func (c *failingCallback) OnPut(kvstore.WriteBatch, *Notifications, *proto.PutRequest, *proto.StorageEntry, feature.Checker) (proto.Status, error) {
 	return proto.Status_OK, c.err
 }
 
@@ -760,6 +760,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
 		proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
 		proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
+		proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1862,7 +1863,7 @@ func (FailureCallback) ValidatePut(req *proto.PutRequest, features feature.Check
 	return proto.Status_OK
 }
 
-func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
 	if req.Key == FailureCallbackKey {
 		return proto.Status_SESSION_DOES_NOT_EXIST, errors.New("failure injection")
 	}

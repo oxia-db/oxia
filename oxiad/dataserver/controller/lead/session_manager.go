@@ -518,7 +518,7 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
 	if request.SessionId != nil {
 		// override by session operation
 		return s.OnPutWithinSession(batch, notification, request, existingEntry)

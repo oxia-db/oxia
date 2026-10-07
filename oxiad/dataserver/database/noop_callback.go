@@ -30,7 +30,7 @@ func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, strin
 	return nil
 }
 
-func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
 	return proto.Status_OK, nil
 }
 
