@@ -259,9 +259,12 @@ type notificationsTestServer struct {
 	// The error that the subscriptions to a shard fail with
 	rejections map[int64]error
 	// The shards whose subscriptions the test confirms
-	unconfirmed   map[int64]bool
-	attempts      map[int64]int
-	subscriptions chan *notificationsTestSubscription
+	unconfirmed map[int64]bool
+	// Confirms only the new subscriptions, as the servers of v0.16 do: a
+	// resumed one starts with the next batch
+	onlyNewConfirmed bool
+	attempts         map[int64]int
+	subscriptions    chan *notificationsTestSubscription
 }
 
 func newNotificationsTestServer() *notificationsTestServer {
@@ -294,8 +297,8 @@ func (s *notificationsTestServer) GetNotifications(ctx context.Context, _ string
 		batches: make(chan *proto.NotificationBatch, 100),
 		errs:    make(chan error, 1),
 	}
-	if !s.unconfirmed[req.Shard] {
-		subscription.send(offset)
+	if !s.unconfirmed[req.Shard] && (!s.onlyNewConfirmed || req.StartOffsetExclusive == nil) {
+		subscription.confirm(offset)
 	}
 	s.subscriptions <- subscription
 	return subscription, nil
@@ -356,9 +359,16 @@ func (s *notificationsTestSubscription) Recv() (*proto.NotificationBatch, error)
 	}
 }
 
-// send sends a batch of creation notifications of the keys.
+// confirm sends the batch that confirms the subscription at the offset: empty,
+// without a timestamp.
+func (s *notificationsTestSubscription) confirm(offset int64) {
+	s.batches <- &proto.NotificationBatch{Shard: s.request.Shard, Offset: offset}
+}
+
+// send sends the batch of the write at the offset, with the creation
+// notifications of the keys.
 func (s *notificationsTestSubscription) send(offset int64, keys ...string) {
-	nb := &proto.NotificationBatch{Shard: s.request.Shard, Offset: offset}
+	nb := &proto.NotificationBatch{Shard: s.request.Shard, Offset: offset, Timestamp: uint64(time.Now().UnixMilli())}
 	for _, key := range keys {
 		nb.Notifications = append(nb.Notifications, &proto.NotificationEntry{
 			Key:   &key,
@@ -464,7 +474,7 @@ func TestNotificationsFollowSplitBeforeInitialized(t *testing.T) {
 		require.FailNow(t, "the subscription was established before the subscription to shard 2")
 	case <-time.After(200 * time.Millisecond):
 	}
-	children[2].send(0)
+	children[2].confirm(0)
 
 	var res result
 	select {
@@ -517,4 +527,33 @@ func TestNotificationsMissed(t *testing.T) {
 	}
 	subscription.send(22, "c")
 	assert.Equal(t, "c", nextNotification(t, nm).Key)
+}
+
+// A server of v0.16 doesn't confirm a resumed subscription: its first batch is
+// the one of the next write, past the offset it starts from, and it missed
+// nothing.
+func TestNotificationsResumedWithoutConfirmation(t *testing.T) {
+	shardManager := &notificationsTestShardManager{shards: []int64{0}}
+	server := newNotificationsTestServer()
+	server.onlyNewConfirmed = true
+	server.confirmAt(0, 10)
+	nm, err := newNotifications(context.Background(), clientOptions{requestTimeout: 10 * time.Second},
+		server, shardManager)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, nm.Close()) }()
+
+	subscription := server.nextSubscription(t)
+	subscription.send(11, "a")
+	assert.Equal(t, "a", nextNotification(t, nm).Key)
+
+	subscription.errs <- constant.ErrResourceUnavailable
+	subscription = server.nextSubscription(t)
+	if assert.NotNil(t, subscription.request.StartOffsetExclusive) {
+		assert.EqualValues(t, 11, *subscription.request.StartOffsetExclusive)
+	}
+	// The next write notified nothing, e.g. a put with an unexpected version:
+	// its batch is empty
+	subscription.send(15)
+	subscription.send(16, "b")
+	assert.Equal(t, "b", nextNotification(t, nm).Key)
 }

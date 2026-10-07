@@ -375,8 +375,11 @@ func (snm *shardNotificationsManager) getNotifications() error {
 
 		// The first batch tells where the subscription starts: after the
 		// batches that the retention deleted, if any is after the requested
-		// offset
-		if first && startOffsetExclusive != nil && nb.Offset > *startOffsetExclusive {
+		// offset. It is the one that confirms the subscription, empty and
+		// without the timestamp of a write: a server of v0.16 confirms only the
+		// new subscriptions, and starts a resumed one with its next batch
+		if first && startOffsetExclusive != nil && nb.Offset > *startOffsetExclusive &&
+			nb.Timestamp == 0 && len(nb.Notifications) == 0 {
 			if err := snm.notifyMissed(*startOffsetExclusive, nb.Offset); err != nil {
 				return err
 			}
