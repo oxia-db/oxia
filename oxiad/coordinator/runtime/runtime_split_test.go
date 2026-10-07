@@ -163,7 +163,7 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 		}},
 		Servers: servers,
 	})
-	_, err := metadata.ReserveShardIDs(4)
+	_, err := metadata.AllocateShardIDs(4)
 	require.NoError(t, err)
 	parentEnsemble := []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3}
 	childSplit := &proto.SplitMetadata{
@@ -211,6 +211,7 @@ func newSplitTestRuntime(t *testing.T) *splitTestRuntime {
 	r := &splitTestRuntime{rpc: mockutils.NewRpcProvider()}
 	r.runtime = &runtime{
 		logger: slog.With(slog.String("component", "coordinator")),
+		ctx:    t.Context(),
 		metadata: &recomputingMetadata{
 			Metadata: metadata,
 			afterWrite: func() {
@@ -416,7 +417,8 @@ func TestSplit_RestartPastPointOfNoReturn(t *testing.T) {
 	// The restarted coordinator starts the controllers of the split shards,
 	// then resumes the split, the way New does
 	r.Lock()
-	status := r.metadata.ListNamespaceStatus()
+	status, err := r.metadata.ListNamespaceStatus()
+	require.NoError(t, err)
 	for _, shard := range []int64{splitParentShard, splitLeftChild, splitRightChild} {
 		r.shardControllers[shard] = shardcontroller.NewController(constant.DefaultNamespace, shard,
 			r.namespaceConfigForSplit(constant.DefaultNamespace),
@@ -501,7 +503,7 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *racingMetadata) {
 			splitPs1, splitPs2, splitPs3, splitLs1, splitLs2, splitLs3, splitRs1, splitRs2, splitRs3,
 		},
 	})
-	_, err := metadata.ReserveShardIDs(2)
+	_, err := metadata.AllocateShardIDs(2)
 	require.NoError(t, err)
 	parentEnsemble := []*proto.DataServerIdentity{splitPs1, splitPs2, splitPs3}
 	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
@@ -527,6 +529,7 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *racingMetadata) {
 	racing := &racingMetadata{Metadata: metadata, beforeWrite: func() {}}
 	r := &runtime{
 		logger:           slog.With(slog.String("component", "coordinator")),
+		ctx:              t.Context(),
 		metadata:         racing,
 		rpc:              mockutils.NewRpcProvider(),
 		ensembleSelector: ensemble.NewSelector(),
@@ -608,7 +611,8 @@ func TestInitiateSplit_FailsIfParentElectionStarts(t *testing.T) {
 	assertElectionKept(t, metadata, splitParentShard, election)
 	parent, _ := metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)
 	assert.Nil(t, parent.UnsafeBorrow().GetSplit())
-	namespace, _ := metadata.GetNamespaceStatus(constant.DefaultNamespace)
+	namespace, _, err := metadata.GetNamespaceStatus(constant.DefaultNamespace)
+	require.NoError(t, err)
 	assert.Len(t, namespace.UnsafeBorrow().GetShards(), 2)
 
 	r.RLock()

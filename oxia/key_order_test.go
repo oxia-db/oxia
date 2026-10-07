@@ -74,11 +74,75 @@ func TestAggregateAndSortRangeScanAcrossShardsKeySorting(t *testing.T) {
 		},
 	} {
 		t.Run(test.keySorting.String(), func(t *testing.T) {
-			channels := make([]chan GetResult, len(test.shards))
+			channels := make([]chan rangeScanResult, len(test.shards))
 			for i, keys := range test.shards {
-				channels[i] = make(chan GetResult, len(keys))
+				channels[i] = make(chan rangeScanResult, len(keys))
 				for _, key := range keys {
-					channels[i] <- GetResult{Key: key}
+					channels[i] <- rangeScanResult{gr: GetResult{Key: key}}
+				}
+				close(channels[i])
+			}
+
+			outCh := make(chan GetResult, 100)
+			aggregateAndSortRangeScanAcrossShards(newKeyOrder(test.keySorting), channels, outCh)
+
+			var merged []string
+			for result := range outCh {
+				merged = append(merged, result.Key)
+			}
+			assert.Equal(t, test.expected, merged)
+		})
+	}
+}
+
+// A range scan with an index merges the records of the shards, which each
+// shard returns in the order of their secondary keys.
+func TestAggregateAndSortRangeScanAcrossShardsSecondaryKeys(t *testing.T) {
+	type record struct{ key, secondaryKey string }
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySorting
+		shards     [][]record
+		expected   []string
+	}{
+		{
+			"natural",
+			proto.KeySorting_KEY_SORTING_NATURAL,
+			[][]record{{{"p4", "a/x"}, {"p2", "a0"}}, {{"p3", "a/y/z"}, {"p1", "ab/y"}}},
+			[]string{"p4", "p3", "p2", "p1"},
+		},
+		{
+			"hierarchical",
+			proto.KeySorting_KEY_SORTING_HIERARCHICAL,
+			[][]record{{{"p4", "a0"}, {"p2", "a/x"}}, {{"p3", "ab/y"}, {"p1", "a/y/z"}}},
+			[]string{"p4", "p3", "p2", "p1"},
+		},
+		{
+			"unknown",
+			proto.KeySorting_KEY_SORTING_UNKNOWN,
+			[][]record{{{"p4", "a0"}, {"p2", "a/x"}}, {{"p3", "a/y/z"}, {"p1", "ab/y"}}},
+			[]string{"p4", "p2", "p3", "p1"},
+		},
+		{
+			// The records with the same secondary key are ordered by their keys
+			"same secondary key",
+			proto.KeySorting_KEY_SORTING_NATURAL,
+			[][]record{{{"p2", "a"}, {"p3", "b"}}, {{"p1", "b"}, {"p4", "c"}}},
+			[]string{"p2", "p1", "p3", "p4"},
+		},
+		{
+			"empty secondary key",
+			proto.KeySorting_KEY_SORTING_NATURAL,
+			[][]record{{{"p2", ""}}, {{"p1", "a"}}},
+			[]string{"p2", "p1"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			channels := make([]chan rangeScanResult, len(test.shards))
+			for i, records := range test.shards {
+				channels[i] = make(chan rangeScanResult, len(records))
+				for _, r := range records {
+					channels[i] <- rangeScanResult{gr: GetResult{Key: r.key}, secondaryIndexKey: new(r.secondaryKey)}
 				}
 				close(channels[i])
 			}

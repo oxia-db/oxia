@@ -178,12 +178,13 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	assert.NoError(t, w.Clear())
 
 	// Append one more entry so there is something to stream after the snapshot
-	assert.NoError(t, w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+	_, err = w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
 		Term:      1,
 		Offset:    n,
 		Value:     []byte("post-snapshot"),
 		Timestamp: uint64(n),
-	}, &lastCrc))
+	}, &lastCrc)
+	assert.NoError(t, err)
 	assert.NoError(t, w.Sync(context.Background()))
 
 	ackTracker := NewQuorumAckTracker(3, n, n-1)
@@ -254,12 +255,13 @@ func TestFollowerCursor_StreamToFollowerRightBeforeWalStart(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	previousCrc := uint32(1)
-	assert.NoError(t, w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+	_, err = w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
 		Term:      1,
 		Offset:    n,
 		Value:     []byte("after-snapshot"),
 		Timestamp: uint64(n),
-	}, &previousCrc))
+	}, &previousCrc)
+	assert.NoError(t, err)
 	assert.NoError(t, w.Sync(context.Background()))
 
 	ackTracker := NewQuorumAckTracker(3, n, n-1)

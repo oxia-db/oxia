@@ -152,7 +152,11 @@ func (m *Monitor) evaluate() {
 
 	m.evaluationsCounter.Inc()
 
-	namespaces := m.metadata.ListNamespaceStatus()
+	namespaces, err := m.metadata.ListNamespaceStatus()
+	if err != nil {
+		m.logger.Warn("Failed to evaluate the auto-split", slog.Any("error", err))
+		return
+	}
 
 	if m.anySplitInProgress(namespaces) {
 		return

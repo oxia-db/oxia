@@ -91,8 +91,9 @@ type Wal interface {
 
 	// AppendAsyncWithPreviousCrc appends an entry without syncing, using the given
 	// previousCrc to seed the CRC chain when the WAL is empty (e.g. after snapshot install).
-	// Pass nil when no CRC seed is needed.
-	AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error
+	// Pass nil when no CRC seed is needed. The returned entryCrc is the chained
+	// CRC of the WAL after appending this entry.
+	AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) (entryCrc uint32, err error)
 
 	// AppendAndSync an entry and forces the sync on the WAL
 	// The operation is perfomed in background and the callback is

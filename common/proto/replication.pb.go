@@ -64,26 +64,32 @@ const (
 	// and an invalid put, e.g. overflowing the sequence, gets the
 	// INVALID_ARGUMENT status instead of rejecting the whole write request
 	Feature_FEATURE_SEQUENCE_KEY_VALIDATION Feature = 8
+	// A put that overwrites a record deletes only the secondary index entries
+	// of the indexes that it drops, and writes only the ones of the indexes that
+	// it adds, instead of deleting and writing again all the entries of the
+	// record
+	Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED Feature = 9
 	// A split child copies all the data of its parent, instead of filtering the
 	// parent's snapshot and log entries to its hash range, and deletes the
 	// records outside its hash range once the split completes. A child does so
 	// when the term of its parent pins the feature
-	Feature_FEATURE_SPLIT_DEFERRED_FILTER Feature = 9
+	Feature_FEATURE_SPLIT_DEFERRED_FILTER Feature = 10
 )
 
 // Enum value maps for Feature.
 var (
 	Feature_name = map[int32]string{
-		0: "FEATURE_UNKNOWN",
-		1: "FEATURE_DB_CHECKSUM",
-		2: "FEATURE_SECONDARY_INDEX_NAME_VALIDATION",
-		3: "FEATURE_ORDERED_WRITES",
-		4: "FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP",
-		5: "FEATURE_SEQUENCE_LAST_KEY_SEPARATOR",
-		6: "FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING",
-		7: "FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS",
-		8: "FEATURE_SEQUENCE_KEY_VALIDATION",
-		9: "FEATURE_SPLIT_DEFERRED_FILTER",
+		0:  "FEATURE_UNKNOWN",
+		1:  "FEATURE_DB_CHECKSUM",
+		2:  "FEATURE_SECONDARY_INDEX_NAME_VALIDATION",
+		3:  "FEATURE_ORDERED_WRITES",
+		4:  "FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP",
+		5:  "FEATURE_SEQUENCE_LAST_KEY_SEPARATOR",
+		6:  "FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING",
+		7:  "FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS",
+		8:  "FEATURE_SEQUENCE_KEY_VALIDATION",
+		9:  "FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED",
+		10: "FEATURE_SPLIT_DEFERRED_FILTER",
 	}
 	Feature_value = map[string]int32{
 		"FEATURE_UNKNOWN":                           0,
@@ -95,7 +101,8 @@ var (
 		"FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING": 6,
 		"FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS": 7,
 		"FEATURE_SEQUENCE_KEY_VALIDATION":           8,
-		"FEATURE_SPLIT_DEFERRED_FILTER":             9,
+		"FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED":    9,
+		"FEATURE_SPLIT_DEFERRED_FILTER":             10,
 	}
 )
 
@@ -2178,7 +2185,7 @@ const file_replication_proto_rawDesc = "" +
 	"\rdb_size_bytes\x18\x01 \x01(\x04R\vdbSizeBytes\x12$\n" +
 	"\x0eread_ops_total\x18\x02 \x01(\x04R\freadOpsTotal\x12&\n" +
 	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal\x120\n" +
-	"\x14split_filter_pending\x18\x04 \x01(\bR\x12splitFilterPending*\xfe\x02\n" +
+	"\x14split_filter_pending\x18\x04 \x01(\bR\x12splitFilterPending*\xaa\x03\n" +
 	"\aFeature\x12\x13\n" +
 	"\x0fFEATURE_UNKNOWN\x10\x00\x12\x17\n" +
 	"\x13FEATURE_DB_CHECKSUM\x10\x01\x12+\n" +
@@ -2188,8 +2195,10 @@ const file_replication_proto_rawDesc = "" +
 	"#FEATURE_SEQUENCE_LAST_KEY_SEPARATOR\x10\x05\x12-\n" +
 	")FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING\x10\x06\x12-\n" +
 	")FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS\x10\a\x12#\n" +
-	"\x1fFEATURE_SEQUENCE_KEY_VALIDATION\x10\b\x12!\n" +
-	"\x1dFEATURE_SPLIT_DEFERRED_FILTER\x10\t*\x8e\x01\n" +
+	"\x1fFEATURE_SEQUENCE_KEY_VALIDATION\x10\b\x12*\n" +
+	"&FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED\x10\t\x12!\n" +
+	"\x1dFEATURE_SPLIT_DEFERRED_FILTER\x10\n" +
+	"*\x8e\x01\n" +
 	"\x0fHandshakeStatus\x12\x1c\n" +
 	"\x18HANDSHAKE_STATUS_UNKNOWN\x10\x00\x12\x1a\n" +
 	"\x16HANDSHAKE_STATUS_BOUND\x10\x01\x12\"\n" +

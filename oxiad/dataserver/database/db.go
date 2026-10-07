@@ -15,6 +15,7 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -75,7 +76,7 @@ const (
 type UpdateOperationCallback interface {
 	// ValidatePut must not mutate the request or database state.
 	ValidatePut(req *proto.PutRequest, features featurepkg.Checker) proto.Status
-	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry) (proto.Status, error)
+	OnPut(batch kvstore.WriteBatch, notifications *Notifications, req *proto.PutRequest, se *proto.StorageEntry, features featurepkg.Checker) (proto.Status, error)
 	OnDeleteWithEntry(batch kvstore.WriteBatch, notifications *Notifications, key string, value *proto.StorageEntry, features featurepkg.Checker) error
 }
 
@@ -134,6 +135,10 @@ type DB interface {
 	CompareKeys(a, b string) int
 
 	ReadCommitOffset() (int64, error)
+
+	// Flush makes the writes to the database durable: it runs without a WAL of
+	// its own, so it loses the writes since its last flush in a crash.
+	Flush() error
 
 	ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error)
 	GetSequenceUpdates(prefixKey string) (SequenceWaiter, error)
@@ -862,6 +867,10 @@ func (d *db) ReadCommitOffset() (int64, error) {
 	return d.readASCIILongOrDefault(commitOffsetKey, constant.I64NegativeOne)
 }
 
+func (d *db) Flush() error {
+	return d.kv.Flush()
+}
+
 func (d *db) readLastVersionId() (int64, error) {
 	return d.readASCIILongOrDefault(commitLastVersionIdKey, constant.I64NegativeOne)
 }
@@ -1072,7 +1081,7 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 
 	versionId := wal.InvalidOffset
 	if !internal {
-		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se)
+		status, err := updateOperationCallback.OnPut(batch, notifications, putReq, se, d)
 		if err != nil {
 			return err
 		}
@@ -1338,33 +1347,39 @@ func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, erro
 // newGetResponse returns the response to getReq that found the record at key,
 // whose entry is value.
 func newGetResponse(getReq *proto.GetRequest, key string, value []byte) (*proto.GetResponse, error) {
-	var se *proto.StorageEntry
-	var deserializeErr error
-	if getReq.IncludeValue {
-		// If we need to return the value we cannot pool the objects, because
-		// the Value slice would be returned to pool
-		se = &proto.StorageEntry{}
-		deserializeErr = Deserialize(value, se)
+	// The unmarshal aliases value: copy out only the fields the response
+	// returns, and drop the partition key and secondary indexes uncopied
+	se := proto.StorageEntryFromVTPool()
+	deserializeErr := se.UnmarshalVTUnsafe(value)
+
+	var res *proto.GetResponse
+	if deserializeErr == nil {
+		res = &proto.GetResponse{
+			Version: &proto.Version{
+				VersionId:          se.VersionId,
+				ModificationsCount: se.ModificationsCount,
+				CreatedTimestamp:   se.CreationTimestamp,
+				ModifiedTimestamp:  se.ModificationTimestamp,
+				SessionId:          se.SessionId,
+			},
+		}
+		if getReq.IncludeValue {
+			res.Value = bytes.Clone(se.Value)
+		}
+		if se.ClientIdentity != nil {
+			ci := strings.Clone(*se.ClientIdentity)
+			res.Version.ClientIdentity = &ci
+		}
 	} else {
-		// Metadata-only read: skip copying the value that would be dropped
-		se = proto.StorageEntryFromVTPool()
-		defer se.ReturnToVTPool()
-		deserializeErr = DeserializeMetadata(value, se)
-	}
-	if deserializeErr != nil {
-		return nil, deserializeErr
+		deserializeErr = errors.Wrap(deserializeErr, "failed to Deserialize storage entry")
 	}
 
-	res := &proto.GetResponse{
-		Value: se.Value,
-		Version: &proto.Version{
-			VersionId:          se.VersionId,
-			ModificationsCount: se.ModificationsCount,
-			CreatedTimestamp:   se.CreationTimestamp,
-			ModifiedTimestamp:  se.ModificationTimestamp,
-			SessionId:          se.SessionId,
-			ClientIdentity:     se.ClientIdentity,
-		},
+	// The pool keeps the Value capacity, which must not alias the read buffer
+	se.Value = nil
+	se.ReturnToVTPool()
+
+	if deserializeErr != nil {
+		return nil, deserializeErr
 	}
 
 	if getReq.ComparisonType != proto.KeyComparisonType_EQUAL {

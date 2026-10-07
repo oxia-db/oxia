@@ -43,6 +43,8 @@ type mockMetadata struct {
 	nsConfigs map[string]*proto.Namespace
 	nodeMap   map[string]*proto.DataServerIdentity
 	lbConfig  *proto.LoadBalancer
+
+	namespaceStatusErr error
 }
 
 func dataServer(id string) *proto.DataServerIdentity {
@@ -69,26 +71,29 @@ func (*mockMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 
 func (m *mockMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
-func (*mockMetadata) ReserveShardIDs(uint32) (int64, error) { return 0, nil }
+func (*mockMetadata) AllocateShardIDs(uint32) (int64, error) { return 0, nil }
 
 func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+func (m *mockMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
 		statuses[name] = commonobject.Borrow(status)
 	}
-	return statuses
+	return statuses, nil
 }
 
-func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
+	if m.namespaceStatusErr != nil {
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, m.namespaceStatusErr
+	}
 	status, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, nil
 	}
-	return commonobject.Borrow(status), true
+	return commonobject.Borrow(status), true, nil
 }
 
 func (m *mockMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool) {
@@ -443,6 +448,47 @@ func TestIsBalancedRequiresNamespaceStatus(t *testing.T) {
 		"ns":      {},
 		"deleted": {},
 	}
+	assert.False(t, b.IsBalanced())
+}
+
+func TestIsBalancedFalseOnNamespaceStatusError(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+	ensemble := []*proto.DataServerIdentity{sv1, sv2, sv3}
+
+	metadata := &mockMetadata{
+		status: &proto.ClusterStatus{
+			Namespaces: map[string]*proto.NamespaceStatus{
+				"ns": {
+					ReplicationFactor: 3,
+					Shards: map[int64]*proto.ShardMetadata{
+						0: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: ensemble},
+						1: {Status: proto.ShardStatusSteadyState, Leader: sv2, Ensemble: ensemble},
+						2: {Status: proto.ShardStatusSteadyState, Leader: sv3, Ensemble: ensemble},
+					},
+				},
+			},
+		},
+		nodes:    linkedhashset.New("sv-1", "sv-2", "sv-3"),
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns": {Name: "ns", ReplicationFactor: 3},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
+	assert.True(t, b.IsBalanced())
+
+	metadata.namespaceStatusErr = errors.New("status unavailable")
 	assert.False(t, b.IsBalanced())
 }
 

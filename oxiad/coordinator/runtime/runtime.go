@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
+	oxiatime "github.com/oxia-db/oxia/common/time"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
@@ -230,15 +232,22 @@ func (c *runtime) SyncShardControllerServerAddresses() {
 }
 
 func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
-	if _, exists := c.metadata.GetNamespaceStatus(name); exists {
-		return c.initShardControllers(name, namespaceConfig)
-	}
-
-	baseShardID, err := c.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	_, exists, err := c.metadata.GetNamespaceStatus(name)
 	if err != nil {
 		return err
 	}
-	status := c.metadata.ListNamespaceStatus()
+	if exists {
+		return c.initShardControllers(name, namespaceConfig)
+	}
+
+	baseShardID, err := c.metadata.AllocateShardIDs(namespaceConfig.GetInitialShardCount())
+	if err != nil {
+		return err
+	}
+	status, err := c.metadata.ListNamespaceStatus()
+	if err != nil {
+		return err
+	}
 	namespaceStatus := &proto.NamespaceStatus{
 		Shards:            map[int64]*proto.ShardMetadata{},
 		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
@@ -248,8 +257,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
 		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status, nil)
 		if err != nil {
-			c.logger.Error("failed to select new ensembles", slog.Any("shard", shard), slog.Any("error", err))
-			continue
+			return errors.Wrapf(err, "failed to select the ensemble of shard %d", shard.Id)
 		}
 
 		namespaceStatus.Shards[shard.Id] = &proto.ShardMetadata{
@@ -277,7 +285,10 @@ func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Names
 
 	// Shard deletion removes status before removing its controller from the
 	// map. Read under the runtime lock to avoid reviving a deleted shard.
-	namespaceStatus, exists := c.metadata.GetNamespaceStatus(name)
+	namespaceStatus, exists, err := c.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
 	if !exists {
 		return fmt.Errorf("%w: namespace %q status disappeared during controller initialization",
 			metadatacommon.ErrConflict, name)
@@ -562,8 +573,19 @@ func (c *runtime) handleActionChangeEnsemble(ac action.Action) {
 
 // This is called while already holding the lock on the coordinator.
 func (c *runtime) computeNewAssignments() {
+	_ = backoff.RetryNotify(c.computeNewAssignments0, oxiatime.NewBackOff(c.ctx), func(err error, retryAfter time.Duration) {
+		c.logger.Warn("Failed to compute the shard assignments, retrying later",
+			slog.Any("error", err),
+			slog.Duration("retry-after", retryAfter))
+	})
+}
+
+func (c *runtime) computeNewAssignments0() error {
 	config := c.metadata.GetConfig().UnsafeBorrow()
-	status := c.metadata.ListNamespaceStatus()
+	status, err := c.metadata.ListNamespaceStatus()
+	if err != nil {
+		return err
+	}
 	namespaces := c.metadata.ListNamespace()
 	assignments := &proto.ShardAssignments{
 		Namespaces:         map[string]*proto.NamespaceShardsAssignment{},
@@ -611,6 +633,7 @@ func (c *runtime) computeNewAssignments() {
 	}
 
 	c.assignmentsWatch.Publish(assignments)
+	return nil
 }
 
 func mergedAuthorities(status map[string]commonobject.Borrowed[*proto.NamespaceStatus], servers []*proto.DataServerIdentity, extraAuthorities []string) []string {
@@ -677,7 +700,11 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	c.Lock()
 	defer c.Unlock()
 
-	status := cloneNamespaceStatuses(c.metadata.ListNamespaceStatus())
+	currentStatus, err := c.metadata.ListNamespaceStatus()
+	if err != nil {
+		return 0, 0, err
+	}
+	status := cloneNamespaceStatuses(currentStatus)
 
 	// Validate namespace
 	borrowedNs, exists := status[namespace]
@@ -705,9 +732,9 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	}
 
 	// Allocate child shard IDs
-	leftChildId, err := c.metadata.ReserveShardIDs(2)
+	leftChildId, err := c.metadata.AllocateShardIDs(2)
 	if err != nil {
-		return 0, 0, errors.Wrap(err, "failed to reserve the child shard ids")
+		return 0, 0, errors.Wrap(err, "failed to allocate the child shard ids")
 	}
 	rightChildId := leftChildId + 1
 	// Select ensembles for children.
@@ -825,7 +852,11 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		RpcProvider:   c.rpc,
 		EventListener: c,
 		EnsembleSelector: func(ns string) ([]*proto.DataServerIdentity, error) {
-			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), c.metadata.ListNamespaceStatus(), nil)
+			status, err := c.metadata.ListNamespaceStatus()
+			if err != nil {
+				return nil, err
+			}
+			return c.selectNewEnsemble(ns, 0, c.namespaceConfigForSplit(ns), status, nil)
 		},
 		SupportedFeaturesSupplier: c.findDataServerFeatures,
 	})
@@ -952,7 +983,11 @@ func (c *runtime) restartInProgressSplits(clusterStatus map[string]commonobject.
 				RpcProvider:   c.rpc,
 				EventListener: c,
 				EnsembleSelector: func(namespace string) ([]*proto.DataServerIdentity, error) {
-					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), c.metadata.ListNamespaceStatus(), nil)
+					status, err := c.metadata.ListNamespaceStatus()
+					if err != nil {
+						return nil, err
+					}
+					return c.selectNewEnsemble(namespace, 0, c.namespaceConfigForSplit(namespace), status, nil)
 				},
 				SupportedFeaturesSupplier: c.findDataServerFeatures,
 			})
@@ -965,7 +1000,10 @@ func New(
 	metadata coordmetadata.Metadata,
 	rpcProvider rpc.ProviderFactory,
 ) (Runtime, error) {
-	clusterStatus := metadata.ListNamespaceStatus()
+	clusterStatus, err := metadata.ListNamespaceStatus()
+	if err != nil {
+		return nil, err
+	}
 	insID, err := metadata.GetInstanceID()
 	if err != nil {
 		return nil, err

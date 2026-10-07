@@ -91,7 +91,8 @@ func (vtprotoCodec) Unmarshal(data mem.BufferSlice, v any) error {
 	// In the common single-buffer case, MaterializeToBuffer just references
 	// the received buffer, without copying it. The buffer can be freed right
 	// after unmarshaling: UnmarshalVT (and pb.Unmarshal) copy the bytes
-	// fields out of it.
+	// fields out of it. The messages must keep their own copies: a follower
+	// keeps the log entries it receives until it applies them.
 	buf := data.MaterializeToBuffer(mem.DefaultBufferPool())
 	defer buf.Free()
 

@@ -37,7 +37,9 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 	//   - entry.Value is a private heap buffer: the segment codec copies
 	//     every record out of the mmap, and the WAL reader aliases
 	//     entry.Value into that copy, so the buffer is never mutated,
-	//     recycled, or unmapped behind the aliases.
+	//     recycled, or unmapped behind the aliases. The entries a follower
+	//     applies as it received them from the leader are private as well:
+	//     the gRPC codec copies their Value out of the message buffer.
 	//   - Everything ProcessWrite/ProcessControlRequest persists is copied
 	//     (Pebble batch arena, sealed notifications) before returning, and
 	//     nothing retains the aliased strings past the call.

@@ -1034,6 +1034,26 @@ func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
 }
 
+type namespaceStatusFailingMetadata struct {
+	coordmetadata.Metadata
+}
+
+func (namespaceStatusFailingMetadata) GetNamespaceStatus(string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
+	return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, errors.New("status unavailable")
+}
+
+func TestManagementServerGetNamespaceStatusLoadError(t *testing.T) {
+	metadata := namespaceStatusFailingMetadata{Metadata: newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 1}},
+	})}
+	management := newReadyManagementServer(metadata, nil)
+
+	_, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "ns-1"})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, grpcstatus.Code(err))
+	assert.ErrorContains(t, err, "status unavailable")
+}
+
 func TestManagementServerGetNamespaceNotFound(t *testing.T) {
 	management := newReadyManagementServer(
 		newTestMetadata(t, &proto.ClusterConfiguration{}),

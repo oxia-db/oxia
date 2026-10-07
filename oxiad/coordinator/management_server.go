@@ -249,7 +249,10 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 		return nil, err
 	}
 	namespaces := runtime.Metadata().ListNamespace()
-	statuses := runtime.Metadata().ListNamespaceStatus()
+	statuses, err := runtime.Metadata().ListNamespaceStatus()
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to list namespaces: %v", err)
+	}
 
 	responseNamespaces := make([]*proto.NamespaceView, 0, len(namespaces))
 	for name, namespace := range namespaces {
@@ -400,7 +403,11 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 	}
 
 	namespaceStatus := &proto.NamespaceStatus{}
-	if borrowedStatus, found := runtime.Metadata().GetNamespaceStatus(req.Namespace); found {
+	borrowedStatus, found, err := runtime.Metadata().GetNamespaceStatus(req.Namespace)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to get namespace %q: %v", req.Namespace, err)
+	}
+	if found {
 		if status := borrowedStatus.UnsafeBorrow(); status != nil {
 			namespaceStatus = status
 		}

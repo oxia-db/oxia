@@ -256,7 +256,11 @@ func isFinalizingSplitParent(meta *proto.ShardMetadata) bool {
 // on their current metadata. Failing to persist it stops the split, as in
 // updateShardMeta.
 func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) error {
-	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
+	_, exists, err := sc.metadata.GetNamespaceStatus(sc.namespace)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		sc.logger.Warn("namespace status not found while updating split phase",
 			slog.String("namespace", sc.namespace),
 			slog.String("phase", newPhase.String()))
@@ -927,7 +931,11 @@ func (sc *SplitController) abort() {
 // a split with a child missing can't complete, and its Cutover keeps the
 // parent frozen until the split times out again.
 func (sc *SplitController) removeSplit() error {
-	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
+	_, exists, err := sc.metadata.GetNamespaceStatus(sc.namespace)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		sc.logger.Warn("namespace status not found while removing the split",
 			slog.String("namespace", sc.namespace))
 		return nil
@@ -997,14 +1005,18 @@ func (sc *SplitController) updateShardsMetaIf(
 	precondition func(shards map[int64]*proto.ShardMetadata) bool,
 	updates map[int64]func(meta *proto.ShardMetadata),
 ) (bool, error) {
-	if _, exists := sc.metadata.GetNamespaceStatus(sc.namespace); !exists {
+	_, exists, err := sc.metadata.GetNamespaceStatus(sc.namespace)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
 		sc.logger.Warn("namespace status not found while updating shards metadata",
 			slog.String("namespace", sc.namespace))
 		return false, nil
 	}
 	var notFound error
 	applied := false
-	err := sc.metadata.UpdateShardStatuses(sc.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+	err = sc.metadata.UpdateShardStatuses(sc.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
 		notFound = nil
 		applied = false
 		for shardId := range updates {

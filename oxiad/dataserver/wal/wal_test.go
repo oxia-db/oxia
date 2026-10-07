@@ -452,7 +452,7 @@ func TestTrim(t *testing.T) {
 	assert.EqualValues(t, 0, w.FirstOffset())
 	assert.EqualValues(t, 99, w.LastOffset())
 
-	assert.NoError(t, w.(*wal).trim(50))
+	assert.NoError(t, w.(*wal).trim(50, w.(*wal).generation.Load(), func() error { return nil }))
 
 	assert.EqualValues(t, 50, w.FirstOffset())
 	assert.EqualValues(t, 99, w.LastOffset())
@@ -629,11 +629,12 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	assert.NoError(t, w2.Clear())
 
 	// First entry after clear uses AppendAsyncWithPreviousCrc to seed the CRC chain
-	assert.NoError(t, w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+	crcAt10, err := w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
 		Term:   1,
 		Offset: 10,
 		Value:  []byte("entry-10"),
-	}, &crcAt9))
+	}, &crcAt9)
+	assert.NoError(t, err)
 	assert.NoError(t, w2.Sync(context.Background()))
 
 	for i := 11; i < 20; i++ {
@@ -650,6 +651,9 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	// the WAL that was cleared+reseeded at offset 9.
 	assert.Equal(t, expectedCrc, actualCrc,
 		"CRC chain must match after clear+AppendAsyncWithPreviousCrc")
+	// The append returns the CRC that the WAL chained for the entry
+	assert.Equal(t, w1Crcs[10], crcAt10)
+	assert.Equal(t, w2CrcsAfter[10], crcAt10)
 
 	assert.NoError(t, w1.Close())
 	assert.NoError(t, f1.Close())
@@ -1225,6 +1229,68 @@ func TestWal_TruncateBelowAllSegments(t *testing.T) {
 		assert.True(t, r.HasNext())
 		e, _, _, err := r.ReadNext()
 		assert.NoError(t, err)
+		assert.EqualValues(t, i, e.Offset)
+	}
+	assert.False(t, r.HasNext())
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// The segments that a truncation deletes, or reopens for writes, must leave
+// the read-only segments cache. The reads of the offsets appended again after
+// the truncation used to be served by the cached segments: the deleted ones,
+// closed, failed every read, and the reopened one read the new entries through
+// the index of the truncated ones, failing or returning the entries of other
+// offsets.
+func TestWal_TruncateEvictsCachedSegments(t *testing.T) {
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		Retention:   1 * time.Hour,
+		SegmentSize: 1024,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	group := w.(*wal).readOnlySegments.(*readOnlySegmentsGroup)
+
+	appendEntries(t, w, 1, 0, 99, "old")
+
+	// Cache the read-only segment holding the truncation point, and one after
+	// it
+	for _, offset := range []int64{0, 50} {
+		r, err := w.NewReader(offset - 1)
+		assert.NoError(t, err)
+		_, _, _, err = r.ReadNext()
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+	}
+	group.Lock()
+	cached := group.openSegments.Values()
+	group.Unlock()
+	if assert.Len(t, cached, 2) {
+		assert.Greater(t, cached[1].Get().BaseOffset(), int64(30))
+	}
+
+	headOffset, err := w.TruncateLog(30)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 30, headOffset)
+	// The truncation releases the cache references: the segments get closed,
+	// exactly once
+	for _, s := range cached {
+		assert.EqualValues(t, 0, s.RefCnt())
+	}
+
+	// Bigger entries than the truncated ones, rolling the reopened segment
+	// over
+	appendEntries(t, w, 2, 31, 130, "new-term")
+
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	for i := int64(0); i <= 130; i++ {
+		e, _, _, err := r.ReadNext()
+		if !assert.NoError(t, err, "offset %d", i) {
+			break
+		}
 		assert.EqualValues(t, i, e.Offset)
 	}
 	assert.False(t, r.HasNext())

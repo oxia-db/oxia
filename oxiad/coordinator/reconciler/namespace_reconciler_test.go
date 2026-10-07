@@ -86,6 +86,7 @@ func assertStatusEqual(t *testing.T, expected, actual *proto.ClusterStatus) {
 
 type mockNamespaceMetadata struct {
 	status   *proto.ClusterStatus
+	config   *proto.ClusterConfiguration
 	configNS map[string]*proto.Namespace
 }
 
@@ -93,7 +94,7 @@ func (*mockNamespaceMetadata) Close() error { return nil }
 
 func (m *mockNamespaceMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
-func (m *mockNamespaceMetadata) ReserveShardIDs(count uint32) (int64, error) {
+func (m *mockNamespaceMetadata) AllocateShardIDs(count uint32) (int64, error) {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	base := cloned.ShardIdGenerator
 	cloned.ShardIdGenerator += int64(count)
@@ -121,20 +122,20 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	return nil
 }
 
-func (m *mockNamespaceMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+func (m *mockNamespaceMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
 	namespaces := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
 	}
-	return namespaces
+	return namespaces, nil
 }
 
-func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+func (m *mockNamespaceMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
 	status, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, nil
 	}
-	return commonobject.Borrow(status), true
+	return commonobject.Borrow(status), true, nil
 }
 
 func (m *mockNamespaceMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool) {
@@ -207,8 +208,8 @@ func (m *mockNamespaceMetadata) ListNamespace() map[string]commonobject.Borrowed
 	return namespaces
 }
 
-func (*mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
-	return commonobject.Borrowed[*proto.ClusterConfiguration]{}
+func (m *mockNamespaceMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfiguration] {
+	return commonobject.Borrow(m.config)
 }
 
 // SubscribeConfig is not used by these tests.
@@ -295,10 +296,14 @@ func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 func (*mockNamespaceRuntime) SyncShardControllerServerAddresses() {}
 
 func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *proto.Namespace) error {
-	if _, exists := m.metadata.GetNamespaceStatus(name); exists {
+	_, exists, err := m.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
+	if exists {
 		return m.initShardControllers(name)
 	}
-	baseShardID, err := m.metadata.ReserveShardIDs(namespaceConfig.GetInitialShardCount())
+	baseShardID, err := m.metadata.AllocateShardIDs(namespaceConfig.GetInitialShardCount())
 	if err != nil {
 		return err
 	}
@@ -309,7 +314,11 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for name, existingNamespaceStatus := range m.metadata.ListNamespaceStatus() {
+	existingNamespaceStatuses, err := m.metadata.ListNamespaceStatus()
+	if err != nil {
+		return err
+	}
+	for name, existingNamespaceStatus := range existingNamespaceStatuses {
 		status.Namespaces[name] = existingNamespaceStatus.UnsafeBorrow()
 	}
 	status.Namespaces[name] = namespaceStatus
@@ -339,7 +348,10 @@ func (m *mockNamespaceRuntime) CreateNamespace(name string, namespaceConfig *pro
 }
 
 func (m *mockNamespaceRuntime) initShardControllers(name string) error {
-	namespaceStatus, exists := m.metadata.GetNamespaceStatus(name)
+	namespaceStatus, exists, err := m.metadata.GetNamespaceStatus(name)
+	if err != nil {
+		return err
+	}
 	if !exists {
 		return metadatacommon.ErrConflict
 	}

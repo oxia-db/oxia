@@ -23,6 +23,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -68,10 +70,32 @@ var (
 	}
 )
 
+const (
+	// memTableSize is the Pebble default, set explicitly because the memtable
+	// slots of the cache are sized after it.
+	memTableSize = 4 * 1024 * 1024
+
+	// memTableSlotSize is the cache space that the memtables of a shard
+	// reserve once they have grown to full size: the mutable memtable, and
+	// the flushed one that Pebble keeps to recycle.
+	memTableSlotSize = 2 * memTableSize
+
+	// maxMemTableSlots is how many open shards get the space of their
+	// memtables on top of the configured cache size. A free slot costs no
+	// memory. Past that many shards, the memtables of the others take their
+	// space from the blocks.
+	maxMemTableSlots = 1024
+)
+
 type PebbleFactory struct {
 	dataDir string
 	cache   *pebble.Cache
 	options *FactoryOptions
+
+	// memTableSlots holds the release of the placeholder reservation of each
+	// free memtable slot
+	memTableSlotsLock sync.Mutex
+	memTableSlots     []func()
 
 	gaugeCacheSize metric.Gauge
 }
@@ -82,11 +106,22 @@ func NewPebbleKVFactory(options *FactoryOptions) (Factory, error) {
 	}
 	options.EnsureDefaults()
 
-	blockCache := pebble.NewCache(options.CacheSizeMB * 1024 * 1024)
+	// Pebble reserves the memory of the memtables in the block cache, so that
+	// the cache bounds both. The shards share the cache: with enough of them,
+	// their memtables would leave no room for the blocks. So the cache gets a
+	// slot for the memtables of each shard on top of the configured size, and
+	// each free slot is held by a placeholder reservation, which a shard
+	// releases while it is open. The blocks keep the configured size.
+	blockCache := pebble.NewCache(options.CacheSizeMB*1024*1024 + maxMemTableSlots*memTableSlotSize)
+	memTableSlots := make([]func(), maxMemTableSlots)
+	for i := range memTableSlots {
+		memTableSlots[i] = blockCache.Reserve(memTableSlotSize)
+	}
 
 	pf := &PebbleFactory{
-		dataDir: options.DataDir,
-		options: options,
+		dataDir:       options.DataDir,
+		options:       options,
+		memTableSlots: memTableSlots,
 
 		// Share a single cache instance across the databases for all the shards
 		cache: blockCache,
@@ -116,6 +151,28 @@ func (p *PebbleFactory) Close() error {
 	p.gaugeCacheSize.Unregister()
 	p.cache.Unref()
 	return nil
+}
+
+// takeMemTableSlot releases a placeholder reservation, to make room for the
+// memtables of a shard. It returns false when every slot is taken.
+func (p *PebbleFactory) takeMemTableSlot() bool {
+	p.memTableSlotsLock.Lock()
+	defer p.memTableSlotsLock.Unlock()
+	n := len(p.memTableSlots)
+	if n == 0 {
+		return false
+	}
+	p.memTableSlots[n-1]()
+	p.memTableSlots = p.memTableSlots[:n-1]
+	return true
+}
+
+// returnMemTableSlot holds a slot with a placeholder reservation again, once
+// the memtables of the shard that had it are freed.
+func (p *PebbleFactory) returnMemTableSlot() {
+	p.memTableSlotsLock.Lock()
+	defer p.memTableSlotsLock.Unlock()
+	p.memTableSlots = append(p.memTableSlots, p.cache.Reserve(memTableSlotSize))
 }
 
 func (p *PebbleFactory) NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error) {
@@ -148,6 +205,7 @@ type Pebble struct {
 	db              *pebble.DB
 	snapshotCounter atomic.Int64
 	writeOptions    *pebble.WriteOptions
+	memTableSlot    bool
 
 	keyEncoder compare.Encoder
 
@@ -166,6 +224,11 @@ type Pebble struct {
 	batchSizeHisto  metric.Histogram
 	batchCountHisto metric.Histogram
 
+	memTableStalls  metric.Counter
+	l0Stalls        metric.Counter
+	writeStallTime  metric.Counter
+	writeStallStart atomic.Int64
+
 	kvTrap *KvTrap
 }
 
@@ -176,6 +239,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	labels := metric.LabelsForShard(namespace, shardId)
+	stallLabels := func(reason string) map[string]any {
+		l := metric.LabelsForShard(namespace, shardId)
+		l["reason"] = reason
+		return l
+	}
 	pb := &Pebble{
 		ctx:       ctx,
 		cancel:    cancelFunc,
@@ -206,6 +274,13 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 			"The size in bytes for a given batch", labels),
 		batchCountHisto: metric.NewCountHistogram("oxia_server_kv_batch_count",
 			"The number of operations in a given batch", labels),
+
+		memTableStalls: metric.NewCounter("oxia_server_kv_pebble_write_stalls",
+			"The number of times Pebble stopped the writes", "count", stallLabels("memtable")),
+		l0Stalls: metric.NewCounter("oxia_server_kv_pebble_write_stalls",
+			"The number of times Pebble stopped the writes", "count", stallLabels("l0")),
+		writeStallTime: metric.NewCounter("oxia_server_kv_pebble_write_stall_time",
+			"The time during which Pebble kept the writes stopped", metric.Milliseconds, labels),
 	}
 
 	var err error
@@ -213,9 +288,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		return nil, err
 	}
 
+	// A point read that misses the block cache reads and decompresses a whole
+	// block: 16 KiB blocks cost a fraction of the 64 KiB ones, and take about
+	// the same disk space
 	levelOptions := [7]pebble.LevelOptions{}
 	levelOptions[0] = pebble.LevelOptions{
-		BlockSize: 64 * 1024,
+		BlockSize: 16 * 1024,
 		Compression: func() *sstable.CompressionProfile {
 			return sstable.NoCompression
 		},
@@ -224,9 +302,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 
 	for i := 1; i < len(levelOptions); i++ {
 		levelOptions[i] = pebble.LevelOptions{
-			BlockSize: 64 * 1024,
+			BlockSize: 16 * 1024,
+			// Snappy rather than zstd: compactions take half the CPU, and a
+			// block cache miss decompresses faster, for about a quarter more
+			// disk space
 			Compression: func() *sstable.CompressionProfile {
-				return sstable.GoodCompression
+				return sstable.SnappyCompression
 			},
 			FilterPolicy: bloom.FilterPolicy(10),
 		}
@@ -234,14 +315,18 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 
 	log := slog.With(
 		slog.String("component", "pebble"),
+		slog.String("namespace", namespace),
 		slog.Int64("shard", shardId),
 	)
 	pbOptions := &pebble.Options{
-		Cache:      factory.cache,
-		Levels:     levelOptions,
-		FS:         vfs.Default,
-		DisableWAL: !factory.options.UseWAL,
-		Logger:     &pebbleLogger{log},
+		Cache:        factory.cache,
+		MemTableSize: memTableSize,
+		Levels:       levelOptions,
+		FS:           vfs.Default,
+		DisableWAL:   !factory.options.UseWAL,
+		Logger:       &pebbleLogger{log},
+		// Pebble fills in the events left out, as it does without a listener
+		EventListener: pb.writeStallListener(),
 
 		FormatMajorVersion: pebble.FormatVirtualSSTables,
 	}
@@ -255,8 +340,12 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 		return nil, errors.Wrap(err, "failed to create marker")
 	}
 
+	pb.memTableSlot = factory.takeMemTableSlot()
 	db, err := pebble.Open(pb.dbPath, pbOptions)
 	if err != nil {
+		if pb.memTableSlot {
+			factory.returnMemTableSlot()
+		}
 		return nil, errors.Wrapf(err, "failed to open database at %s", pb.dbPath)
 	}
 
@@ -304,6 +393,11 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 			"The estimated number of bytes that need to be compacted",
 			metric.Bytes, labels, func() int64 {
 				return int64(pb.dbMetrics().Compact.EstimatedDebt)
+			}),
+		metric.NewGauge("oxia_server_kv_pebble_l0_sublevels",
+			"The number of sublevels in L0: Pebble stops the writes at 12",
+			"count", labels, func() int64 {
+				return int64(pb.dbMetrics().Levels[0].Sublevels)
 			}),
 		metric.NewGauge("oxia_server_kv_pebble_flush_total",
 			"The total number of db flushes",
@@ -374,6 +468,28 @@ func newKVPebble(factory *PebbleFactory, namespace string, shardId int64, keySor
 	return pb, nil
 }
 
+// writeStallListener counts the write stalls of the db, and the time they
+// last. Pebble stops the writes when its memtables are full while the previous
+// one is still being flushed, or when L0 has too many sublevels.
+func (p *Pebble) writeStallListener() *pebble.EventListener {
+	return &pebble.EventListener{
+		WriteStallBegin: func(info pebble.WriteStallBeginInfo) {
+			p.writeStallStart.Store(time.Now().UnixNano())
+			// "L0 file count limit exceeded" or "memtable count limit reached"
+			if strings.HasPrefix(info.Reason, "L0") {
+				p.l0Stalls.Inc()
+			} else {
+				p.memTableStalls.Inc()
+			}
+		},
+		WriteStallEnd: func() {
+			if start := p.writeStallStart.Swap(0); start != 0 {
+				p.writeStallTime.Add(int(time.Since(time.Unix(0, start)).Milliseconds()))
+			}
+		},
+	}
+}
+
 func (p *Pebble) Close() error {
 	select {
 	case <-p.ctx.Done():
@@ -387,7 +503,11 @@ func (p *Pebble) Close() error {
 		if err := p.db.Flush(); err != nil {
 			return err
 		}
-		return p.db.Close()
+		err := p.db.Close()
+		if p.memTableSlot {
+			p.factory.returnMemTableSlot()
+		}
+		return err
 	}
 }
 
