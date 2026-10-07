@@ -1142,7 +1142,7 @@ func TestSessionManager_DeleteEphemeralRecord(t *testing.T) {
 	}}})
 	assert.NoError(t, err)
 	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
-	assert.True(t, keyExists(t, lc, secondaryIndexKey(url.PathEscape("/a"), secondaryIndex)))
+	assert.True(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
 
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
 		Shard:   &shardId,
@@ -1151,7 +1151,7 @@ func TestSessionManager_DeleteEphemeralRecord(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, keyExists(t, lc, "/a"))
 	assert.False(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "/a")))
-	assert.False(t, keyExists(t, lc, secondaryIndexKey(url.PathEscape("/a"), secondaryIndex)))
+	assert.False(t, keyExists(t, lc, secondaryIndexKey("/a", secondaryIndex)))
 
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shardId, Puts: []*proto.PutRequest{{
 		Key:   "/a",
@@ -1471,8 +1471,7 @@ func TestSplitChild_RecordInternalKeysFollowPartitionKey(t *testing.T) {
 
 		owner := hash.Xxh332(partitionKey) >= child.Min && hash.Xxh332(partitionKey) <= child.Max
 		for _, record := range records {
-			indexKey := secondaryIndexKey(url.PathEscape(record), index)
-			for _, key := range []string{record, indexKey, ShadowKey(sessionId, record)} {
+			for _, key := range []string{record, secondaryIndexKey(record, index), ShadowKey(sessionId, record)} {
 				_, _, closer, err := db.RawKV().Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
 				if assert.Equal(t, owner, err == nil, "key %q, child %v", key, child) && err == nil {
 					assert.NoError(t, closer.Close())

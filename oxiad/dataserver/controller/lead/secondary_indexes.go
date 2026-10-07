@@ -110,18 +110,15 @@ const secondaryIdxRangePrefixFormat = secondaryIdxKeyPrefix + "/%s/%s"
 // the key of an index entry.
 const secondaryIdxNameSeparator = "/"
 
-// secondaryIndexKey returns the key of the entry of a secondary index of the
-// record whose key, escaped with url.PathEscape, is escapedPrimaryKey.
-func secondaryIndexKey(escapedPrimaryKey string, si *proto.SecondaryIndex) string {
+func secondaryIndexKey(primaryKey string, si *proto.SecondaryIndex) string {
 	return secondaryIdxKeyPrefix + "/" + si.IndexName + secondaryIdxNameSeparator + si.SecondaryKey +
-		secondaryIdxSeparator + escapedPrimaryKey
+		secondaryIdxSeparator + url.PathEscape(primaryKey)
 }
 
 func deleteSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, existingEntry *proto.StorageEntry) error {
 	if len(existingEntry.SecondaryIndexes) > 0 {
-		escapedPrimaryKey := url.PathEscape(primaryKey)
 		for _, si := range existingEntry.SecondaryIndexes {
-			if err := batch.Delete(secondaryIndexKey(escapedPrimaryKey, si)); err != nil {
+			if err := batch.Delete(secondaryIndexKey(primaryKey, si)); err != nil {
 				return err
 			}
 		}
@@ -147,9 +144,8 @@ var emptyValue []byte
 
 func writeSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string, secondaryIndexes []*proto.SecondaryIndex) error {
 	if len(secondaryIndexes) > 0 {
-		escapedPrimaryKey := url.PathEscape(primaryKey)
 		for _, si := range secondaryIndexes {
-			if err := batch.Put(secondaryIndexKey(escapedPrimaryKey, si), emptyValue); err != nil {
+			if err := batch.Put(secondaryIndexKey(primaryKey, si), emptyValue); err != nil {
 				return err
 			}
 		}
@@ -203,17 +199,16 @@ func updateSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string,
 		entries[newSecondaryIndexEntry(si)] |= inUpdated
 	}
 
-	escapedPrimaryKey := url.PathEscape(primaryKey)
 	for _, si := range existing {
 		if entries[newSecondaryIndexEntry(si)]&inUpdated == 0 {
-			if err := batch.Delete(secondaryIndexKey(escapedPrimaryKey, si)); err != nil {
+			if err := batch.Delete(secondaryIndexKey(primaryKey, si)); err != nil {
 				return err
 			}
 		}
 	}
 	for _, si := range updated {
 		if entries[newSecondaryIndexEntry(si)]&inExisting == 0 {
-			if err := batch.Put(secondaryIndexKey(escapedPrimaryKey, si), emptyValue); err != nil {
+			if err := batch.Put(secondaryIndexKey(primaryKey, si), emptyValue); err != nil {
 				return err
 			}
 		}
