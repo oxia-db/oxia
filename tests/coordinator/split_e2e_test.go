@@ -2908,9 +2908,11 @@ func TestCoordinator_ShardSplit_ChildDataSurvivesLeaderLossAfterSplit(t *testing
 // e.g. while it is down: a term of an ensemble with that data server pins no
 // feature, so its leader enables none with an entry, and a shard that gets no
 // write has no committed entry. It also holds the first cutover of a split
-// before it freezes the parent.
+// before it freezes the parent and, once given the coordinator's metadata, adds
+// only the leader of each child as an observer of the parent (see
+// leaderOnlyChildObservers).
 type featurelessServerRpcProvider struct {
-	rpc2.Provider
+	leaderOnlyChildObservers
 	featurelessServer string
 	cutoverReached    chan struct{}
 	resumeCutover     chan struct{}
@@ -2958,9 +2960,9 @@ func (p *featurelessServerRpcProvider) FreezeShard(ctx context.Context, node *pr
 	return p.Provider.FreezeShard(ctx, node, req)
 }
 
-// setupSplitClusterWithDbDirs is setupSplitCluster, with data servers named
-// s1, s2 and s3, and a coordinator that uses the given rpc provider factory. It
-// also returns the database directory of each data server.
+// setupSplitClusterWithDbDirs is setupSplitClusterWithRpc, with data servers
+// named s1, s2 and s3. It also returns the database directory of each data
+// server.
 func setupSplitClusterWithDbDirs(t *testing.T,
 	rpcProviderFactory rpc2.ProviderFactory) (*splitTestCluster, map[string]string) {
 	t.Helper()
@@ -2975,33 +2977,7 @@ func setupSplitClusterWithDbDirs(t *testing.T,
 		servers[name] = s
 		addresses = append(addresses, addr)
 	}
-
-	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
-	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
-	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
-		Value: newClusterConfig([]*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}}, addresses),
-		Version: metadatacommon.NotExists,
-	})
-	require.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpcProviderFactory)
-
-	metadata := coordinatorInstance.Metadata()
-	require.Eventually(t, func() bool {
-		shard := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards[0]
-		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
-	}, 30*time.Second, 100*time.Millisecond)
-
-	return &splitTestCluster{
-		servers:     servers,
-		addresses:   addresses,
-		sa1:         addresses[0],
-		coordinator: coordinatorInstance,
-		metadata:    metadata,
-	}, dbDirs
+	return setupSplitClusterWith(t, rpcProviderFactory, servers, addresses), dbDirs
 }
 
 // readShardKeys reads the keys of a shard from the database directory of a
@@ -3028,18 +3004,19 @@ func readShardKeys(t *testing.T, dbDir string, shard int64) []string {
 	return keys
 }
 
-// A split child applies the entries of the parent with the split filter while
-// it observes the parent, and the parent first sends it a snapshot of its
-// database: the wal of the child starts after the entries in the snapshot, and
-// at the end of the split, the followers of the child get a snapshot of the
-// child as well. A parent that has committed no entry, like a shard that got no
-// write and whose ensemble pins no feature, must not send the child its entries
-// from the first one on, or the followers of the child would get them from the
-// child's wal and apply them without the filter, keeping the records of the
-// other child.
+// A member of a split child observes the parent, starting from a snapshot of
+// it: installing it records the split filter in the member's database, and the
+// member's wal starts after the entries in the snapshot. A member that missed
+// the parent's data gets the child's data from the child leader once the split
+// completes, with a snapshot of the leader, as the leader's wal lacks the first
+// entries. A parent that has committed no entry, like a shard that got no write
+// and whose ensemble pins no feature, must not send its observers its entries
+// from the first one on: that member would get them from the leader's wal too,
+// and apply them without the filter, keeping the records of the other child.
 func TestCoordinator_ShardSplit_ParentWithoutCommittedEntries(t *testing.T) {
 	rpcProvider := newFeaturelessServerRpcProvider("s3")
 	cluster, dbDirs := setupSplitClusterWithDbDirs(t, rpcProvider.factory)
+	rpcProvider.metadata.Store(cluster.metadata)
 	closed := false
 	defer func() {
 		if !closed {
@@ -3059,8 +3036,8 @@ func TestCoordinator_ShardSplit_ParentWithoutCommittedEntries(t *testing.T) {
 	cluster.leftChild, cluster.rightChild, err = cluster.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
 	require.NoError(t, err)
 
-	// The children observe the parent: write to it on both sides of the split
-	// point before its cutover
+	// The leaders of the children observe the parent: write to it on both sides
+	// of the split point before its cutover
 	select {
 	case <-rpcProvider.cutoverReached:
 	case <-time.After(60 * time.Second):
@@ -3113,8 +3090,8 @@ func TestCoordinator_ShardSplit_ParentWithoutCommittedEntries(t *testing.T) {
 	}
 }
 
-// The split of a parent that never commits an entry completes as well: the
-// children have nothing to get from it.
+// The split of a parent that never commits an entry completes as well: its
+// observers have nothing to send to the members of the children.
 func TestCoordinator_ShardSplit_ParentWithoutEntries(t *testing.T) {
 	rpcProvider := newFeaturelessServerRpcProvider("s3")
 	rpcProvider.resume()

@@ -324,12 +324,14 @@ func (fc *followerCursor) run() {
 }
 
 func (fc *followerCursor) runOnce() error {
-	// A split child must start from a snapshot that holds an entry of the
-	// parent, so that its wal starts after that entry. Once the split
-	// completes, the followers of the child are brought up to date by tailing
-	// the child's wal if it starts at the first entry (see shouldSendSnapshot),
-	// and they would apply the parent's entries in it without the split
-	// filter. Until the parent has committed an entry, its snapshot holds none.
+	// A member of a split child must start from a snapshot of the parent that
+	// holds an entry: installing it records the split filter in the member's
+	// database, and the member's wal starts after that entry. A member that
+	// tails the parent's wal from the first entry instead only filters it
+	// while it observes the parent, and a member of the child that missed the
+	// parent's data then tails the child's wal from that first entry as well
+	// (see shouldSendSnapshot), without the filter. Until the parent has
+	// committed an entry, its snapshot holds none.
 	seeding := fc.observer && fc.ackOffset.Load() == wal.InvalidOffset
 	if seeding {
 		// The head offset never reaches math.MaxInt64: wait for the commit
