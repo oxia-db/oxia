@@ -575,6 +575,69 @@ func TestSessionManager_MassExpiry(t *testing.T) {
 
 // Closing the leader controller while sessions are in the middle of expiring
 // must not deadlock or panic.
+// A session id registered twice, as the re-open of a shard does when the new
+// term re-mints the id of a session recovered from the database, must leave
+// only the replacement queued for expiry: the expiry of the earlier
+// registration deletes the session record and the ephemeral keys they share.
+func TestSessionManager_DuplicateRegistrationKeepsReplacement(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+
+	createResp, err := sManager.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shardId,
+		SessionTimeoutMs: uint32(time.Minute.Milliseconds()),
+		ClientIdentity:   "first",
+	})
+	assert.NoError(t, err)
+	sessionId := createResp.SessionId
+
+	sManager.Lock()
+	previous := sManager.sessions[SessionId(sessionId)]
+	replacement := startSession(SessionId(sessionId), &proto.SessionMetadata{
+		TimeoutMs: uint32(time.Minute.Milliseconds()),
+		Identity:  "replacement",
+	}, sManager)
+	sManager.Unlock()
+
+	assert.NotSame(t, previous, replacement)
+	assert.Equal(t, -1, previous.heapIdx)
+	assert.Len(t, sManager.expiryHeap, 1)
+	assert.Same(t, replacement, sManager.expiryHeap[0])
+
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shardId,
+		Puts:  []*proto.PutRequest{{Key: "ephemeral", Value: []byte("value"), SessionId: &sessionId}},
+	})
+	assert.NoError(t, err)
+
+	// The earlier registration reaches its deadline first: its timeout has
+	// been running since before the re-open
+	past := sManager.now() - int64(time.Second)
+	previous.deadline.Store(past)
+	sManager.Lock()
+	previous.heapDeadline = past
+	if previous.heapIdx >= 0 {
+		heap.Fix(&sManager.expiryHeap, previous.heapIdx)
+	}
+	sManager.Unlock()
+
+	due, _ := sManager.collectDueSessions()
+	sManager.expireSessions(due)
+
+	// The replacement is well within its own timeout: it keeps its session
+	// record, its ephemeral record and its place in the manager
+	assert.NotNil(t, getSessionMetadata(t, lc, sessionId))
+	assert.Equal(t, "value", getData(t, lc, "ephemeral"))
+	assert.True(t, keyExists(t, lc, ShadowKey(SessionId(sessionId), "ephemeral")))
+	sManager.RLock()
+	assert.Same(t, replacement, sManager.sessions[SessionId(sessionId)])
+	sManager.RUnlock()
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
+}
+
 func TestSessionManager_CloseDuringExpiry(t *testing.T) {
 	shardId := int64(1)
 	kvf, walf, sManager, lc := createSessionManager(t)

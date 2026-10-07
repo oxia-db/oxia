@@ -59,8 +59,25 @@ func (s *session) heartbeat(now int64) {
 }
 
 // startSession registers the session with the manager and queues it on the
-// expiry heap. The caller must hold the manager's write lock.
+// expiry heap, replacing any registration the id already has. The caller must
+// hold the manager's write lock.
 func startSession(sessionId SessionId, sessionMetadata *proto.SessionMetadata, sm *sessionManager) *session {
+	if previous, found := sm.sessions[sessionId]; found {
+		// The map entry would be overwritten while the previous registration
+		// stayed queued for expiry, and the expiry of that orphan would
+		// delete the session record and the ephemeral keys of this one, which
+		// share the id. Take the previous registration out instead, heap entry
+		// included, so that only the registration the manager tracks can
+		// expire the id.
+		sm.log.Warn(
+			"Replacing an earlier registration of the session id",
+			slog.Int64("session-id", int64(sessionId)),
+			slog.String("previous-client-identity", previous.clientIdentity),
+			slog.String("client-identity", sessionMetadata.Identity),
+		)
+		sm.removeSession(sessionId)
+	}
+
 	s := &session{
 		id:             sessionId,
 		clientIdentity: sessionMetadata.Identity,
@@ -211,7 +228,7 @@ func (sm *sessionManager) expireSessions(due []*session) {
 
 		sm.Lock()
 		for _, s := range expired {
-			sm.removeSession(s.id)
+			sm.removeRegistration(s)
 			sm.expiredSessions.Inc()
 		}
 		sm.Unlock()
@@ -220,19 +237,25 @@ func (sm *sessionManager) expireSessions(due []*session) {
 
 // requeueRefreshed gives popped sessions a last chance before their delete is
 // issued: any session that received a heartbeat while earlier batches were
-// being deleted goes back on the heap, the rest are confirmed expired.
+// being deleted goes back on the heap, the rest are confirmed expired. A
+// session whose id was taken over by a later registration is dropped: the
+// session record and the ephemeral keys of that id are the replacement's.
 func (sm *sessionManager) requeueRefreshed(batch []*session) (expired []*session) {
 	sm.Lock()
 	defer sm.Unlock()
 	now := sm.now()
 	expired = make([]*session, 0, len(batch))
 	for _, s := range batch {
+		tracked, stillTracked := sm.sessions[s.id]
+		if stillTracked && tracked != s {
+			continue
+		}
 		deadline := s.deadline.Load()
 		if deadline <= now {
 			expired = append(expired, s)
 			continue
 		}
-		if _, stillTracked := sm.sessions[s.id]; stillTracked {
+		if stillTracked {
 			s.heapDeadline = deadline
 			heap.Push(&sm.expiryHeap, s)
 		}

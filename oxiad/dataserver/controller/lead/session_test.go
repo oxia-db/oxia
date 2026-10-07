@@ -189,6 +189,45 @@ func TestSessionManager_RequeueRefreshed(t *testing.T) {
 	assert.Equal(t, -1, closed.heapIdx)
 }
 
+// A registration replaced while it is already off the heap, mid-expiry, must
+// neither be re-queued nor expired: the session record and the ephemeral keys
+// of the id are the replacement's.
+func TestSessionManager_ReplacedRegistrationIsNotExpired(t *testing.T) {
+	sm := newBareSessionManager()
+	defer func() { assert.NoError(t, sm.Close()) }()
+
+	previous := newTestSession(sm, 1, 10*time.Second)
+
+	// The scheduler pops it as due
+	now := sm.now()
+	sm.Lock()
+	previous.deadline.Store(now - 1)
+	previous.heapDeadline = now - 1
+	heap.Fix(&sm.expiryHeap, previous.heapIdx)
+	sm.Unlock()
+	collected, _ := sm.collectDueSessions()
+	assert.Equal(t, []*session{previous}, collected)
+
+	// A new registration takes over the id before the delete goes out
+	replacement := newTestSession(sm, 1, 10*time.Second)
+
+	assert.Empty(t, sm.requeueRefreshed(collected))
+	assert.Same(t, replacement, sm.sessions[1])
+	assert.Len(t, sm.expiryHeap, 1)
+	assert.Same(t, replacement, sm.expiryHeap[0])
+
+	// The eviction of the replaced registration leaves the replacement alone
+	sm.Lock()
+	sm.removeRegistration(previous)
+	sm.Unlock()
+	assert.Same(t, replacement, sm.sessions[1])
+
+	sm.Lock()
+	sm.removeRegistration(replacement)
+	sm.Unlock()
+	assert.NotContains(t, sm.sessions, SessionId(1))
+}
+
 func TestSessionHeap_Ordering(t *testing.T) {
 	sm := newBareSessionManager()
 	defer func() { assert.NoError(t, sm.Close()) }()

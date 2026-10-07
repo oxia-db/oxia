@@ -253,6 +253,17 @@ func (sm *sessionManager) removeSession(id SessionId) {
 	sm.activeSessions.Dec()
 }
 
+// removeRegistration removes a session, unless a later registration took over
+// its id: evicting by id alone would leave the replacement un-tracked, with
+// its keep-alives failing and its own expiry never running. It must be called
+// while holding the manager's write lock.
+func (sm *sessionManager) removeRegistration(s *session) {
+	if sm.sessions[s.id] != s {
+		return
+	}
+	sm.removeSession(s.id)
+}
+
 // deleteSessions removes the session records from the database. Deleting a
 // session record cascades, through the storage update callback, to the
 // session's ephemeral keys and their shadows. Deleting an already-deleted
