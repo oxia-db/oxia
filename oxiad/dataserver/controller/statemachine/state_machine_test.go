@@ -227,6 +227,50 @@ func TestApplyLogEntry_SplitFilter(t *testing.T) {
 	assertValue("d", "child")
 }
 
+// TestApplyLogEntry_DeferredSplitFilter checks that a split child that holds
+// all the records of its parent applies the parent's entries as the parent
+// applied them, with the records of the other child, and its own entries as if
+// these records were gone.
+func TestApplyLogEntry_DeferredSplitFilter(t *testing.T) {
+	db := newTestDB(t)
+	apply := func(term int64, offset int64, put *proto.PutRequest) {
+		proposal := NewWriteProposal(offset, &proto.WriteRequest{Puts: []*proto.PutRequest{put}})
+		_, err := ApplyLogEntry(db, &proto.LogEntry{
+			Term:      term,
+			Offset:    offset,
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}, database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	get := func(key string) *proto.GetResponse {
+		res, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		return res
+	}
+
+	// The lower half of the hash space holds the key "a", and not "d"
+	apply(1, 0, &proto.PutRequest{Key: "d", Value: []byte("parent")})
+	assert.NoError(t, db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
+		MinHash: 0, MaxHash: 0x7FFFFFFF, ParentTerm: 1,
+	}))
+	assert.Equal(t, proto.Status_KEY_NOT_FOUND, get("d").Status)
+
+	// An entry of the parent finds "d", and its put takes a version id
+	apply(1, 1, &proto.PutRequest{Key: "d", Value: []byte("updated"), ExpectedVersionId: pb.Int64(0)})
+	apply(2, 2, &proto.PutRequest{Key: "a", Value: []byte("child")})
+	assert.Equal(t, int64(2), get("a").GetVersion().GetVersionId())
+
+	// An entry of the child doesn't find "d"
+	apply(2, 3, &proto.PutRequest{Key: "d", Value: []byte("child"), PartitionKey: pb.String("a"),
+		ExpectedVersionId: pb.Int64(-1)})
+	res := get("d")
+	assert.Equal(t, proto.Status_OK, res.Status)
+	assert.Equal(t, []byte("child"), res.Value)
+	assert.Equal(t, int64(3), res.GetVersion().GetVersionId())
+	assert.Equal(t, int64(0), res.GetVersion().GetModificationsCount())
+}
+
 func TestApplyLogEntry_InvalidBytes(t *testing.T) {
 	db := newTestDB(t)
 

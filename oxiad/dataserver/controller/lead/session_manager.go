@@ -589,10 +589,19 @@ func (*sessionManagerUpdateOperationCallbackS) OnDeleteWithEntry(batch kvstore.W
 // deleteEphemeralKey deletes an ephemeral key of a session that ends.
 func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notifications, key string,
 	features feature.Checker) error {
-	if features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) {
-		// delete the ephemeral key secondary indexes: they are listed
-		// in its entry, so this has to happen before the key goes
-		if err := deleteKeySecondaryIndexes(batch, key); err != nil {
+	indexCleanup := features.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP)
+	var se *proto.StorageEntry
+	if indexCleanup || notification.NeedsDeletedRecord() {
+		// The entry of the key goes with it: read it first
+		var err error
+		if se, err = database.GetStorageEntryMetadata(batch, key); err != nil && !errors.Is(err, kvstore.ErrKeyNotFound) {
+			return err
+		}
+		defer se.ReturnToVTPool()
+	}
+	if indexCleanup && se != nil {
+		// delete the ephemeral key secondary indexes, listed in its entry
+		if err := deleteSecondaryIndexes(batch, key, se); err != nil {
 			return err
 		}
 	}
@@ -602,7 +611,7 @@ func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notific
 	}
 	// add ephemeral key to notification
 	if notification != nil {
-		notification.Deleted(key)
+		notification.DeletedRecord(key, se)
 	}
 	return nil
 }

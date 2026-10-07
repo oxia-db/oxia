@@ -59,6 +59,10 @@ type Notifications struct {
 	// Their keys can alias the WAL entry that the write was decoded from:
 	// nothing may keep them past the write.
 	pending []pendingNotification
+	// The deferred filter of a split child that still holds records outside
+	// its hash range, for the writes of its own terms, or nil (see
+	// DeletedRecord)
+	splitFilter *DeferredSplitFilter
 }
 
 // pendingNotification is a notification recorded by Notifications.add, held
@@ -165,6 +169,24 @@ func (n *Notifications) Deleted(key string) {
 	n.add(key, &proto.Notification{
 		Type: proto.NotificationType_KEY_DELETED,
 	})
+}
+
+// NeedsDeletedRecord reports whether the deletion of a record that the write
+// didn't look up, like an ephemeral record of a session that ends, has to be
+// notified with DeletedRecord, rather than Deleted.
+func (n *Notifications) NeedsDeletedRecord() bool {
+	return n != nil && n.splitFilter != nil
+}
+
+// DeletedRecord notifies the deletion of the record at key, whose entry is se,
+// or nil if the write didn't find it: a split child that still holds records
+// outside its hash range doesn't notify the deletion of one it doesn't keep,
+// which doesn't exist for its clients.
+func (n *Notifications) DeletedRecord(key string, se *proto.StorageEntry) {
+	if n.splitFilter != nil && se != nil && !n.splitFilter.keeps(key, se) {
+		return
+	}
+	n.Deleted(key)
 }
 
 func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {

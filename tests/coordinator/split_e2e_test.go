@@ -590,6 +590,165 @@ func TestCoordinator_ShardSplit_WriteOrder(t *testing.T) {
 	assert.NoError(t, client.Close())
 }
 
+// TestCoordinator_ShardSplit_VersionIDs checks that the records written to the
+// parent while the split is in progress keep, on the children, the version the
+// parent returned to the writer, although each child applies only part of the
+// parent's puts. The writer updates every record it creates with a conditional
+// write on the version it got back, as a read-modify-write client does; after
+// the split, reads, conditional writes and the notifications of the children
+// must all see the versions the writer saw.
+func TestCoordinator_ShardSplit_VersionIDs(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	ctx := context.Background()
+
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	for i := 0; i < 50; i++ {
+		_, _, err := client.Put(ctx, fmt.Sprintf("seed-%04d", i), []byte("seed"))
+		require.NoError(t, err)
+	}
+
+	writerClient, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	var (
+		mu sync.Mutex
+		// The versions of the acknowledged writes of each record, in order
+		versions = make(map[string][]oxia.Version)
+		// The conditional writes rejected although they used the version
+		// that the previous write of the record returned
+		rejected []string
+		stop     atomic.Bool
+		wg       sync.WaitGroup
+	)
+	wg.Go(func() {
+		for i := 0; !stop.Load(); i++ {
+			key := fmt.Sprintf("live-%06d", i)
+			putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			_, created, err := writerClient.Put(putCtx, key, []byte("created"))
+			if err == nil {
+				_, updated, updateErr := writerClient.Put(putCtx, key, []byte("updated"),
+					oxia.ExpectedVersionId(created.VersionId))
+				mu.Lock()
+				switch {
+				case updateErr == nil:
+					versions[key] = []oxia.Version{created, updated}
+				case errors.Is(updateErr, oxia.ErrUnexpectedVersionId):
+					rejected = append(rejected, fmt.Sprintf("%s: version %d", key, created.VersionId))
+				default:
+					// The update may or may not have been applied: the record
+					// is not checked
+				}
+				mu.Unlock()
+			}
+			cancel()
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+
+	c.splitAndWait(t)
+	stop.Store(true)
+	wg.Wait()
+	assert.NoError(t, writerClient.Close())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Positive(t, len(versions), "expected some acknowledged writes during the split")
+	assert.Empty(t, rejected, "conditional writes rejected with the version the previous write returned")
+
+	client = c.reconnectClient(t, client, "seed-0000")
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	for key, acked := range versions {
+		_, value, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "record %s", key) {
+			last := acked[len(acked)-1]
+			assert.Equal(t, "updated", string(value), "value of %s", key)
+			assert.Equal(t, last.VersionId, version.VersionId, "version id of %s", key)
+			assert.Equal(t, last.ModificationsCount, version.ModificationsCount, "modifications count of %s", key)
+		}
+	}
+
+	for _, childId := range []int64{c.leftChild, c.rightChild} {
+		c.assertNotificationVersions(t, childId, versions)
+	}
+
+	for key, acked := range versions {
+		_, _, err := client.Put(ctx, key, []byte("after-split"), oxia.ExpectedVersionId(acked[len(acked)-1].VersionId))
+		assert.NoError(t, err, "conditional write on %s after the split", key)
+	}
+}
+
+// assertNotificationVersions checks that the notifications of a child carry,
+// for each of the records in its hash range, the versions of its writes.
+func (c *splitTestCluster) assertNotificationVersions(t *testing.T, childId int64, versions map[string][]oxia.Version) {
+	t.Helper()
+
+	childMeta := c.shardStatus(t, childId)
+	expected := make(map[string][]int64)
+	for key, acked := range versions {
+		h := hash.Xxh332(key)
+		if h >= childMeta.Int32HashRange.Min && h <= childMeta.Int32HashRange.Max {
+			for _, version := range acked {
+				expected[key] = append(expected[key], version.VersionId)
+			}
+		}
+	}
+
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer func() { assert.NoError(t, clientPool.Close()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	received := make(map[string][]int64)
+	pending := len(expected)
+	// All the retained notifications, from those of the parent in the snapshot
+	// the child was seeded with
+	lastOffset := int64(-1)
+	for pending > 0 {
+		// The leader of the child can move: subscribe again, to the current
+		// leader, from where the previous subscription got to
+		require.NoError(t, ctx.Err(), "notifications of child %d: %d records still missing", childId, pending)
+		leader := c.shardStatus(t, childId).GetLeader()
+		if leader == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		rpcClient, err := clientPool.GetClientRpc(leader.Public)
+		require.NoError(t, err)
+		stream, err := rpcClient.GetNotifications(ctx, &proto.NotificationsRequest{
+			Shard:                childId,
+			StartOffsetExclusive: &lastOffset,
+		})
+		require.NoError(t, err)
+
+		for pending > 0 {
+			batch, err := stream.Recv()
+			if err != nil {
+				time.Sleep(100 * time.Millisecond)
+				break
+			}
+			lastOffset = batch.Offset
+			for _, n := range batch.Notifications {
+				want, ok := expected[n.GetKey()]
+				if !ok {
+					continue
+				}
+				received[n.GetKey()] = append(received[n.GetKey()], n.GetValue().GetVersionId())
+				if len(received[n.GetKey()]) == len(want) {
+					pending--
+				}
+			}
+		}
+	}
+	for key, want := range expected {
+		assert.Equal(t, want, received[key], "version ids in the notifications of %s", key)
+	}
+}
+
 // splitTestCluster holds references to a 3-node test cluster with a
 // coordinator, used by the shard-split integration tests.
 type splitTestCluster struct {

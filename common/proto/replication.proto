@@ -88,6 +88,11 @@ enum Feature {
   // it adds, instead of deleting and writing again all the entries of the
   // record
   FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED = 9;
+  // A split child copies all the data of its parent, instead of filtering the
+  // parent's snapshot and log entries to its hash range, and deletes the
+  // records outside its hash range once the split completes. A child does so
+  // when the term of its parent pins the feature
+  FEATURE_SPLIT_DEFERRED_FILTER = 10;
 }
 
 message GetInfoRequest {
@@ -330,4 +335,7 @@ message ShardStats {
   uint64 db_size_bytes = 1;
   uint64 read_ops_total = 2;
   uint64 write_ops_total = 3;
+  // The shard is a split child that still holds records of its parent outside
+  // its hash range: it can't be split until it deletes them
+  bool split_filter_pending = 4;
 }

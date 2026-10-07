@@ -186,8 +186,7 @@ func filterUserKey(it kvstore.KeyValueIterator, batch kvstore.WriteBatch, key st
 func deleteRecordInternalKeys(batch kvstore.WriteBatch, key string, se *proto.StorageEntry) error {
 	escapedKey := url.PathEscape(key)
 	for _, si := range se.SecondaryIndexes {
-		idxKey := fmt.Sprintf("%s/%s/%s%s%s", idxKeyPrefix, si.IndexName, si.SecondaryKey, idxSeparator, escapedKey)
-		if err := batch.Delete(idxKey); err != nil {
+		if err := batch.Delete(secondaryIndexEntryKey(escapedKey, si)); err != nil {
 			return err
 		}
 	}
@@ -198,6 +197,12 @@ func deleteRecordInternalKeys(batch kvstore.WriteBatch, key string, se *proto.St
 		}
 	}
 	return nil
+}
+
+// secondaryIndexEntryKey returns the key of the entry of a secondary index, si,
+// of the record at a key, escaped with url.PathEscape.
+func secondaryIndexEntryKey(escapedKey string, si *proto.SecondaryIndex) string {
+	return fmt.Sprintf("%s/%s/%s%s%s", idxKeyPrefix, si.IndexName, si.SecondaryKey, idxSeparator, escapedKey)
 }
 
 // rotateSplitBatchIfFull commits and closes the batch once it reaches the
@@ -370,7 +375,7 @@ func (d *db) SetSplitFilter(filter *SplitFilter) error {
 	if err := d.applyPut(batch, nil, nil, &proto.PutRequest{
 		Key:   splitFilterKey,
 		Value: value,
-	}, now(), NoOpCallback, true, nil, nil); err != nil {
+	}, now(), NoOpCallback, true, nil, nil, nil); err != nil {
 		return err
 	}
 	if err := batch.Commit(); err != nil {

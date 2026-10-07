@@ -630,6 +630,7 @@ func (m *ShardStats) CloneVT() *ShardStats {
 	r.DbSizeBytes = m.DbSizeBytes
 	r.ReadOpsTotal = m.ReadOpsTotal
 	r.WriteOpsTotal = m.WriteOpsTotal
+	r.SplitFilterPending = m.SplitFilterPending
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -1412,6 +1413,9 @@ func (this *ShardStats) EqualVT(that *ShardStats) bool {
 		return false
 	}
 	if this.WriteOpsTotal != that.WriteOpsTotal {
+		return false
+	}
+	if this.SplitFilterPending != that.SplitFilterPending {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -3035,6 +3039,16 @@ func (m *ShardStats) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.SplitFilterPending {
+		i--
+		if m.SplitFilterPending {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x20
+	}
 	if m.WriteOpsTotal != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.WriteOpsTotal))
 		i--
@@ -3647,6 +3661,9 @@ func (m *ShardStats) SizeVT() (n int) {
 	}
 	if m.WriteOpsTotal != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.WriteOpsTotal))
+	}
+	if m.SplitFilterPending {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -7455,6 +7472,26 @@ func (m *ShardStats) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SplitFilterPending", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.SplitFilterPending = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11322,6 +11359,26 @@ func (m *ShardStats) UnmarshalVTUnsafe(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SplitFilterPending", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.SplitFilterPending = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

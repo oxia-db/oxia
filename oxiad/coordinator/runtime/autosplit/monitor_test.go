@@ -525,6 +525,41 @@ func TestMonitor_UnsplittableShardSkipped(t *testing.T) {
 	assert.Empty(t, splitter.getSplits())
 }
 
+// A split child that still holds records of its parent outside its hash range
+// is not split until it deletes them, while its size counts them.
+func TestMonitor_SplitFilterPendingSkipped(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxShardSizeMb:      100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "0s",
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 0, 4294967295),
+		},
+	}))
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024, SplitFilterPending: true})
+
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	m.evaluate()
+	assert.Empty(t, splitter.getSplits())
+
+	// Once the records are deleted, the shard can be split
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024})
+	m.evaluate()
+	assert.Len(t, splitter.getSplits(), 1)
+}
+
 // A leader change resets the throughput baseline so a cross-leader counter
 // delta cannot be mistaken for a genuine spike and trigger a wrong split.
 func TestMonitor_LeaderChangeResetsThroughput(t *testing.T) {

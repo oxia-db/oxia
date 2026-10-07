@@ -159,6 +159,20 @@ type KV interface {
 
 	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
 
+	// Seek returns an iterator over the regular keys, positioned on the key
+	// that Get finds with the comparison, but EQUAL, if any. The iterator moves
+	// away from key: with Next for CEILING and HIGHER, and with Prev for FLOOR
+	// and LOWER.
+	Seek(key string, comparisonType ComparisonType) (KeyValueIterator, error)
+
+	// Scan visits the regular keys, with their values, in order from the
+	// stored key start on, or from the first key if start is nil, until visit
+	// returns false. It returns the stored key to start the next scan from,
+	// right after the last key visited, or nil if that was the last key. A
+	// stored key keeps its position, which the key decoded from it can lose
+	// (see compare.Encoder.Decode).
+	Scan(start []byte, visit func(key string, value []byte) (bool, error)) (next []byte, err error)
+
 	// CompareKeys compares two keys in the order the store sorts them, which
 	// depends on the key sorting
 	CompareKeys(a, b string) int
