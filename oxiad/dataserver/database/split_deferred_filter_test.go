@@ -112,7 +112,7 @@ func setLeftChildFilter(t *testing.T, db DB) {
 	left, _ := splitRanges()
 	require.NoError(t, db.SetDeferredSplitFilter(&DeferredSplitFilter{
 		MinHash: left.Min, MaxHash: left.Max, ParentTerm: 1,
-	}))
+	}, nil))
 }
 
 // expectedGet returns the key that a Get of probe with comparison finds among
@@ -284,7 +284,7 @@ func TestDeferredSplitFilter_Recovery(t *testing.T) {
 	// The snapshot of a parent that is itself the child of an earlier split
 	require.NoError(t, db.SetSplitFilter(&SplitFilter{MinHash: 0, MaxHash: 100, ParentTerm: 2}))
 	filter := &DeferredSplitFilter{MinHash: 10, MaxHash: 20, ParentTerm: 5}
-	require.NoError(t, db.SetDeferredSplitFilter(filter))
+	require.NoError(t, db.SetDeferredSplitFilter(filter, nil))
 	assert.Equal(t, filter, db.DeferredSplitFilter())
 	assert.Nil(t, db.SplitFilter())
 	require.NoError(t, db.Close())

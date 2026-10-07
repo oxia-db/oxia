@@ -34,6 +34,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
@@ -407,12 +408,8 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 	}
 
 	// Activate split filtering if hash range metadata is present
-	hashRange, ok, err := readSplitHashRange(md)
-	if err != nil {
+	if err := setSplitHashRange(follower, md, term); err != nil {
 		return err
-	}
-	if ok {
-		follower.SetSplitHashRange(hashRange, term)
 	}
 
 	err = follower.AppendEntries(srv)
@@ -472,12 +469,8 @@ func (s *internalRpcServer) SendSnapshot(srv proto.OxiaLogReplication_SendSnapsh
 	// Activate split filtering if hash range metadata is present.
 	// The child follower will filter its snapshot and WAL entries to
 	// only keep keys whose hash falls within this range.
-	hashRange, ok, err := readSplitHashRange(md)
-	if err != nil {
+	if err := setSplitHashRange(follower, md, term); err != nil {
 		return err
-	}
-	if ok {
-		follower.SetSplitHashRange(hashRange, term)
 	}
 
 	err = follower.InstallSnapshot(srv)
@@ -562,25 +555,53 @@ func readTerm(md metadata.MD) (v int64, err error) {
 // Returns the hash range and true if present, nil and false if absent,
 // or an error if the metadata is present but malformed.
 func readSplitHashRange(md metadata.MD) (*proto.HashRange, bool, error) {
-	minArr := md.Get(constant.MetadataSplitHashRangeMin)
-	maxArr := md.Get(constant.MetadataSplitHashRangeMax)
+	return readHashRange(md, "split hash range", constant.MetadataSplitHashRangeMin, constant.MetadataSplitHashRangeMax)
+}
+
+// readSplitParentHashRange reads the optional hash range of the parent of a
+// split child from gRPC metadata, like readSplitHashRange. A coordinator that
+// predates it doesn't send it.
+func readSplitParentHashRange(md metadata.MD) (*proto.HashRange, error) {
+	hashRange, _, err := readHashRange(md, "split parent hash range",
+		constant.MetadataSplitParentHashRangeMin, constant.MetadataSplitParentHashRangeMax)
+	return hashRange, err
+}
+
+func readHashRange(md metadata.MD, name string, minKey string, maxKey string) (*proto.HashRange, bool, error) {
+	minArr := md.Get(minKey)
+	maxArr := md.Get(maxKey)
 	if len(minArr) == 0 || len(maxArr) == 0 {
 		return nil, false, nil
 	}
 
 	var minVal, maxVal uint32
 	if _, err := fmt.Sscan(minArr[0], &minVal); err != nil {
-		return nil, false, fmt.Errorf("invalid split hash range min %q: %w", minArr[0], err)
+		return nil, false, fmt.Errorf("invalid %s min %q: %w", name, minArr[0], err)
 	}
 	if _, err := fmt.Sscan(maxArr[0], &maxVal); err != nil {
-		return nil, false, fmt.Errorf("invalid split hash range max %q: %w", maxArr[0], err)
+		return nil, false, fmt.Errorf("invalid %s max %q: %w", name, maxArr[0], err)
 	}
 	if minVal > maxVal {
-		return nil, false, fmt.Errorf("invalid split hash range: min %d is greater than max %d", minVal, maxVal)
+		return nil, false, fmt.Errorf("invalid %s: min %d is greater than max %d", name, minVal, maxVal)
 	}
 
 	return &proto.HashRange{
 		Min: minVal,
 		Max: maxVal,
 	}, true, nil
+}
+
+// setSplitHashRange marks the follower as a split child if the split hash
+// range metadata is present.
+func setSplitHashRange(follower follow.FollowerController, md metadata.MD, term int64) error {
+	hashRange, ok, err := readSplitHashRange(md)
+	if err != nil || !ok {
+		return err
+	}
+	parentHashRange, err := readSplitParentHashRange(md)
+	if err != nil {
+		return err
+	}
+	follower.SetSplitHashRange(hashRange, parentHashRange, term)
+	return nil
 }
