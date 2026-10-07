@@ -288,6 +288,36 @@ func TestDBSameKeyMutations(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDBGetClientIdentity(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "k",
+		Value:            []byte("v"),
+		PartitionKey:     pb.String("pk"),
+		ClientIdentity:   pb.String("client-1"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "s"}},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
+
+	withValue, err := db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, "v", string(withValue.Value))
+	assert.Equal(t, "client-1", withValue.Version.GetClientIdentity())
+
+	withoutValue, err := db.Get(&proto.GetRequest{Key: "k"})
+	assert.NoError(t, err)
+	assert.Nil(t, withoutValue.Value)
+	assert.Equal(t, "client-1", withoutValue.Version.GetClientIdentity())
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDBList(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -668,7 +698,7 @@ type failingCallback struct {
 	err error
 }
 
-func (c *failingCallback) OnPut(kvstore.WriteBatch, *Notifications, *proto.PutRequest, *proto.StorageEntry) (proto.Status, error) {
+func (c *failingCallback) OnPut(kvstore.WriteBatch, *Notifications, *proto.PutRequest, *proto.StorageEntry, feature.Checker) (proto.Status, error) {
 	return proto.Status_OK, c.err
 }
 
@@ -730,6 +760,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
 		proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
 		proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
+		proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1832,7 +1863,7 @@ func (FailureCallback) ValidatePut(req *proto.PutRequest, features feature.Check
 	return proto.Status_OK
 }
 
-func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
 	if req.Key == FailureCallbackKey {
 		return proto.Status_SESSION_DOES_NOT_EXIST, errors.New("failure injection")
 	}

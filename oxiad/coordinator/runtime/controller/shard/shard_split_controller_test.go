@@ -190,7 +190,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase, nsMutators ...func(*pr
 		ShardIdGenerator: 3,
 	}
 
-	baseShardID, err := metadata.ReserveShardIDs(3)
+	baseShardID, err := metadata.AllocateShardIDs(3)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), baseShardID)
 	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, clusterStatus.Namespaces[constant.DefaultNamespace]))
@@ -212,7 +212,9 @@ func loadTestStatus(t *testing.T, metadata coordmetadata.Metadata) *proto.Cluste
 	status := &proto.ClusterStatus{
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for namespace, namespaceStatus := range metadata.ListNamespaceStatus() {
+	namespaces, err := metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	for namespace, namespaceStatus := range namespaces {
 		status.Namespaces[namespace] = gproto.Clone(namespaceStatus.UnsafeBorrow()).(*proto.NamespaceStatus)
 	}
 	return status

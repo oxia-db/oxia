@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -188,17 +189,6 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 	}
 	commitOffset := &atomic.Int64{}
 	commitOffset.Store(rawCommitOffset)
-
-	writeAheadLog, err := wf.NewWal(namespace, shardId, wal.NewCommitOffsetObserver(commitOffset))
-	if err != nil {
-		return nil, multierr.Append(err, db.Close())
-	}
-	lastAppendedOffset := &atomic.Int64{}
-	lastAppendedOffset.Store(writeAheadLog.LastOffset())
-
-	if lastAppendedOffset.Load() == constant.I64NegativeOne {
-		lastAppendedOffset.Store(rawCommitOffset)
-	}
 	advertisedCommitOffset := &atomic.Int64{}
 	advertisedCommitOffset.Store(rawCommitOffset)
 
@@ -223,8 +213,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		term:                   term,
 		commitOffset:           commitOffset,
 		advertisedCommitOffset: advertisedCommitOffset,
-		lastAppendedOffset:     lastAppendedOffset,
-		wal:                    writeAheadLog,
+		lastAppendedOffset:     &atomic.Int64{},
 		db:                     db,
 		stateApplierCond:       make(chan struct{}, 1),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
@@ -233,6 +222,17 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 			"The current DB checksum value", "count", metric.LabelsForShard(namespace, shardId)),
 		walChecksumGauge: metric.NewSyncGauge("oxia_dataserver_wal_checksum",
 			"The current WAL checksum value", "count", metric.LabelsForShard(namespace, shardId)),
+	}
+
+	// The WAL trimming gets the commit offset from the follower, which flushes
+	// the database for it
+	if fc.wal, err = wf.NewWal(namespace, shardId, fc); err != nil {
+		cancel()
+		return nil, multierr.Append(err, db.Close())
+	}
+	fc.lastAppendedOffset.Store(fc.wal.LastOffset())
+	if fc.lastAppendedOffset.Load() == constant.I64NegativeOne {
+		fc.lastAppendedOffset.Store(rawCommitOffset)
 	}
 
 	if rawTerm != constant.I64NegativeOne {
@@ -295,6 +295,18 @@ func (fc *followerController) Term() int64 {
 
 func (fc *followerController) CommitOffset() int64 {
 	return fc.commitOffset.Load()
+}
+
+// FlushDatabase is called by the WAL trimming, while Close can hold the lock
+// and wait for the WAL to close: it doesn't wait for the lock. When a writer
+// holds it or waits for it, like a snapshot install or Close, the trimming
+// deletes no segment, and retries later.
+func (fc *followerController) FlushDatabase() error {
+	if !fc.rwMutex.TryRLock() {
+		return errors.Wrap(constant.ErrResourceConflict, "the follower is busy")
+	}
+	defer fc.rwMutex.RUnlock()
+	return fc.db.Flush()
 }
 
 func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
@@ -393,6 +405,13 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	}
 	fc.term.Store(newTerm)
 	fc.status.Store(int32(proto.ServingStatus_FENCED))
+
+	// A closed stream of the leader can leave entries appended to the wal and
+	// not synced yet, while the head is read from the last synced entry: wait
+	// for their sync, so that the head covers every entry of the wal
+	if err = fc.wal.Sync(fc.ctx); err != nil {
+		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "wal sync failed")
+	}
 	headEntryId, err := lead.HeadEntryId(fc.wal, fc.db)
 	if err != nil {
 		fc.log.Warn("Failed to get the head entry", slog.Any("error", err), slog.Int64("new-term", req.Term))
@@ -505,28 +524,12 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 			)
 			return nil
 		}
-		var resp statemachine.ApplyResponse
-		// A split child that holds all the records of its parent applies the
-		// parent's entries as they are (see database.DeferredSplitFilter)
-		if fc.splitHashRange != nil && fc.db.DeferredSplitFilter() == nil {
-			resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
-				lead.WrapperUpdateOperationCallback, fc.splitHashRange)
-		} else {
-			resp, err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
-		}
-		if err == nil {
-			// Still under the lock: a snapshot installed after it is released
-			// sets its own commit offset, which must not be moved back
-			fc.commitOffset.Store(entry.Offset)
-		}
+		resp, err := fc.applyEntry(entry)
 		fc.rwMutex.RUnlock()
 		if err != nil {
 			return err
 		}
-		if resp.Checksum != nil {
-			fc.checksumGauge.Record(int64(*resp.Checksum))
-			fc.walChecksumGauge.Record(int64(entryCrc))
-		}
+		fc.recordChecksums(resp, entryCrc)
 		if entry.Offset == maxInclusive {
 			// Stop at the max point, not at the WAL head: the next entry
 			// would only be discarded, and read again by the next pass
@@ -537,6 +540,11 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 	return nil
 }
 
+// applyCommittedEntries applies the committed entries up to maxInclusive. It
+// takes them from the replication stream, which keeps the entries it appends to
+// the WAL, and reads back from the WAL only the ones the stream doesn't keep:
+// the entries appended before it, e.g. before a restart or a reconnection, and
+// those it had no room for, e.g. while catching up.
 func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
 		fc.log.Debug(
@@ -550,10 +558,79 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 		return nil
 	}
 
+	// The entries are applied from the WAL and database content of the same
+	// snapshot generation, and only once synced in the WAL
+	fc.rwMutex.RLock()
+	snapshotGeneration := fc.snapshotGeneration
+	maxInclusive = min(maxInclusive, fc.wal.LastOffset())
+	fc.rwMutex.RUnlock()
+
+	for fc.commitOffset.Load() < maxInclusive {
+		firstAppended, err := fc.applyAppendedEntries(snapshotGeneration, maxInclusive)
+		if err != nil {
+			return err
+		}
+		// The stream doesn't keep the next entry: read it from the WAL, with
+		// the ones after it up to the first entry the stream keeps
+		commitOffset := fc.commitOffset.Load()
+		walMaxInclusive := min(maxInclusive, firstAppended-1)
+		if walMaxInclusive <= commitOffset {
+			// All applied, or a snapshot replaced the WAL
+			return nil
+		}
+		if err = fc.applyWalEntries(snapshotGeneration, walMaxInclusive); err != nil {
+			return err
+		}
+		if fc.commitOffset.Load() == commitOffset {
+			// A snapshot replaced the WAL
+			return nil
+		}
+	}
+	return nil
+}
+
+// applyAppendedEntries applies the committed entries up to maxInclusive that
+// the replication stream keeps, as long as it keeps the next one. It returns
+// the offset of the first entry the stream keeps after them, or math.MaxInt64
+// when it keeps none.
+func (fc *followerController) applyAppendedEntries(snapshotGeneration int64, maxInclusive int64) (int64, error) {
+	for {
+		fc.rwMutex.RLock()
+		// A closed stream doesn't keep the entries: the WAL can get truncated
+		// or cleared once it is closed
+		if fc.snapshotGeneration != snapshotGeneration || !fc.logSynchronizer.IsValid() {
+			fc.rwMutex.RUnlock()
+			return math.MaxInt64, nil
+		}
+		offset := fc.commitOffset.Load() + 1
+		if offset > maxInclusive {
+			fc.rwMutex.RUnlock()
+			return math.MaxInt64, nil
+		}
+		next, firstOffset, ok := fc.logSynchronizer.appended.take(offset)
+		if !ok {
+			fc.rwMutex.RUnlock()
+			return firstOffset, nil
+		}
+		resp, err := fc.applyEntry(next.entry)
+		fc.rwMutex.RUnlock()
+		if err != nil {
+			return 0, err
+		}
+		fc.recordChecksums(resp, next.entryCrc)
+	}
+}
+
+// applyWalEntries applies the committed entries up to maxInclusive that it
+// reads from the WAL.
+func (fc *followerController) applyWalEntries(snapshotGeneration int64, maxInclusive int64) error {
 	// Open the reader under the lock, so that it starts from the commit
 	// offset of the WAL and database content of the same snapshot generation
 	fc.rwMutex.RLock()
-	snapshotGeneration := fc.snapshotGeneration
+	if fc.snapshotGeneration != snapshotGeneration {
+		fc.rwMutex.RUnlock()
+		return nil
+	}
 	reader, err := fc.wal.NewReader(fc.commitOffset.Load())
 	fc.rwMutex.RUnlock()
 	if err != nil {
@@ -574,6 +651,34 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 	}()
 
 	return fc.processCommittedEntriesLoop(reader, snapshotGeneration, maxInclusive)
+}
+
+// applyEntry applies the committed entry that follows the commit offset. Must
+// be called while holding the read lock: a snapshot installed after it is
+// released sets its own commit offset, which must not be moved back.
+func (fc *followerController) applyEntry(entry *proto.LogEntry) (statemachine.ApplyResponse, error) {
+	var resp statemachine.ApplyResponse
+	var err error
+	// A split child that holds all the records of its parent applies the
+	// parent's entries as they are (see database.DeferredSplitFilter)
+	if fc.splitHashRange != nil && fc.db.DeferredSplitFilter() == nil {
+		resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
+			lead.WrapperUpdateOperationCallback, fc.splitHashRange)
+	} else {
+		resp, err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+	}
+	if err != nil {
+		return resp, err
+	}
+	fc.commitOffset.Store(entry.Offset)
+	return resp, nil
+}
+
+func (fc *followerController) recordChecksums(resp statemachine.ApplyResponse, entryCrc uint32) {
+	if resp.Checksum != nil {
+		fc.checksumGauge.Record(int64(*resp.Checksum))
+		fc.walChecksumGauge.Record(int64(entryCrc))
+	}
 }
 
 func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange, parentHashRange *proto.HashRange,

@@ -310,9 +310,13 @@ func collectEnabledFeatures(enabledFeatures map[proto.Feature]bool, res *proto.N
 func (e *Election) selectNewLeader(candidatesStatus map[*proto.DataServerIdentity]*proto.EntryId) (
 	leader *proto.DataServerIdentity, followers map[*proto.DataServerIdentity]*proto.EntryId, err error) {
 	candidates := chooseCandidates(candidatesStatus)
+	namespaces, err := e.metadataStore.ListNamespaceStatus()
+	if err != nil {
+		return nil, nil, err
+	}
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Namespaces: e.metadataStore.ListNamespaceStatus(),
+		Namespaces: namespaces,
 	})
 	if err != nil {
 		return nil, nil, err

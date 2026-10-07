@@ -157,7 +157,7 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	cancel()
 
 	// Every status writer gives up, and reports that nothing was persisted
-	_, err = metadata.ReserveShardIDs(1)
+	_, err = metadata.AllocateShardIDs(1)
 	require.Error(t, err)
 	require.Error(t, metadata.CreateNamespaceStatus("other", &commonproto.NamespaceStatus{}))
 	require.Nil(t, metadata.DeleteNamespaceStatus("default").UnsafeBorrow())
@@ -245,11 +245,13 @@ func TestMetadataUpdateShardStatusesDeletesEmptiedNamespace(t *testing.T) {
 	require.NoError(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
 
 	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(0)))
-	_, exists := metadata.GetNamespaceStatus("default")
+	_, exists, err := metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.True(t, exists)
 
 	require.NoError(t, metadata.UpdateShardStatuses("default", deleteShard(1)))
-	_, exists = metadata.GetNamespaceStatus("default")
+	_, exists, err = metadata.GetNamespaceStatus("default")
+	require.NoError(t, err)
 	require.False(t, exists)
 	require.NoError(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
 }
@@ -423,4 +425,57 @@ func TestMetadataGetInstanceIDReturnsLoadError(t *testing.T) {
 
 	_, err := metadata.GetInstanceID()
 	require.ErrorContains(t, err, "status unavailable")
+}
+
+func TestMetadataListNamespaceStatusReturnsLoadError(t *testing.T) {
+	statusProvider := loadFailingStatusProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.ListNamespaceStatus()
+	require.ErrorContains(t, err, "status unavailable")
+}
+
+func TestMetadataGetNamespaceStatusReturnsLoadError(t *testing.T) {
+	statusProvider := loadFailingStatusProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, exists, err := metadata.GetNamespaceStatus("default")
+	require.ErrorContains(t, err, "status unavailable")
+	require.False(t, exists)
+}
+
+// countingFailingStatusProvider counts the status writes, and fails them.
+type countingFailingStatusProvider struct {
+	provider.Provider[*commonproto.ClusterStatus]
+	writes *atomic.Int32
+}
+
+func (p countingFailingStatusProvider) Store(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
+	p.writes.Add(1)
+	return metadataconstant.NotExists, errors.New("store unavailable")
+}
+
+// AllocateShardIDs reports a failed write to its caller, which retries,
+// instead of retrying it.
+func TestMetadataAllocateShardIDsReturnsWriteError(t *testing.T) {
+	var writes atomic.Int32
+	statusProvider := countingFailingStatusProvider{
+		Provider: memory.NewProvider(metadatacodec.ClusterStatusCodec, metadataconstant.WatchDisabled, ""),
+		writes:   &writes,
+	}
+	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadataconstant.WatchEnabled, "")
+	metadata := newMetadata(t.Context(), statusProvider, configProvider, "")
+	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+
+	_, err := metadata.AllocateShardIDs(2)
+	require.ErrorContains(t, err, "store unavailable")
+	require.EqualValues(t, 1, writes.Load())
 }

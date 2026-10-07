@@ -15,14 +15,18 @@
 package runtime
 
 import (
+	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
 
 // The clients merge the results of the shards of a namespace in the order of
@@ -62,6 +66,7 @@ func TestComputeNewAssignmentsKeySorting(t *testing.T) {
 	}
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
+		ctx:              t.Context(),
 		metadata:         metadata,
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
@@ -74,4 +79,52 @@ func TestComputeNewAssignmentsKeySorting(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, expectedKeySorting, nsAssignments.KeySorting, "key sorting %q", keySorting)
 	}
+}
+
+type listStatusFailingMetadata struct {
+	coordmetadata.Metadata
+	failures int
+}
+
+func (m *listStatusFailingMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
+	if m.failures > 0 {
+		m.failures--
+		return nil, errors.New("status unavailable")
+	}
+	return m.Metadata.ListNamespaceStatus()
+}
+
+func TestComputeNewAssignmentsRetriesStatusLoadError(t *testing.T) {
+	server := &proto.DataServerIdentity{Public: "public:6648", Internal: "internal:6649"}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers:    []*proto.DataServerIdentity{server},
+		Namespaces: []*proto.Namespace{{Name: "ns", InitialShardCount: 1, ReplicationFactor: 1}},
+	})
+	require.NoError(t, metadata.CreateNamespaceStatus("ns", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {
+				Status:         proto.ShardStatusSteadyState,
+				Leader:         server,
+				Ensemble:       []*proto.DataServerIdentity{server},
+				Int32HashRange: &proto.HashRange{Min: 0, Max: 100},
+			},
+		},
+	}))
+	failingMetadata := &listStatusFailingMetadata{Metadata: metadata, failures: 2}
+	c := &runtime{
+		RWMutex:          sync.RWMutex{},
+		ctx:              t.Context(),
+		logger:           slog.Default(),
+		metadata:         failingMetadata,
+		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
+	}
+
+	c.computeNewAssignments()
+
+	require.Zero(t, failingMetadata.failures)
+	nsAssignments, ok := c.assignmentsWatch.Load().Namespaces["ns"]
+	require.True(t, ok)
+	require.Len(t, nsAssignments.Assignments, 1)
+	assert.Equal(t, server.GetPublic(), nsAssignments.Assignments[0].Leader)
 }

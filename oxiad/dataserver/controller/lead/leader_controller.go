@@ -397,6 +397,14 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 
 	lc.followers = nil
 	lc.observers = nil
+
+	// The proposals return once their entry is appended to the wal, before it
+	// is synced, while the head is read from the last synced entry: wait for
+	// the syncs in progress, so that the head covers every entry of the wal.
+	// The election, and the truncation of the followers, rely on it.
+	if err := lc.wal.Sync(lc.ctx); err != nil {
+		return nil, err
+	}
 	headEntryId, err := HeadEntryId(lc.wal, lc.db)
 	if err != nil {
 		return nil, err
@@ -1665,6 +1673,13 @@ func (lc *leaderController) CommitOffset() int64 {
 	// WAL trimming can call back into this provider while leader close holds the
 	// leader lock and waits for WAL close. Do not take the leader lock here.
 	return lc.dbCommitOffset.Load()
+}
+
+// FlushDatabase is called by the WAL trimming as well, and doesn't take the
+// leader lock either: the database is opened before the WAL, and closed after
+// it.
+func (lc *leaderController) FlushDatabase() error {
+	return lc.db.Flush()
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {

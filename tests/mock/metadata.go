@@ -109,7 +109,9 @@ func StatusSnapshot(t *testing.T, metadata coordmetadata.Metadata) *proto.Cluste
 		InstanceId: instanceID,
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for namespace, namespaceStatus := range metadata.ListNamespaceStatus() {
+	namespaces, err := metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	for namespace, namespaceStatus := range namespaces {
 		cloned, ok := gproto.Clone(namespaceStatus.UnsafeBorrow()).(*proto.NamespaceStatus)
 		require.True(t, ok)
 		status.Namespaces[namespace] = cloned
