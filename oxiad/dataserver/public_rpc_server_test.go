@@ -250,10 +250,9 @@ func TestWriteStreamSlowClientDoesNotBlockWriteCallbacks(t *testing.T) {
 	}
 
 	finished := make(chan error, 1)
-	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
-	responses := make(chan *proto.WriteResponse, maxWriteStreamPendingWrites)
-	go processWriteStream(ctx, finished, stream, lc, pendingWrites, responses)
-	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, responses)
+	pipeline := newWriteStreamPipeline()
+	go processWriteStream(ctx, finished, stream, lc, pipeline)
+	go sendWriteStreamResponses(ctx, finished, stream, pipeline)
 
 	for i := 0; i < total; i++ {
 		requests <- &proto.WriteRequest{}
@@ -617,8 +616,7 @@ func TestProcessWriteStreamStopsWhenStreamContextDone(t *testing.T) {
 		},
 	}
 
-	processWriteStream(ctx, finished, stream, &testLeaderController{}, make(chan struct{}, 1),
-		make(chan *proto.WriteResponse, 1))
+	processWriteStream(ctx, finished, stream, &testLeaderController{}, newWriteStreamPipeline())
 	assert.Empty(t, finished)
 }
 
@@ -628,8 +626,7 @@ func TestProcessWriteStreamNilRequest(t *testing.T) {
 		recv: func() (*proto.WriteRequest, error) { return nil, nil }, //nolint:nilnil // ends the stream
 	}
 
-	processWriteStream(context.Background(), finished, stream, &testLeaderController{}, make(chan struct{}, 1),
-		make(chan *proto.WriteResponse, 1))
+	processWriteStream(context.Background(), finished, stream, &testLeaderController{}, newWriteStreamPipeline())
 	assert.ErrorContains(t, <-finished, "stream closed")
 }
 
@@ -645,21 +642,25 @@ func TestProcessWriteStreamContextDoneWhileWaitingForPendingWrite(t *testing.T) 
 	}
 
 	// No free pending write slot
-	processWriteStream(ctx, finished, stream, &testLeaderController{}, make(chan struct{}),
-		make(chan *proto.WriteResponse, 1))
+	pipeline := &writeStreamPipeline{
+		pendingWrites: make(chan struct{}),
+		responses:     make(chan *proto.WriteResponse, 1),
+		answeredC:     make(chan struct{}, 1),
+	}
+	processWriteStream(ctx, finished, stream, &testLeaderController{}, pipeline)
 	assert.ErrorIs(t, <-finished, context.Canceled)
 }
 
 func TestSendWriteStreamResponsesSendError(t *testing.T) {
 	sendErr := errors.New("send failure")
 	finished := make(chan error, 1)
-	responses := make(chan *proto.WriteResponse, 1)
-	responses <- &proto.WriteResponse{}
+	pipeline := newWriteStreamPipeline()
+	pipeline.responses <- &proto.WriteResponse{}
 	stream := &testStream[proto.WriteRequest, proto.WriteResponse]{
 		send: func(*proto.WriteResponse) error { return sendErr },
 	}
 
-	sendWriteStreamResponses(context.Background(), finished, stream, make(chan struct{}, 1), responses)
+	sendWriteStreamResponses(context.Background(), finished, stream, pipeline)
 	assert.ErrorIs(t, <-finished, sendErr)
 }
 
