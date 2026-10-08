@@ -33,6 +33,7 @@ var ErrRequestTooLarge = errors.New("put request is too large")
 type writeBatchFactory struct {
 	namespace      string
 	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	executeAsync   func(context.Context, *proto.WriteRequest) func() (*proto.WriteResponse, error)
 	reroute        WriteRerouter
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -44,6 +45,7 @@ func (b writeBatchFactory) newBatch(shardId *int64) batch.Batch {
 		namespace:      b.namespace,
 		shardId:        shardId,
 		execute:        b.execute,
+		executeAsync:   b.executeAsync,
 		reroute:        b.reroute,
 		puts:           make([]model.PutCall, 0),
 		deletes:        make([]model.DeleteCall, 0),
@@ -60,6 +62,7 @@ type writeBatch struct {
 	namespace      string
 	shardId        *int64
 	execute        func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error)
+	executeAsync   func(context.Context, *proto.WriteRequest) func() (*proto.WriteResponse, error)
 	reroute        WriteRerouter
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -109,6 +112,30 @@ func (b *writeBatch) Complete() {
 	defer cancel()
 
 	response, err := b.execute(ctx, request)
+	b.finish(executionStart, request, response, err)
+}
+
+// Send sends the request of the batch without waiting for its response, and
+// returns the function that waits for it and completes the calls.
+func (b *writeBatch) Send() func() {
+	if b.Size() == 0 {
+		return func() {}
+	}
+	executionStart := time.Now()
+	request := b.toProto()
+
+	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
+	wait := b.executeAsync(ctx, request)
+	return func() {
+		defer cancel()
+		response, err := wait()
+		b.finish(executionStart, request, response, err)
+	}
+}
+
+// finish completes the calls with the response of the request, or reroutes
+// them when their shard was split or merged.
+func (b *writeBatch) finish(executionStart time.Time, request *proto.WriteRequest, response *proto.WriteResponse, err error) {
 	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),

@@ -35,39 +35,44 @@ const (
 	DefaultBatchLinger         = 5 * time.Millisecond
 	DefaultMaxRequestsPerBatch = 1000
 	DefaultMaxBatchSize        = 128 * 1024
-	DefaultRequestTimeout      = 30 * time.Second
-	DefaultSessionTimeout      = 15 * time.Second
-	DefaultNamespace           = constant.DefaultNamespace
+	// DefaultMaxWriteBatchesInFlight is the number of write batches of a shard
+	// that the client sends without waiting for their responses.
+	DefaultMaxWriteBatchesInFlight = 4
+	DefaultRequestTimeout          = 30 * time.Second
+	DefaultSessionTimeout          = 15 * time.Second
+	DefaultNamespace               = constant.DefaultNamespace
 )
 
 var (
-	ErrInvalidOptionBatchLinger         = errors.New("BatchLinger must be greater than or equal to zero")
-	ErrInvalidOptionMaxRequestsPerBatch = errors.New("MaxRequestsPerBatch must be greater than zero")
-	ErrInvalidOptionMaxBatchSize        = errors.New("MaxBatchSize must be greater than zero")
-	ErrInvalidOptionRequestTimeout      = errors.New("RequestTimeout must be greater than zero")
-	ErrInvalidOptionSessionTimeout      = errors.New("SessionTimeout must be greater than zero")
-	ErrInvalidOptionIdentity            = errors.New("Identity must be non-empty")
-	ErrInvalidOptionNamespace           = errors.New("Namespace cannot be empty")
-	ErrInvalidOptionTLS                 = errors.New("Tls cannot be empty")
-	ErrInvalidOptionAuthentication      = errors.New("Authentication cannot be empty")
+	ErrInvalidOptionBatchLinger             = errors.New("BatchLinger must be greater than or equal to zero")
+	ErrInvalidOptionMaxRequestsPerBatch     = errors.New("MaxRequestsPerBatch must be greater than zero")
+	ErrInvalidOptionMaxBatchSize            = errors.New("MaxBatchSize must be greater than zero")
+	ErrInvalidOptionMaxWriteBatchesInFlight = errors.New("MaxWriteBatchesInFlight must be greater than or equal to zero")
+	ErrInvalidOptionRequestTimeout          = errors.New("RequestTimeout must be greater than zero")
+	ErrInvalidOptionSessionTimeout          = errors.New("SessionTimeout must be greater than zero")
+	ErrInvalidOptionIdentity                = errors.New("Identity must be non-empty")
+	ErrInvalidOptionNamespace               = errors.New("Namespace cannot be empty")
+	ErrInvalidOptionTLS                     = errors.New("Tls cannot be empty")
+	ErrInvalidOptionAuthentication          = errors.New("Authentication cannot be empty")
 )
 
 // clientOptions contains options for the Oxia client.
 type clientOptions struct {
-	serviceAddress         string
-	namespace              string
-	batchLinger            time.Duration
-	maxRequestsPerBatch    int
-	maxBatchSize           int
-	requestTimeout         time.Duration
-	meterProvider          metric.MeterProvider
-	sessionTimeout         time.Duration
-	identity               string
-	tls                    *tls.Config
-	authentication         auth.Authentication
-	sessionKeepAliveTicker time.Duration
-	failureInjection       *hashset.Set[Failure]
-	resolver               ServiceResolver
+	serviceAddress          string
+	namespace               string
+	batchLinger             time.Duration
+	maxRequestsPerBatch     int
+	maxBatchSize            int
+	maxWriteBatchesInFlight int
+	requestTimeout          time.Duration
+	meterProvider           metric.MeterProvider
+	sessionTimeout          time.Duration
+	identity                string
+	tls                     *tls.Config
+	authentication          auth.Authentication
+	sessionKeepAliveTicker  time.Duration
+	failureInjection        *hashset.Set[Failure]
+	resolver                ServiceResolver
 }
 
 func defaultIdentity() string {
@@ -88,16 +93,17 @@ type ClientOption interface {
 
 func newClientOptions(serviceAddress string, opts ...ClientOption) (clientOptions, error) {
 	options := clientOptions{
-		serviceAddress:      serviceAddress,
-		namespace:           constant.DefaultNamespace,
-		batchLinger:         DefaultBatchLinger,
-		maxRequestsPerBatch: DefaultMaxRequestsPerBatch,
-		maxBatchSize:        DefaultMaxBatchSize,
-		requestTimeout:      DefaultRequestTimeout,
-		meterProvider:       noop.NewMeterProvider(),
-		sessionTimeout:      DefaultSessionTimeout,
-		identity:            defaultIdentity(),
-		failureInjection:    hashset.New[Failure](),
+		serviceAddress:          serviceAddress,
+		namespace:               constant.DefaultNamespace,
+		batchLinger:             DefaultBatchLinger,
+		maxRequestsPerBatch:     DefaultMaxRequestsPerBatch,
+		maxBatchSize:            DefaultMaxBatchSize,
+		maxWriteBatchesInFlight: DefaultMaxWriteBatchesInFlight,
+		requestTimeout:          DefaultRequestTimeout,
+		meterProvider:           noop.NewMeterProvider(),
+		sessionTimeout:          DefaultSessionTimeout,
+		identity:                defaultIdentity(),
+		failureInjection:        hashset.New[Failure](),
 	}
 	var errs error
 	var err error
@@ -153,6 +159,37 @@ func WithMaxRequestsPerBatch(maxRequestsPerBatch int) ClientOption {
 			return options, ErrInvalidOptionMaxRequestsPerBatch
 		}
 		options.maxRequestsPerBatch = maxRequestsPerBatch
+		return options, nil
+	})
+}
+
+// WithMaxBatchSize defines the maximum size, in bytes, of the keys and values
+// of a write batch. The value must be greater than zero.
+func WithMaxBatchSize(maxBatchSize int) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		if maxBatchSize <= 0 {
+			return options, ErrInvalidOptionMaxBatchSize
+		}
+		options.maxBatchSize = maxBatchSize
+		return options, nil
+	})
+}
+
+// WithMaxWriteBatchesInFlight defines how many write batches of a shard the
+// client sends without waiting for their responses. The batches are sent and
+// completed in order. While the limit is reached, the next batch keeps taking
+// the writes that arrive, so that a busy shard gets fewer, larger batches.
+//
+// A write batch that was sent is never sent again: if its stream fails, it
+// fails with the writes in flight behind it, since the server may have applied
+// them. Zero sends each write batch once the previous one completed, and
+// retries a batch whose stream fails.
+func WithMaxWriteBatchesInFlight(maxWriteBatchesInFlight int) ClientOption {
+	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
+		if maxWriteBatchesInFlight < 0 {
+			return options, ErrInvalidOptionMaxWriteBatchesInFlight
+		}
+		options.maxWriteBatchesInFlight = maxWriteBatchesInFlight
 		return options, nil
 	})
 }
