@@ -22,6 +22,11 @@ import (
 
 type Executor interface {
 	ExecuteWrite(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error)
+	// ExecuteWriteAsync sends the request, and returns a function that waits
+	// for its response. The requests sent by consecutive calls for a shard
+	// reach its leader in the order of the calls. Only a request that was
+	// not sent yet is retried: once sent, it is never sent again.
+	ExecuteWriteAsync(ctx context.Context, request *proto.WriteRequest) (wait func() (*proto.WriteResponse, error))
 	ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error)
 	ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error
 	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, rangeScanResponseConsumer func(*proto.RangeScanResponse)) error
