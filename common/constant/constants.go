@@ -26,8 +26,11 @@ const (
 	MetadataShardId           = "shard-id"
 	MetadataSplitHashRangeMin = "split-hash-range-min"
 	MetadataSplitHashRangeMax = "split-hash-range-max"
-	MetadataInstanceId        = "instance-id"
-	DefaultNamespace          = "default"
+	// The hash range of the parent of a split child.
+	MetadataSplitParentHashRangeMin = "split-parent-hash-range-min"
+	MetadataSplitParentHashRangeMax = "split-parent-hash-range-max"
+	MetadataInstanceId              = "instance-id"
+	DefaultNamespace                = "default"
 
 	DefaultPublicPort   = 6648
 	DefaultInternalPort = 6649

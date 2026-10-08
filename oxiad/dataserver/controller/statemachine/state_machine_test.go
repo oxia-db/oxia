@@ -253,7 +253,7 @@ func TestApplyLogEntry_DeferredSplitFilter(t *testing.T) {
 	apply(1, 0, &proto.PutRequest{Key: "d", Value: []byte("parent")})
 	assert.NoError(t, db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
 		MinHash: 0, MaxHash: 0x7FFFFFFF, ParentTerm: 1,
-	}))
+	}, nil))
 	assert.Equal(t, proto.Status_KEY_NOT_FOUND, get("d").Status)
 
 	// An entry of the parent finds "d", and its put takes a version id

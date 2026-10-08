@@ -40,6 +40,37 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+func TestFollowerCursor_SplitMetadata(t *testing.T) {
+	childRange := &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100}
+	parentRange := &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 200}
+	for _, test := range []struct {
+		name     string
+		cursor   *followerCursor
+		expected map[string]string
+	}{
+		{"follower", &followerCursor{}, map[string]string{}},
+		{"observer without the parent range", &followerCursor{splitHashRange: childRange}, map[string]string{
+			constant.MetadataSplitHashRangeMin: "0",
+			constant.MetadataSplitHashRangeMax: "100",
+		}},
+		{"observer", &followerCursor{splitHashRange: childRange, splitParentHashRange: parentRange}, map[string]string{
+			constant.MetadataSplitHashRangeMin:       "0",
+			constant.MetadataSplitHashRangeMax:       "100",
+			constant.MetadataSplitParentHashRangeMin: "0",
+			constant.MetadataSplitParentHashRangeMax: "200",
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			md, _ := metadata.FromOutgoingContext(test.cursor.withSplitMetadata(context.Background()))
+			actual := map[string]string{}
+			for key, values := range md {
+				actual[key] = values[0]
+			}
+			assert.Equal(t, test.expected, actual)
+		})
+	}
+}
+
 func TestFollowerCursor(t *testing.T) {
 	var term int64 = 1
 	var shard int64 = 2
@@ -549,7 +580,7 @@ func TestObserverFollowerCursor_AdvertisesCommitOffsetAtHead(t *testing.T) {
 
 	// The observer was seeded with a snapshot up to entry 0
 	fc, err := NewObserverFollowerCursor("child-1", term, constant.DefaultNamespace, shard, stream, ackTracker,
-		w, db, 0, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100})
+		w, db, 0, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100}, nil)
 	assert.NoError(t, err)
 
 	// The observer streams entry 1 with the commit offset of that moment (0)
@@ -632,7 +663,7 @@ func TestObserverFollowerCursor_SeedsChildWithAnEntry(t *testing.T) {
 	assert.NoError(t, err)
 
 	fc, err := NewObserverFollowerCursor("child-1", term, constant.DefaultNamespace, shard, provider, ackTracker,
-		w, db, wal.InvalidOffset, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100})
+		w, db, wal.InvalidOffset, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100}, nil)
 	assert.NoError(t, err)
 
 	time.Sleep(100 * time.Millisecond)

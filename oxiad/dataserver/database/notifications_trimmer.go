@@ -46,13 +46,21 @@ type notificationsTrimmer struct {
 	notificationsRetentionTime time.Duration
 	clock                      time2.Clock
 	log                        *slog.Logger
-	// onTrimmed gets the offset up to which the batches were trimmed, included
-	onTrimmed func(offset int64)
+	listener                   trimListener
+}
+
+// trimListener follows the batches that the trimmer deletes.
+type trimListener interface {
+	// trimming gets the batch that trims the batches up to offset, included,
+	// before it is committed, and returns the function to call if that fails
+	trimming(batch kvstore.WriteBatch, offset int64) (func(), error)
+	// trimmed gets the offset up to which the batches were trimmed, included
+	trimmed(offset int64)
 }
 
 func newNotificationsTrimmer(ctx context.Context, namespace string, shardId int64, kv kvstore.KV,
 	notificationRetentionTime time.Duration, waitClose concurrent.WaitGroup, clock time2.Clock,
-	onTrimmed func(offset int64)) *notificationsTrimmer {
+	listener trimListener) *notificationsTrimmer {
 	interval := notificationRetentionTime / 10
 	if interval < minNotificationTrimmingInterval {
 		interval = minNotificationTrimmingInterval
@@ -68,7 +76,7 @@ func newNotificationsTrimmer(ctx context.Context, namespace string, shardId int6
 		interval:                   interval,
 		notificationsRetentionTime: notificationRetentionTime,
 		clock:                      clock,
-		onTrimmed:                  onTrimmed,
+		listener:                   listener,
 		log: slog.With(
 			slog.String("component", "db-notifications-trimmer"),
 			slog.String("namespace", namespace),
@@ -160,11 +168,16 @@ func (t *notificationsTrimmer) trimNotifications() error {
 	if err = wb.DeleteRange(notificationKey(first), notificationKey(trimOffset+1)); err != nil {
 		return err
 	}
-
-	if err = wb.Commit(); err != nil {
+	revert, err := t.listener.trimming(wb, trimOffset)
+	if err != nil {
 		return err
 	}
-	t.onTrimmed(trimOffset)
+
+	if err = wb.Commit(); err != nil {
+		revert()
+		return err
+	}
+	t.listener.trimmed(trimOffset)
 
 	t.log.Debug(
 		"Successfully trimmed the notification",

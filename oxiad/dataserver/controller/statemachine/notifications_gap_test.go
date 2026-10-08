@@ -79,9 +79,11 @@ func TestNotificationsTrimmer_GapFromControlRequests(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
+	// A read from a trimmed batch fails, as some of the batches it reads are
+	// gone: read from after them
 	clock.Set(30)
 	assert.Eventually(t, func() bool {
-		nb, err := db.ReadNextNotifications(context.Background(), 0)
+		nb, err := db.ReadNextNotifications(context.Background(), db.TrimmedNotificationsOffset()+1)
 		if err != nil {
 			return false
 		}
@@ -97,7 +99,7 @@ func TestNotificationsTrimmer_GapFromControlRequests(t *testing.T) {
 		// Once every batch is trimmed, the read waits for the next one
 		ctx, cancel := context.WithTimeout(context.Background(), 100*stdtime.Millisecond)
 		defer cancel()
-		_, err := db.ReadNextNotifications(ctx, 0)
+		_, err := db.ReadNextNotifications(ctx, db.TrimmedNotificationsOffset()+1)
 		return errors.Is(err, context.DeadlineExceeded)
 	}, 10*stdtime.Second, 500*stdtime.Millisecond)
 }
