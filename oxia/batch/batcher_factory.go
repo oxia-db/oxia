@@ -28,6 +28,10 @@ var batcherChannelBufferSize = runtime.GOMAXPROCS(-1)
 type BatcherFactory struct {
 	Linger              time.Duration
 	MaxRequestsPerBatch int
+	// MaxBatchesInFlight bounds the batches that a batcher has sent and not
+	// completed yet, when its batches are an AsyncBatch. Zero completes each
+	// batch before the next one is formed.
+	MaxBatchesInFlight int
 }
 
 func (b *BatcherFactory) NewBatcher(ctx context.Context, shard int64, batcherType string, batchFactory func() Batch) Batcher {
@@ -38,6 +42,13 @@ func (b *BatcherFactory) NewBatcher(ctx context.Context, shard int64, batcherTyp
 		addsDone:            make(chan struct{}),
 		linger:              b.Linger,
 		maxRequestsPerBatch: b.MaxRequestsPerBatch,
+	}
+	if b.MaxBatchesInFlight > 0 {
+		batcher.window = newWindow(b.MaxBatchesInFlight)
+		go process.DoWithLabels(ctx, map[string]string{
+			"oxia":  fmt.Sprintf("batcher-%s-completion", batcherType),
+			"shard": fmt.Sprintf("%d", shard),
+		}, batcher.window.run)
 	}
 
 	go process.DoWithLabels(ctx, map[string]string{
