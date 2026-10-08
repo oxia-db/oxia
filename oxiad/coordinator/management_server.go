@@ -38,6 +38,7 @@ type managementServer struct {
 
 	metadata coordmetadata.Metadata
 	runtime  atomic.Value
+	stopped  atomic.Bool
 }
 
 func (management *managementServer) setRuntime(runtime coordruntime.Runtime) {
@@ -47,10 +48,17 @@ func (management *managementServer) setRuntime(runtime coordruntime.Runtime) {
 	management.runtime.Store(runtime)
 }
 
+// stop makes the admin API answer as a coordinator that is not the leader,
+// redirecting to the leader when it is known: for a coordinator that lost the
+// leadership.
+func (management *managementServer) stop() {
+	management.stopped.Store(true)
+}
+
 func (management *managementServer) getRuntime() (coordruntime.Runtime, error) {
 	metadata := management.metadata
 	runtime, runtimeLoaded := management.runtime.Load().(coordruntime.Runtime)
-	if metadata == nil || !runtimeLoaded {
+	if metadata == nil || !runtimeLoaded || management.stopped.Load() {
 		return nil, management.redirectError()
 	}
 	return runtime, nil

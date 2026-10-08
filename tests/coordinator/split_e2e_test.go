@@ -39,7 +39,6 @@ import (
 	"github.com/stretchr/testify/require"
 	grpcmetadata "google.golang.org/grpc/metadata"
 
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -53,6 +52,7 @@ import (
 	"github.com/oxia-db/oxia/oxia"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -1984,7 +1984,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			dataServerOption.Observability.Metric.Enabled = &constant.FlagFalse
 			dataServerOption.Storage.Database.Dir = t.TempDir()
 			dataServerOption.Storage.WAL.Dir = t.TempDir()
-			s1, err := dataserver.New(t.Context(), commonwatch.New(dataServerOption))
+			s1, err := dataserver.New(t.Context(), dataServerOption)
 			assert.NoError(t, err)
 
 			sa1 := &proto.DataServerIdentity{
