@@ -197,9 +197,41 @@ func TestWriteStreamLeaderControllerClosed(t *testing.T) {
 	require.NoError(t, lc.Close())
 
 	_, err = stream.Recv()
-	oxiaErr, _ := constant.FromGrpcError(err)
+	oxiaErr, md := constant.FromGrpcError(err)
 	assert.ErrorIs(t, oxiaErr, constant.ErrNodeIsNotLeader)
 	assert.True(t, constant.IsRetryable(oxiaErr), "the client does not retry on: %v", err)
+	assert.True(t, md.Unprocessed(), "every write appended on the stream was answered")
+}
+
+// A write stream rejected at its setup read none of its writes: the end is
+// marked unprocessed, whatever the reason.
+func TestWriteStreamRejectedAtSetupIsUnprocessed(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(map[string]string{
+		"shard-id":  "99",
+		"namespace": "default",
+	}))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := client.WriteStream(ctx)
+	require.NoError(t, err)
+	// The send may fail if the rejection arrived first: either way, the
+	// receive reports the stream's end
+	_ = stream.Send(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "k", Value: []byte("v")}}})
+
+	_, err = stream.Recv()
+	require.Error(t, err)
+	_, md := constant.FromGrpcError(err)
+	assert.True(t, md.Unprocessed(), "a stream rejected at its setup processed no write: %v", err)
 }
 
 func receiveWithTimeout[T any](t *testing.T, ch <-chan T, msg string) T {
@@ -664,6 +696,102 @@ func TestSendWriteStreamResponsesSendError(t *testing.T) {
 	assert.ErrorIs(t, <-finished, sendErr)
 }
 
+// A write rejected before it was appended ends the stream as unprocessed, once
+// the writes appended before it are answered, and no write after it is read:
+// the client can send every write left unanswered again.
+func TestProcessWriteStreamEndsUnprocessedAfterARejectedWrite(t *testing.T) {
+	w := startWriteStream(t, "a", "b", "reject", "c")
+
+	first := receiveWithTimeout(t, w.appended, "the first write was not appended")
+	second := receiveWithTimeout(t, w.appended, "the second write was not appended")
+	select {
+	case err := <-w.finished:
+		require.Fail(t, "the stream ended before the appended writes were answered", "err: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	first.OnComplete(&proto.WriteResponse{})
+	second.OnComplete(&proto.WriteResponse{})
+	end := receiveWithTimeout(t, w.finished, "the stream did not end")
+	err, md := constant.FromGrpcError(writeStreamStatus(end))
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+	assert.True(t, md.Unprocessed(), "the end marks the unanswered writes unprocessed")
+
+	assert.Len(t, w.sent, 2, "the appended writes were answered")
+	assert.Equal(t, []string{"a", "b", "reject"}, drain(w.received), "no write after the rejected one was read")
+}
+
+// If a write appended before the rejected one fails, its outcome is unknown:
+// the stream ends with its error, not as unprocessed.
+func TestProcessWriteStreamRejectedWriteBehindAFailedOneIsNotUnprocessed(t *testing.T) {
+	w := startWriteStream(t, "a", "reject")
+
+	first := receiveWithTimeout(t, w.appended, "the first write was not appended")
+	failure := errors.New("commit failed")
+	first.OnCompleteError(failure)
+
+	end := receiveWithTimeout(t, w.finished, "the stream did not end")
+	_, md := constant.FromGrpcError(writeStreamStatus(end))
+	assert.False(t, md.Unprocessed(), "an appended write failed: its outcome is unknown")
+}
+
+// A write stream whose leader closed waits for the writes in flight to be
+// answered, and then ends as unprocessed: none of the writes left unanswered
+// was applied.
+func TestEndAfterLeaderClosedWaitsForTheWritesInFlight(t *testing.T) {
+	pipeline := newWriteStreamPipeline()
+	pipeline.pendingWrites <- struct{}{}
+	pipeline.unanswered.Add(1)
+	ended := make(chan error, 1)
+	go func() {
+		ended <- endAfterLeaderClosed(t.Context(), make(chan error, 1), pipeline)
+	}()
+	select {
+	case err := <-ended:
+		require.FailNow(t, "the stream ended with a write in flight", "err: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	pipeline.answered()
+	err, md := constant.FromGrpcError(receiveWithTimeout(t, ended, "the stream did not end"))
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+	assert.True(t, md.Unprocessed(), "every write appended on the stream was answered")
+}
+
+// If a write appended on the stream failed, its outcome is unknown: the stream
+// ends with its error, not as unprocessed.
+func TestEndAfterLeaderClosedReturnsTheErrorOfAFailedWrite(t *testing.T) {
+	finished := make(chan error, 1)
+	finished <- constant.ErrResourceUnavailable
+
+	err, md := constant.FromGrpcError(endAfterLeaderClosed(t.Context(), finished, newWriteStreamPipeline()))
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.False(t, md.Unprocessed(), "an appended write failed: its outcome is unknown")
+}
+
+// A stream that ends while writes are in flight stops the wait for them.
+func TestEndAfterLeaderClosedEndsWithTheStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	pipeline := newWriteStreamPipeline()
+	pipeline.unanswered.Add(1)
+
+	assert.ErrorIs(t, endAfterLeaderClosed(ctx, make(chan error, 1), pipeline), context.Canceled)
+}
+
+// A stream that ends while the writes appended before a rejected one are in
+// flight stops the wait for them, and reports nothing more.
+func TestEndUnprocessedEndsWithTheStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	pipeline := newWriteStreamPipeline()
+	pipeline.unanswered.Add(1)
+	finished := make(chan error, 1)
+
+	endUnprocessed(ctx, finished, pipeline, constant.ErrNodeIsNotLeader)
+	assert.Empty(t, finished)
+}
+
 func TestPublicRpcServerWriteStreamInvalidMetadata(t *testing.T) {
 	server := newTestPublicRpcServer(nil, nil)
 
@@ -682,6 +810,39 @@ func TestPublicRpcServerWriteStreamInvalidMetadata(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+// A write stream that the node rejects at its setup read none of its writes:
+// the rejection is marked unprocessed, for the client to send them again.
+func TestPublicRpcServerWriteStreamRejectedAtSetupIsUnprocessed(t *testing.T) {
+	server := newTestPublicRpcServer(nil, nil)
+	server.shardsDirector = &testShardsDirector{
+		getLeader: func(int64) (lead.LeaderController, error) { return nil, constant.ErrResourceUnavailable },
+	}
+
+	err, md := constant.FromGrpcError(server.WriteStream(newWriteStreamServerStream(t)))
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.True(t, md.Unprocessed(), "the stream read none of its writes")
+}
+
+// A write stream that a write rejected before its append ended returns the
+// rejection marked unprocessed, and logs it.
+func TestPublicRpcServerWriteStreamEndsUnprocessedOnARejectedWrite(t *testing.T) {
+	logs := &bytes.Buffer{}
+	lc := &testLeaderController{
+		ctx: t.Context(),
+		write: func(_ context.Context, _ *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+			cb.OnCompleteError(lead.NotAppended(constant.ErrNodeIsNotLeader))
+		},
+	}
+	server := newTestPublicRpcServer(logs, lc)
+
+	err, md := constant.FromGrpcError(server.WriteStream(newWriteStreamServerStream(t,
+		&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a"}}})))
+	assert.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+	assert.True(t, md.Unprocessed(), "the rejected write was the only one")
+	assert.Contains(t, logs.String(), "Failed to perform write operation")
+	assert.Contains(t, logs.String(), constant.ErrNodeIsNotLeader.Error())
 }
 
 func TestPublicRpcServerRead(t *testing.T) {
@@ -1117,6 +1278,8 @@ type testLeaderController struct {
 
 func (l *testLeaderController) Context() context.Context { return l.ctx }
 func (l *testLeaderController) Term() int64              { return l.term }
+func (*testLeaderController) Namespace() string          { return constant.DefaultNamespace }
+func (*testLeaderController) ShardID() int64             { return 0 }
 func (l *testLeaderController) IsFeatureEnabled(f proto.Feature) bool {
 	return l.isFeatureEnabled != nil && l.isFeatureEnabled(f)
 }
@@ -1178,4 +1341,100 @@ func (w *testSequenceWaiter) Ch() <-chan string { return w.ch }
 func (w *testSequenceWaiter) Close() error {
 	w.closed = true
 	return nil
+}
+
+type writeStreamUnderTest struct {
+	sent     chan *proto.WriteResponse
+	appended chan concurrent.Callback[*proto.WriteResponse]
+	received chan string
+	finished chan error
+}
+
+// startWriteStream runs a write stream over the keys, whose client reads the
+// responses as they come. The leader holds the callbacks of the writes it
+// appends, and rejects the write of key "reject" before appending it, the way
+// a leader that steps down or freezes does.
+func startWriteStream(t *testing.T, keys ...string) *writeStreamUnderTest {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	requests := make(chan *proto.WriteRequest, len(keys))
+	for _, key := range keys {
+		requests <- &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: key}}}
+	}
+	w := &writeStreamUnderTest{
+		sent:     make(chan *proto.WriteResponse, len(keys)),
+		appended: make(chan concurrent.Callback[*proto.WriteResponse], len(keys)),
+		received: make(chan string, len(keys)),
+		finished: make(chan error, 1),
+	}
+	stream := &testStream[proto.WriteRequest, proto.WriteResponse]{
+		ctx: ctx,
+		recv: func() (*proto.WriteRequest, error) {
+			select {
+			case request := <-requests:
+				return request, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+		send: func(response *proto.WriteResponse) error {
+			w.sent <- response
+			return nil
+		},
+	}
+	lc := &testLeaderController{
+		write: func(_ context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+			key := request.Puts[0].Key
+			w.received <- key
+			if key == "reject" {
+				cb.OnCompleteError(lead.NotAppended(constant.ErrNodeIsNotLeader))
+				return
+			}
+			w.appended <- cb
+		},
+	}
+
+	pipeline := newWriteStreamPipeline()
+	go processWriteStream(ctx, w.finished, stream, lc, pipeline)
+	go sendWriteStreamResponses(ctx, w.finished, stream, pipeline)
+	return w
+}
+
+func drain(ch chan string) []string {
+	var out []string
+	for {
+		select {
+		case v := <-ch:
+			out = append(out, v)
+		default:
+			return out
+		}
+	}
+}
+
+// newWriteStreamServerStream returns the server side of a write stream of shard
+// 0, which receives the requests, and then waits for the end of the test.
+func newWriteStreamServerStream(t *testing.T, requests ...*proto.WriteRequest) *testStream[proto.WriteRequest, proto.WriteResponse] {
+	t.Helper()
+
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(
+		constant.MetadataShardId, "0", constant.MetadataNamespace, constant.DefaultNamespace))
+	queued := make(chan *proto.WriteRequest, len(requests))
+	for _, request := range requests {
+		queued <- request
+	}
+	return &testStream[proto.WriteRequest, proto.WriteResponse]{
+		ctx: ctx,
+		recv: func() (*proto.WriteRequest, error) {
+			select {
+			case request := <-queued:
+				return request, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+		send: func(*proto.WriteResponse) error { return nil },
+	}
 }
