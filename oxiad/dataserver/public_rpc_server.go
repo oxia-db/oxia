@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -169,8 +170,58 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 	return wr, err
 }
 
+// writeStreamPipeline carries the writes of a stream from the leader to the
+// client: the responses travel in order, at most maxWriteStreamPendingWrites
+// at a time. unanswered counts the writes handed to the leader and not
+// answered yet, and answeredC wakes whoever waits for it to drop.
+type writeStreamPipeline struct {
+	pendingWrites chan struct{}
+	responses     chan *proto.WriteResponse
+	unanswered    atomic.Int64
+	answeredC     chan struct{}
+}
+
+func newWriteStreamPipeline() *writeStreamPipeline {
+	return &writeStreamPipeline{
+		pendingWrites: make(chan struct{}, maxWriteStreamPendingWrites),
+		responses:     make(chan *proto.WriteResponse, maxWriteStreamPendingWrites),
+		answeredC:     make(chan struct{}, 1),
+	}
+}
+
+// answered counts a write as answered: its response was sent, or it failed.
+func (p *writeStreamPipeline) answered() {
+	<-p.pendingWrites
+	p.unanswered.Add(-1)
+	channel.PushNoBlock(p.answeredC, struct{}{})
+}
+
+// unprocessedEndError ends a write stream after which none of the writes left
+// unanswered on it was applied.
+type unprocessedEndError struct {
+	err error
+}
+
+func (e *unprocessedEndError) Error() string { return e.err.Error() }
+
+func (e *unprocessedEndError) Unwrap() error { return e.err }
+
+// writeStreamStatus is the status a write stream ends with: an end after which
+// none of the unanswered writes was applied is marked so, for the client to
+// send them again.
+func writeStreamStatus(err error) error {
+	var unprocessed *unprocessedEndError
+	if errors.As(err, &unprocessed) {
+		return constant.IntoGrpcStatusError(unprocessed.err, constant.WithUnprocessed())
+	}
+	return constant.IntoGrpcStatusError(err)
+}
+
 func processWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
-	lc lead.LeaderController, pendingWrites chan<- struct{}, responses chan<- *proto.WriteResponse) {
+	lc lead.LeaderController, pipeline *writeStreamPipeline) {
+	// A write rejected before being appended is reported here, synchronously
+	// within lc.Write
+	rejected := make(chan error, 1)
 	for {
 		if streamCtx.Err() != nil {
 			return
@@ -191,35 +242,68 @@ func processWriteStream(streamCtx context.Context, finished chan<- error, stream
 		}
 
 		select {
-		case pendingWrites <- struct{}{}:
+		case pipeline.pendingWrites <- struct{}{}:
 		case <-streamCtx.Done():
 			channel.PushNoBlock(finished, streamCtx.Err())
 			return
 		}
 
+		pipeline.unanswered.Add(1)
 		lc.Write(streamCtx, req, concurrent.NewOnce(
 			func(t *proto.WriteResponse) {
 				// The write callback can be invoked under the quorum-ack-tracker lock:
 				// hand the response off to the sender goroutine instead of calling
 				// stream.Send here, where a slow client would stall the whole shard.
 				// The push cannot block (see maxWriteStreamPendingWrites).
-				responses <- t
+				pipeline.responses <- t
 			}, func(err error) {
-				channel.PushNoBlock(finished, err)
+				if lead.IsNotAppended(err) {
+					channel.PushNoBlock(rejected, err)
+				} else {
+					// An appended write that fails may still be applied: its
+					// error ends the stream before anything is marked
+					// unprocessed
+					channel.PushNoBlock(finished, err)
+				}
+				pipeline.answered()
 			}))
+
+		select {
+		case err := <-rejected:
+			endUnprocessed(streamCtx, finished, pipeline, err)
+			return
+		default:
+		}
 	}
 }
 
+// endUnprocessed ends the stream after a write was rejected before being
+// appended. The leader appends no write after it either, and none is read
+// anymore: once every write appended before it is answered, none of the writes
+// left unanswered was applied, and the end says so.
+func endUnprocessed(streamCtx context.Context, finished chan<- error, pipeline *writeStreamPipeline, rejection error) {
+	for pipeline.unanswered.Load() > 0 {
+		select {
+		case <-pipeline.answeredC:
+		case <-streamCtx.Done():
+			return
+		}
+	}
+	// If an appended write failed meanwhile, its error is the end already
+	var end error = &unprocessedEndError{err: rejection}
+	channel.PushNoBlock(finished, end)
+}
+
 func sendWriteStreamResponses(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
-	pendingWrites <-chan struct{}, responses <-chan *proto.WriteResponse) {
+	pipeline *writeStreamPipeline) {
 	for {
 		select {
-		case response := <-responses:
+		case response := <-pipeline.responses:
 			if err := stream.Send(response); err != nil {
 				channel.PushNoBlock(finished, err)
 				return
 			}
-			<-pendingWrites
+			pipeline.answered()
 		case <-streamCtx.Done():
 			return
 		}
@@ -257,8 +341,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	}
 
 	finished := make(chan error, 1)
-	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
-	responses := make(chan *proto.WriteResponse, maxWriteStreamPendingWrites)
+	pipeline := newWriteStreamPipeline()
 	go process.DoWithLabels(
 		streamCtx,
 		map[string]string{
@@ -267,7 +350,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 			"shard":     fmt.Sprintf("%d", lc.ShardID()),
 		},
 		func() {
-			processWriteStream(streamCtx, finished, stream, lc, pendingWrites, responses)
+			processWriteStream(streamCtx, finished, stream, lc, pipeline)
 		},
 	)
 	go process.DoWithLabels(
@@ -278,7 +361,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 			"shard":     fmt.Sprintf("%d", lc.ShardID()),
 		},
 		func() {
-			sendWriteStreamResponses(streamCtx, finished, stream, pendingWrites, responses)
+			sendWriteStreamResponses(streamCtx, finished, stream, pipeline)
 		},
 	)
 
@@ -287,7 +370,7 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	case err := <-finished:
 		if err != nil {
 			s.log.Warn("Failed to perform write operation", slog.Any("error", err))
-			return constant.IntoGrpcStatusError(err)
+			return writeStreamStatus(err)
 		}
 		return nil
 	case <-streamCtx.Done():

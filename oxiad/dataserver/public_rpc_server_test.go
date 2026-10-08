@@ -250,10 +250,9 @@ func TestWriteStreamSlowClientDoesNotBlockWriteCallbacks(t *testing.T) {
 	}
 
 	finished := make(chan error, 1)
-	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
-	responses := make(chan *proto.WriteResponse, maxWriteStreamPendingWrites)
-	go processWriteStream(ctx, finished, stream, lc, pendingWrites, responses)
-	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, responses)
+	pipeline := newWriteStreamPipeline()
+	go processWriteStream(ctx, finished, stream, lc, pipeline)
+	go sendWriteStreamResponses(ctx, finished, stream, pipeline)
 
 	for i := 0; i < total; i++ {
 		stream.requests <- &proto.WriteRequest{}

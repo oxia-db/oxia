@@ -1286,8 +1286,34 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	err := lc.proposeLocked(ctx, proposalSupplier, cb)
 	lc.RUnlock()
 	if err != nil {
-		cb.OnCompleteError(err)
+		// proposeLocked fails only before appending the proposal
+		cb.OnCompleteError(NotAppended(err))
 	}
+}
+
+// notAppendedError is the error of a write that the leader rejected before
+// appending it to its log: the write was not applied.
+type notAppendedError struct {
+	err error
+}
+
+func (e *notAppendedError) Error() string { return e.err.Error() }
+
+func (e *notAppendedError) Unwrap() error { return e.err }
+
+// NotAppended wraps the error of a write that was rejected before being
+// appended to the log, for the LeaderController implementations other than
+// this package's.
+func NotAppended(err error) error {
+	return &notAppendedError{err: err}
+}
+
+// IsNotAppended reports whether the error of a write says that the leader
+// rejected the write before appending it to its log, so that it was not
+// applied.
+func IsNotAppended(err error) bool {
+	var notAppended *notAppendedError
+	return errors.As(err, &notAppended)
 }
 
 // proposeLocked appends a proposal to the WAL. The caller must hold the
