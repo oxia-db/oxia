@@ -142,7 +142,7 @@ func TestMonitor_SplitOnSizeThreshold(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -152,7 +152,7 @@ func TestMonitor_SplitOnSizeThreshold(t *testing.T) {
 				Int32HashRange: &proto.HashRange{Min: 0, Max: 4294967295},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -180,7 +180,7 @@ func TestMonitor_StabilizationPeriod(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -190,7 +190,7 @@ func TestMonitor_StabilizationPeriod(t *testing.T) {
 				Int32HashRange: &proto.HashRange{Min: 0, Max: 4294967295},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -214,7 +214,7 @@ func TestMonitor_CooldownPreventsRapidSplits(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -231,7 +231,7 @@ func TestMonitor_CooldownPreventsRapidSplits(t *testing.T) {
 				Int32HashRange: &proto.HashRange{Min: 2147483648, Max: 4294967295},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -260,7 +260,7 @@ func TestMonitor_SkipsWhenSplitInProgress(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -274,7 +274,7 @@ func TestMonitor_SkipsWhenSplitInProgress(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -299,7 +299,7 @@ func TestMonitor_MaxShardsGuardRail(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -309,7 +309,7 @@ func TestMonitor_MaxShardsGuardRail(t *testing.T) {
 				Int32HashRange: &proto.HashRange{Min: 0, Max: 4294967295},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -333,7 +333,7 @@ func TestMonitor_ThroughputThreshold(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -343,7 +343,7 @@ func TestMonitor_ThroughputThreshold(t *testing.T) {
 				Int32HashRange: &proto.HashRange{Min: 0, Max: 4294967295},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	splitter := &mockSplitter{}
@@ -378,7 +378,7 @@ func TestMonitor_PicksWorstOffender(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
 				Status:         proto.ShardStatusSteadyState,
@@ -395,7 +395,7 @@ func TestMonitor_PicksWorstOffender(t *testing.T) {
 				Int32HashRange: &proto.HashRange{Min: 2147483648, Max: 4294967295},
 			},
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -437,12 +437,12 @@ func TestMonitor_MalformedCooldownFallsBackToDefault(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: steadyShard(leader, 0, 2147483647),
 			1: steadyShard(leader, 2147483648, 4294967295),
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
@@ -474,12 +474,12 @@ func TestMonitor_StarvationFallThrough(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: steadyShard(leader, 0, 2147483647), // worst offender, but unsplittable
 			1: steadyShard(leader, 2147483648, 4294967295),
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024}) // higher overshoot
@@ -509,11 +509,11 @@ func TestMonitor_UnsplittableShardSkipped(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: steadyShard(leader, 100, 100), // width 0 -> unsplittable
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024})
@@ -523,6 +523,41 @@ func TestMonitor_UnsplittableShardSkipped(t *testing.T) {
 
 	m.evaluate()
 	assert.Empty(t, splitter.getSplits())
+}
+
+// A split child that still holds records of its parent outside its hash range
+// is not split until it deletes them, while its size counts them.
+func TestMonitor_SplitFilterPendingSkipped(t *testing.T) {
+	config := &proto.ClusterConfiguration{
+		AutoSplit: &proto.AutoSplitConfig{
+			Enabled:             true,
+			MaxShardSizeMb:      100,
+			StabilizationPeriod: "0s",
+			CooldownPeriod:      "0s",
+		},
+	}
+	metadata := newTestMetadata(t, config)
+	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{
+			0: steadyShard(leader, 0, 4294967295),
+		},
+	}))
+
+	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024, SplitFilterPending: true})
+
+	splitter := &mockSplitter{}
+	m := NewMonitor(metadata, rpcMock, splitter, time.Millisecond)
+
+	m.evaluate()
+	assert.Empty(t, splitter.getSplits())
+
+	// Once the records are deleted, the shard can be split
+	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 500 * 1024 * 1024})
+	m.evaluate()
+	assert.Len(t, splitter.getSplits(), 1)
 }
 
 // A leader change resets the throughput baseline so a cross-leader counter
@@ -540,11 +575,11 @@ func TestMonitor_LeaderChangeResetsThroughput(t *testing.T) {
 	leaderA := &proto.DataServerIdentity{Name: strPtr("nodeA"), Public: "a:9091", Internal: "a:8191"}
 	leaderB := &proto.DataServerIdentity{Name: strPtr("nodeB"), Public: "b:9091", Internal: "b:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: steadyShard(leaderA, 0, 4294967295),
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{ReadOpsTotal: 1000, WriteOpsTotal: 1000})
@@ -558,11 +593,7 @@ func TestMonitor_LeaderChangeResetsThroughput(t *testing.T) {
 
 	// Leader moves to B, whose cumulative counters are much higher. Age the
 	// sample so elapsed > 0.
-	metadata.UpdateNamespaceStatus("default", &proto.NamespaceStatus{
-		Shards: map[int64]*proto.ShardMetadata{
-			0: steadyShard(leaderB, 0, 4294967295),
-		},
-	})
+	require.NoError(t, metadata.UpdateShardStatus("default", 0, steadyShard(leaderB, 0, 4294967295)))
 	m.mu.Lock()
 	m.trackers[shardKey{namespace: "default", shardId: 0}].lastSampleTime = time.Now().Add(-time.Second)
 	m.mu.Unlock()
@@ -587,11 +618,11 @@ func TestMonitor_CounterResetDropsThroughput(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Name: strPtr("nodeA"), Public: "a:9091", Internal: "a:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: steadyShard(leader, 0, 4294967295),
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	splitter := &mockSplitter{}
@@ -638,12 +669,12 @@ func TestMonitor_MaxShardCountRetainsTrackers(t *testing.T) {
 	metadata := newTestMetadata(t, config)
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: steadyShard(leader, 0, 2147483647),
 			1: steadyShard(leader, 2147483648, 4294967295),
 		},
-	})
+	}))
 
 	rpcMock := &mockRpcProvider{statuses: make(map[int64]*proto.GetStatusResponse)}
 	rpcMock.setStats(0, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})

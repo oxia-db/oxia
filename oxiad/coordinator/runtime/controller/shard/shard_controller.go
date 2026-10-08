@@ -25,8 +25,10 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
+	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
@@ -99,6 +101,18 @@ type controller struct {
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
 
+	// The features of a data server are reported only when they change, so
+	// unlike the other notifications they must not be dropped when the event
+	// loop is busy: the data servers are collected until the loop handles
+	// them, and featuresDiscoveredOp wakes it up.
+	discoveredDataServersMu sync.Mutex
+	discoveredDataServers   map[string]*proto.DataServerIdentity
+	featuresDiscoveredOp    chan any
+	// termFeaturesCheckPending is set from the discovery of the features of
+	// an ensemble member until checkTermFeatures completes. It is owned by
+	// the event loop.
+	termFeaturesCheckPending bool
+
 	ctx                   context.Context
 	ctxCancel             context.CancelFunc
 	wg                    sync.WaitGroup
@@ -131,6 +145,19 @@ func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 	}
 }
 
+func (s *controller) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	s.discoveredDataServersMu.Lock()
+	s.discoveredDataServers[dataServer.GetNameOrDefault()] = dataServer
+	s.discoveredDataServersMu.Unlock()
+	// A wake-up that is pending already covers this data server too
+	channel.PushNoBlock(s.featuresDiscoveredOp, nil)
+}
+
 //nolint:revive
 func NewController(
 	namespace string,
@@ -156,6 +183,8 @@ func NewController(
 		deleteOp:                            make(chan any, chanBufferSize),
 		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		discoveredDataServers:               make(map[string]*proto.DataServerIdentity),
+		featuresDiscoveredOp:                make(chan any, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -273,6 +302,8 @@ func (s *controller) run() {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailure(n)
+		case <-s.featuresDiscoveredOp:
+			s.handleFeaturesDiscovered()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
 		case <-periodicTasksTimer.C:
@@ -331,6 +362,101 @@ func (s *controller) handleDataServerFailure(failedDataServer *proto.DataServerI
 		)
 		s.onElectLeader(nil)
 	}
+}
+
+// handleFeaturesDiscovered checks the features pinned by the current term
+// when the features of ensemble members are discovered (see
+// checkTermFeatures). The features of the other data servers don't change the
+// ones that the ensemble supports.
+func (s *controller) handleFeaturesDiscovered() {
+	s.discoveredDataServersMu.Lock()
+	discovered := s.discoveredDataServers
+	s.discoveredDataServers = make(map[string]*proto.DataServerIdentity)
+	s.discoveredDataServersMu.Unlock()
+
+	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling discovered features: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	if slices.ContainsFunc(shardMeta.Ensemble, func(member *proto.DataServerIdentity) bool {
+		_, found := discovered[member.GetNameOrDefault()]
+		return found
+	}) {
+		s.termFeaturesCheckPending = true
+	}
+	s.checkTermFeatures(shardMeta)
+}
+
+// checkTermFeatures starts a new election when the whole ensemble supports
+// features that the current term doesn't pin, or the shard would run without
+// them until its next election. A term pins the features of the members as
+// far as they were known when it was negotiated, and they can change
+// afterward: e.g. in a rolling upgrade, the leader restarts last, and the
+// election that replaces it negotiates the features of its previous binary;
+// or the first handshake of a member with this coordinator completes after
+// the election. The periodic tasks retry the check while it can't complete,
+// e.g. during a split of the shard.
+func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
+	if !s.termFeaturesCheckPending {
+		return
+	}
+	if shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState || shardMeta.Split != nil {
+		return
+	}
+	ensemble := shardMeta.Ensemble
+	supported := negotiate(s.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble))
+	if len(supported) == 0 {
+		// e.g. the features of a member are not known yet
+		s.termFeaturesCheckPending = false
+		return
+	}
+	pinned, err := s.termFeatures(shardMeta)
+	switch {
+	case errors.Is(err, ErrTermFeaturesNotReported):
+		// The leader runs an older binary: the election that replaces it when
+		// it restarts with a newer one negotiates the features again
+		s.termFeaturesCheckPending = false
+		return
+	case err != nil:
+		s.logger.Warn(
+			"Failed to read the features pinned by the term, retrying later",
+			slog.Any("leader", shardMeta.Leader),
+			slog.Any("error", err),
+		)
+		return
+	}
+	s.termFeaturesCheckPending = false
+	features := featurepkg.Missing(supported, pinned)
+	if len(features) == 0 {
+		return
+	}
+	s.logger.Info(
+		"Starting a new election to pin the features supported by the ensemble",
+		slog.Int64("term", shardMeta.Term),
+		slog.Any("pinned-features", pinned),
+		slog.Any("features", features),
+	)
+	s.onElectLeader(nil)
+}
+
+// termFeatures returns the features pinned by the current term of the shard.
+// They are known if the controller elected the leader of the term; otherwise,
+// e.g. after a restart of the coordinator, the leader reports them.
+func (s *controller) termFeatures(shardMeta *proto.ShardMetadata) ([]proto.Feature, error) {
+	if e := s.currentElection; e != nil && e.mutableShardMetadata.GetLeader() != nil &&
+		e.mutableShardMetadata.GetTerm() == shardMeta.GetTerm() {
+		return e.pinnedFeatures, nil
+	}
+	status, err := s.rpc.GetStatus(s.ctx, shardMeta.Leader, &proto.GetStatusRequest{Shard: s.shard})
+	switch {
+	case err != nil:
+		return nil, err
+	case status.GetTerm() != shardMeta.GetTerm() || status.GetStatus() != proto.ServingStatus_LEADER:
+		return nil, fmt.Errorf("the leader is in term %d with status %s", status.GetTerm(), status.GetStatus())
+	case status.GetTermFeatures() == nil:
+		return nil, ErrTermFeaturesNotReported
+	}
+	return status.GetTermFeatures().GetFeatures(), nil
 }
 
 func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) bool {
@@ -408,6 +534,14 @@ func (s *controller) validateChangeEnsembleFeatures(changeEnsembleAction *action
 		"bug: shard metadata missing while validating change ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
+	// The ensemble of the parent and of the children of a split doesn't change
+	// until the split ends. Checking it before the election that changes the
+	// ensemble keeps the current election of the shard running; the election
+	// checks it again, in the status update that starts it, in case a split
+	// started since (see Election.persistNewTerm).
+	if shardMeta.Split != nil {
+		return fmt.Errorf("%w: the shard is part of a split", ErrNotReadyForChangeEnsemble)
+	}
 	if changeEnsembleAction.From == nil {
 		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
 	}
@@ -533,7 +667,11 @@ func (s *controller) deleteShardWithRetries() {
 		}
 
 		s.terminating.Store(true)
-		s.metadataStore.DeleteShardStatus(s.namespace, s.shard)
+		if err := s.metadataStore.DeleteShardStatus(s.namespace, s.shard); err != nil {
+			// The shard is still marked as deleting: its deletion resumes when
+			// the coordinator restarts
+			return backoff.Permanent(err)
+		}
 		if s.eventListener != nil {
 			go func() {
 				process.DoWithLabels(
@@ -579,6 +717,7 @@ func (s *controller) Close() error {
 				electionAction.Done("")
 			case <-s.deleteOp:
 			case <-s.dataServerFailureOp:
+			case <-s.featuresDiscoveredOp:
 			case op := <-s.changeEnsembleOp:
 				op.Error(constant.ErrResourceUnavailable)
 			default:
@@ -621,7 +760,23 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	s.onElectLeader(changeEnsembleAction)
+	leader := s.onElectLeader(changeEnsembleAction)
+	if err := s.currentElection.ChangeEnsembleError(); err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
+	if leader == nil {
+		// The election stopped without changing the ensemble, e.g. because a
+		// split of the shard started after the validation above. The shard is
+		// as ready for a change of its ensemble as it was before this one: drop
+		// the election, which never elected a leader for its followers to catch
+		// up with, or it rejects the next changes as not ready.
+		s.currentElection.Stop()
+		s.currentElection = nil
+		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
+			ErrNotReadyForChangeEnsemble))
+		return
+	}
 	changeEnsembleAction.Done(nil)
 }
 
@@ -668,39 +823,51 @@ func (s *controller) SyncServerAddress() {
 
 func (s *controller) handlePeriodicTasks() {
 	borrowedMeta, exists := s.metadataStore.GetShardStatus(s.namespace, s.shard)
-	mutShardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
+	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
-		s.shard).UnsafeBorrow())
-	stateDirty := false
+		s.shard).UnsafeBorrow()
 
-	if len(mutShardMeta.PendingDeleteShardNodes) > 0 {
-		if err := s.handlePendingDeleteShard(mutShardMeta); err != nil {
+	if len(shardMeta.PendingDeleteShardNodes) > 0 {
+		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
-		} else {
-			stateDirty = true
 		}
 	}
 
-	if stateDirty {
-		s.metadataStore.UpdateShardStatus(s.namespace, s.shard, mutShardMeta)
-	}
+	s.checkTermFeatures(shardMeta)
 }
 
-func (s *controller) handlePendingDeleteShard(mutShardMeta *proto.ShardMetadata) error {
-	for _, ds := range mutShardMeta.PendingDeleteShardNodes {
+// handlePendingDeleteShard deletes the shard from the data servers removed from
+// its ensemble, then drops them from the pending-delete nodes, on top of the
+// current metadata of the shard. Other writers update the shard concurrently,
+// e.g. a namespace deletion marks it Deleting, and a write of the copy read
+// before the deletions would revert them.
+func (s *controller) handlePendingDeleteShard(shardMeta *proto.ShardMetadata) error {
+	deleted := make(map[string]bool, len(shardMeta.PendingDeleteShardNodes))
+	for _, ds := range shardMeta.PendingDeleteShardNodes {
 		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
 		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
-			Term:      mutShardMeta.Term,
+			Term:      shardMeta.Term,
 		}); err != nil {
 			return fmt.Errorf("delete shard from removed data server %s: %w", ds.GetNameOrDefault(), err)
 		}
 
 		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
+		deleted[ds.GetNameOrDefault()] = true
 	}
 
-	mutShardMeta.PendingDeleteShardNodes = nil
+	// Best-effort: if this is not persisted, the pending deletes are retried
+	_ = s.metadataStore.UpdateShardStatuses(s.namespace, func(shards map[int64]*proto.ShardMetadata) bool {
+		current, exists := shards[s.shard]
+		if !exists {
+			return false
+		}
+		pending := len(current.PendingDeleteShardNodes)
+		current.PendingDeleteShardNodes = slices.DeleteFunc(current.PendingDeleteShardNodes,
+			func(ds *proto.DataServerIdentity) bool { return deleted[ds.GetNameOrDefault()] })
+		return len(current.PendingDeleteShardNodes) < pending
+	})
 	return nil
 }

@@ -45,8 +45,22 @@ type ConcurrentBackOff struct {
 	bo backoff.BackOff
 }
 
+var _ backoff.BackOffContext = (*ConcurrentBackOff)(nil)
+
 func NewConcurrentBackOff(bo backoff.BackOff) *ConcurrentBackOff {
 	return &ConcurrentBackOff{bo: bo}
+}
+
+// Context exposes the context of the wrapped backoff. backoff.RetryNotify
+// only interrupts its wait between retries through a backoff.BackOffContext,
+// so without it a cancelled context would not stop the wait.
+func (c *ConcurrentBackOff) Context() context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if bc, ok := c.bo.(backoff.BackOffContext); ok {
+		return bc.Context()
+	}
+	return context.Background()
 }
 
 func (c *ConcurrentBackOff) NextBackOff() time.Duration {

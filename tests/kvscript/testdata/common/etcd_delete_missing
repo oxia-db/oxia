@@ -1,0 +1,171 @@
+# Ported from etcd tests/common/kv_test.go: TestKVDelete (missing-key deletion).
+# etcd returns deleted=0; Oxia returns key not found and preserves all records.
+
+put key=a value=alpha save=a
+----
+ok key="a" modifications=0
+
+put key=b value=bravo
+----
+ok key="b" modifications=0
+
+put key=c value=charlie save=c
+----
+ok key="c" modifications=0
+
+put key=c/abc value=child save=child
+----
+ok key="c/abc" modifications=0
+
+put key=d value=delta save=d
+----
+ok key="d" modifications=0
+
+delete key=e
+----
+error: key not found
+
+get key=e
+----
+error: key not found
+
+get key=a
+----
+key="a" value="alpha" modifications=0
+
+get key=b
+----
+key="b" value="bravo" modifications=0
+
+get key=c
+----
+key="c" value="charlie" modifications=0
+
+get key=c/abc
+----
+key="c/abc" value="child" modifications=0
+
+get key=d
+----
+key="d" value="delta" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="b"
+key="c"
+key="c/abc"
+key="d"
+
+delete key=b
+----
+ok
+
+get key=b
+----
+error: key not found
+
+get key=a
+----
+key="a" value="alpha" modifications=0
+
+get key=c
+----
+key="c" value="charlie" modifications=0
+
+get key=c/abc
+----
+key="c/abc" value="child" modifications=0
+
+get key=d
+----
+key="d" value="delta" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="c"
+key="c/abc"
+key="d"
+
+# Repeating a successful deletion reports missing and leaves neighbors intact.
+delete key=b
+----
+error: key not found
+
+get key=b
+----
+error: key not found
+
+get key=a
+----
+key="a" value="alpha" modifications=0
+
+get key=c
+----
+key="c" value="charlie" modifications=0
+
+get key=c/abc
+----
+key="c/abc" value="child" modifications=0
+
+get key=d
+----
+key="d" value="delta" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="c"
+key="c/abc"
+key="d"
+
+# Every surviving record still accepts its version saved before the deletions.
+put key=a value=alpha expected-version=@a
+----
+ok key="a" modifications=1
+
+put key=c value=charlie expected-version=@c
+----
+ok key="c" modifications=1
+
+put key=c/abc value=child expected-version=@child
+----
+ok key="c/abc" modifications=1
+
+put key=d value=delta expected-version=@d
+----
+ok key="d" modifications=1
+
+get key=a
+----
+key="a" value="alpha" modifications=1
+
+get key=c
+----
+key="c" value="charlie" modifications=1
+
+get key=c/abc
+----
+key="c/abc" value="child" modifications=1
+
+get key=d
+----
+key="d" value="delta" modifications=1
+
+# A missing deletion never prevents a subsequent normal create and read.
+put key=e value=echo create-only
+----
+ok key="e" modifications=0
+
+get key=e
+----
+key="e" value="echo" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="c"
+key="c/abc"
+key="d"
+key="e"

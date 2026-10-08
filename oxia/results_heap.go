@@ -14,35 +14,67 @@
 
 package oxia
 
-import "github.com/oxia-db/oxia/common/compare"
+// rangeScanResult is a result of the range scan of one shard. When the scan
+// uses an index, the shard returns the records in the order of their secondary
+// keys, and the servers send the secondary key with each record. Older servers
+// don't, and leave it nil.
+type rangeScanResult struct {
+	gr                GetResult
+	secondaryIndexKey *string
+}
 
 type ResultAndChannel struct {
 	gr GetResult
-	ch chan GetResult
+	// The key of the result, and its secondary key if it has one, in the form
+	// that the order of the heap compares
+	sortKey          []byte
+	sortSecondaryKey []byte
+	hasSecondaryKey  bool
+	ch               chan rangeScanResult
 }
 
-type ResultHeap []*ResultAndChannel
-
-func (h ResultHeap) Len() int {
-	return len(h)
+func newResultAndChannel(order keyOrder, r rangeScanResult, ch chan rangeScanResult) *ResultAndChannel {
+	rc := &ResultAndChannel{gr: r.gr, sortKey: order.sortKey(r.gr.Key), ch: ch}
+	if r.secondaryIndexKey != nil {
+		rc.sortSecondaryKey = order.sortKey(*r.secondaryIndexKey)
+		rc.hasSecondaryKey = true
+	}
+	return rc
 }
 
-func (h ResultHeap) Less(i, j int) bool {
-	return compare.CompareWithSlash([]byte(h[i].gr.Key), []byte(h[j].gr.Key)) < 0
+type ResultHeap struct {
+	results []*ResultAndChannel
+	order   keyOrder
 }
 
-func (h ResultHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
+func (h *ResultHeap) Len() int {
+	return len(h.results)
+}
+
+// Less orders the results by their secondary keys, then by their keys. The
+// results without a secondary key are ordered by their keys only.
+func (h *ResultHeap) Less(i, j int) bool {
+	a, b := h.results[i], h.results[j]
+	if a.hasSecondaryKey && b.hasSecondaryKey {
+		if c := h.order.compareSortKeys(a.sortSecondaryKey, b.sortSecondaryKey); c != 0 {
+			return c < 0
+		}
+	}
+	return h.order.compareSortKeys(a.sortKey, b.sortKey) < 0
+}
+
+func (h *ResultHeap) Swap(i, j int) {
+	h.results[i], h.results[j] = h.results[j], h.results[i]
 }
 
 func (h *ResultHeap) Push(x any) {
-	*h = append(*h, x.(*ResultAndChannel))
+	h.results = append(h.results, x.(*ResultAndChannel))
 }
 
 func (h *ResultHeap) Pop() any {
-	old := *h
+	old := h.results
 	n := len(old)
 	x := old[n-1]
-	*h = old[0 : n-1]
+	h.results = old[0 : n-1]
 	return x
 }

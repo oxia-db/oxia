@@ -1,0 +1,79 @@
+# Adapted from etcd server/storage/mvcc/kv_test.go: TestKVPutMultipleTimes,
+# and tests/e2e/ctl_v3_kv_test.go: getCountOnlyTest.
+# Rewriting the same value is a modification, not a new record or a no-op.
+# Oxia versions are captured by aliases rather than etcd revision numbers.
+
+put key=baz value=neighbor save=neighbor
+----
+ok key="baz" modifications=0
+
+put key=foo value=bar save=first
+----
+ok key="foo" modifications=0
+
+get key=foo
+----
+key="foo" value="bar" modifications=0
+
+put key=foo value=bar save=second
+----
+ok key="foo" modifications=1
+
+get key=foo
+----
+key="foo" value="bar" modifications=1
+
+# The old version becomes stale even though the value did not change.
+put key=foo value=rejected expected-version=@first
+----
+error: unexpected version id
+
+range start="" end=""
+----
+key="baz" value="neighbor" modifications=0
+key="foo" value="bar" modifications=1
+
+list start="" end="" unordered
+----
+key="baz"
+key="foo"
+
+put key=foo value=bar expected-version=@second save=third
+----
+ok key="foo" modifications=2
+
+put key=foo value=latest expected-version=@third save=latest
+----
+ok key="foo" modifications=3
+
+get key=foo
+----
+key="foo" value="latest" modifications=3
+
+range start="" end=""
+----
+key="baz" value="neighbor" modifications=0
+key="foo" value="latest" modifications=3
+
+list start="" end="" unordered
+----
+key="baz"
+key="foo"
+
+put key=foo value=rejected expected-version=@third
+----
+error: unexpected version id
+
+get key=foo
+----
+key="foo" value="latest" modifications=3
+
+# Rewrites and failed CAS on foo leave the neighbor's saved version valid.
+put key=baz value=neighbor expected-version=@neighbor
+----
+ok key="baz" modifications=1
+
+range start="" end=""
+----
+key="baz" value="neighbor" modifications=1
+key="foo" value="latest" modifications=3

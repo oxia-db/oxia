@@ -29,9 +29,10 @@ func (d *DizzyShardManager) Leader(int64) string {
 	return d.lookupAddress
 }
 
-func NewDizzyShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
-	serviceAddress string, namespace string, requestTimeout time.Duration) (ShardManager, error) {
-	manager, err := NewShardManager(shardStrategy, rpcProvider, serviceAddress, namespace, requestTimeout)
+func NewDizzyShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider, serviceAddress string,
+	namespace string, requestTimeout time.Duration, onShardsReplaced ShardsReplacedListener) (ShardManager, error) {
+	manager, err := NewShardManager(shardStrategy, rpcProvider, serviceAddress, namespace, requestTimeout,
+		onShardsReplaced)
 	if err != nil {
 		return nil, err
 	}

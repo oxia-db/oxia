@@ -51,6 +51,7 @@ const (
 	SplitPhaseBootstrap = SplitPhase_Bootstrap
 	SplitPhaseCatchUp   = SplitPhase_CatchUp
 	SplitPhaseCutover   = SplitPhase_Cutover
+	SplitPhaseFinalize  = SplitPhase_Finalize
 )
 
 func (ds *DataServerIdentity) GetNameOrDefault() string {
@@ -102,6 +103,8 @@ func ParseSplitPhase(value SplitPhase) SplitPhase {
 		return SplitPhaseCatchUp
 	case SplitPhaseCutover:
 		return SplitPhaseCutover
+	case SplitPhaseFinalize:
+		return SplitPhaseFinalize
 	default:
 		return SplitPhaseBootstrap
 	}
@@ -146,6 +149,16 @@ func ParseKeySortingType(value string) (KeySortingType, error) {
 	default:
 		return KeySortingType_UNKNOWN, errors.New(`must be one of "natural" or "hierarchical"`)
 	}
+}
+
+// ToKeySorting returns the order of the keys in the shards of a namespace with
+// this key sorting, as the clients are told. The data servers keep the keys in
+// hierarchical order when the key sorting is not set.
+func (t KeySortingType) ToKeySorting() KeySorting {
+	if t == KeySortingType_NATURAL {
+		return KeySorting_KEY_SORTING_NATURAL
+	}
+	return KeySorting_KEY_SORTING_HIERARCHICAL
 }
 
 func ParseAntiAffinityMode(value string) string {

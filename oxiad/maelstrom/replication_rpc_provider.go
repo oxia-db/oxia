@@ -146,6 +146,10 @@ type maelstromReplicateClient struct {
 	md        metadata.MD
 	responses chan *proto.Ack
 	failed    chan error
+
+	// Sequence number of the next append. Only the cursor's sender goroutine
+	// touches it: like on a gRPC stream, Send is never called concurrently.
+	nextSeq int64
 }
 
 func (m *maelstromReplicateClient) Send(request *proto.Append) error {
@@ -159,11 +163,13 @@ func (m *maelstromReplicateClient) Send(request *proto.Append) error {
 			},
 			OxiaMsg:  toJSON(request),
 			StreamId: m.streamId,
+			Seq:      m.nextSeq,
 		},
 	})
 	if err != nil {
 		panic("failed to serialize json")
 	}
+	m.nextSeq++
 
 	fmt.Fprintln(os.Stdout, string(b))
 	return nil

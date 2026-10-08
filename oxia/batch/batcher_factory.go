@@ -35,6 +35,7 @@ func (b *BatcherFactory) NewBatcher(ctx context.Context, shard int64, batcherTyp
 		batchFactory:        batchFactory,
 		callC:               make(chan any, batcherChannelBufferSize),
 		closeC:              make(chan bool),
+		addsDone:            make(chan struct{}),
 		linger:              b.Linger,
 		maxRequestsPerBatch: b.MaxRequestsPerBatch,
 	}

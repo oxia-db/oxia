@@ -25,10 +25,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/metric"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -449,7 +452,7 @@ func TestTrim(t *testing.T) {
 	assert.EqualValues(t, 0, w.FirstOffset())
 	assert.EqualValues(t, 99, w.LastOffset())
 
-	assert.NoError(t, w.(*wal).trim(50))
+	assert.NoError(t, w.(*wal).trim(50, w.(*wal).generation.Load(), func() error { return nil }))
 
 	assert.EqualValues(t, 50, w.FirstOffset())
 	assert.EqualValues(t, 99, w.LastOffset())
@@ -626,11 +629,12 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	assert.NoError(t, w2.Clear())
 
 	// First entry after clear uses AppendAsyncWithPreviousCrc to seed the CRC chain
-	assert.NoError(t, w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+	crcAt10, err := w2.AppendAsyncWithPreviousCrc(&proto.LogEntry{
 		Term:   1,
 		Offset: 10,
 		Value:  []byte("entry-10"),
-	}, &crcAt9))
+	}, &crcAt9)
+	assert.NoError(t, err)
 	assert.NoError(t, w2.Sync(context.Background()))
 
 	for i := 11; i < 20; i++ {
@@ -647,11 +651,84 @@ func TestAppendAsyncWithPreviousCrc(t *testing.T) {
 	// the WAL that was cleared+reseeded at offset 9.
 	assert.Equal(t, expectedCrc, actualCrc,
 		"CRC chain must match after clear+AppendAsyncWithPreviousCrc")
+	// The append returns the CRC that the WAL chained for the entry
+	assert.Equal(t, w1Crcs[10], crcAt10)
+	assert.Equal(t, w2CrcsAfter[10], crcAt10)
 
 	assert.NoError(t, w1.Close())
 	assert.NoError(t, f1.Close())
 	assert.NoError(t, w2.Close())
 	assert.NoError(t, f2.Close())
+}
+
+func appendEntries(t *testing.T, w Wal, term, firstOffset, lastOffset int64, payload string) {
+	t.Helper()
+	for i := firstOffset; i <= lastOffset; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: term, Offset: i, Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+}
+
+// assertCrcChain checks that every entry of the wal carries the crc of the
+// entry before it as its previous crc, and returns the crc of the last entry.
+func assertCrcChain(t *testing.T, w Wal) uint32 {
+	t.Helper()
+	previousCrcs, entryCrcs := readCrcsViaReader(t, w)
+	for offset := w.FirstOffset() + 1; offset <= w.LastOffset(); offset++ {
+		assert.Equal(t, entryCrcs[offset-1], previousCrcs[offset], "crc chain broken at offset %d", offset)
+	}
+	return entryCrcs[w.LastOffset()]
+}
+
+// The entries appended after a truncation must chain from the last entry kept:
+// their crcs must match the ones of a wal that never held the truncated
+// entries, as a follower's must keep matching the leader's after it truncated
+// its uncommitted entries.
+func TestWal_TruncateKeepsCrcChain(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		payloadSize  int
+		olderSegment bool
+	}{
+		{"current segment", 10, false},
+		// The truncation reopens an older segment for writes, and deletes the
+		// segments after it
+		{"older segment", 1024, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := strings.Repeat("x", test.payloadSize)
+
+			fExpected, wExpected := createWal(t)
+			appendEntries(t, wExpected, 1, 0, 50, payload)
+			appendEntries(t, wExpected, 2, 51, 59, payload)
+			expectedCrc := assertCrcChain(t, wExpected)
+			assert.NoError(t, wExpected.Close())
+			assert.NoError(t, fExpected.Close())
+
+			f, w := createWal(t)
+			appendEntries(t, w, 1, 0, 299, payload)
+			// Make sure that the truncation point is in the intended segment
+			walImpl := w.(*wal)
+			walImpl.RLock()
+			assert.Equal(t, test.olderSegment, walImpl.currentSegment.BaseOffset() > 50)
+			walImpl.RUnlock()
+
+			headOffset, err := w.TruncateLog(50)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 50, headOffset)
+			appendEntries(t, w, 2, 51, 59, payload)
+			assert.Equal(t, expectedCrc, assertCrcChain(t, w))
+			assert.NoError(t, w.Close())
+
+			// The chain written to the segment files survives a reopen
+			w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+			assert.NoError(t, err)
+			assert.EqualValues(t, 59, w.LastOffset())
+			assert.Equal(t, expectedCrc, assertCrcChain(t, w))
+			assert.NoError(t, w.Close())
+			assert.NoError(t, f.Close())
+		})
+	}
 }
 
 // With sync disabled there are no sync rounds: every rollover exercises the
@@ -1026,6 +1103,95 @@ func TestWal_RecoverAfterAllSegmentsContentLost(t *testing.T) {
 	assert.NoError(t, f.Close())
 }
 
+// The recovery discards a torn entry past the commit offset along with the
+// intact ones after it: when the next term rewrites that entry with one of the
+// same size, a later recovery must not bring the discarded entries of the
+// older term back after it.
+func TestWal_DiscardedEntriesNotResurrected(t *testing.T) {
+	f := NewTestWalFactory(t)
+	commitOffsetProvider := ConfigurableCommitOffsetProvider{commitOffset: 2}
+	w, err := f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	for i := int64(0); i <= 5; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: i, Value: fmt.Appendf(nil, "term-1-entry-%d", i)}))
+	}
+
+	// A power loss tears the uncommitted entry 3, while 4 and 5 reach the disk
+	rw := w.(*wal).currentSegment.(*readWriteSegment)
+	rw.txnMappedFile[fileOffset(rw.writingIdx, 0, 3)+rw.c.codec.GetHeaderSize()] ^= 0xFF
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 2, w.LastOffset())
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term: 2, Offset: 3, Value: []byte("term-2-entry-3")}))
+	assert.NoError(t, w.Close())
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, commitOffsetProvider)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 3, w.LastOffset())
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, r, []string{"term-1-entry-0", "term-1-entry-1", "term-1-entry-2", "term-2-entry-3"})
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// A failed recovery must release what the wal set up before it: a leaked
+// entries gauge would keep reporting the shard, and pin the wal in memory.
+func TestWal_RecoveryFailureUnregistersGauge(t *testing.T) {
+	// Swap in an SDK meter so the registered gauges can be read back.
+	previous := metric.GetMeter()
+	reader := sdkmetric.NewManualReader()
+	metric.SetMeter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
+	defer metric.SetMeter(previous)
+
+	dir := t.TempDir()
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  dir,
+		Retention:   1 * time.Hour,
+		SegmentSize: 128 * 1024,
+		SyncData:    true,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	payload := strings.Repeat("x", 1024)
+	for i := 0; i < 300; i++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term: 1, Offset: int64(i), Value: []byte(fmt.Sprintf("%s-%d", payload, i))}))
+	}
+	assert.NoError(t, w.Close())
+
+	// Fail the recovery after it opened a read-only segment for the last
+	// crc: the last segment is reopened for writes, and its stale index
+	// cannot be removed
+	basePath := walPath(dir, constant.DefaultNamespace, shard)
+	segments, err := listAllSegments(basePath)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(segments), 2)
+	lastConfig, err := newSegmentConfig(basePath, segments[len(segments)-1])
+	assert.NoError(t, err)
+	assert.NoError(t, codec.RemoveFileIfExists(lastConfig.idxPath))
+	assert.NoError(t, os.MkdirAll(filepath.Join(lastConfig.idxPath, "not-empty"), 0755))
+
+	w, err = f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.ErrorContains(t, err, "failed to remove stale segment index file")
+	assert.Nil(t, w)
+
+	var rm metricdata.ResourceMetrics
+	assert.NoError(t, reader.Collect(context.Background(), &rm))
+	for _, scope := range rm.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			assert.NotEqual(t, "oxia_server_wal_entries", m.Name)
+		}
+	}
+	assert.NoError(t, f.Close())
+}
+
 // Truncating to an offset below all the retained segments clears the wal:
 // the clear used to re-acquire the wal lock already held by TruncateLog,
 // deadlocking the wal permanently (this test would time out).
@@ -1067,6 +1233,121 @@ func TestWal_TruncateBelowAllSegments(t *testing.T) {
 	}
 	assert.False(t, r.HasNext())
 	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// The segments that a truncation deletes, or reopens for writes, must leave
+// the read-only segments cache. The reads of the offsets appended again after
+// the truncation used to be served by the cached segments: the deleted ones,
+// closed, failed every read, and the reopened one read the new entries through
+// the index of the truncated ones, failing or returning the entries of other
+// offsets.
+func TestWal_TruncateEvictsCachedSegments(t *testing.T) {
+	f := NewWalFactory(&FactoryOptions{
+		BaseWalDir:  t.TempDir(),
+		Retention:   1 * time.Hour,
+		SegmentSize: 1024,
+	})
+	w, err := f.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+	group := w.(*wal).readOnlySegments.(*readOnlySegmentsGroup)
+
+	appendEntries(t, w, 1, 0, 99, "old")
+
+	// Cache the read-only segment holding the truncation point, and one after
+	// it
+	for _, offset := range []int64{0, 50} {
+		r, err := w.NewReader(offset - 1)
+		assert.NoError(t, err)
+		_, _, _, err = r.ReadNext()
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+	}
+	group.Lock()
+	cached := group.openSegments.Values()
+	group.Unlock()
+	if assert.Len(t, cached, 2) {
+		assert.Greater(t, cached[1].Get().BaseOffset(), int64(30))
+	}
+
+	headOffset, err := w.TruncateLog(30)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 30, headOffset)
+	// The truncation releases the cache references: the segments get closed,
+	// exactly once
+	for _, s := range cached {
+		assert.EqualValues(t, 0, s.RefCnt())
+	}
+
+	// Bigger entries than the truncated ones, rolling the reopened segment
+	// over
+	appendEntries(t, w, 2, 31, 130, "new-term")
+
+	r, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	for i := int64(0); i <= 130; i++ {
+		e, _, _, err := r.ReadNext()
+		if !assert.NoError(t, err, "offset %d", i) {
+			break
+		}
+		assert.EqualValues(t, i, e.Offset)
+	}
+	assert.False(t, r.HasNext())
+	assert.NoError(t, r.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, f.Close())
+}
+
+// Each entry read records one read-latency sample, whichever way the reader
+// goes: the forward reader used to time the read a second time around
+// readAtIndex.
+func TestWal_ReadLatencyRecordedOncePerEntry(t *testing.T) {
+	// Read the histograms through their producer, as the Prometheus exporter
+	// does.
+	reader := sdkmetric.NewManualReader(sdkmetric.WithProducer(metric.HistogramProducer))
+	sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	readLatencyCount := func() uint64 {
+		var rm metricdata.ResourceMetrics
+		assert.NoError(t, reader.Collect(context.Background(), &rm))
+		for _, scope := range rm.ScopeMetrics {
+			for _, m := range scope.Metrics {
+				if m.Name != "oxia_server_wal_read_latency" {
+					continue
+				}
+				histo, ok := m.Data.(metricdata.Histogram[float64])
+				assert.True(t, ok, "unexpected data: %#v", m.Data)
+				var total uint64
+				for _, dp := range histo.DataPoints {
+					total += dp.Count
+				}
+				return total
+			}
+		}
+		return 0
+	}
+
+	f, w := createWal(t)
+
+	input := []string{"A", "B", "C"}
+	for i, s := range input {
+		assert.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: int64(i), Value: []byte(s)}))
+	}
+
+	before := readLatencyCount()
+	fr, err := w.NewReader(InvalidOffset)
+	assert.NoError(t, err)
+	assertReaderReads(t, fr, input)
+	assert.NoError(t, fr.Close())
+	assert.EqualValues(t, len(input), readLatencyCount()-before)
+
+	before = readLatencyCount()
+	rr, err := w.NewReverseReader()
+	assert.NoError(t, err)
+	assertReaderReads(t, rr, []string{"C", "B", "A"})
+	assert.NoError(t, rr.Close())
+	assert.EqualValues(t, len(input), readLatencyCount()-before)
+
 	assert.NoError(t, w.Close())
 	assert.NoError(t, f.Close())
 }

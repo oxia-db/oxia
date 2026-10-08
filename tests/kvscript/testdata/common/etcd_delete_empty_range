@@ -1,0 +1,155 @@
+# Adapted from etcd server/storage/mvcc/kv_test.go: TestKVDeleteRange,
+# whose [foo3,foo8) case deletes nothing from foo, foo1, and foo2.
+# Oxia returns status rather than deleted count or global revision, so reads
+# and successful CAS verify that every existing record and version survives.
+# foo8 is an extra Oxia check for exclusion of a populated upper boundary.
+
+put key=foo value="bar" save=foo
+----
+ok key="foo" modifications=0
+
+put key=foo1 value="bar1" save=foo1
+----
+ok key="foo1" modifications=0
+
+put key=foo2 value="bar2" save=foo2
+----
+ok key="foo2" modifications=0
+
+put key=foo8 value="boundary" save=foo8
+----
+ok key="foo8" modifications=0
+
+range start=foo3 end=foo8
+----
+(empty)
+
+list start=foo3 end=foo8 unordered
+----
+(empty)
+
+delete-range start=foo3 end=foo8
+----
+ok
+
+range start="" end=""
+----
+key="foo" value="bar" modifications=0
+key="foo1" value="bar1" modifications=0
+key="foo2" value="bar2" modifications=0
+key="foo8" value="boundary" modifications=0
+
+list start="" end="" unordered
+----
+key="foo"
+key="foo1"
+key="foo2"
+key="foo8"
+
+get key=foo
+----
+key="foo" value="bar" modifications=0
+
+get key=foo1
+----
+key="foo1" value="bar1" modifications=0
+
+get key=foo2
+----
+key="foo2" value="bar2" modifications=0
+
+get key=foo8
+----
+key="foo8" value="boundary" modifications=0
+
+# Every saved version from before the no-op deletion remains valid.
+put key=foo value="bar" expected-version=@foo save=foo
+----
+ok key="foo" modifications=1
+
+put key=foo1 value="bar1" expected-version=@foo1 save=foo1
+----
+ok key="foo1" modifications=1
+
+put key=foo2 value="bar2" expected-version=@foo2 save=foo2
+----
+ok key="foo2" modifications=1
+
+put key=foo8 value="boundary" expected-version=@foo8 save=foo8
+----
+ok key="foo8" modifications=1
+
+# Additional Oxia coverage: equal bounds describe an empty interval even when
+# that exact key exists. This is not a case copied from etcd TestKVDeleteRange.
+range start=foo1 end=foo1
+----
+(empty)
+
+list start=foo1 end=foo1 unordered
+----
+(empty)
+
+delete-range start=foo1 end=foo1
+----
+ok
+
+range start="" end=""
+----
+key="foo" value="bar" modifications=1
+key="foo1" value="bar1" modifications=1
+key="foo2" value="bar2" modifications=1
+key="foo8" value="boundary" modifications=1
+
+list start="" end="" unordered
+----
+key="foo"
+key="foo1"
+key="foo2"
+key="foo8"
+
+get key=foo
+----
+key="foo" value="bar" modifications=1
+
+get key=foo1
+----
+key="foo1" value="bar1" modifications=1
+
+get key=foo2
+----
+key="foo2" value="bar2" modifications=1
+
+get key=foo8
+----
+key="foo8" value="boundary" modifications=1
+
+# The equal-bound deletion also preserves all saved versions.
+put key=foo value="bar" expected-version=@foo
+----
+ok key="foo" modifications=2
+
+put key=foo1 value="bar1" expected-version=@foo1
+----
+ok key="foo1" modifications=2
+
+put key=foo2 value="bar2" expected-version=@foo2
+----
+ok key="foo2" modifications=2
+
+put key=foo8 value="boundary" expected-version=@foo8
+----
+ok key="foo8" modifications=2
+
+range start="" end=""
+----
+key="foo" value="bar" modifications=2
+key="foo1" value="bar1" modifications=2
+key="foo2" value="bar2" modifications=2
+key="foo8" value="boundary" modifications=2
+
+list start="" end="" unordered
+----
+key="foo"
+key="foo1"
+key="foo2"
+key="foo8"

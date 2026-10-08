@@ -18,6 +18,7 @@ import (
 	libtls "crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"log/slog"
 	"os"
 
 	"github.com/pkg/errors"
@@ -35,7 +36,8 @@ type TLSOptions struct {
 	MinVersion uint16 `yaml:"minVersion,omitempty" json:"minVersion,omitempty" jsonschema:"description=Minimum TLS version"`
 	// MaxVersion is the maximum TLS version supported.
 	MaxVersion uint16 `yaml:"maxVersion,omitempty" json:"maxVersion,omitempty" jsonschema:"description=Maximum TLS version"`
-	// TrustedCaFile is the path to the CA certificate.
+	// TrustedCaFile is the path to the CA certificate bundle.
+	// When empty, certificate verification uses the system roots.
 	TrustedCaFile string `yaml:"trustedCaFile,omitempty" json:"trustedCaFile,omitempty" jsonschema:"description=Path to trusted CA certificate file"`
 	// InsecureSkipVerify controls whether it verifies the certificate chain and host name.
 	InsecureSkipVerify bool `yaml:"insecureSkipVerify,omitempty" json:"insecureSkipVerify,omitempty" jsonschema:"description=Skip TLS certificate verification"`
@@ -188,6 +190,9 @@ func (tls *TLSOptions) TryIntoServerTLSConf() (*libtls.Config, error) {
 			return nil, err
 		}
 		tlsConf.ClientCAs = certPool
+	} else if tls.ClientAuth {
+		slog.Warn("TLS client authentication is using system roots because trustedCaFile is not set",
+			slog.String("hint", "Set trustedCaFile to explicitly configure trusted client CAs"))
 	}
 
 	return tlsConf, nil

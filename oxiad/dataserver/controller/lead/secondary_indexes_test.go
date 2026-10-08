@@ -16,10 +16,12 @@ package lead
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
@@ -87,11 +89,22 @@ func TestSecondaryIndexNameValidation(t *testing.T) {
 }
 
 type testFeatureChecker struct {
-	secondaryIndexNameValidation bool
+	secondaryIndexNameValidation   bool
+	ephemeralCleanupNaturalSorting bool
+	secondaryIndexSkipUnchanged    bool
 }
 
 func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
-	return f.secondaryIndexNameValidation && candidate == proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION
+	switch candidate {
+	case proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION:
+		return f.secondaryIndexNameValidation
+	case proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING:
+		return f.ephemeralCleanupNaturalSorting
+	case proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED:
+		return f.secondaryIndexSkipUnchanged
+	default:
+		return false
+	}
 }
 
 var _ feature.Checker = testFeatureChecker{}
@@ -231,8 +244,10 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	assert.Equal(t, 2, len(results))
 	assert.Equal(t, "/b", *results[0].Key)
 	assert.Equal(t, "1", string(results[0].Value))
+	assert.Equal(t, pb.String("1"), results[0].SecondaryIndexKey)
 	assert.Equal(t, "/c", *results[1].Key)
 	assert.Equal(t, "2", string(results[1].Value))
+	assert.Equal(t, pb.String("2"), results[1].SecondaryIndexKey)
 
 	// Wrong index
 	results, err = scanAll(ctx, lc, &proto.RangeScanRequest{
@@ -498,6 +513,215 @@ func TestSecondaryIndices_GetBoundedToRequestedIndex(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+func TestSecondaryIndices_GetFollowsKeySorting(t *testing.T) {
+	var shard int64 = 1
+
+	// Every record is indexed by its own key, so a get through the index has to
+	// return the same record as the same get on the primary keys, in either key
+	// sorting. The keys mix '/' with the bytes right below and above it, and "/"
+	// right after the '/' that ends the index prefix makes a "//".
+	//
+	// The hierarchical sorting groups the entries of an index by level, and
+	// other internal keys sort between the groups: here, the entries of a second
+	// index, and the session shadow key of the ephemeral record.
+	keys := []string{"a.c", "a0", "b/x", "a/y/z", "/"}
+	ephemeralKey := "a0"
+	queries := []string{"/", "a", "a.c", "a/", "a/y/y", "a/y/z", "a/z", "a0", "b", "b/x", "b/y", "c/d/e/f"}
+	comparisons := []proto.KeyComparisonType{
+		proto.KeyComparisonType_FLOOR,
+		proto.KeyComparisonType_LOWER,
+		proto.KeyComparisonType_CEILING,
+		proto.KeyComparisonType_HIGHER,
+	}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory,
+				&proto.NewTermOptions{KeySorting: keySorting})
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+			})
+
+			session, err := lc.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 60_000})
+			assert.NoError(t, err)
+
+			var puts []*proto.PutRequest
+			for _, key := range keys {
+				put := &proto.PutRequest{
+					Key:   key,
+					Value: []byte(key),
+					SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "idx", SecondaryKey: key},
+						{IndexName: "other", SecondaryKey: key},
+					},
+				}
+				if key == ephemeralKey {
+					put.SessionId = &session.SessionId
+				}
+				puts = append(puts, put)
+			}
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			assert.NoError(t, err)
+
+			for _, key := range keys {
+				resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+					Shard: &shard,
+					Gets: []*proto.GetRequest{{
+						Key:                key,
+						ComparisonType:     proto.KeyComparisonType_EQUAL,
+						SecondaryIndexName: pb.String("idx"),
+					}},
+				})
+				assert.NoError(t, err)
+				assert.Equal(t, 1, len(resps))
+				assert.Equal(t, proto.Status_OK, resps[0].Status, "EQUAL %q", key)
+				assert.Equal(t, key, resps[0].GetKey(), "EQUAL %q", key)
+			}
+
+			for _, comparison := range comparisons {
+				for _, query := range queries {
+					resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+						Shard: &shard,
+						Gets: []*proto.GetRequest{
+							{Key: query, ComparisonType: comparison},
+							{Key: query, ComparisonType: comparison, SecondaryIndexName: pb.String("idx")},
+						},
+					})
+					assert.NoError(t, err)
+					assert.Equal(t, 2, len(resps))
+
+					primary, index := resps[0], resps[1]
+					assert.Equal(t, primary.Status, index.Status, "%v %q", comparison, query)
+					assert.Equal(t, primary.GetKey(), index.GetKey(), "%v %q", comparison, query)
+					assert.Equal(t, primary.GetKey(), index.GetSecondaryIndexKey(), "%v %q", comparison, query)
+				}
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
+func TestSecondaryIndices_ListFollowsKeySorting(t *testing.T) {
+	var shard int64 = 1
+
+	// Every record is indexed by its own key, so a list or a range scan through
+	// the index has to return the same records as on the primary keys, in either
+	// key sorting.
+	//
+	// The hierarchical sorting groups the entries of an index by level, and other
+	// internal keys sort between the groups: here, the entries of a second index,
+	// and the session shadow key of the ephemeral record. Most ranges go from a
+	// level to another, and some start or end on "/", or end on a key ending in
+	// "//", like the ranges of the children of a key.
+	keys := []string{"a", "b", "a/b", "b/c", "/", "/a", "/b", "/a/b", "a/b/c", "/a/b/c"}
+	ephemeralKey := "b"
+	ranges := []struct{ start, end string }{
+		{"a", "b/d"},
+		{"", "/a/b"},
+		{"/c", "a/b/d"},
+		{"c", "/"},
+		{"/", "//"},
+		{"/a/", "/a//"},
+		{"a/", "c"},
+		{"", "z"},
+		{"b", "a"},
+	}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+				walFactory, kvFactory, &proto.NewTermOptions{KeySorting: keySorting})
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+			})
+
+			session, err := lc.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 60_000})
+			assert.NoError(t, err)
+
+			var puts []*proto.PutRequest
+			for _, key := range keys {
+				put := &proto.PutRequest{
+					Key:   key,
+					Value: []byte(key),
+					SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "idx", SecondaryKey: key},
+						{IndexName: "other", SecondaryKey: key},
+					},
+				}
+				if key == ephemeralKey {
+					put.SessionId = &session.SessionId
+				}
+				puts = append(puts, put)
+			}
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			assert.NoError(t, err)
+
+			list := func(start, end string, index *string) []string {
+				listed, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+					Shard:              &shard,
+					StartInclusive:     start,
+					EndExclusive:       end,
+					SecondaryIndexName: index,
+				})
+				assert.NoError(t, err)
+				return listed
+			}
+			scan := func(start, end string, index *string) []string {
+				results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+					Shard:              &shard,
+					StartInclusive:     start,
+					EndExclusive:       end,
+					SecondaryIndexName: index,
+				})
+				assert.NoError(t, err)
+				var scanned []string
+				for _, result := range results {
+					// Each record has its key as value
+					assert.Equal(t, result.GetKey(), string(result.Value))
+					scanned = append(scanned, result.GetKey())
+				}
+				return scanned
+			}
+
+			for _, r := range ranges {
+				assert.Equal(t, list(r.start, r.end, nil), list(r.start, r.end, pb.String("idx")),
+					"List [%q, %q)", r.start, r.end)
+				assert.Equal(t, scan(r.start, r.end, nil), scan(r.start, r.end, pb.String("idx")),
+					"RangeScan [%q, %q)", r.start, r.end)
+			}
+
+			// As before, a range through an index ends before its first entry
+			// when the end key is empty, while on the primary keys an empty end
+			// key means no upper bound
+			for _, start := range []string{"", "a", "/"} {
+				assert.Empty(t, list(start, "", pb.String("idx")), "List [%q, \"\")", start)
+				assert.Empty(t, scan(start, "", pb.String("idx")), "RangeScan [%q, \"\")", start)
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	var shard int64 = 1
 
@@ -537,6 +761,21 @@ func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []string{"/a", "/b"}, keys)
 
+	// A range scan returns the records with their secondary keys, the empty one
+	// included.
+	results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+		Shard:              &shard,
+		StartInclusive:     "",
+		EndExclusive:       "\xff",
+		SecondaryIndexName: pb.String("my-idx"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(results))
+	assert.Equal(t, "/b", *results[0].Key)
+	assert.Equal(t, pb.String(""), results[0].SecondaryIndexKey)
+	assert.Equal(t, "/a", *results[1].Key)
+	assert.Equal(t, pb.String(sneaky), results[1].SecondaryIndexKey)
+
 	// The same keys have to come back through a get on the index.
 	for _, tc := range []struct{ secondaryKey, expectedKey string }{
 		{sneaky, "/a"},
@@ -560,6 +799,168 @@ func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
+}
+
+// The ephemeral records deleted when their session ends must take their
+// secondary index entries with them. Until the feature is enabled, the session
+// end must be applied as by the servers that don't support it, which leave the
+// entries behind: otherwise the replicas of a mixed ensemble would diverge.
+func TestSecondaryIndices_SessionEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		features         []proto.Feature
+		expectedMyIdx    []string
+		expectedOtherIdx []string
+	}{{
+		name:          "feature enabled",
+		features:      []proto.Feature{proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP},
+		expectedMyIdx: []string{"/persistent"},
+	}, {
+		name:             "feature disabled",
+		expectedMyIdx:    []string{"/ephemeral", "/persistent"},
+		expectedOtherIdx: []string{"/ephemeral"},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var shard int64 = 1
+
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+				FeaturesSupported: tc.features,
+			})
+			assert.NoError(t, err)
+			sm := lc.(*leaderController).sessionManager
+
+			createResp, err := sm.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 5000})
+			assert.NoError(t, err)
+			sessionId := createResp.SessionId
+
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+				Shard: &shard,
+				Puts: []*proto.PutRequest{
+					{Key: "/ephemeral", Value: []byte("0"), SessionId: &sessionId, SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "my-idx", SecondaryKey: "0"},
+						{IndexName: "other-idx", SecondaryKey: "0"},
+					}},
+					{Key: "/persistent", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "my-idx", SecondaryKey: "1"},
+					}},
+				},
+			})
+			assert.NoError(t, err)
+
+			_, err = sm.CloseSession(&proto.CloseSessionRequest{Shard: shard, SessionId: sessionId})
+			assert.NoError(t, err)
+			assert.Empty(t, getData(t, lc.(*leaderController), "/ephemeral"))
+
+			listIndex := func(indexName string) []string {
+				keys, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+					Shard:              &shard,
+					StartInclusive:     "",
+					EndExclusive:       "\xff",
+					SecondaryIndexName: pb.String(indexName),
+				})
+				assert.NoError(t, err)
+				return keys
+			}
+			assert.Equal(t, tc.expectedMyIdx, listIndex("my-idx"))
+			assert.Equal(t, tc.expectedOtherIdx, listIndex("other-idx"))
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
+// With FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED, a put that overwrites a record
+// deletes only the index entries of the indexes that it drops, and writes only
+// the ones of the indexes that it adds. Without the feature, it deletes and
+// writes again all the entries, as the servers that don't support the feature
+// do. Either way, the record ends up with the entries of its new indexes.
+func TestSecondaryIndices_OverwriteSkipsUnchangedEntries(t *testing.T) {
+	a := &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "a"}
+	b := &proto.SecondaryIndex{IndexName: "idx", SecondaryKey: "b"}
+	c := &proto.SecondaryIndex{IndexName: "other-idx", SecondaryKey: "a"}
+	// Index names could have a '/' before
+	// FEATURE_SECONDARY_INDEX_NAME_VALIDATION: these two indexes give a record
+	// the same entry
+	slashInName := &proto.SecondaryIndex{IndexName: "x/y", SecondaryKey: "z"}
+	slashInKey := &proto.SecondaryIndex{IndexName: "x", SecondaryKey: "y/z"}
+
+	for _, tc := range []struct {
+		name     string
+		existing []*proto.SecondaryIndex
+		updated  []*proto.SecondaryIndex
+		// The write batch operations of the overwrite with the feature
+		operations int
+	}{
+		{name: "same indexes", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{a, c}},
+		{name: "reordered", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{c, a}},
+		{name: "changed", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{b, c}, operations: 2},
+		{name: "dropped", existing: []*proto.SecondaryIndex{a, c}, updated: []*proto.SecondaryIndex{c}, operations: 1},
+		{name: "added", existing: []*proto.SecondaryIndex{c}, updated: []*proto.SecondaryIndex{a, c}, operations: 1},
+		{name: "all dropped", existing: []*proto.SecondaryIndex{a, c}, operations: 2},
+		{name: "duplicate", existing: []*proto.SecondaryIndex{a, a}, updated: []*proto.SecondaryIndex{a}},
+		{name: "same entry", existing: []*proto.SecondaryIndex{slashInName}, updated: []*proto.SecondaryIndex{slashInKey}},
+		{
+			name:     "same entry kept",
+			existing: []*proto.SecondaryIndex{slashInName, slashInKey},
+			updated:  []*proto.SecondaryIndex{slashInKey},
+		},
+	} {
+		for _, skipUnchanged := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/feature=%v", tc.name, skipUnchanged), func(t *testing.T) {
+				kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				defer kvFactory.Close()
+				kv, err := kvFactory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_HIERARCHICAL)
+				require.NoError(t, err)
+				defer kv.Close()
+
+				features := testFeatureChecker{secondaryIndexSkipUnchanged: skipUnchanged}
+				put := func(existingEntry *proto.StorageEntry, indexes []*proto.SecondaryIndex) int {
+					batch := kv.NewWriteBatch()
+					defer batch.Close()
+					request := &proto.PutRequest{Key: "/record", SecondaryIndexes: indexes}
+					status, err := secondaryIndexesUpdateCallback.OnPut(batch, nil, request, existingEntry, features)
+					require.NoError(t, err)
+					require.Equal(t, proto.Status_OK, status)
+					operations := batch.Count()
+					require.NoError(t, batch.Commit())
+					return operations
+				}
+
+				put(nil, tc.existing)
+				operations := put(&proto.StorageEntry{SecondaryIndexes: tc.existing}, tc.updated)
+				if skipUnchanged {
+					assert.Equal(t, tc.operations, operations)
+				} else {
+					assert.Equal(t, len(tc.existing)+len(tc.updated), operations)
+				}
+
+				var expected []string
+				for _, si := range tc.updated {
+					expected = append(expected, "__oxia/idx/"+si.IndexName+"/"+si.SecondaryKey+"\x01%2Frecord")
+				}
+				it, err := kv.KeyPrefixIterator(secondaryIdxKeyPrefix + "/")
+				require.NoError(t, err)
+				var entries []string
+				for it.SeekGE(secondaryIdxKeyPrefix + "/"); it.Valid(); it.Next() {
+					entries = append(entries, it.Key())
+				}
+				require.NoError(t, it.Close())
+				assert.ElementsMatch(t, expected, entries)
+			})
+		}
+	}
 }
 
 func TestDoSecondaryGet_UnsupportedComparisonType(t *testing.T) {

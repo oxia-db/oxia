@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
@@ -40,7 +41,15 @@ import (
 const (
 	notificationsPrefix      = constant.InternalKeyPrefix + "notifications"
 	maxNotificationBatchSize = 100
+
+	// The offset of the last notification batch that the retention deleted.
+	trimmedNotificationsKey = constant.InternalKeyPrefix + "trimmed-notifications"
 )
+
+// ErrNotificationsTrimmed is returned by a read of the notification batches
+// from an offset when the retention deleted some of the batches from there on.
+var ErrNotificationsTrimmed = errors.Wrap(constant.ErrResourceUnavailable,
+	"the retention deleted notifications after the requested offset")
 
 var (
 	firstNotificationKey = notificationKey(0)
@@ -51,30 +60,86 @@ var (
 
 type Notifications struct {
 	batch proto.NotificationBatch
+	// The sealed batch in the wire format, when it is kept for the
+	// notifications cache, or nil
+	encoded []byte
+	// The notifications recorded by add, in the order of their operations.
+	// Their keys can alias the WAL entry that the write was decoded from:
+	// nothing may keep them past the write.
+	pending []pendingNotification
+	// The deferred filter of a split child that still holds records outside
+	// its hash range, for the writes of its own terms, or nil (see
+	// DeletedRecord)
+	splitFilter *DeferredSplitFilter
 }
 
-func newNotifications(shardId int64, offset int64, timestamp uint64) *Notifications {
+// pendingNotification is a notification recorded by Notifications.add, held
+// by value: the entry that seal builds for it points into it.
+type pendingNotification struct {
+	key             string
+	keyRangeLast    string
+	versionId       int64
+	nType           proto.NotificationType
+	hasVersionId    bool
+	hasKeyRangeLast bool
+}
+
+// newNotifications creates the notifications of the batch at offset, with
+// room for expectedCount of them: add only has to grow the slice that holds
+// them past that count.
+func newNotifications(shardId int64, offset int64, timestamp uint64, expectedCount int) *Notifications {
 	return &Notifications{
 		batch: proto.NotificationBatch{
 			Shard:     shardId,
 			Offset:    offset,
 			Timestamp: timestamp,
 		},
+		pending: make([]pendingNotification, 0, expectedCount),
 	}
 }
 
+// add records the operation on key that the notification describes. It keeps
+// neither the notification nor its fields, but copies them, so that they can
+// stay on the stack of the caller.
 func (n *Notifications) add(key string, notification *proto.Notification) {
-	n.batch.Notifications = append(n.batch.Notifications,
-		&proto.NotificationEntry{Key: &key, Value: notification})
+	p := pendingNotification{key: key, nType: notification.Type}
+	if notification.VersionId != nil {
+		p.versionId, p.hasVersionId = *notification.VersionId, true
+	}
+	if notification.KeyRangeLast != nil {
+		p.keyRangeLast, p.hasKeyRangeLast = *notification.KeyRangeLast, true
+	}
+	n.pending = append(n.pending, p)
 }
 
-// seal sorts the accumulated entries in place and deduplicates them, keeping
-// the last operation recorded for each key. The sorted order makes the
-// generated marshal deterministic — the serialized batch feeds the replicated
-// checksum — and the sort must be stable so that "last within a run of equal
-// keys" still means "last operation applied".
+// seal builds the batch entries from the recorded operations, sorts them and
+// deduplicates them, keeping the last operation recorded for each key. The
+// sorted order makes the generated marshal deterministic — the serialized
+// batch feeds the replicated checksum — and the sort must be stable so that
+// "last within a run of equal keys" still means "last operation applied".
 func (n *Notifications) seal() *proto.NotificationBatch {
-	entries := n.batch.Notifications
+	// One allocation for each kind of object, whatever the number of entries:
+	// the entries point into the pending notifications for their keys,
+	// version ids and range ends
+	entries := make([]*proto.NotificationEntry, len(n.pending))
+	entryStore := make([]proto.NotificationEntry, len(n.pending))
+	notificationStore := make([]proto.Notification, len(n.pending))
+	for i := range n.pending {
+		p := &n.pending[i]
+		notification := &notificationStore[i]
+		notification.Type = p.nType
+		if p.hasVersionId {
+			notification.VersionId = &p.versionId
+		}
+		if p.hasKeyRangeLast {
+			notification.KeyRangeLast = &p.keyRangeLast
+		}
+		entry := &entryStore[i]
+		entry.Key = &p.key
+		entry.Value = notification
+		entries[i] = entry
+	}
+
 	slices.SortStableFunc(entries, func(a, b *proto.NotificationEntry) int {
 		return strings.Compare(a.GetKey(), b.GetKey())
 	})
@@ -114,7 +179,28 @@ func (n *Notifications) Deleted(key string) {
 	})
 }
 
+// NeedsDeletedRecord reports whether the deletion of a record that the write
+// didn't look up, like an ephemeral record of a session that ends, has to be
+// notified with DeletedRecord, rather than Deleted.
+func (n *Notifications) NeedsDeletedRecord() bool {
+	return n != nil && n.splitFilter != nil
+}
+
+// DeletedRecord notifies the deletion of the record at key, whose entry is se,
+// or nil if the write didn't find it: a split child that still holds records
+// outside its hash range doesn't notify the deletion of one it doesn't keep,
+// which doesn't exist for its clients.
+func (n *Notifications) DeletedRecord(key string, se *proto.StorageEntry) {
+	if n.splitFilter != nil && se != nil && !n.splitFilter.keeps(key, se) {
+		return
+	}
+	n.Deleted(key)
+}
+
 func (n *Notifications) DeletedRange(keyStartInclusive, keyEndExclusive string) {
+	// With FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS, a range covers either
+	// internal keys or regular ones, and its start tells which: one that covers
+	// both is rejected before its notification
 	if strings.HasPrefix(keyStartInclusive, constant.InternalKeyPrefix) {
 		return
 	}
@@ -135,6 +221,41 @@ func parseNotificationKey(key string) (offset int64, err error) {
 	return offset, nil
 }
 
+var (
+	notificationBatchFields        = (&proto.NotificationBatch{}).ProtoReflect().Descriptor().Fields()
+	notificationBatchOffsetField   = notificationBatchFields.ByName("offset").Number()
+	notificationBatchNotifications = notificationBatchFields.ByName("notifications").Number()
+)
+
+// parseNotificationBatch reads the offset of an encoded notification batch,
+// and counts its notifications, without decoding them.
+func parseNotificationBatch(data []byte) (offset int64, notifications int, err error) {
+	for len(data) > 0 {
+		number, wireType, n := protowire.ConsumeTag(data)
+		if n < 0 {
+			return 0, 0, protowire.ParseError(n)
+		}
+		data = data[n:]
+		if number == notificationBatchOffsetField && wireType == protowire.VarintType {
+			value, n := protowire.ConsumeVarint(data)
+			if n < 0 {
+				return 0, 0, protowire.ParseError(n)
+			}
+			offset = int64(value)
+			data = data[n:]
+			continue
+		}
+		if n = protowire.ConsumeFieldValue(number, wireType, data); n < 0 {
+			return 0, 0, protowire.ParseError(n)
+		}
+		if number == notificationBatchNotifications {
+			notifications++
+		}
+		data = data[n:]
+	}
+	return offset, notifications, nil
+}
+
 type notificationsTracker struct {
 	sync.Mutex
 	cond       concurrent.ConditionContext
@@ -143,6 +264,17 @@ type notificationsTracker struct {
 	closed     atomic.Bool
 	kv         kvstore.KV
 	log        *slog.Logger
+
+	// The offset of the last batch that the retention deleted, or -1: a reader
+	// that is past it misses none
+	trimmedOffset atomic.Int64
+	// putTrimmedOffset adds the record of trimmedOffset to a batch
+	putTrimmedOffset func(batch kvstore.WriteBatch, offset int64) error
+
+	// The first read creates the cache: until then, which is forever on a
+	// follower, the commits don't pay for it
+	cache   *notificationsCache
+	caching atomic.Bool
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -153,12 +285,15 @@ type notificationsTracker struct {
 	readBytesCounter metric.Counter
 }
 
-func newNotificationsTracker(namespace string, shard int64, lastOffset int64, kv kvstore.KV, notificationRetentionTime time.Duration, clock time2.Clock) *notificationsTracker {
+func newNotificationsTracker(namespace string, shard int64, lastOffset int64, trimmedOffset int64,
+	putTrimmedOffset func(batch kvstore.WriteBatch, offset int64) error, kv kvstore.KV,
+	notificationRetentionTime time.Duration, clock time2.Clock) *notificationsTracker {
 	labels := metric.LabelsForShard(namespace, shard)
 	nt := &notificationsTracker{
-		shard:     shard,
-		kv:        kv,
-		waitClose: concurrent.NewWaitGroup(1),
+		shard:            shard,
+		kv:               kv,
+		putTrimmedOffset: putTrimmedOffset,
+		waitClose:        concurrent.NewWaitGroup(1),
 		log: slog.With(
 			slog.String("component", "notifications-tracker"),
 			slog.String("namespace", namespace),
@@ -172,76 +307,198 @@ func newNotificationsTracker(namespace string, shard int64, lastOffset int64, kv
 			"The total size in bytes of notifications reads", metric.Bytes, labels),
 	}
 	nt.lastOffset.Store(lastOffset)
+	nt.trimmedOffset.Store(trimmedOffset)
 	nt.cond = concurrent.NewConditionContext(nt)
 	nt.ctx, nt.cancel = context.WithCancel(context.Background())
-	newNotificationsTrimmer(nt.ctx, namespace, shard, kv, notificationRetentionTime, nt.waitClose, clock)
+	newNotificationsTrimmer(nt.ctx, namespace, shard, kv, notificationRetentionTime, nt.waitClose, clock, nt)
 	return nt
 }
 
-func (nt *notificationsTracker) UpdatedCommitOffset(offset int64) {
+// TrimmedOffset returns the offset of the last batch that the retention
+// deleted, or -1.
+func (nt *notificationsTracker) TrimmedOffset() int64 {
+	return nt.trimmedOffset.Load()
+}
+
+// trimming adds to the batch that deletes the batches up to offset, included,
+// the record that they are trimmed, and records it before the batch is
+// committed: a reader that finds them deleted finds them trimmed. It returns
+// the function that reverts it if the batch fails to commit.
+func (nt *notificationsTracker) trimming(batch kvstore.WriteBatch, offset int64) (func(), error) {
+	if err := nt.putTrimmedOffset(batch, offset); err != nil {
+		return nil, err
+	}
+	previous := nt.trimmedOffset.Swap(offset)
+	return func() { nt.trimmedOffset.CompareAndSwap(offset, previous) }, nil
+}
+
+// Caching reports whether the batches get cached, encoded in
+// Notifications.encoded.
+func (nt *notificationsTracker) Caching() bool {
+	return nt.caching.Load()
+}
+
+// Committed makes the batch of notifications of a commit visible to the
+// readers, once it is in the db.
+func (nt *notificationsTracker) Committed(notifications *Notifications) {
+	offset := notifications.batch.Offset
+	// The offset must be updated while holding the lock the waiters check it
+	// under, or a waiter that has just found it too low can miss the Broadcast
+	// and stay parked until the next commit
+	nt.Lock()
+	if nt.cache != nil {
+		if notifications.encoded != nil {
+			nt.cache.add(proto.EncodedNotificationBatch{Offset: offset, Data: notifications.encoded},
+				len(notifications.batch.Notifications))
+		} else {
+			// The first read created the cache after the batch was stored
+			// without the bytes for it: the cache starts after it
+			nt.cache.restart(offset + 1)
+		}
+	}
 	nt.lastOffset.Store(offset)
+	nt.Unlock()
 	nt.cond.Broadcast()
 }
 
-func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startOffset int64) error {
+// trimmed drops the batches up to offset, included, which the trimmer deleted
+// from the db.
+func (nt *notificationsTracker) trimmed(offset int64) {
+	nt.Lock()
+	defer nt.Unlock()
+	if nt.cache != nil {
+		nt.cache.dropUpTo(offset)
+	}
+}
+
+// RecordsDeleted drops all the cached batches, as a delete range over the
+// internal keys deletes notification records.
+func (nt *notificationsTracker) RecordsDeleted() {
+	nt.Lock()
+	defer nt.Unlock()
+	if nt.cache != nil {
+		nt.cache.restart(nt.lastOffset.Load() + 1)
+	}
+}
+
+// waitForNotifications waits until there are batches from startOffset on. It
+// returns them when they are cached, with the number of notifications they
+// carry, or nil.
+func (nt *notificationsTracker) waitForNotifications(ctx context.Context, startOffset int64) (
+	[]proto.EncodedNotificationBatch, int, error) {
 	nt.Lock()
 	defer nt.Unlock()
 
+	if nt.cache == nil {
+		// The first read: from now on, the batches get cached as they commit
+		nt.cache = newNotificationsCache(nt.lastOffset.Load() + 1)
+		nt.caching.Store(true)
+	}
+
 	for startOffset > nt.lastOffset.Load() && !nt.closed.Load() {
-		nt.log.Debug(
-			"Waiting for notification to be available",
-			slog.Int64("start-offset", startOffset),
-			slog.Int64("last-notification-offset", nt.lastOffset.Load()),
-		)
+		if nt.log.Enabled(ctx, slog.LevelDebug) {
+			nt.log.Debug(
+				"Waiting for notification to be available",
+				slog.Int64("start-offset", startOffset),
+				slog.Int64("last-notification-offset", nt.lastOffset.Load()),
+			)
+		}
 
 		if err := nt.cond.Wait(ctx); err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
 
 	if nt.closed.Load() {
-		return constant.ErrResourceUnavailable
+		return nil, 0, constant.ErrResourceUnavailable
 	}
 
-	return nil
+	res, notifications := nt.cache.read(startOffset)
+	return res, notifications, nil
 }
 
-func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, startOffset int64) ([]*proto.NotificationBatch, error) {
-	if err := nt.waitForNotifications(ctx, startOffset); err != nil {
-		return nil, err
-	}
+// ReadNextNotifications returns the next retained batches from startOffset
+// onwards, waiting until there is at least one: it never returns an empty
+// result. A negative startOffset reads from the first retained batch, like 0.
+// It fails with ErrNotificationsTrimmed if the retention deleted batches from
+// startOffset on that it would skip.
+func (nt *notificationsTracker) ReadNextNotifications(ctx context.Context, startOffset int64) (
+	[]proto.EncodedNotificationBatch, error) {
+	for {
+		res, notifications, err := nt.waitForNotifications(ctx, startOffset)
+		if err != nil {
+			return nil, err
+		}
 
+		// Load before the scan: Committed runs after the batch commit, so the
+		// scan sees every batch up to lastOffset not yet trimmed
+		lastOffset := nt.lastOffset.Load()
+		if res == nil {
+			// The cache doesn't go back to startOffset
+			if res, notifications, err = nt.scanNotifications(startOffset); err != nil {
+				return nil, err
+			}
+			// Loaded after the scan, which skips the batches it finds trimmed:
+			// the cache holds every batch from where it starts
+			if trimmed := nt.trimmedOffset.Load(); trimmed >= max(startOffset, 0) &&
+				(len(res) == 0 || res[0].Offset > trimmed) {
+				return nil, errors.Wrapf(ErrNotificationsTrimmed, "up to offset %d, reading from offset %d",
+					trimmed, startOffset)
+			}
+		}
+		if len(res) > 0 {
+			size := 0
+			for i := range res {
+				size += len(res[i].Data)
+			}
+			nt.readBatchCounter.Add(len(res))
+			nt.readBytesCounter.Add(size)
+			nt.readCounter.Add(notifications)
+			return res, nil
+		}
+
+		// Nothing is retained from startOffset onwards: the trimmer deleted
+		// those batches, or startOffset is negative on a shard without any.
+		// Wait for the next batch instead of returning the empty result, which
+		// the caller would retry at once, busy-spinning.
+		startOffset = max(startOffset, lastOffset+1)
+	}
+}
+
+// scanNotifications reads the batches from startOffset on from the db, with
+// the number of notifications they carry.
+func (nt *notificationsTracker) scanNotifications(startOffset int64) ([]proto.EncodedNotificationBatch, int, error) {
 	it, err := nt.kv.RangeScan(notificationKey(startOffset), lastNotificationKey, kvstore.ShowInternalKeys)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer it.Close()
 
-	var res []*proto.NotificationBatch
-
+	var res []proto.EncodedNotificationBatch
 	totalCount := 0
-	totalSize := 0
 
 	for ; len(res) < maxNotificationBatchSize && it.Valid(); it.Next() {
 		value, err := it.Value()
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to read notification batch")
+			return nil, 0, errors.Wrap(err, "failed to read notification batch")
 		}
 
-		nb := &proto.NotificationBatch{}
-		if err := nb.UnmarshalVT(value); err != nil {
-			return nil, errors.Wrap(err, "failed to Deserialize notification batch")
+		offset, count, err := parseNotificationBatch(value)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "failed to Deserialize notification batch")
 		}
-		res = append(res, nb)
-
-		totalSize += len(value)
-		totalCount += len(nb.Notifications)
+		// The value is only valid until the iterator moves
+		res = append(res, proto.EncodedNotificationBatch{Offset: offset, Data: slices.Clone(value)})
+		totalCount += count
 	}
 
-	nt.readBatchCounter.Add(len(res))
-	nt.readBytesCounter.Add(totalSize)
-	nt.readCounter.Add(totalCount)
-	return res, nil
+	// The iteration also stops when a read fails. Returning what was read
+	// until then could be an empty result, which ReadNextNotifications takes
+	// for trimmed batches and skips.
+	if err := it.Error(); err != nil {
+		return nil, 0, errors.Wrap(err, "failed to read notification batches")
+	}
+	return res, totalCount, nil
 }
 
 func (nt *notificationsTracker) Close() error {
@@ -250,7 +507,10 @@ func (nt *notificationsTracker) Close() error {
 		return nil
 	default:
 		nt.cancel()
+		// Like the offset, the closed flag must be set under the waiters' lock
+		nt.Lock()
 		nt.closed.Store(true)
+		nt.Unlock()
 		nt.cond.Broadcast()
 		return nt.waitClose.Wait(context.Background())
 	}

@@ -19,6 +19,7 @@ import "github.com/pkg/errors"
 var (
 	ErrNotInitialized     = errors.New("metadata not initialized")
 	ErrBadVersion         = errors.New("metadata bad version")
+	ErrConflict           = errors.New("metadata conflict")
 	ErrAlreadyExists      = errors.New("metadata already exists")
 	ErrNotFound           = errors.New("metadata not found")
 	ErrFailedPrecondition = errors.New("metadata failed precondition")

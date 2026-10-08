@@ -87,7 +87,7 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 		},
 	}
 	metadata := newTestMetadata(t, clusterConfig)
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
@@ -100,9 +100,10 @@ func TestComputeNewAssignmentsIncludesExtraAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
+		ctx:              t.Context(),
 		metadata:         metadata,
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
@@ -142,7 +143,7 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 		}},
 	}
 	metadata := newTestMetadata(t, clusterConfig)
-	metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
@@ -156,9 +157,10 @@ func TestComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	c := &runtime{
 		RWMutex:          sync.RWMutex{},
+		ctx:              t.Context(),
 		metadata:         metadata,
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 	}
@@ -192,12 +194,14 @@ func TestSelectNewEnsembleByNamespace(t *testing.T) {
 				Ensemble: []*proto.DataServerIdentity{[]*proto.DataServerIdentity{a, b}[i]},
 			}
 		}
-		metadata.CreateNamespaceStatus(name, status)
+		require.NoError(t, metadata.CreateNamespaceStatus(name, status))
 	}
 	lb := balancer.NewLoadBalancer(balancer.Options{Context: t.Context(), Metadata: metadata})
 	t.Cleanup(func() { require.NoError(t, lb.Close()) })
 	c := &runtime{metadata: metadata, loadBalancer: lb, ensembleSelector: ensemble.NewSelector()}
-	selected, err := c.selectNewEnsemble("hot", 99, ns, metadata.ListNamespaceStatus())
+	statuses, err := metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	selected, err := c.selectNewEnsemble("hot", 99, ns, statuses, nil)
 	require.NoError(t, err)
 	require.Len(t, selected, 1)
 	assert.Equal(t, "b", selected[0].Internal, "other namespaces must not hide the unused node")

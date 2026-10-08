@@ -18,15 +18,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/oxia-db/oxia/common/hash"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )
 
@@ -94,6 +100,30 @@ func TestAsyncClientImpl(t *testing.T) {
 
 	err = standaloneServer.Close()
 	assert.NoError(t, err)
+}
+
+// https://github.com/oxia-db/oxia/issues/834
+func TestAsyncClientImpl_PutDeletePutOrder(t *testing.T) {
+	standaloneServer, err := dataserver.NewStandalone(dataserver.NewTestConfig(t.TempDir()))
+	assert.NoError(t, err)
+
+	// A long linger makes the operations below go in the same write batch
+	client, err := oxia.NewAsyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(1*time.Second))
+	assert.NoError(t, err)
+
+	putResult1 := client.Put("/k", []byte("v1"))
+	deleteResult := client.Delete("/k")
+	putResult2 := client.Put("/k", []byte("v2"))
+	assert.NoError(t, (<-putResult1).Err)
+	assert.NoError(t, <-deleteResult)
+	assert.NoError(t, (<-putResult2).Err)
+
+	getResult := <-client.Get("/k")
+	assert.NoError(t, getResult.Err)
+	assert.Equal(t, []byte("v2"), getResult.Value)
+
+	assert.NoError(t, client.Close())
+	assert.NoError(t, standaloneServer.Close())
 }
 
 func TestSyncClientImpl_Notifications(t *testing.T) {
@@ -202,6 +232,60 @@ func TestAsyncClientImpl_NotificationsClose(t *testing.T) {
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, standaloneServer.Close())
+}
+
+// A subscription that falls behind by more than the retention time misses the
+// notifications that the server deletes meanwhile: it is told, before the
+// notifications that follow them.
+func TestSyncClientImpl_NotificationsMissed(t *testing.T) {
+	config := dataserver.NewTestConfig(t.TempDir())
+	config.DataServerOptions.Storage.Notification.Retention = commonoption.Duration(time.Second)
+	standaloneServer, err := dataserver.NewStandalone(config)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, standaloneServer.Close()) }()
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	notifications, err := client.GetNotifications()
+	require.NoError(t, err)
+
+	// The subscription doesn't read: the notifications of these writes fill its
+	// channel and the flow-control window of its stream, with their long keys,
+	// and the retention deletes the ones still on the server
+	ctx := context.Background()
+	padding := strings.Repeat("x", 1000)
+	for i := 0; i < 1000; i++ {
+		_, _, err := client.Put(ctx, fmt.Sprintf("/unread-%04d-%s", i, padding), []byte("0"))
+		require.NoError(t, err)
+	}
+	time.Sleep(3 * time.Second)
+
+	// It reads the ones it got before, then is told that it missed the others
+	nextNotification := func() *oxia.Notification {
+		select {
+		case n := <-notifications.Ch():
+			require.NotNil(t, n)
+			return n
+		case <-time.After(30 * time.Second):
+			require.FailNow(t, "no notification")
+			return nil
+		}
+	}
+	read := 0
+	for n := nextNotification(); n.Type != oxia.NotificationsMissed; n = nextNotification() {
+		assert.True(t, strings.HasPrefix(n.Key, "/unread-"), n.Key)
+		read++
+	}
+	assert.Less(t, read, 1000)
+
+	// Then it gets the next ones
+	_, version, err := client.Put(ctx, "/after", []byte("0"))
+	require.NoError(t, err)
+	n := nextNotification()
+	assert.Equal(t, "/after", n.Key)
+	assert.Equal(t, version.VersionId, n.VersionId)
 }
 
 func TestAsyncClientImpl_Sessions(t *testing.T) {
@@ -579,6 +663,171 @@ func TestSyncClientImpl_FloorCeilingGet(t *testing.T) {
 
 	assert.NoError(t, client.Close())
 	assert.NoError(t, standaloneServer.Close())
+}
+
+// A floor, lower, ceiling or higher get without a partition key goes to every
+// shard, and the client picks one of their answers. Each case stores two keys
+// on different shards: both shards answer with their key, and the client must
+// pick the right one in the key sorting of the namespace.
+func TestSyncClientImpl_FloorCeilingGetKeySorting(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		keys       [2]string
+		key        string
+		comparison oxia.GetOption
+		expected   string
+	}{
+		// Natural sorting compares the bytes: "a/x" < "b" < "c"
+		{"natural floor", proto.KeySortingType_NATURAL, [2]string{"a/x", "b"}, "c", oxia.ComparisonFloor(), "b"},
+		{"natural lower", proto.KeySortingType_NATURAL, [2]string{"a/x", "b"}, "c", oxia.ComparisonLower(), "b"},
+		// "b" < "b/x" < "c"
+		{"natural ceiling", proto.KeySortingType_NATURAL, [2]string{"b/x", "c"}, "b", oxia.ComparisonCeiling(), "b/x"},
+		{"natural higher", proto.KeySortingType_NATURAL, [2]string{"b/x", "c"}, "b", oxia.ComparisonHigher(), "b/x"},
+
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte: "aa/z" < "ab/y" < "a/x" < "a/z"
+		{"hierarchical floor", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "a/z",
+			oxia.ComparisonFloor(), "a/x"},
+		{"hierarchical lower", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "a/z",
+			oxia.ComparisonLower(), "a/x"},
+		{"hierarchical ceiling", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "aa/z",
+			oxia.ComparisonCeiling(), "ab/y"},
+		{"hierarchical higher", proto.KeySortingType_HIERARCHICAL, [2]string{"a/x", "ab/y"}, "aa/z",
+			oxia.ComparisonHigher(), "ab/y"},
+		// "z" < "b/x" < "a/y/z" < "c/c/c"
+		{"hierarchical floor across levels", proto.KeySortingType_HIERARCHICAL, [2]string{"b/x", "a/y/z"}, "c/c/c",
+			oxia.ComparisonFloor(), "a/y/z"},
+		{"hierarchical ceiling across levels", proto.KeySortingType_HIERARCHICAL, [2]string{"b/x", "a/y/z"}, "z",
+			oxia.ComparisonCeiling(), "b/x"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = test.keySorting
+			require.NotEqual(t, shardOf(test.keys[0], config.NumShards), shardOf(test.keys[1], config.NumShards))
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range test.keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			key, _, _, err := client.Get(t.Context(), test.key, test.comparison)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, key)
+		})
+	}
+}
+
+// A range scan without a partition key goes to every shard, and the client
+// merges the records of the shards. The merged records must follow the key
+// sorting of the namespace, like the records of a single shard.
+func TestSyncClientImpl_RangeScanKeySorting(t *testing.T) {
+	keys := []string{"b", "a/y/z", "ab/y", "a0", "a/x"}
+	for _, test := range []struct {
+		keySorting proto.KeySortingType
+		expected   []string
+	}{
+		// Natural sorting compares the bytes: '/' sorts before '0'
+		{proto.KeySortingType_NATURAL, []string{"a/x", "a/y/z", "a0", "ab/y", "b"}},
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte
+		{proto.KeySortingType_HIERARCHICAL, []string{"a0", "b", "ab/y", "a/x", "a/y/z"}},
+	} {
+		t.Run(test.keySorting.String(), func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = test.keySorting
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "", "") {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, test.expected, scanned)
+		})
+	}
+}
+
+// A range scan with an index and without a partition key goes to every shard,
+// and each shard returns its records in the order of their secondary keys. The
+// client must merge the records of the shards in that order too, not in the
+// order of their primary keys.
+func TestSyncClientImpl_RangeScanUseIndexKeySorting(t *testing.T) {
+	// The secondary keys sort in the opposite order of the primary keys
+	records := []struct{ key, secondaryKey string }{
+		{"p1", "h"}, {"p2", "g"}, {"p3", "f"}, {"p4", "e"},
+		{"p5", "d"}, {"p6", "c"}, {"p7", "b"}, {"p8", "a"},
+	}
+	expected := []string{"p8", "p7", "p6", "p5", "p4", "p3", "p2", "p1"}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = keySorting
+
+			// The records are spread over all the shards
+			shards := map[int64]bool{}
+			for _, record := range records {
+				shards[shardOf(record.key, config.NumShards)] = true
+			}
+			require.Len(t, shards, int(config.NumShards))
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, record := range records {
+				_, _, err = client.Put(t.Context(), record.key, []byte(record.key),
+					oxia.SecondaryIndex("idx", record.secondaryKey))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "a", "z", oxia.UseIndex("idx")) {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, expected, scanned)
+		})
+	}
+}
+
+// shardOf returns the shard of a standalone server that stores the key.
+func shardOf(key string, numShards uint32) int64 {
+	code := hash.Xxh332(key)
+	for _, shard := range sharding.GenerateShards(0, numShards) {
+		if shard.Min <= code && code <= shard.Max {
+			return shard.Id
+		}
+	}
+	panic("no shard for the key")
 }
 
 func TestSyncClientImpl_PartitionRouting(t *testing.T) {

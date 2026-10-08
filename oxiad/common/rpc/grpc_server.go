@@ -24,7 +24,6 @@ import (
 	"os"
 	"time"
 
-	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,6 +32,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/common/rpc/grpcmetrics"
 )
 
 const (
@@ -80,10 +80,10 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 		tcs = credentials.NewTLS(tlsConf)
 	}
 	streamInterceptors := []grpc.StreamServerInterceptor{
-		grpcprometheus.StreamServerInterceptor,
+		grpcmetrics.StreamServerInterceptor,
 	}
 	unaryInterceptors := []grpc.UnaryServerInterceptor{
-		grpcprometheus.UnaryServerInterceptor,
+		grpcmetrics.UnaryServerInterceptor,
 	}
 	if authOptions.IsEnabled() {
 		provider, err := auth.NewAuthenticationProvider(context.Background(), *authOptions)
@@ -121,7 +121,7 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 		),
 	}
 	registerFunc(c.server)
-	grpcprometheus.Register(c.server)
+	grpcmetrics.Register(c.server)
 
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(context.Background(), "tcp", bindAddress)

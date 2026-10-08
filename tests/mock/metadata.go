@@ -56,7 +56,7 @@ func PutConfig(
 ) {
 	t.Helper()
 
-	version := configProvider.Watch().Load().Version
+	version := Load(t, configProvider).Version
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
 		Version: version,
@@ -74,8 +74,8 @@ func NewMetadataFromProviders(
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, coordoption.DefaultFileStatusName)
 	configPath := filepath.Join(dir, coordoption.DefaultFileConfigName)
-	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, statusProvider.Watch().Load().Value)
-	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, configProvider.Watch().Load().Value)
+	writeSnapshot(t, statusPath, metadatacodec.ClusterStatusCodec, Load(t, statusProvider).Value)
+	writeSnapshot(t, configPath, metadatacodec.ClusterConfigCodec, Load(t, configProvider).Value)
 	mirrorProviderToFile(t, configPath, metadatacodec.ClusterConfigCodec, configProvider)
 	name, err := statusProvider.GetLeaderName()
 	require.NoError(t, err)
@@ -103,11 +103,15 @@ func NewMetadataFromProviders(
 func StatusSnapshot(t *testing.T, metadata coordmetadata.Metadata) *proto.ClusterStatus {
 	t.Helper()
 
+	instanceID, err := metadata.GetInstanceID()
+	require.NoError(t, err)
 	status := &proto.ClusterStatus{
-		InstanceId: metadata.GetInstanceID(),
+		InstanceId: instanceID,
 		Namespaces: map[string]*proto.NamespaceStatus{},
 	}
-	for namespace, namespaceStatus := range metadata.ListNamespaceStatus() {
+	namespaces, err := metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	for namespace, namespaceStatus := range namespaces {
 		cloned, ok := gproto.Clone(namespaceStatus.UnsafeBorrow()).(*proto.NamespaceStatus)
 		require.True(t, ok)
 		status.Namespaces[namespace] = cloned
@@ -129,14 +133,22 @@ func mirrorProviderToFile[T interface {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
-	receiver := source.Watch().Subscribe()
+	subscription := source.Subscribe()
 	go func() {
+		defer subscription.Close()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-receiver.Changed():
-				if err := writeSnapshotFile(path, codec, receiver.Load().Value); err != nil {
+			case _, ok := <-subscription.Changed():
+				if !ok {
+					return
+				}
+				snapshot, err := subscription.Get()
+				if err != nil {
+					continue
+				}
+				if err := writeSnapshotFile(path, codec, snapshot.Value); err != nil {
 					panic(err)
 				}
 			}

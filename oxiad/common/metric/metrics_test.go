@@ -15,12 +15,17 @@
 package metric
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 func TestPrometheusMetrics(t *testing.T) {
@@ -52,4 +57,35 @@ func TestPrometheusMetrics(t *testing.T) {
 	if response2 != nil && response2.Body != nil {
 		defer response2.Body.Close()
 	}
+}
+
+// The OTel SDK defaults to 2000 attribute sets per instrument, collapsing the
+// rest into an `otel.metric.overflow` series. Per-shard metrics can exceed that.
+func TestNoCardinalityLimit(t *testing.T) {
+	const name = "oxia_test_cardinality"
+	const attributeSets = 2500
+
+	counter, err := otel.Meter("oxia-test").Int64Counter(name)
+	assert.NoError(t, err)
+
+	for i := 0; i < attributeSets; i++ {
+		counter.Add(context.Background(), 1, metric.WithAttributes(attribute.Int("shard", i)))
+	}
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	assert.NoError(t, err)
+
+	series := 0
+	for _, family := range families {
+		if family.GetName() != name+"_total" {
+			continue
+		}
+		for _, m := range family.GetMetric() {
+			series++
+			for _, label := range m.GetLabel() {
+				assert.NotEqual(t, "otel_metric_overflow", label.GetName())
+			}
+		}
+	}
+	assert.Equal(t, attributeSets, series)
 }

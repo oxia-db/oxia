@@ -30,6 +30,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
@@ -138,6 +139,14 @@ type controller struct {
 	runningSince    time.Time
 	everUnavailable bool
 	statusEpoch     int64
+	// statusChanged is closed, and replaced, every time statusEpoch
+	// increments, to wake up the goroutines waiting for a status transition.
+	// Guarded by statusLock.
+	statusChanged chan any
+	// handshaking is set while the NotRunning -> Running handshake is in
+	// flight: the watch and ping paths can both observe SERVING for the same
+	// status epoch (e.g. at startup), and only the first one binds the node.
+	handshaking bool
 
 	healthPolicy               healthCheckPolicy
 	healthCheckBackoff         *commontime.ConcurrentBackOff
@@ -167,7 +176,7 @@ func (n *controller) SetStatus(status Status) {
 	previous := n.status
 	n.status = status
 	if status != previous {
-		n.statusEpoch++
+		n.advanceStatusEpochLocked()
 	}
 	if status == Running && previous != Running {
 		n.runningSince = time.Now()
@@ -192,6 +201,14 @@ func (n *controller) currentStatusEpoch() int64 {
 	return n.statusEpoch
 }
 
+// advanceStatusEpochLocked records a status transition and wakes up the
+// goroutines waiting for one. It must be called with statusLock held.
+func (n *controller) advanceStatusEpochLocked() {
+	n.statusEpoch++
+	close(n.statusChanged)
+	n.statusChanged = make(chan any)
+}
+
 func (n *controller) Close() error {
 	if !n.closed.CompareAndSwap(false, true) {
 		return nil
@@ -204,13 +221,34 @@ func (n *controller) Close() error {
 	return nil
 }
 
+// openAssignmentsStream opens the assignments stream once the data server is
+// Running or Draining. The data server rejects the stream until the handshake
+// binds it to this coordinator, and a rejected stream is only retried after
+// the full backoff: waiting for the handshake instead delivers the first
+// assignments right after it.
+func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+	for {
+		n.statusLock.RLock()
+		status, statusChanged := n.status, n.statusChanged
+		n.statusLock.RUnlock()
+		if status == Running || status == Draining {
+			n.logger.Debug("Ready to send assignments")
+			return n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
+		}
+
+		select {
+		case <-n.ctx.Done():
+			return nil, n.ctx.Err()
+		case <-statusChanged:
+		}
+	}
+}
+
 func (n *controller) sendAssignmentsDispatchWithRetries() {
 	receiver := n.SubscribeShardAssignments()
 
 	_ = backoff.RetryNotify(func() error {
-		n.logger.Debug("Ready to send assignments")
-
-		stream, err := n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
+		stream, err := n.openAssignmentsStream()
 		if err != nil {
 			n.logger.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
@@ -473,7 +511,7 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 		n.status = NotRunning
 	}
 	n.everUnavailable = true
-	n.statusEpoch++
+	n.advanceStatusEpochLocked()
 	n.statusLock.Unlock()
 
 	n.failedHealthChecks.Inc()
@@ -481,22 +519,30 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 }
 
 func (n *controller) becomeAvailable(observedEpoch int64) {
-	if n.currentStatusEpoch() != observedEpoch {
+	n.statusLock.Lock()
+	if n.statusEpoch != observedEpoch {
 		// The node was fenced while the probe was in flight: the SERVING
 		// answer is stale. The next probe will re-evaluate.
+		n.statusLock.Unlock()
 		return
 	}
-	if n.Status() != NotRunning {
+	if n.status != NotRunning || n.handshaking {
+		// Nothing to do: the node is Running or Draining, or the other health
+		// path is already binding it for this same observation.
+		n.statusLock.Unlock()
 		return
 	}
+	n.handshaking = true
+	n.statusLock.Unlock()
 
 	n.logger.Info("Storage data server is back online")
 
 	n.healthCheckBackoff.Reset()
 
 	// Bind the node before it can receive other internal traffic.
+	featuresChanged := false
 	bo := commontime.NewBackOffWithInitialInterval(n.ctx, defaultInitialRetryBackoff)
-	if err := backoff.RetryNotify(func() error {
+	err := backoff.RetryNotify(func() error {
 		handshake, err := n.rpc.Handshake(n.ctx, n.dataServer.GetIdentity(), &proto.HandshakeRequest{
 			InstanceId: n.insID,
 		})
@@ -505,7 +551,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		}
 		switch handshake.Status {
 		case proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND, proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND:
-			n.supportedFeatures.Store(handshake.FeaturesSupported)
+			featuresChanged = n.storeSupportedFeatures(handshake.FeaturesSupported)
 			return nil
 		case proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH:
 			return errors.New("data server instance id mismatch")
@@ -517,17 +563,36 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
 		)
-	}); err != nil {
-		return
-	}
+	})
 
 	n.statusLock.Lock()
+	n.handshaking = false
+	if err != nil {
+		// The retries only stop when the controller is closing; a later
+		// observation may bind the node again.
+		n.statusLock.Unlock()
+		return
+	}
 	if n.status == NotRunning && n.statusEpoch == observedEpoch {
 		n.status = Running
 		n.runningSince = time.Now()
-		n.statusEpoch++
+		n.advanceStatusEpochLocked()
 	}
 	n.statusLock.Unlock()
+
+	if featuresChanged {
+		// The features the node supports were not known before this handshake:
+		// it is the first one, or the node restarted with another binary
+		n.FeaturesDiscovered(n.dataServer.GetIdentity())
+	}
+}
+
+// storeSupportedFeatures stores the features that the data server supports,
+// and reports whether they differ from the ones stored before.
+func (n *controller) storeSupportedFeatures(features []proto.Feature) bool {
+	known := n.SupportedFeatures()
+	n.supportedFeatures.Store(features)
+	return len(feature.Missing(features, known)) > 0 || len(feature.Missing(known, features)) > 0
 }
 
 func (n *controller) healthCheckHandler(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {
@@ -581,6 +646,7 @@ func newController(ctx context.Context, dataServer *proto.DataServer,
 		insID:                      insID,
 		statusLock:                 sync.RWMutex{},
 		status:                     NotRunning,
+		statusChanged:              make(chan any),
 		supportedFeatures:          supportedFeatures,
 		logger:                     logger,
 		healthPolicy:               healthPolicy,

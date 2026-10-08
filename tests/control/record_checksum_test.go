@@ -90,14 +90,15 @@ func TestControlRequestRecordChecksum(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
+	shardMetadata := waitForLeaderFeature(t, coordinatorInstance.Metadata(), serverInstanceIndex,
+		proto.Feature_FEATURE_DB_CHECKSUM)
+	leader := shardMetadata.Leader
+
 	// Write initial data
 	_, _, err = client.Put(context.Background(), "/key1", []byte("value1"))
 	assert.NoError(t, err)
 
 	// Wait for the checksum feature to be enabled on all replicas
-	resource := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
-	shardMetadata := resource.Namespaces["default"].Shards[0]
-	leader := shardMetadata.Leader
 	for _, dataServer := range shardMetadata.Ensemble {
 		targetId := dataServer.GetNameOrDefault()
 		if targetId == leader.GetNameOrDefault() {

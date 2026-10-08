@@ -134,6 +134,8 @@ enum SplitPhase {
   Bootstrap = 0;
   CatchUp = 1;
   Cutover = 2;
+  // The cutover passed the point of no return: the split can only complete.
+  Finalize = 3;
 }
 
 message SplitMetadata {

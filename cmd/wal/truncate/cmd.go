@@ -36,6 +36,7 @@ var (
 		Use:   "truncate",
 		Short: "truncate the WAL",
 		Long:  `truncate the WAL by some conditions`,
+		Args:  cobra.NoArgs,
 		RunE:  exec,
 	}
 )

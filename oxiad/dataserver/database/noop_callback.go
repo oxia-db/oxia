@@ -26,20 +26,12 @@ func (*noopCallback) ValidatePut(*proto.PutRequest, feature.Checker) proto.Statu
 	return proto.Status_OK
 }
 
-func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry) error {
+func (*noopCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry, feature.Checker) error {
 	return nil
 }
 
-func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (*noopCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, _ *proto.PutRequest, _ *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
 	return proto.Status_OK, nil
-}
-
-func (*noopCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, _ string) error {
-	return nil
-}
-
-func (*noopCallback) OnDeleteRange(_ kvstore.WriteBatch, _ *Notifications, _ string, _ string) error {
-	return nil
 }
 
 var NoOpCallback UpdateOperationCallback = &noopCallback{}

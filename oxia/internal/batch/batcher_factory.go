@@ -24,7 +24,10 @@ import (
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
-type WriteRerouter func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall)
+// WriteRerouter re-adds the calls of a write batch that failed because its
+// shard is no longer in the shard map.
+type WriteRerouter func(shardId int64, puts []model.PutCall, deletes []model.DeleteCall,
+	deleteRanges []model.DeleteRangeCall)
 
 type ReadRerouter func([]model.GetCall)
 

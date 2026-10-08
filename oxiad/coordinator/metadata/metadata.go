@@ -30,7 +30,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -42,21 +42,29 @@ type Metadata interface {
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
 	GetSelf() (*commonproto.Coordinator, error)
 	GetLeader() (*commonproto.Coordinator, error)
-	GetInstanceID() string
-	ReserveShardIDs(count uint32) int64
+	GetInstanceID() (string, error)
+	AllocateShardIDs(count uint32) (int64, error)
 
-	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool
-	ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus]
-	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool)
-	UpdateNamespaceStatus(name string, status *commonproto.NamespaceStatus)
+	CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) error
+	ListNamespaceStatus() (map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], error)
+	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool, error)
 	DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus]
 
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool)
-	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata)
-	DeleteShardStatus(namespace string, shard int64)
+	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) error
+	// UpdateShardStatuses applies update to the shards of a namespace, as they
+	// are in the current status, and stores the result in a single status
+	// write: no reader sees some of the changes without the others, and no
+	// concurrent update, e.g. a leader election, is reverted. update may run
+	// more than once, each time on a fresh copy, and returns false to leave
+	// the status unchanged, in which case UpdateShardStatuses returns nil. It
+	// may delete shards: a namespace left without shards is deleted, as by
+	// DeleteShardStatus.
+	UpdateShardStatuses(namespace string, update func(shards map[int64]*commonproto.ShardMetadata) bool) error
+	DeleteShardStatus(namespace string, shard int64) error
 
 	GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration]
-	SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]]
+	SubscribeConfig() *cache.Subscription[provider.Versioned[*commonproto.ClusterConfiguration]]
 	GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer]
 
 	CreateNamespace(namespace *commonproto.Namespace) error
@@ -109,17 +117,20 @@ func newMetadata(
 	return m
 }
 
-func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, metadatacommon.Version) (*commonproto.ClusterStatus, bool)) error {
+func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, metadatacommon.Version) (*commonproto.ClusterStatus, bool, error)) error {
 	m.statusLock.Lock()
 	defer m.statusLock.Unlock()
 
-	current := m.statusProvider.Watch().Load()
-	next, changed := fn(metadatacodec.ClusterStatusCodec.Clone(current.Value), current.Version)
-	if !changed {
-		return nil
+	current, err := m.statusProvider.Load()
+	if err != nil {
+		return err
+	}
+	next, changed, err := fn(metadatacodec.ClusterStatusCodec.Clone(current.Value), current.Version)
+	if err != nil || !changed {
+		return err
 	}
 
-	_, err := m.statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+	_, err = m.statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
 		Value:   next,
 		Version: current.Version,
 	})
@@ -133,7 +144,10 @@ func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfigur
 	m.configLock.Lock()
 	defer m.configLock.Unlock()
 
-	current := m.configProvider.Watch().Load()
+	current, err := m.configProvider.Load()
+	if err != nil {
+		return err
+	}
 	next, err := fn(metadatacodec.ClusterConfigCodec.Clone(current.Value), current.Version)
 	if err != nil {
 		return err
@@ -156,33 +170,20 @@ func (m *coordinatorMetadata) Close() error {
 	return nil
 }
 
-func (m *coordinatorMetadata) doStatusRecovery() {
-	status := m.statusProvider.Watch().Load().Value
-	if status.GetInstanceId() == "" {
-		_ = backoff.RetryNotify(func() error {
-			return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-				if status.GetInstanceId() != "" {
-					return status, false
-				}
-				status.InstanceId = uuid.NewString()
-				return status, true
-			})
-		}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-			m.logger.Warn(
-				"failed to initialize instance id",
-				slog.Any("error", err),
-				slog.Duration("retry-after", duration),
-			)
-		})
+func (m *coordinatorMetadata) GetInstanceID() (string, error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return "", err
 	}
-}
-
-func (m *coordinatorMetadata) GetInstanceID() string {
-	return m.statusProvider.Watch().Load().Value.GetInstanceId()
+	return status.Value.GetInstanceId(), nil
 }
 
 func (m *coordinatorMetadata) GetSelf() (*commonproto.Coordinator, error) {
-	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(m.name)
+	config, err := m.configProvider.Load()
+	if err != nil {
+		return nil, err
+	}
+	coordinator, ok := config.Value.GetCoordinator(m.name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", m.name)
 	}
@@ -194,7 +195,11 @@ func (m *coordinatorMetadata) GetLeader() (*commonproto.Coordinator, error) {
 	if err != nil {
 		return nil, err
 	}
-	coordinator, ok := m.configProvider.Watch().Load().Value.GetCoordinator(name)
+	config, err := m.configProvider.Load()
+	if err != nil {
+		return nil, err
+	}
+	coordinator, ok := config.Value.GetCoordinator(name)
 	if !ok {
 		return nil, fmt.Errorf("coordinator %q not found in cluster configuration", name)
 	}
@@ -208,101 +213,91 @@ func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return nil, fmt.Errorf("failed to wait in becoming leader: %w", err)
 	}
 	m.logger.Info("This coordinator is now leader")
-	m.doStatusRecovery()
+	// The snapshots were loaded before the leadership, and the previous
+	// leader may have changed them since.
+	if err := m.statusProvider.Reload(); err != nil {
+		return nil, fmt.Errorf("failed to reload the cluster status: %w", err)
+	}
+	if err := m.configProvider.Reload(); err != nil {
+		return nil, fmt.Errorf("failed to reload the cluster configuration: %w", err)
+	}
+	// A coordinator that lost the leadership while reloading must not write.
+	select {
+	case <-leadershipLost:
+		return nil, errors.New("lost the leadership while reloading the metadata")
+	default:
+	}
+	// Initialize the instance id of a new cluster. The reloads just succeeded,
+	// so a failed write fails the takeover rather than being retried.
+	if err := m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		if status.GetInstanceId() != "" {
+			return status, false, nil
+		}
+		status.InstanceId = uuid.NewString()
+		return status, true, nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to initialize the instance id: %w", err)
+	}
 	return leadershipLost, nil
 }
 
-func (m *coordinatorMetadata) ReserveShardIDs(count uint32) int64 {
+func (m *coordinatorMetadata) AllocateShardIDs(count uint32) (int64, error) {
 	var base int64
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-			base = status.GetShardIdGenerator()
-			status.ShardIdGenerator += int64(count)
-			return status, true
-		})
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to reserve shard ids",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-	return base
+	if err := m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		base = status.GetShardIdGenerator()
+		status.ShardIdGenerator += int64(count)
+		return status, true, nil
+	}); err != nil {
+		return 0, err
+	}
+	return base, nil
 }
 
-func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) bool {
-	created := false
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-			if clusterStatus.Namespaces == nil {
-				clusterStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
-			}
-			if _, exists := clusterStatus.Namespaces[name]; exists {
-				return clusterStatus, false
-			}
-			clusterStatus.Namespaces[name] = status
-			created = true
-			return clusterStatus, true
-		})
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to create namespace status",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
+func (m *coordinatorMetadata) CreateNamespaceStatus(name string, status *commonproto.NamespaceStatus) error {
+	return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		if clusterStatus.Namespaces == nil {
+			clusterStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
+		}
+		if _, exists := clusterStatus.Namespaces[name]; exists {
+			return clusterStatus, false, fmt.Errorf("%w: namespace %q", metadatacommon.ErrAlreadyExists, name)
+		}
+		clusterStatus.Namespaces[name] = status
+		return clusterStatus, true, nil
 	})
-	return created
 }
 
-func (m *coordinatorMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
-	status := m.statusProvider.Watch().Load().Value
-	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.GetNamespaces()))
-	for name, status := range status.GetNamespaces() {
+func (m *coordinatorMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return nil, err
+	}
+	namespaces := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], len(status.Value.GetNamespaces()))
+	for name, status := range status.Value.GetNamespaces() {
 		namespaces[name] = commonobject.Borrow(status)
 	}
-	return namespaces
+	return namespaces, nil
 }
 
-func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool) {
-	status := m.statusProvider.Watch().Load().Value
-	namespaceStatus, exists := status.GetNamespaces()[namespace]
+func (m *coordinatorMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool, error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false, err
+	}
+	namespaceStatus, exists := status.Value.GetNamespaces()[namespace]
 	if !exists {
-		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}, false, nil
 	}
-	return commonobject.Borrow(namespaceStatus), true
-}
-
-func (m *coordinatorMetadata) UpdateNamespaceStatus(name string, namespaceStatus *commonproto.NamespaceStatus) {
-	namespaceExists := true
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
-			if _, exists := clusterStatus.Namespaces[name]; !exists {
-				namespaceExists = false
-				return clusterStatus, false
-			}
-			clusterStatus.Namespaces[name] = namespaceStatus
-			return clusterStatus, true
-		})
-	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
-		m.logger.Warn(
-			"failed to update namespace status",
-			slog.Any("error", err),
-			slog.Duration("retry-after", duration),
-		)
-	})
-	if !namespaceExists {
-		m.logger.Warn("failed to update namespace status: namespace does not exist", slog.String("namespace", name))
-	}
+	return commonobject.Borrow(namespaceStatus), true, nil
 }
 
 func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Borrowed[*commonproto.NamespaceStatus] {
 	var namespaceStatus *commonproto.NamespaceStatus
 	changed := false
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+	err := backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
 			ns, exists := clusterStatus.Namespaces[name]
 			if !exists {
-				return clusterStatus, false
+				return clusterStatus, false, nil
 			}
 			namespaceStatus = ns
 			for shardID, shardMetadata := range ns.Shards {
@@ -312,7 +307,7 @@ func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Bo
 					changed = true
 				}
 			}
-			return clusterStatus, changed
+			return clusterStatus, changed, nil
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -321,33 +316,52 @@ func (m *coordinatorMetadata) DeleteNamespaceStatus(name string) commonobject.Bo
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.NamespaceStatus]{}
+	}
 	return commonobject.Borrow(namespaceStatus)
 }
 
 func (m *coordinatorMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool) {
-	namespaceStatus, exists := m.GetNamespaceStatus(namespace)
+	status, err := backoff.RetryNotifyWithData(m.statusProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster status",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
+	}
+	namespaceStatus, exists := status.Value.GetNamespaces()[namespace]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
 	}
-	shardStatus, exists := namespaceStatus.UnsafeBorrow().GetShards()[shard]
+	shardStatus, exists := namespaceStatus.GetShards()[shard]
 	if !exists {
 		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false
 	}
 	return commonobject.Borrow(shardStatus), true
 }
 
-func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) {
+func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) error {
 	if shardMetadata != nil {
 		shardMetadata = gproto.Clone(shardMetadata).(*commonproto.ShardMetadata) //nolint:revive
 	}
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+	shardExists := true
+	err := backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
 			ns, exist := clusterStatus.Namespaces[namespace]
 			if !exist {
-				return clusterStatus, false
+				shardExists = false
+				return clusterStatus, false, nil
+			}
+			if _, exist = ns.Shards[shard]; !exist {
+				shardExists = false
+				return clusterStatus, false, nil
 			}
 			ns.Shards[shard] = shardMetadata
-			return clusterStatus, true
+			return clusterStatus, true, nil
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -356,23 +370,61 @@ func (m *coordinatorMetadata) UpdateShardStatus(namespace string, shard int64, s
 			slog.Duration("retry-after", duration),
 		)
 	})
+	if err != nil {
+		return err
+	}
+	if !shardExists {
+		return fmt.Errorf("%w: shard %d of namespace %q", metadatacommon.ErrNotFound, shard, namespace)
+	}
+	return nil
 }
 
-func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
-	_ = backoff.RetryNotify(func() error {
-		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool) {
+func (m *coordinatorMetadata) UpdateShardStatuses(
+	namespace string,
+	update func(shards map[int64]*commonproto.ShardMetadata) bool,
+) error {
+	namespaceExists := true
+	err := backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+			ns, exist := clusterStatus.Namespaces[namespace]
+			namespaceExists = exist
+			updated := exist && update(ns.Shards)
+			if updated && len(ns.Shards) == 0 {
+				delete(clusterStatus.Namespaces, namespace)
+			}
+			return clusterStatus, updated, nil
+		})
+	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to update shards metadata",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return err
+	}
+	if !namespaceExists {
+		return fmt.Errorf("%w: namespace %q", metadatacommon.ErrNotFound, namespace)
+	}
+	return nil
+}
+
+func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) error {
+	return backoff.RetryNotify(func() error {
+		return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
 			ns, exist := clusterStatus.Namespaces[namespace]
 			if !exist {
-				return clusterStatus, false
+				return clusterStatus, false, nil
 			}
 			if _, exists := ns.Shards[shard]; !exists {
-				return clusterStatus, false
+				return clusterStatus, false, nil
 			}
 			delete(ns.Shards, shard)
 			if len(ns.Shards) == 0 {
 				delete(clusterStatus.Namespaces, namespace)
 			}
-			return clusterStatus, true
+			return clusterStatus, true, nil
 		})
 	}, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
 		m.logger.Warn(
@@ -384,11 +436,21 @@ func (m *coordinatorMetadata) DeleteShardStatus(namespace string, shard int64) {
 }
 
 func (m *coordinatorMetadata) GetConfig() commonobject.Borrowed[*commonproto.ClusterConfiguration] {
-	return commonobject.Borrow(m.configProvider.Watch().Load().Value)
+	config, err := backoff.RetryNotifyWithData(m.configProvider.Load, oxiatime.NewBackOff(m.ctx), func(err error, duration time.Duration) {
+		m.logger.Warn(
+			"failed to load the cluster configuration",
+			slog.Any("error", err),
+			slog.Duration("retry-after", duration),
+		)
+	})
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.ClusterConfiguration]{}
+	}
+	return commonobject.Borrow(config.Value)
 }
 
-func (m *coordinatorMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*commonproto.ClusterConfiguration]] {
-	return m.configProvider.Watch().Subscribe()
+func (m *coordinatorMetadata) SubscribeConfig() *cache.Subscription[provider.Versioned[*commonproto.ClusterConfiguration]] {
+	return m.configProvider.Subscribe()
 }
 
 func (m *coordinatorMetadata) GetLoadBalancer() commonobject.Borrowed[*commonproto.LoadBalancer] {

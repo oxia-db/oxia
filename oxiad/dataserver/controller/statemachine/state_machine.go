@@ -22,15 +22,24 @@ import (
 )
 
 func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallback database.UpdateOperationCallback) (ApplyResponse, error) {
+	// An entry that a split child inherited from its parent is filtered
+	// however the child applies it (see database.DB.SetSplitFilter)
+	if filter := db.SplitFilter(); filter != nil && entry.Term <= filter.ParentTerm {
+		return ApplyLogEntryWithSplitFilter(db, entry, updateOperationCallback,
+			&proto.HashRange{Min: filter.MinHash, Max: filter.MaxHash})
+	}
+
 	logEntryValue := proto.LogEntryValueFromVTPool()
 	defer logEntryValue.ReturnToVTPool()
 
 	// UnmarshalVTUnsafe aliases every string/bytes field of the decoded tree
 	// into entry.Value instead of copying it. The lifetime contract:
-	//   - entry.Value is a private heap buffer: the WAL reader materializes
-	//     every LogEntry with a copying unmarshal (and the segment codec
-	//     itself copies records out of the mmap), so the buffer is never
-	//     mutated, recycled, or unmapped behind the aliases.
+	//   - entry.Value is a private heap buffer: the segment codec copies
+	//     every record out of the mmap, and the WAL reader aliases
+	//     entry.Value into that copy, so the buffer is never mutated,
+	//     recycled, or unmapped behind the aliases. The entries a follower
+	//     applies as it received them from the leader are private as well:
+	//     the gRPC codec copies their Value out of the message buffer.
 	//   - Everything ProcessWrite/ProcessControlRequest persists is copied
 	//     (Pebble batch arena, sealed notifications) before returning, and
 	//     nothing retains the aliased strings past the call.
@@ -53,8 +62,20 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 			Checksum: meta.Checksum,
 		}, nil
 	case *proto.LogEntryValue_Requests:
+		// A split child that holds all the records of its parent applies the
+		// parent's entries as the parent applied them
+		splitFilter := db.DeferredSplitFilter()
+		parentEntry := splitFilter != nil && entry.Term <= splitFilter.ParentTerm
 		for _, writeRequest := range logEntryValue.GetRequests().Writes {
-			if _, err := db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
+			var err error
+			if parentEntry {
+				_, err = db.ProcessSplitParentWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback)
+			} else {
+				_, err = db.ProcessWrite(writeRequest, entry.Offset, entry.Timestamp, updateOperationCallback)
+			}
+			// A rejected request has no effect, as on the leader, which answered
+			// the client with the error: the entry is applied all the same
+			if err != nil && !errors.Is(err, database.ErrWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}
@@ -100,7 +121,8 @@ func ApplyLogEntryWithSplitFilter(
 				// Still call ProcessWrite with an empty request to advance commit offset.
 				filtered = &proto.WriteRequest{Shard: writeRequest.Shard}
 			}
-			if _, err := db.ProcessWrite(filtered, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil {
+			if _, err := db.ProcessWrite(filtered, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil &&
+				!errors.Is(err, database.ErrWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}

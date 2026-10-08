@@ -17,6 +17,7 @@ package compare
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -153,6 +154,84 @@ func TestEncodeDeeplyNestedInternalKeys(t *testing.T) {
 
 	assert.True(t, enc.IsInternalKey(encoded))
 	assert.Equal(t, key, enc.Decode(encoded))
+}
+
+// The keys with a prefix are in a single range with the natural encoder, and in
+// one range per level with the hierarchical one. From a key without the prefix,
+// NextStart and PrevEnd have to move past the key, towards the nearest keys
+// with the prefix, without skipping any.
+func TestPrefixRanges(t *testing.T) {
+	// Every key of up to 4 bytes made of 'a', 'b' and the separator, and keys
+	// deeper than the level can count, each as a regular and an internal key
+	var keys []string
+	var add func(key string)
+	add = func(key string) {
+		keys = append(keys, key, constant.InternalKeyPrefix+key)
+		if len(key) < 4 {
+			for _, c := range []string{"a", "b", "/"} {
+				add(key + c)
+			}
+		}
+	}
+	add("")
+	for _, key := range []string{strings.Repeat("a/", 1<<15) + "a", strings.Repeat("b/", 1<<15) + "b"} {
+		keys = append(keys, key, constant.InternalKeyPrefix+key)
+	}
+
+	for _, encoder := range []Encoder{EncoderNatural, EncoderHierarchical} {
+		t.Run(encoder.Name(), func(t *testing.T) {
+			encoded := make(map[string][]byte, len(keys))
+			for _, key := range keys {
+				encoded[key] = encoder.Encode(key)
+			}
+			slices.SortFunc(keys, func(a, b string) int { return bytes.Compare(encoded[a], encoded[b]) })
+
+			for _, prefix := range []string{"", "a", "a/", "a//", "/", "//", "b/a", "ba/"} {
+				for _, prefix := range []string{prefix, constant.InternalKeyPrefix + prefix} {
+					ranges := encoder.PrefixRanges(prefix)
+					lower, upper := ranges.Bounds()
+
+					// The positions of the keys with the prefix
+					var withPrefix []int
+					for i, key := range keys {
+						hasPrefix := strings.HasPrefix(key, prefix)
+						assert.Equal(t, hasPrefix, ranges.Contains(encoded[key]), "%q %.40q", prefix, key)
+						if hasPrefix {
+							withPrefix = append(withPrefix, i)
+							assert.LessOrEqual(t, bytes.Compare(lower, encoded[key]), 0, "%q %.40q", prefix, key)
+							assert.True(t, upper == nil || bytes.Compare(encoded[key], upper) < 0, "%q %.40q", prefix, key)
+						}
+					}
+
+					for i, key := range keys {
+						if strings.HasPrefix(key, prefix) {
+							continue
+						}
+						n, _ := slices.BinarySearch(withPrefix, i)
+						before, after := withPrefix[:n], withPrefix[n:]
+
+						if next := ranges.NextStart(encoded[key]); next == nil {
+							assert.Empty(t, after, "%q %.40q", prefix, key)
+						} else {
+							assert.Positive(t, bytes.Compare(next, encoded[key]), "%q %.40q", prefix, key)
+							if len(after) > 0 {
+								assert.GreaterOrEqual(t, bytes.Compare(encoded[keys[after[0]]], next), 0, "%q %.40q", prefix, key)
+							}
+						}
+
+						if prev := ranges.PrevEnd(encoded[key]); prev == nil {
+							assert.Empty(t, before, "%q %.40q", prefix, key)
+						} else {
+							assert.LessOrEqual(t, bytes.Compare(prev, encoded[key]), 0, "%q %.40q", prefix, key)
+							if len(before) > 0 {
+								assert.Negative(t, bytes.Compare(encoded[keys[before[len(before)-1]]], prev), "%q %.40q", prefix, key)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
 }
 
 // The buffer passed to Decode is Pebble memory, handed out under an explicit

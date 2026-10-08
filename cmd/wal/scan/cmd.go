@@ -41,6 +41,7 @@ var (
 		Use:   "scan",
 		Short: "scan the WAL",
 		Long:  `scan the WAL`,
+		Args:  cobra.NoArgs,
 		RunE:  exec,
 	}
 )

@@ -152,7 +152,11 @@ func (m *Monitor) evaluate() {
 
 	m.evaluationsCounter.Inc()
 
-	namespaces := m.metadata.ListNamespaceStatus()
+	namespaces, err := m.metadata.ListNamespaceStatus()
+	if err != nil {
+		m.logger.Warn("Failed to evaluate the auto-split", slog.Any("error", err))
+		return
+	}
 
 	if m.anySplitInProgress(namespaces) {
 		return
@@ -277,6 +281,11 @@ func (m *Monitor) shardCandidate(key shardKey, meta *proto.ShardMetadata,
 
 	stats := m.collectStats(key, meta.Leader)
 	if stats == nil {
+		return candidate{}, false
+	}
+	// A split child that still holds records of its parent outside its hash
+	// range can't be split until it deletes them, and its size counts them
+	if stats.GetSplitFilterPending() {
 		return candidate{}, false
 	}
 

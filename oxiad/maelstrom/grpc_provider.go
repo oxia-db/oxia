@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -151,7 +152,7 @@ func (m *maelstromGrpcProvider) HandleOxiaStreamRequest(msgType MsgType, msg *Me
 		}
 		m.Unlock()
 
-		stream.deliver(message.(*proto.Append))
+		stream.deliver(msg.Body.Seq, message.(*proto.Append))
 	default:
 		slog.Info(
 			"HandleOxiaStreamRequest with unsupported message",
@@ -405,6 +406,13 @@ func (m *maelstromGrpcServer) Port() int {
 	return 0
 }
 
+// How long an append that arrived ahead of its turn waits for the missing
+// ones before the stream is considered broken, see
+// maelstromReplicateServerStream.deliver. Well above the reordering window of
+// the latencies Maelstrom tests run with (0-20ms for --latency 10
+// --latency-dist uniform).
+var replicateStreamGapTimeout = time.Second
+
 type maelstromReplicateServerStream struct {
 	BaseStream
 
@@ -413,6 +421,12 @@ type maelstromReplicateServerStream struct {
 	closeOnce sync.Once
 	streamId  int64
 	client    string
+
+	// Appends that arrived ahead of their turn, by sequence number
+	seqMutex sync.Mutex
+	nextSeq  int64
+	early    map[int64]*proto.Append
+	gapTimer *time.Timer
 }
 
 func (m *maelstromReplicateServerStream) SetHeader(metadata.MD) error {
@@ -462,12 +476,78 @@ func (m *maelstromReplicateServerStream) Recv() (*proto.Append, error) {
 	}
 }
 
-// deliver hands an entry to the Replicate handler without ever blocking the
+// deliver hands the appends to the Replicate handler in the order the leader
+// sent them, as a gRPC stream does. Maelstrom delivers every message after
+// its own random latency, so appends sent back to back overtake each other:
+// the backlog a leader pushes when a partition heals arrives shuffled, and
+// the follower would reject the first entry out of place, on every retry. An
+// append that arrives early waits for the ones before it. If the gap is still
+// open after replicateStreamGapTimeout, the missing appends were lost (e.g.
+// in a partition) and the stream is reset, like a broken connection, so that
+// the leader re-establishes it.
+func (m *maelstromReplicateServerStream) deliver(seq int64, req *proto.Append) {
+	m.seqMutex.Lock()
+	defer m.seqMutex.Unlock()
+
+	if seq < m.nextSeq {
+		return
+	}
+	m.early[seq] = req
+
+	advanced := false
+	for next, ok := m.early[m.nextSeq]; ok; next, ok = m.early[m.nextSeq] {
+		delete(m.early, m.nextSeq)
+		m.nextSeq++
+		advanced = true
+		m.push(next)
+	}
+
+	if len(m.early) == 0 {
+		m.stopGapTimer()
+		return
+	}
+	if advanced || m.gapTimer == nil {
+		// Give the append at nextSeq, which is missing, its time to arrive
+		m.stopGapTimer()
+		gap := m.nextSeq
+		m.gapTimer = time.AfterFunc(replicateStreamGapTimeout, func() { m.onGapTimeout(gap) })
+	}
+}
+
+func (m *maelstromReplicateServerStream) stopGapTimer() {
+	if m.gapTimer != nil {
+		m.gapTimer.Stop()
+		m.gapTimer = nil
+	}
+}
+
+func (m *maelstromReplicateServerStream) onGapTimeout(gap int64) {
+	select {
+	case <-m.done:
+		return
+	default:
+	}
+
+	m.seqMutex.Lock()
+	lost := m.nextSeq == gap && len(m.early) > 0
+	m.seqMutex.Unlock()
+
+	if lost {
+		slog.Warn(
+			"Replicate stream lost appends, resetting it",
+			slog.Int64("stream-id", m.streamId),
+			slog.Int64("missing-seq", gap),
+		)
+		m.close()
+	}
+}
+
+// push hands an entry to the Replicate handler without ever blocking the
 // dispatcher: entries for a dead stream are dropped (best effort here — an
 // entry racing with a concurrent close may still be buffered, but Recv never
 // delivers past the close), and a stream whose handler stopped draining is
 // closed rather than piling up goroutines.
-func (m *maelstromReplicateServerStream) deliver(req *proto.Append) {
+func (m *maelstromReplicateServerStream) push(req *proto.Append) {
 	select {
 	case <-m.done:
 		return
@@ -504,5 +584,6 @@ func newMaelstromReplicateServerStream(msg *Message[OxiaStreamMessage]) *maelstr
 		streamId: msg.Body.StreamId,
 		requests: make(chan *proto.Append, 1024),
 		done:     make(chan struct{}),
+		early:    make(map[int64]*proto.Append),
 	}
 }

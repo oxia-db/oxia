@@ -72,6 +72,7 @@ func (m *NamespaceShardsAssignment) CloneVT() *NamespaceShardsAssignment {
 	}
 	r := new(NamespaceShardsAssignment)
 	r.ShardKeyRouter = m.ShardKeyRouter
+	r.KeySorting = m.KeySorting
 	if rhs := m.Assignments; rhs != nil {
 		tmpContainer := make([]*ShardAssignment, len(rhs))
 		for k, v := range rhs {
@@ -292,6 +293,7 @@ func (m *PutRequest) CloneVT() *PutRequest {
 	}
 	r := new(PutRequest)
 	r.Key = m.Key
+	r.OpIndex = m.OpIndex
 	if rhs := m.Value; rhs != nil {
 		tmpBytes := make([]byte, len(rhs))
 		copy(tmpBytes, rhs)
@@ -372,6 +374,7 @@ func (m *DeleteRequest) CloneVT() *DeleteRequest {
 	}
 	r := new(DeleteRequest)
 	r.Key = m.Key
+	r.OpIndex = m.OpIndex
 	if rhs := m.ExpectedVersionId; rhs != nil {
 		tmpVal := *rhs
 		r.ExpectedVersionId = &tmpVal
@@ -469,6 +472,7 @@ func (m *DeleteRangeRequest) CloneVT() *DeleteRangeRequest {
 	r := new(DeleteRangeRequest)
 	r.StartInclusive = m.StartInclusive
 	r.EndExclusive = m.EndExclusive
+	r.OpIndex = m.OpIndex
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -945,6 +949,9 @@ func (this *NamespaceShardsAssignment) EqualVT(that *NamespaceShardsAssignment) 
 	if this.ShardKeyRouter != that.ShardKeyRouter {
 		return false
 	}
+	if this.KeySorting != that.KeySorting {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -1320,6 +1327,9 @@ func (this *PutRequest) EqualVT(that *PutRequest) bool {
 	if p, q := this.OverrideModificationsCount, that.OverrideModificationsCount; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
+	if this.OpIndex != that.OpIndex {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -1368,6 +1378,9 @@ func (this *DeleteRequest) EqualVT(that *DeleteRequest) bool {
 		return false
 	}
 	if p, q := this.PartitionKey, that.PartitionKey; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
+		return false
+	}
+	if this.OpIndex != that.OpIndex {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1468,6 +1481,9 @@ func (this *DeleteRangeRequest) EqualVT(that *DeleteRangeRequest) bool {
 		return false
 	}
 	if this.EndExclusive != that.EndExclusive {
+		return false
+	}
+	if this.OpIndex != that.OpIndex {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -2059,6 +2075,11 @@ func (m *NamespaceShardsAssignment) MarshalToSizedBufferVT(dAtA []byte) (int, er
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.KeySorting != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.KeySorting))
+		i--
+		dAtA[i] = 0x18
+	}
 	if m.ShardKeyRouter != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.ShardKeyRouter))
 		i--
@@ -2512,6 +2533,11 @@ func (m *PutRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.OpIndex != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.OpIndex))
+		i--
+		dAtA[i] = 0x58
+	}
 	if m.OverrideModificationsCount != nil {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(*m.OverrideModificationsCount))
 		i--
@@ -2679,6 +2705,11 @@ func (m *DeleteRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.OpIndex != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.OpIndex))
+		i--
+		dAtA[i] = 0x20
 	}
 	if m.PartitionKey != nil {
 		i -= len(*m.PartitionKey)
@@ -2900,6 +2931,11 @@ func (m *DeleteRangeRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.OpIndex != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.OpIndex))
+		i--
+		dAtA[i] = 0x18
 	}
 	if len(m.EndExclusive) > 0 {
 		i -= len(m.EndExclusive)
@@ -3835,6 +3871,9 @@ func (m *NamespaceShardsAssignment) SizeVT() (n int) {
 	if m.ShardKeyRouter != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.ShardKeyRouter))
 	}
+	if m.KeySorting != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.KeySorting))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4046,6 +4085,9 @@ func (m *PutRequest) SizeVT() (n int) {
 	if m.OverrideModificationsCount != nil {
 		n += 1 + protohelpers.SizeOfVarint(uint64(*m.OverrideModificationsCount))
 	}
+	if m.OpIndex != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.OpIndex))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4087,6 +4129,9 @@ func (m *DeleteRequest) SizeVT() (n int) {
 	if m.PartitionKey != nil {
 		l = len(*m.PartitionKey)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.OpIndex != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.OpIndex))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -4171,6 +4216,9 @@ func (m *DeleteRangeRequest) SizeVT() (n int) {
 	l = len(m.EndExclusive)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.OpIndex != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.OpIndex))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -4874,6 +4922,25 @@ func (m *NamespaceShardsAssignment) UnmarshalVT(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.ShardKeyRouter |= ShardKeyRouter(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
+			}
+			m.KeySorting = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeySorting |= KeySorting(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -6096,6 +6163,25 @@ func (m *PutRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.OverrideModificationsCount = &v
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OpIndex", wireType)
+			}
+			m.OpIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OpIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -6371,6 +6457,25 @@ func (m *DeleteRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.PartitionKey = &s
 			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OpIndex", wireType)
+			}
+			m.OpIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OpIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -6917,6 +7022,25 @@ func (m *DeleteRangeRequest) UnmarshalVT(dAtA []byte) error {
 			}
 			m.EndExclusive = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OpIndex", wireType)
+			}
+			m.OpIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OpIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -9226,6 +9350,25 @@ func (m *NamespaceShardsAssignment) UnmarshalVTUnsafe(dAtA []byte) error {
 					break
 				}
 			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySorting", wireType)
+			}
+			m.KeySorting = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeySorting |= KeySorting(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -10465,6 +10608,25 @@ func (m *PutRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.OverrideModificationsCount = &v
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OpIndex", wireType)
+			}
+			m.OpIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OpIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -10752,6 +10914,25 @@ func (m *DeleteRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			s := stringValue
 			m.PartitionKey = &s
 			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OpIndex", wireType)
+			}
+			m.OpIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OpIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11319,6 +11500,25 @@ func (m *DeleteRangeRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			}
 			m.EndExclusive = stringValue
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OpIndex", wireType)
+			}
+			m.OpIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OpIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

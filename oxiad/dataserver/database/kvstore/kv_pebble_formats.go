@@ -24,6 +24,7 @@ import (
 	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/cockroachdb/pebble/v2/sstable"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/proto"
 
@@ -203,7 +204,13 @@ func createMarker(dbPath string, newEncodingFormat string) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(dbPath, markerFileName), []byte(newEncodingFormat), 0600)
+	markerPath := filepath.Join(dbPath, markerFileName)
+	// Leave an up-to-date marker alone: rewriting it truncates it, and a machine
+	// crash could then leave it empty, as the rewrite isn't synced
+	if markerData, err := os.ReadFile(markerPath); err == nil && string(markerData) == newEncodingFormat {
+		return nil
+	}
+	return os.WriteFile(markerPath, []byte(newEncodingFormat), 0600)
 }
 
 func (p *pebbleDbConversion) convertDb(
@@ -216,6 +223,8 @@ func (p *pebbleDbConversion) convertDb(
 		return errors.Wrap(err, "failed to open old database")
 	}
 
+	// Close the databases on any failure from here on: a leaked one would keep
+	// its Pebble lock and fail every later open of the shard
 	oldDbSizeMB := float64(oldDb.Metrics().DiskSpaceUsage()) / 1024 / 1024
 
 	p.log.Info("Starting conversion of db",
@@ -229,25 +238,25 @@ func (p *pebbleDbConversion) convertDb(
 	if pathExists(newDbPath) {
 		p.log.Info("Removing previous temp conversion db", slog.String("path", newDbPath))
 		if err := os.RemoveAll(newDbPath); err != nil {
-			return err
+			return multierr.Append(err, oldDb.Close())
 		}
 	}
 
 	if err := createMarker(newDbPath, newEncoder.Name()); err != nil {
-		return err
+		return multierr.Append(err, oldDb.Close())
 	}
 
 	newDb, err := pebble.Open(newDbPath, newConfig)
 	if err != nil {
-		return errors.Wrap(err, "failed to open new database")
+		return multierr.Append(errors.Wrap(err, "failed to open new database"), oldDb.Close())
 	}
 
 	if err := copyData(oldDb, oldEncoder, newDb, newEncoder); err != nil {
-		return errors.Wrap(err, "failed to copy db data")
+		return multierr.Combine(errors.Wrap(err, "failed to copy db data"), oldDb.Close(), newDb.Close())
 	}
 
 	if err := oldDb.Close(); err != nil {
-		return errors.Wrap(err, "failed to close old database")
+		return multierr.Append(errors.Wrap(err, "failed to close old database"), newDb.Close())
 	}
 
 	if err := newDb.Close(); err != nil {
@@ -298,6 +307,9 @@ func copyData(from *pebble.DB, fromEncoder compare.Encoder,
 	it.First()
 
 	wb := to.NewBatch()
+	// Closes whichever batch is current when returning; full batches are
+	// closed when they are replaced
+	defer func() { _ = wb.Close() }()
 	batchCount := 0
 	for it.Valid() {
 		key := fromEncoder.Decode(it.Key())
@@ -327,15 +339,16 @@ func copyData(from *pebble.DB, fromEncoder compare.Encoder,
 		it.Next()
 	}
 
-	// Close the last batch
+	// The iteration also stops when a read fails
+	if err := it.Error(); err != nil {
+		return err
+	}
+
+	// Commit the last batch
 	if batchCount > 0 {
 		if err := wb.Commit(pebble.NoSync); err != nil {
 			return err
 		}
-	}
-
-	if err := wb.Close(); err != nil {
-		return err
 	}
 
 	// Ensure everything is flushed to disk

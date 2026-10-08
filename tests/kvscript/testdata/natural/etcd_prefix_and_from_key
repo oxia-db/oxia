@@ -1,0 +1,151 @@
+# Adapted from etcd tests/common/kv_test.go: TestKVGet prefix/from-key cases
+# and TestKVDelete prefix/from-key cases. Natural sorting can represent the
+# byte prefix foo as [foo, fop); hierarchical sorting cannot use these bounds
+# for the same prefix because it orders keys by path depth.
+# Extra foo1, fo and goo records check adjacent keys and the unbounded tail.
+
+put key=foo1 value=sibling
+----
+ok key="foo1" modifications=0
+
+put key=goo value=after save=after
+----
+ok key="goo" modifications=0
+
+put key=foo/abc value=child
+----
+ok key="foo/abc" modifications=0
+
+put key=fo value=before save=before
+----
+ok key="fo" modifications=0
+
+put key=fop value=upper-bound save=upper
+----
+ok key="fop" modifications=0
+
+put key=foo value=parent
+----
+ok key="foo" modifications=0
+
+# A prefix includes the exact key, its child, and the flat foo1 key.
+range start=foo end=fop
+----
+key="foo" value="parent" modifications=0
+key="foo/abc" value="child" modifications=0
+key="foo1" value="sibling" modifications=0
+
+list start=foo end=fop unordered
+----
+key="foo"
+key="foo/abc"
+key="foo1"
+
+# From-key also includes the upper-bound record and every later user record.
+range start=foo end=""
+----
+key="foo" value="parent" modifications=0
+key="foo/abc" value="child" modifications=0
+key="foo1" value="sibling" modifications=0
+key="fop" value="upper-bound" modifications=0
+key="goo" value="after" modifications=0
+
+list start=foo end="" unordered
+----
+key="foo"
+key="foo/abc"
+key="foo1"
+key="fop"
+key="goo"
+
+delete-range start=foo end=fop
+----
+ok
+
+get key=foo
+----
+error: key not found
+
+get key=foo/abc
+----
+error: key not found
+
+get key=foo1
+----
+error: key not found
+
+range start="" end=""
+----
+key="fo" value="before" modifications=0
+key="fop" value="upper-bound" modifications=0
+key="goo" value="after" modifications=0
+
+list start="" end="" unordered
+----
+key="fo"
+key="fop"
+key="goo"
+
+# Oxia-specific CAS assertions prove both upper and later records were spared.
+put key=fop value=upper-bound expected-version=@upper
+----
+ok key="fop" modifications=1
+
+put key=goo value=after expected-version=@after
+----
+ok key="goo" modifications=1
+
+put key=foo value=reborn-parent create-only
+----
+ok key="foo" modifications=0
+
+put key=foo1 value=reborn-sibling create-only
+----
+ok key="foo1" modifications=0
+
+put key=foo/abc value=reborn-child create-only
+----
+ok key="foo/abc" modifications=0
+
+range start=foo end=fop
+----
+key="foo" value="reborn-parent" modifications=0
+key="foo/abc" value="reborn-child" modifications=0
+key="foo1" value="reborn-sibling" modifications=0
+
+range start=foo end=""
+----
+key="foo" value="reborn-parent" modifications=0
+key="foo/abc" value="reborn-child" modifications=0
+key="foo1" value="reborn-sibling" modifications=0
+key="fop" value="upper-bound" modifications=1
+key="goo" value="after" modifications=1
+
+delete-range start=foo end=""
+----
+ok
+
+get key=fop
+----
+error: key not found
+
+get key=goo
+----
+error: key not found
+
+range start="" end=""
+----
+key="fo" value="before" modifications=0
+
+list start="" end="" unordered
+----
+key="fo"
+
+# The version below the lower bound remains valid after both range deletions.
+put key=fo value=before expected-version=@before
+----
+ok key="fo" modifications=1
+
+range start="" end=""
+----
+key="fo" value="before" modifications=1

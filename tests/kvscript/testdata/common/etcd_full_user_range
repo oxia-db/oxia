@@ -1,0 +1,137 @@
+# Adapted from etcd tests/common/kv_test.go: TestKVGet and TestKVDelete,
+# covering the empty-prefix/from-key cases over the entire user keyspace.
+# Oxia expresses an unbounded range with start="" and end="".
+# Deleted counts are checked through the remaining records instead.
+
+range start="" end=""
+----
+(empty)
+
+list start="" end="" unordered
+----
+(empty)
+
+delete-range start="" end=""
+----
+ok
+
+# Include keys below a and above z so a partial scan cannot pass as a full scan.
+put key=!first value=first
+----
+ok key="!first" modifications=0
+
+put key=a value=middle
+----
+ok key="a" modifications=0
+
+put key=z value=last-letter
+----
+ok key="z" modifications=0
+
+put key=~last value=last-ascii
+----
+ok key="~last" modifications=0
+
+put key=你好 value=unicode
+----
+ok key="你好" modifications=0
+
+range start="" end=""
+----
+key="!first" value="first" modifications=0
+key="a" value="middle" modifications=0
+key="z" value="last-letter" modifications=0
+key="~last" value="last-ascii" modifications=0
+key="你好" value="unicode" modifications=0
+
+list start="" end="" unordered
+----
+key="!first"
+key="a"
+key="z"
+key="~last"
+key="你好"
+
+delete-range start="" end=""
+----
+ok
+
+get key=!first
+----
+error: key not found
+
+get key=a
+----
+error: key not found
+
+get key=z
+----
+error: key not found
+
+get key=~last
+----
+error: key not found
+
+get key=你好
+----
+error: key not found
+
+range start="" end=""
+----
+(empty)
+
+list start="" end="" unordered
+----
+(empty)
+
+# Repeating the range deletion is successful on an empty user keyspace.
+delete-range start="" end=""
+----
+ok
+
+range start="" end=""
+----
+(empty)
+
+# A full user-range deletion must leave the server able to create/update records.
+put key=!first value=reborn create-only save=reborn
+----
+ok key="!first" modifications=0
+
+put key=z value=reborn create-only
+----
+ok key="z" modifications=0
+
+put key=!first value=updated expected-version=@reborn
+----
+ok key="!first" modifications=1
+
+range start="" end=""
+----
+key="!first" value="updated" modifications=1
+key="z" value="reborn" modifications=0
+
+list start="" end="" unordered
+----
+key="!first"
+key="z"
+
+delete-range start="" end=""
+----
+ok
+
+range start="" end=""
+----
+(empty)
+
+list start="" end="" unordered
+----
+(empty)
+
+put key=a value=after-cleanup create-only
+----
+ok key="a" modifications=0
+
+get key=a
+----
+key="a" value="after-cleanup" modifications=0

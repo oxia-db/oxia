@@ -15,10 +15,56 @@
 package auth
 
 import (
+	"context"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
+
+// recordingProvider accepts any token and records the last one.
+type recordingProvider struct {
+	token string
+}
+
+func (*recordingProvider) AcceptParamType() string {
+	return ProviderParamTypeToken
+}
+
+func (p *recordingProvider) Authenticate(_ context.Context, param any) (string, error) {
+	p.token = param.(string)
+	return "user", nil
+}
+
+func TestValidateTokenWithContext(t *testing.T) {
+	peerCtx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}})
+
+	t.Run("token", func(t *testing.T) {
+		provider := &recordingProvider{}
+		ctx := metadata.NewIncomingContext(peerCtx, metadata.Pairs(
+			":authority", "localhost:6648",
+			MetadataAuthorizationKey, TokenPrefix+"token"))
+		userName, err := validateTokenWithContext(ctx, provider)
+		require.NoError(t, err)
+		assert.Equal(t, "user", userName)
+		assert.Equal(t, "token", provider.token)
+	})
+
+	t.Run("missing header", func(t *testing.T) {
+		ctx := metadata.NewIncomingContext(peerCtx, metadata.Pairs(":authority", "localhost:6648"))
+		_, err := validateTokenWithContext(ctx, &recordingProvider{})
+		assert.ErrorIs(t, err, ErrEmptyToken)
+	})
+
+	t.Run("no metadata", func(t *testing.T) {
+		_, err := validateTokenWithContext(peerCtx, &recordingProvider{})
+		assert.ErrorIs(t, err, ErrEmptyToken)
+	})
+}
 
 func TestRedactToken(t *testing.T) {
 	tests := []struct {

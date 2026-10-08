@@ -169,6 +169,68 @@ func TestPebbleGetPastInternalRegionHierarchical(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// The kinds of keys a range can hold are decided from its bounds alone, read
+// as the batch RangeScan reads them.
+func TestPebbleBatchRangeOverlaps(t *testing.T) {
+	for _, test := range []struct {
+		lower, upper string
+		// "internal", "regular", "both" or "none"
+		natural, hierarchical string
+	}{
+		{"a", "b", "regular", "regular"},
+		{"a/b", "a/c", "regular", "regular"},
+		{"b", "a", "none", "none"},
+		{"a", "__oxia/zzz", "both", "both"},
+		{"__oxia/zzz", "a", "none", "none"},
+		// Every internal key sorts at or after their prefix
+		{"a", "__oxia/", "regular", "regular"},
+		{"a", "__oxia/a", "both", "both"},
+		{"__oxia/notifications/", "__oxia/notifications//", "internal", "internal"},
+		{"__oxia/notifications/", "__oxia/notifications/~", "internal", "internal"},
+		// An empty end is unbounded with the natural encoding, and the smallest
+		// key with the hierarchical one
+		{"a", "", "both", "none"},
+		{"__oxia/notifications/", "", "both", "none"},
+		// Only the natural encoding can place regular keys around the internal
+		// region
+		{keyBeforeInternalRegion, keyAfterInternalRegion, "both", "regular"},
+		{keyAfterInternalRegion, keyAfterInternalRegion + "z", "regular", "regular"},
+	} {
+		for _, sorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+			t.Run(fmt.Sprintf("%s/%q-%q", sorting, test.lower, test.upper), func(t *testing.T) {
+				factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+				assert.NoError(t, err)
+				kv, err := factory.NewKV(constant.DefaultNamespace, 1, sorting)
+				assert.NoError(t, err)
+
+				expected := test.natural
+				if sorting == proto.KeySortingType_HIERARCHICAL {
+					expected = test.hierarchical
+				}
+				wb := kv.NewWriteBatch()
+				assert.Equal(t, expected, keyKinds(wb.RangeOverlaps(test.lower, test.upper)))
+				assert.NoError(t, wb.Close())
+
+				assert.NoError(t, kv.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+func keyKinds(internalKeys, regularKeys bool) string {
+	switch {
+	case internalKeys && regularKeys:
+		return "both"
+	case internalKeys:
+		return "internal"
+	case regularKeys:
+		return "regular"
+	default:
+		return "none"
+	}
+}
+
 // A ceiling lookup past the last user key used to step through the entire
 // internal-key backlog (pebble's SkipPoint is a filter, not a seek). The cost
 // must now be flat in the size of that backlog.

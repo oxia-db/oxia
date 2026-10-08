@@ -32,6 +32,7 @@ var (
 		Use:   "perf",
 		Short: "Oxia perf client",
 		Long:  `Oxia tool for basic performance tests`,
+		Args:  cobra.NoArgs,
 		Run:   exec,
 	}
 

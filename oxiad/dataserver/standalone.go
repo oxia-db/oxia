@@ -85,6 +85,12 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 	s := &Standalone{config: config}
 
 	storageOptions := config.DataServerOptions.Storage
+	// Unlike the server command, the standalone command does not validate the
+	// options, and the storage must not be opened with a wal dir that is the
+	// data dir
+	if err := storageOptions.Validate(); err != nil {
+		return nil, err
+	}
 	kvOptions := kvstore.FactoryOptions{
 		DataDir:     storageOptions.Database.Dir,
 		UseWAL:      false, // WAL is kept outside the KV store
@@ -108,7 +114,7 @@ func NewStandalone(config StandaloneConfig) (*Standalone, error) {
 		return nil, err
 	}
 
-	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards)
+	s.shardAssignmentDispatcher = assignment.NewStandaloneShardAssignmentDispatcher(config.NumShards, config.KeySorting)
 	s.healthServer = rpc2.NewClosableHealthServer(context.Background())
 	s.healthServer.SetServingStatus(rpc2.ReadinessProbeService, grpc_health_v1.HealthCheckResponse_SERVING)
 
@@ -168,9 +174,18 @@ func (s *Standalone) initializeShards(numShards uint32) error {
 			ReplicationFactor: 1,
 			FollowerMaps:      make(map[string]*proto.EntryId),
 			// Standalone has no coordinator to negotiate features. Enable the
-			// locally safe validation feature explicitly without also enabling
+			// locally safe features explicitly without also enabling
 			// cluster-specific features such as DB checksums.
-			FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION},
+			FeaturesSupported: []proto.Feature{
+				proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+				proto.Feature_FEATURE_ORDERED_WRITES,
+				proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
+				proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
+				proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
+				proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
+				proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
+				proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED,
+			},
 		}); err != nil {
 			return err
 		}

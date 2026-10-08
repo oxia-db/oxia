@@ -38,7 +38,10 @@ type Runtime interface {
 	ListDataServerStatus() map[string]*proto.DataServerStatus
 	GetDataServerStatus(name string) (*proto.DataServerStatus, bool)
 
-	CreateNamespace(name string, namespaceConfig *proto.Namespace) bool
+	// CreateNamespace creates the status if absent and starts any missing shard
+	// controllers from the existing status when the namespace is already saved.
+	// Returns ErrConflict if the status disappears before controller initialization.
+	CreateNamespace(name string, namespaceConfig *proto.Namespace) error
 	DeleteNamespace(namespace string)
 
 	LoadBalancer() balancer.LoadBalancer

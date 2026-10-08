@@ -147,10 +147,12 @@ func TestWriteBatchComplete(t *testing.T) {
 				Deletes: []*proto.DeleteRequest{{
 					Key:               "/b",
 					ExpectedVersionId: &two,
+					OpIndex:           1,
 				}},
 				DeleteRanges: []*proto.DeleteRangeRequest{{
 					StartInclusive: "/callC",
 					EndExclusive:   "/d",
+					OpIndex:        2,
 				}},
 			}, request)
 			return item.response, item.err
@@ -230,13 +232,15 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 		return nil, constant.ErrShardNotFound
 	}
 
+	var reroutedShardId int64
 	var reroutedPuts []model.PutCall
 	var reroutedDeletes []model.DeleteCall
 	var reroutedDeleteRanges []model.DeleteRangeCall
 
 	factory := &writeBatchFactory{
 		execute: execute,
-		reroute: func(puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+		reroute: func(id int64, puts []model.PutCall, deletes []model.DeleteCall, deleteRanges []model.DeleteRangeCall) {
+			reroutedShardId = id
 			reroutedPuts = puts
 			reroutedDeletes = deletes
 			reroutedDeleteRanges = deleteRanges
@@ -258,6 +262,7 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 
 	batch.Complete()
 
+	assert.Equal(t, shardId, reroutedShardId)
 	assert.Equal(t, 2, len(reroutedPuts))
 	assert.Equal(t, "key-1", reroutedPuts[0].Key)
 	assert.Equal(t, "key-2", reroutedPuts[1].Key)
@@ -265,6 +270,47 @@ func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	assert.Equal(t, "key-3", reroutedDeletes[0].Key)
 	assert.Equal(t, 1, len(reroutedDeleteRanges))
 	assert.Equal(t, 1, executeCount)
+
+	// The rerouted calls keep their op index, to be re-added in the same order
+	assert.EqualValues(t, 0, reroutedPuts[0].OpIndex)
+	assert.EqualValues(t, 1, reroutedPuts[1].OpIndex)
+	assert.EqualValues(t, 2, reroutedDeletes[0].OpIndex)
+	assert.EqualValues(t, 3, reroutedDeleteRanges[0].OpIndex)
+}
+
+func TestWriteBatchOpIndex(t *testing.T) {
+	var request *proto.WriteRequest
+	factory := &writeBatchFactory{
+		execute: func(_ context.Context, r *proto.WriteRequest) (*proto.WriteResponse, error) {
+			request = r
+			return nil, errors.New("failure")
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+	batch := factory.newBatch(&shardId)
+
+	putCallback := func(*proto.PutResponse, error) {}
+	deleteCallback := func(*proto.DeleteResponse, error) {}
+	deleteRangeCallback := func(*proto.DeleteRangeResponse, error) {}
+
+	batch.Add(model.PutCall{Key: "a", Callback: putCallback})
+	batch.Add(model.DeleteCall{Key: "a", Callback: deleteCallback})
+	batch.Add(model.PutCall{Key: "a", Callback: putCallback})
+	batch.Add(model.DeleteRangeCall{MinKeyInclusive: "a", MaxKeyExclusive: "b", Callback: deleteRangeCallback})
+	batch.Add(model.DeleteCall{Key: "a", Callback: deleteCallback})
+
+	batch.Complete()
+
+	assert.Len(t, request.Puts, 2)
+	assert.EqualValues(t, 0, request.Puts[0].OpIndex)
+	assert.EqualValues(t, 2, request.Puts[1].OpIndex)
+	assert.Len(t, request.Deletes, 2)
+	assert.EqualValues(t, 1, request.Deletes[0].OpIndex)
+	assert.EqualValues(t, 4, request.Deletes[1].OpIndex)
+	assert.Len(t, request.DeleteRanges, 1)
+	assert.EqualValues(t, 3, request.DeleteRanges[0].OpIndex)
 }
 
 func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
@@ -282,7 +328,7 @@ func TestWriteBatchNoRerouteOnOtherError(t *testing.T) {
 	rerouted := false
 	factory := &writeBatchFactory{
 		execute: execute,
-		reroute: func([]model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
+		reroute: func(int64, []model.PutCall, []model.DeleteCall, []model.DeleteRangeCall) {
 			rerouted = true
 		},
 		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),

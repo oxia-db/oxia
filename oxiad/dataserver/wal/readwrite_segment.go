@@ -16,7 +16,9 @@ package wal
 
 import (
 	"encoding/binary"
+	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -140,7 +142,49 @@ func newReadWriteSegment(basePath string, baseOffset int64, segmentSize uint32, 
 	if len(ms.writingIdx) == 0 {
 		ms.lastCrc = initialLastCrc
 	}
+	if err = ms.zeroDiscardedTail(); err != nil {
+		codec.ReturnIndexBuf(&ms.writingIdx)
+		return nil, multierr.Combine(
+			errors.Wrapf(err, "failed to zero the discarded tail of segment file %s", ms.c.txnPath),
+			ms.txnMappedFile.Unmap(),
+			ms.txnFile.Close())
+	}
 	return ms, nil
+}
+
+// zeroDiscardedTail zeroes what the recovery left past the recovered entries
+// when it stopped at a record it did not accept: a corrupted record past the
+// commit offset is discarded along with everything after it, but its bytes,
+// and the intact records following it, are still in the file. A later
+// recovery would read those records back as valid entries, as soon as new
+// appends end right where one of them starts. Like Truncate, it syncs the
+// zeroes, here before any new entry gets appended.
+func (ms *readWriteSegment) zeroDiscardedTail() error {
+	tail := ms.txnMappedFile[ms.currentFileOffset:]
+	headerSlot := tail[:min(len(tail), int(ms.c.codec.GetHeaderSize()))]
+	if !slices.ContainsFunc(headerSlot, isNonZero) {
+		// The recovery reached the end of the written data. Intact records
+		// past a record whose header never reached the disk would go unnoticed
+		// here: finding them takes scanning the whole segment on every reopen
+		return nil
+	}
+
+	slog.Warn("Zeroing the discarded data past the last recovered entry of the wal segment.",
+		slog.String("path", ms.c.txnPath),
+		slog.Int64("last-entry-offset", ms.lastOffset),
+		slog.Uint64("file-offset", uint64(ms.currentFileOffset)))
+	// Only write the non-zero bytes: the pages that never held data stay
+	// untouched, instead of getting allocated in the sparse segment file
+	for i, b := range tail {
+		if b != 0 {
+			tail[i] = 0
+		}
+	}
+	return ms.Flush()
+}
+
+func isNonZero(b byte) bool {
+	return b != 0
 }
 
 func (ms *readWriteSegment) LastCrc() uint32 {
@@ -279,12 +323,11 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 
 	// Write zeroes in the section to clear
 	fileLastSafeOffset := fileOffset(ms.writingIdx, ms.c.baseOffset, lastSafeOffset)
-	var recordSize uint32
-	var err error
-	if recordSize, err = ms.c.codec.GetRecordSize(ms.txnMappedFile, fileLastSafeOffset); err != nil {
+	payloadSize, _, lastSafeCrc, err := ms.c.codec.ReadHeaderWithValidation(ms.txnMappedFile, fileLastSafeOffset)
+	if err != nil {
 		return err
 	}
-	fileEndOffset := fileLastSafeOffset + recordSize
+	fileEndOffset := fileLastSafeOffset + ms.c.codec.GetHeaderSize() + payloadSize
 	for i := fileEndOffset; i < ms.currentFileOffset; i++ {
 		ms.txnMappedFile[i] = 0
 	}
@@ -293,6 +336,9 @@ func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	ms.writingIdx = ms.writingIdx[:4*(lastSafeOffset-ms.c.baseOffset+1)]
 	ms.currentFileOffset = fileEndOffset
 	ms.lastOffset = lastSafeOffset
+	// The next append must chain from the crc of the record at the truncation
+	// point, not from the one of the last truncated record
+	ms.lastCrc = lastSafeCrc
 	return ms.Flush()
 }
 

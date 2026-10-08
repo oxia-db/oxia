@@ -24,14 +24,11 @@ import (
 )
 
 func GetAuthority(ctx context.Context) (string, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		if authority := md.Get(":authority"); len(authority) > 0 {
-			if err := ValidateAuthorityAddress(authority[0]); err != nil {
-				return "", err
-			}
-			return authority[0], nil
+	if authority := metadata.ValueFromIncomingContext(ctx, ":authority"); len(authority) > 0 {
+		if err := ValidateAuthorityAddress(authority[0]); err != nil {
+			return "", err
 		}
+		return authority[0], nil
 	}
 	return "", errors.New("authority not identified")
 }

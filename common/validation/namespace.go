@@ -23,6 +23,17 @@ import (
 
 var validNamespacePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$`)
 
+// A data server keeps these names for itself, in the same directory as the
+// directories of the namespaces, so no namespace can take one. File systems
+// can be case-insensitive, so they are reserved in any letter case.
+const (
+	// KeywordNamespaceManifest is the file a data server keeps its manifest in.
+	KeywordNamespaceManifest = "MANIFEST"
+	// KeywordNamespaceSnapshots is the directory a data server keeps the
+	// database snapshots in.
+	KeywordNamespaceSnapshots = "snapshots"
+)
+
 func ValidateNamespace(namespace string) error {
 	if namespace == "" {
 		return errors.New("namespace must not be empty")
@@ -35,6 +46,12 @@ func ValidateNamespace(namespace string) error {
 	}
 	if !validNamespacePattern.MatchString(namespace) {
 		return errors.Errorf("namespace %q contains invalid characters", namespace)
+	}
+	if strings.EqualFold(namespace, KeywordNamespaceManifest) {
+		return errors.Errorf("namespace %q is reserved: it collides with the data server manifest file", namespace)
+	}
+	if strings.EqualFold(namespace, KeywordNamespaceSnapshots) {
+		return errors.Errorf("namespace %q is reserved: it collides with the data server snapshots directory", namespace)
 	}
 	return nil
 }

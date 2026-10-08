@@ -155,6 +155,9 @@ type OxiaStreamMessage struct {
 	BaseMessageBody
 	OxiaMsg  json.RawMessage `json:"m"`
 	StreamId int64           `json:"stream_id"`
+	// Position of an append within its replicate stream, see
+	// maelstromReplicateServerStream.deliver
+	Seq int64 `json:"seq,omitempty"`
 }
 
 type EmptyResponse struct {

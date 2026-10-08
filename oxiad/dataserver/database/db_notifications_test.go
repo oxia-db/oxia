@@ -16,6 +16,10 @@ package database
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,8 +28,10 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
+	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	time2 "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -33,6 +39,32 @@ import (
 
 func init() {
 	logging.ConfigureLogger()
+}
+
+// readNotifications reads the next notification batches, decoded as the
+// clients get them.
+func readNotifications(ctx context.Context, db DB, startOffset int64) ([]*proto.NotificationBatch, error) {
+	encoded, err := db.ReadNextNotifications(ctx, startOffset)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]*proto.NotificationBatch, len(encoded))
+	for i := range encoded {
+		res[i] = &proto.NotificationBatch{}
+		if err := res[i].UnmarshalVT(encoded[i].Data); err != nil {
+			return nil, err
+		}
+		if res[i].Offset != encoded[i].Offset {
+			return nil, fmt.Errorf("batch at offset %d read as offset %d", res[i].Offset, encoded[i].Offset)
+		}
+	}
+	return res, nil
+}
+
+// trimmedNotifications tells the tracker of d that the batches up to offset,
+// included, were deleted, as the trimmer does.
+func trimmedNotifications(d DB, offset int64) {
+	d.(*db).notificationsTracker.trimmed(offset)
 }
 
 func findNotification(nb *proto.NotificationBatch, key string) (*proto.Notification, bool) {
@@ -58,7 +90,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 0, t0, NoOpCallback)
 
-	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	notifications, err := readNotifications(context.Background(), db, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -88,7 +120,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 2, t2, NoOpCallback)
 
-	notifications, err = db.ReadNextNotifications(context.Background(), 1)
+	notifications, err = readNotifications(context.Background(), db, 1)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(notifications))
 
@@ -127,7 +159,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 3, t3, NoOpCallback)
 
-	notifications, err = db.ReadNextNotifications(context.Background(), 3)
+	notifications, err = readNotifications(context.Background(), db, 3)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -162,7 +194,7 @@ func TestDB_Notifications(t *testing.T) {
 		}},
 	}, 4, t4, NoOpCallback)
 
-	notifications, err = db.ReadNextNotifications(context.Background(), 4)
+	notifications, err = readNotifications(context.Background(), db, 4)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -199,7 +231,7 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 	doneCh := make(chan error)
 
 	go func() {
-		notifications, err := db.ReadNextNotifications(ctx, 5)
+		notifications, err := readNotifications(ctx, db, 5)
 		assert.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, notifications)
 		close(doneCh)
@@ -217,6 +249,98 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 	}
 
 	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// hookedCondition runs beforeWait on the first Wait, while the waiter still
+// holds the tracker lock: after it has checked its condition, but before it is
+// parked on the condition.
+type hookedCondition struct {
+	concurrent.ConditionContext
+	once       sync.Once
+	beforeWait func()
+}
+
+func (c *hookedCondition) Wait(ctx context.Context) error {
+	c.once.Do(c.beforeWait)
+	return c.ConditionContext.Wait(ctx)
+}
+
+// runBeforeFirstWait makes action run concurrently with the first waiter of
+// the tracker, between its condition check and its parking. The waiter gives
+// action a grace period to complete, which it can only do if it does not need
+// the tracker lock. The returned channel is closed once action has completed.
+func runBeforeFirstWait(nt *notificationsTracker, action func()) <-chan struct{} {
+	done := make(chan struct{})
+	nt.cond = &hookedCondition{
+		ConditionContext: nt.cond,
+		beforeWait: func() {
+			go func() {
+				action()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(100 * time.Millisecond):
+			}
+		},
+	}
+	return done
+}
+
+func TestDB_NotificationsCommitBeforeWaiterParks(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	d, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+
+	_, err = d.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
+	}, 0, now(), NoOpCallback)
+	require.NoError(t, err)
+
+	// The batch at offset 1 gets committed after the reader found it missing,
+	// but before the reader parks: the commit must still wake it up
+	writeDone := runBeforeFirstWait(d.(*db).notificationsTracker, func() {
+		_, err := d.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{Key: "b", Value: []byte("0")}},
+		}, 1, now(), NoOpCallback)
+		assert.NoError(t, err)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	notifications, err := readNotifications(ctx, d, 1)
+	require.NoError(t, err)
+	require.Len(t, notifications, 1)
+	assert.EqualValues(t, 1, notifications[0].Offset)
+
+	<-writeDone
+	assert.NoError(t, d.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_NotificationsCloseBeforeWaiterParks(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	d, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+
+	// The tracker gets closed after the reader checked it, but before the
+	// reader parks: the close must still wake it up
+	nt := d.(*db).notificationsTracker
+	closeDone := runBeforeFirstWait(nt, func() {
+		assert.NoError(t, nt.Close())
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	notifications, err := readNotifications(ctx, d, 0)
+	require.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.Nil(t, notifications)
+
+	<-closeDone
+	assert.NoError(t, d.Close())
 	assert.NoError(t, factory.Close())
 }
 
@@ -270,7 +394,7 @@ func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
 			defer factory.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			notifications, err := db.ReadNextNotifications(ctx, 1)
+			notifications, err := readNotifications(ctx, db, 1)
 			cancel()
 			assert.ErrorIs(t, err, context.DeadlineExceeded)
 			assert.Nil(t, notifications)
@@ -283,7 +407,7 @@ func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
 			}, 2, now(), NoOpCallback)
 			assert.NoError(t, err)
 
-			notifications, err = db.ReadNextNotifications(context.Background(), 1)
+			notifications, err = readNotifications(context.Background(), db, 1)
 			assert.NoError(t, err)
 			if assert.Len(t, notifications, 1) {
 				assert.EqualValues(t, 2, notifications[0].Offset)
@@ -307,7 +431,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 		}},
 	}, 0, t0, NoOpCallback)
 
-	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	notifications, err := readNotifications(context.Background(), db, 0)
 	assert.Error(t, ErrNotificationsDisabled, err)
 	assert.Nil(t, notifications)
 
@@ -338,7 +462,7 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 		}},
 	}, 1, t1, NoOpCallback)
 
-	notifications, err := db.ReadNextNotifications(context.Background(), 1)
+	notifications, err := readNotifications(context.Background(), db, 1)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(notifications))
 
@@ -355,6 +479,415 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+// The notification records are not storage entries. Without the feature, a
+// delete range that covers them rejects the whole write request, where some
+// are left. With it, a range over the internal keys deletes them.
+func TestDB_DeleteRangeNotificationRecords(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{"natural", proto.KeySortingType_NATURAL, "__oxia/notifications/", "__oxia/notifications/~"},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//"},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%v", test.name, enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+				require.NoError(t, err)
+				if enabled {
+					db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+				}
+
+				userKeys := []string{"k0", "k1", "k2"}
+				for i, key := range userKeys {
+					_, err := db.ProcessWrite(&proto.WriteRequest{
+						Puts: []*proto.PutRequest{{Key: key, Value: []byte("v")}},
+					}, int64(i), now(), NoOpCallback)
+					require.NoError(t, err)
+				}
+
+				res, err := db.ProcessWrite(&proto.WriteRequest{
+					DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
+				}, 3, now(), NoOpCallback)
+				if !enabled {
+					assert.ErrorIs(t, err, ErrNotificationRecord)
+					assert.EqualValues(t, 0, firstNotification(t, db))
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+
+					// Only the batch of the delete range itself is left
+					assert.EqualValues(t, 3, firstNotification(t, db))
+				}
+
+				for _, key := range userKeys {
+					gr, err := db.Get(&proto.GetRequest{Key: key})
+					require.NoError(t, err)
+					assert.Equal(t, proto.Status_OK, gr.Status, key)
+				}
+				commitOffset, err := db.ReadCommitOffset()
+				require.NoError(t, err)
+				assert.EqualValues(t, 3, commitOffset)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+// Each replica trims its notification records on its own schedule. A delete
+// range must not depend on which ones are still there: the batch feeds the DB
+// checksum, which must stay the same on every replica.
+func TestDB_DeleteRangeNotificationRecordsChecksum(t *testing.T) {
+	for _, test := range []struct {
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{proto.KeySortingType_NATURAL, "__oxia/notifications/", "__oxia/notifications/~"},
+		{proto.KeySortingType_HIERARCHICAL, "__oxia/notifications/", "__oxia/notifications//"},
+	} {
+		t.Run(test.keySorting.String(), func(t *testing.T) {
+			replicas := make([]DB, 2)
+			factories := make([]kvstore.Factory, 2)
+			for i := range replicas {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+				require.NoError(t, err)
+				db.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+				db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+				replicas[i], factories[i] = db, factory
+			}
+			apply := func(offset int64, req *proto.WriteRequest) {
+				for _, db := range replicas {
+					_, err := db.ProcessWrite(req.CloneVT(), offset, uint64(offset), NoOpCallback)
+					require.NoError(t, err)
+				}
+			}
+
+			for i := int64(0); i < 5; i++ {
+				apply(i, &proto.WriteRequest{
+					Puts: []*proto.PutRequest{{Key: fmt.Sprintf("k%d", i), Value: []byte("v")}},
+				})
+			}
+
+			// The second replica trims the oldest records, as its trimmer does,
+			// outside of the checksum
+			wb := replicas[1].RawKV().NewWriteBatch()
+			require.NoError(t, wb.DeleteRange(notificationKey(0), notificationKey(3)))
+			require.NoError(t, wb.Commit())
+			require.NoError(t, wb.Close())
+			require.Equal(t, replicas[0].ReadChecksum(), replicas[1].ReadChecksum())
+
+			apply(5, &proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
+			})
+			assert.Equal(t, replicas[0].ReadChecksum(), replicas[1].ReadChecksum())
+
+			for i, db := range replicas {
+				// Only the batch of the delete range itself is left
+				assert.EqualValues(t, 5, firstNotification(t, db), "replica %d", i)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factories[i].Close())
+			}
+		})
+	}
+}
+
+type deleteCountingCallback struct {
+	noopCallback
+	deletes int
+}
+
+func (c *deleteCountingCallback) OnDeleteWithEntry(kvstore.WriteBatch, *Notifications, string, *proto.StorageEntry, feature.Checker) error {
+	c.deletes++
+	return nil
+}
+
+// A delete range that covers both regular keys and internal keys is rejected
+// before the callbacks run and before its notification: it would delete the
+// term, the enabled features and the other internal keys with the regular
+// ones.
+func TestDB_DeleteRangeRegularAndInternalKeys(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{"natural", proto.KeySortingType_NATURAL, "a", "__oxia/zzz"},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "a", "__oxia/zzz"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b", Value: []byte("v")}},
+			}, 0, now(), NoOpCallback)
+			require.NoError(t, err)
+
+			callback := &deleteCountingCallback{}
+			res, err := db.ProcessWrite(&proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
+			}, 1, now(), callback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
+			assert.Zero(t, callback.deletes)
+
+			for _, key := range []string{"a", "b"} {
+				gr, err := db.Get(&proto.GetRequest{Key: key})
+				require.NoError(t, err)
+				assert.Equal(t, proto.Status_OK, gr.Status, key)
+			}
+
+			// No notification for the rejected range
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			notifications, err := readNotifications(ctx, db, 0)
+			require.NoError(t, err)
+			require.Len(t, notifications, 2)
+			assert.Empty(t, notifications[1].Notifications)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// A delete range without an end covers all the keys after its start, up to
+// the internal keys, which it doesn't delete. Without the feature, it reaches
+// the internal keys with the natural key sorting, and gets the whole write
+// request rejected at the first notification record; with the hierarchical
+// one, its end is the smallest key, and it deletes nothing.
+func TestDB_DeleteRangeWithoutEnd(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		// Up to DeleteRangeThreshold keys, the range is deleted key by key, and
+		// with a range deletion past it
+		for _, count := range []int{2, DeleteRangeThreshold + 1} {
+			for _, enabled := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/keys=%d/enabled=%v", keySorting, count, enabled), func(t *testing.T) {
+					factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+					require.NoError(t, err)
+					db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 1*time.Hour, time2.SystemClock)
+					require.NoError(t, err)
+					require.NoError(t, db.UpdateTerm(1, TermOptions{NotificationsEnabled: true}))
+					if enabled {
+						db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+					}
+
+					// A key before the range, and the keys in it, up to a key with
+					// a "/", which the hierarchical sorting places after them
+					keys := []string{"a"}
+					for i := range count {
+						keys = append(keys, fmt.Sprintf("b%04d", i))
+					}
+					keys = append(keys, "c/d")
+					var puts []*proto.PutRequest
+					for _, key := range keys {
+						puts = append(puts, &proto.PutRequest{Key: key, Value: []byte("v")})
+					}
+					_, err = db.ProcessWrite(&proto.WriteRequest{Puts: puts}, 0, now(), NoOpCallback)
+					require.NoError(t, err)
+
+					res, err := db.ProcessWrite(&proto.WriteRequest{
+						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "b"}},
+					}, 1, now(), NoOpCallback)
+					expectedKeys := keys
+					switch {
+					case enabled:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+						expectedKeys = []string{"a"}
+					case keySorting == proto.KeySortingType_NATURAL:
+						assert.ErrorIs(t, err, ErrNotificationRecord)
+					default:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+					}
+
+					for _, key := range keys {
+						gr, err := db.Get(&proto.GetRequest{Key: key})
+						require.NoError(t, err)
+						if slices.Contains(expectedKeys, key) {
+							assert.Equal(t, proto.Status_OK, gr.Status, key)
+						} else {
+							assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
+						}
+					}
+
+					// The internal keys are left: the term, the notification
+					// records, and the commit offset, at the delete range
+					term, _, err := db.ReadTerm()
+					require.NoError(t, err)
+					assert.EqualValues(t, 1, term)
+					assert.EqualValues(t, 0, firstNotification(t, db))
+					commitOffset, err := db.ReadCommitOffset()
+					require.NoError(t, err)
+					assert.EqualValues(t, 1, commitOffset)
+
+					assert.NoError(t, db.Close())
+					assert.NoError(t, factory.Close())
+				})
+			}
+		}
+	}
+}
+
+// The notifications are for the clients, which never see the internal keys: a
+// write request that creates, modifies or deletes internal keys records no
+// notification for them.
+func TestDB_NotificationsInternalKeys(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%v", keySorting, enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 1*time.Hour, time2.SystemClock)
+				require.NoError(t, err)
+				if enabled {
+					db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+				}
+
+				for offset, test := range []struct {
+					request          *proto.WriteRequest
+					notificationType proto.NotificationType
+				}{{
+					request: &proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: "a", Value: []byte("v")},
+						{Key: "__oxia/x", Value: []byte("v")},
+						{Key: "__oxia/y", Value: []byte("v")},
+					}},
+					notificationType: proto.NotificationType_KEY_CREATED,
+				}, {
+					request: &proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: "a", Value: []byte("v")},
+						{Key: "__oxia/x", Value: []byte("v")},
+					}},
+					notificationType: proto.NotificationType_KEY_MODIFIED,
+				}, {
+					request: &proto.WriteRequest{
+						Deletes:      []*proto.DeleteRequest{{Key: "a"}, {Key: "__oxia/x"}},
+						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "__oxia/y", EndExclusive: "__oxia/z"}},
+					},
+					notificationType: proto.NotificationType_KEY_DELETED,
+				}} {
+					_, err := db.ProcessWrite(test.request, int64(offset), now(), NoOpCallback)
+					require.NoError(t, err)
+
+					nb := readNotificationBatch(t, db.RawKV(), int64(offset))
+					require.NotNil(t, nb)
+					assert.Equal(t, []string{"a"}, notificationKeys(nb))
+					n, _ := findNotification(nb, "a")
+					assert.Equal(t, test.notificationType, n.GetType())
+				}
+
+				for _, key := range []string{"__oxia/x", "__oxia/y"} {
+					gr, err := db.Get(&proto.GetRequest{Key: key})
+					require.NoError(t, err)
+					assert.Equal(t, proto.Status_KEY_NOT_FOUND, gr.Status, key)
+				}
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+// A delete range from a regular key can reach the internal keys. Without the
+// feature, its notification then covers them, if the write request applies,
+// which depends on the notification records that the replica has not trimmed
+// yet: the request fails where its scan reads one, as they are not storage
+// entries. With the feature, such a range gets the INVALID_ARGUMENT status
+// before its notification, whatever the records. A range without an end then
+// stops before the internal keys, and its notification keeps the empty end,
+// which the clients read as all the records from the start on: what the range
+// deletes.
+func TestDB_NotificationsDeleteRangeInternalKeys(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		end        string
+		// Without the feature, the scan of the range reads the notification
+		// records
+		readsRecords bool
+		// With the feature, the range covers both regular and internal keys
+		mixed bool
+	}{
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "__oxia/zzz", false, true},
+		{"hierarchical/records", proto.KeySortingType_HIERARCHICAL, "__oxia/zzz/zzz", true, true},
+		{"hierarchical/no-end", proto.KeySortingType_HIERARCHICAL, "", false, false},
+		{"natural", proto.KeySortingType_NATURAL, "__oxia/m", false, true},
+		{"natural/records", proto.KeySortingType_NATURAL, "__oxia/zzz", true, true},
+		{"natural/no-end", proto.KeySortingType_NATURAL, "", true, false},
+	} {
+		for _, enabled := range []bool{false, true} {
+			for _, trimmed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/enabled=%v/trimmed=%v", test.name, enabled, trimmed), func(t *testing.T) {
+					factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+					require.NoError(t, err)
+					db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 1*time.Hour, time2.SystemClock)
+					require.NoError(t, err)
+					if enabled {
+						db.EnableFeature(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS)
+					}
+
+					// "b/c" is on the second level of the hierarchical sorting
+					_, err = db.ProcessWrite(&proto.WriteRequest{
+						Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b/c", Value: []byte("v")}},
+					}, 0, now(), NoOpCallback)
+					require.NoError(t, err)
+					if trimmed {
+						// As the trimmer of the replica does, outside of the log
+						wb := db.RawKV().NewWriteBatch()
+						require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey))
+						require.NoError(t, wb.Commit())
+						require.NoError(t, wb.Close())
+					}
+
+					res, err := db.ProcessWrite(&proto.WriteRequest{
+						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "a", EndExclusive: test.end}},
+					}, 1, now(), NoOpCallback)
+					nb := readNotificationBatch(t, db.RawKV(), 1)
+					switch {
+					case enabled && test.mixed:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
+						require.NotNil(t, nb)
+						assert.Empty(t, nb.Notifications)
+					case !enabled && test.readsRecords && !trimmed:
+						assert.ErrorIs(t, err, ErrNotificationRecord)
+						assert.Nil(t, nb)
+					default:
+						require.NoError(t, err)
+						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+						require.NotNil(t, nb)
+						assert.Equal(t, []string{"a"}, notificationKeys(nb))
+						n, _ := findNotification(nb, "a")
+						assert.Equal(t, proto.NotificationType_KEY_RANGE_DELETED, n.GetType())
+						assert.Equal(t, test.end, n.GetKeyRangeLast())
+					}
+					if enabled && !test.mixed {
+						// All the records from the start on
+						assert.Empty(t, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+					}
+
+					assert.NoError(t, db.Close())
+					assert.NoError(t, factory.Close())
+				})
+			}
+		}
+	}
 }
 
 // A subscriber catching up from an old offset must receive the backlog in
@@ -377,7 +910,7 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 	// First read is capped at maxNotificationBatchSize batches. require, not
 	// assert: with an uncapped read the resume below would ask for an offset
 	// past the backlog and block until the suite timeout.
-	notifications, err := db.ReadNextNotifications(context.Background(), 0)
+	notifications, err := readNotifications(context.Background(), db, 0)
 	require.NoError(t, err)
 	require.Equal(t, maxNotificationBatchSize, len(notifications))
 	assert.EqualValues(t, 0, notifications[0].Offset)
@@ -385,7 +918,7 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 	assert.EqualValues(t, maxNotificationBatchSize-1, lastDelivered)
 
 	// Resuming from the last delivered offset + 1 returns the remainder
-	rest, err := db.ReadNextNotifications(context.Background(), lastDelivered+1)
+	rest, err := readNotifications(context.Background(), db, lastDelivered+1)
 	assert.NoError(t, err)
 	assert.Equal(t, total-maxNotificationBatchSize, len(rest))
 	assert.EqualValues(t, maxNotificationBatchSize, rest[0].Offset)
@@ -393,4 +926,74 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
+}
+
+// A read with no batch retained from its start offset onwards must wait for
+// the next one: the leader dispatch loop retries an empty result at once and
+// would busy-spin until the next write to the shard.
+func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer factory.Close()
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer db.Close()
+
+	write := func(offset int64) {
+		_, err := db.ProcessWrite(&proto.WriteRequest{
+			Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
+		}, offset, now(), NoOpCallback)
+		require.NoError(t, err)
+	}
+	assertReadWaits := func(startOffset int64) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		notifications, err := readNotifications(ctx, db, startOffset)
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "start offset %d", startOffset)
+		assert.Nil(t, notifications, "start offset %d", startOffset)
+	}
+
+	// No batch was ever written. MinInt64 is what the leader reads from for
+	// StartOffsetExclusive=MaxInt64.
+	assertReadWaits(-5)
+	assertReadWaits(math.MinInt64)
+
+	write(0)
+	write(1)
+
+	// A negative start offset reads from the first retained batch
+	notifications, err := readNotifications(context.Background(), db, -5)
+	require.NoError(t, err)
+	require.Len(t, notifications, 2)
+	assert.EqualValues(t, 0, notifications[0].Offset)
+
+	// Delete every batch, as the trimmer does once they are all past the
+	// retention time, while the last notification offset stays at 1
+	wb := db.RawKV().NewWriteBatch()
+	require.NoError(t, wb.DeleteRange(firstNotificationKey, lastNotificationKey))
+	require.NoError(t, wb.Commit())
+	require.NoError(t, wb.Close())
+	trimmedNotifications(db, 1)
+
+	assertReadWaits(-5)
+	assertReadWaits(0)
+	assertReadWaits(1)
+
+	// A reader waiting past the deleted batches gets the next one. The sleep
+	// lets it reach the wait before the batch is written.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	readCh := make(chan []*proto.NotificationBatch, 1)
+	go func() {
+		notifications, err := readNotifications(ctx, db, 0)
+		assert.NoError(t, err)
+		readCh <- notifications
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	write(2)
+
+	notifications = <-readCh
+	require.Len(t, notifications, 1)
+	assert.EqualValues(t, 2, notifications[0].Offset)
 }

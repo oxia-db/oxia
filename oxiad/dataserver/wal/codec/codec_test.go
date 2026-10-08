@@ -47,3 +47,22 @@ func TestCodec_GetOrCreate(t *testing.T) {
 	assert.EqualValues(t, v2, codec)
 	assert.EqualValues(t, true, exist)
 }
+
+// The WAL reader decodes the payload zero-copy, so the payload must not alias
+// the buffer it was read from: that buffer is a segment's mmap, which gets
+// unmapped.
+func TestCodec_ReadRecordCopiesPayload(t *testing.T) {
+	for name, codec := range map[string]Codec{"v1": v1, "v2": v2} {
+		t.Run(name, func(t *testing.T) {
+			buf := make([]byte, 100)
+			payload := []byte{1, 2, 3}
+			codec.WriteRecord(buf, 0, 0, payload)
+
+			readPayload, _, _, err := codec.ReadRecordWithValidation(buf, 0)
+			assert.NoError(t, err)
+
+			clear(buf)
+			assert.EqualValues(t, payload, readPayload)
+		})
+	}
+}

@@ -33,6 +33,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 
+	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -64,17 +65,23 @@ func (sap *ShardAssignmentsProvider) SubscribeShardAssignments() *commonwatch.Re
 }
 
 type NodeAvailabilityListener struct {
-	Events chan *proto.DataServerIdentity
+	Events                   chan *proto.DataServerIdentity
+	FeaturesDiscoveredEvents chan *proto.DataServerIdentity
 }
 
 func NewNodeAvailabilityListener() *NodeAvailabilityListener {
 	return &NodeAvailabilityListener{
-		Events: make(chan *proto.DataServerIdentity, 100),
+		Events:                   make(chan *proto.DataServerIdentity, 100),
+		FeaturesDiscoveredEvents: make(chan *proto.DataServerIdentity, 100),
 	}
 }
 
 func (nal *NodeAvailabilityListener) BecameUnavailable(node *proto.DataServerIdentity) {
 	nal.Events <- node
+}
+
+func (nal *NodeAvailabilityListener) FeaturesDiscovered(node *proto.DataServerIdentity) {
+	nal.FeaturesDiscoveredEvents <- node
 }
 
 type PerNodeChannels struct {
@@ -114,7 +121,7 @@ type PerNodeChannels struct {
 		error
 	}
 
-	freezeShardRequests  chan *proto.FreezeShardRequest
+	FreezeShardRequests  chan *proto.FreezeShardRequest
 	freezeShardResponses chan struct {
 		*proto.FreezeShardResponse
 		error
@@ -124,13 +131,21 @@ type PerNodeChannels struct {
 	HealthClient           *HealthClient
 	err                    error
 
+	// PushShardAssignmentsCount counts the attempts to open the assignments
+	// stream, including the rejected ones.
+	PushShardAssignmentsCount atomic.Int64
+
 	// Feature negotiation support
 	supportedFeatures []proto.Feature
+	enabledFeatures   []proto.Feature
 	handshakeStatus   proto.HandshakeStatus
 	handshakeErr      error
 	HandshakeCount    atomic.Int64
-	getInfoErr        error
-	getInfoCount      atomic.Int64
+	// handshakeGate, when set by BlockHandshakes, holds every Handshake call
+	// (after it has been counted) until ReleaseHandshakes closes it.
+	handshakeGate chan struct{}
+	getInfoErr    error
+	getInfoCount  atomic.Int64
 }
 
 const defaultTimeout = 10 * time.Second
@@ -168,6 +183,34 @@ func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFeatures(t *testing.T, sh
 	assert.Equal(t, term, r.Term)
 	assert.Equal(t, replicationFactor, r.ReplicationFactor)
 	assert.ElementsMatch(t, expectedFeatures, r.FeaturesSupported, "negotiated features should match")
+}
+
+// ExpectBecomeLeaderRequestWithFollowers verifies the BecomeLeader request
+// hands the new leader exactly the expected followers.
+func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFollowers(t *testing.T, shard int64, term int64, replicationFactor uint32,
+	expectedFollowers ...*proto.DataServerIdentity) {
+	t.Helper()
+
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive BecomeLeader request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.Equal(t, replicationFactor, r.ReplicationFactor)
+	expected := make([]string, 0, len(expectedFollowers))
+	for _, follower := range expectedFollowers {
+		expected = append(expected, follower.GetInternal())
+	}
+	actual := make([]string, 0, len(r.FollowerMaps))
+	for follower := range r.FollowerMaps {
+		actual = append(actual, follower)
+	}
+	assert.ElementsMatch(t, expected, actual, "followers should match")
 }
 
 func (m *PerNodeChannels) ExpectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
@@ -212,7 +255,7 @@ func (m *PerNodeChannels) ExpectDeleteShardRequest(t *testing.T, shard int64, te
 	assert.Equal(t, term, r.Term)
 }
 
-func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, term int64) {
+func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, term int64) *proto.AddFollowerRequest {
 	t.Helper()
 
 	var r *proto.AddFollowerRequest
@@ -220,11 +263,29 @@ func (m *PerNodeChannels) ExpectAddFollowerRequest(t *testing.T, shard int64, te
 	case r = <-m.addFollowerRequests:
 	case <-time.After(defaultTimeout):
 		assert.Fail(t, "did not receive AddFollower request in time")
-		return
+		return nil
 	}
 
 	assert.Equal(t, shard, r.Shard)
 	assert.Equal(t, term, r.Term)
+	return r
+}
+
+func (m *PerNodeChannels) ExpectRemoveObserverRequest(t *testing.T, shard int64,
+	term int64) *proto.RemoveObserverRequest {
+	t.Helper()
+
+	var r *proto.RemoveObserverRequest
+	select {
+	case r = <-m.removeObserverRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive RemoveObserver request in time")
+		return nil
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	return r
 }
 
 func (m *PerNodeChannels) ExpectGetStatusRequest(t *testing.T, shard int64) {
@@ -253,6 +314,69 @@ func (m *PerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
 	}, err}
 }
 
+// NewTermResponseWithFeatures enqueues a NewTerm response that also reports
+// the features already enabled in the node's database.
+func (m *PerNodeChannels) NewTermResponseWithFeatures(term int64, offset int64, featuresEnabled []proto.Feature, err error) {
+	m.newTermResponses <- struct {
+		*proto.NewTermResponse
+		error
+	}{&proto.NewTermResponse{
+		HeadEntryId: &proto.EntryId{
+			Term:   term,
+			Offset: offset,
+		},
+		FeaturesEnabled: featuresEnabled,
+	}, err}
+}
+
+// ExpectNewTermRequestWithFeatures verifies the NewTerm request pins the
+// expected feature set for the term.
+func (m *PerNodeChannels) ExpectNewTermRequestWithFeatures(t *testing.T, shard int64, term int64, expectedFeatures []proto.Feature) {
+	t.Helper()
+
+	var r *proto.NewTermRequest
+	select {
+	case r = <-m.NewTermRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive NewTerm request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.ElementsMatch(t, expectedFeatures, r.Options.GetFeatures(), "pinned features should match")
+}
+
+func (m *PerNodeChannels) ExpectNoBecomeLeaderRequest(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-m.becomeLeaderRequests:
+		assert.Fail(t, "should not have received any become leader request")
+	case <-time.After(defaultNegativeTimeout):
+		// expected
+	}
+}
+
+// ExpectAddFollowerRequestWithFeatures verifies the AddFollower request
+// reports the joiner's supported features.
+func (m *PerNodeChannels) ExpectAddFollowerRequestWithFeatures(t *testing.T, shard int64, term int64, expectedFeatures []proto.Feature) {
+	t.Helper()
+
+	var r *proto.AddFollowerRequest
+	select {
+	case r = <-m.addFollowerRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, "did not receive AddFollower request in time")
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.NotNil(t, r.FollowerFeatures, "the coordinator should report the follower's features")
+	assert.ElementsMatch(t, expectedFeatures, r.FollowerFeatures.GetSupported())
+}
+
 //nolint:revive
 func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStatus,
 	headOffset int64, commitOffset int64) {
@@ -264,6 +388,24 @@ func (m *PerNodeChannels) GetStatusResponse(term int64, status proto.ServingStat
 		Status:       status,
 		HeadOffset:   headOffset,
 		CommitOffset: commitOffset,
+	}, nil}
+}
+
+// GetStatusResponseWithTermFeatures enqueues a GetStatus response that also
+// reports the features pinned by the node's term, as a leader does.
+//
+//nolint:revive
+func (m *PerNodeChannels) GetStatusResponseWithTermFeatures(term int64, status proto.ServingStatus,
+	headOffset int64, commitOffset int64, termFeatures []proto.Feature) {
+	m.getStatusResponses <- struct {
+		*proto.GetStatusResponse
+		error
+	}{&proto.GetStatusResponse{
+		Term:         term,
+		Status:       status,
+		HeadOffset:   headOffset,
+		CommitOffset: commitOffset,
+		TermFeatures: &proto.TermFeatures{Features: termFeatures},
 	}, nil}
 }
 
@@ -341,7 +483,7 @@ func newPerNodeChannels() *PerNodeChannels {
 			*proto.RemoveObserverResponse
 			error
 		}, 100),
-		freezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
+		FreezeShardRequests: make(chan *proto.FreezeShardRequest, 100),
 		freezeShardResponses: make(chan struct {
 			*proto.FreezeShardResponse
 			error
@@ -358,11 +500,32 @@ func (m *PerNodeChannels) SetNodeFeatures(features []proto.Feature) {
 	m.supportedFeatures = features
 }
 
+// SetEnabledFeatures sets the features enabled in this node's database: like
+// a leader, it then refuses to lead a term whose negotiated features don't
+// cover them, and rejects the followers whose reported features don't cover
+// them.
+func (m *PerNodeChannels) SetEnabledFeatures(features []proto.Feature) {
+	m.enabledFeatures = features
+}
+
 // SetOldNode simulates an old node that doesn't support the GetInfo RPC.
 func (m *PerNodeChannels) SetOldNode() {
 	m.handshakeErr = errNotImplemented
 	m.getInfoErr = errNotImplemented
 	m.supportedFeatures = nil
+}
+
+// BlockHandshakes holds every Handshake call in flight, after counting it,
+// until ReleaseHandshakes is called, so a test can observe the controller
+// while a handshake has not completed yet. Call it before the controller
+// starts.
+func (m *PerNodeChannels) BlockHandshakes() {
+	m.handshakeGate = make(chan struct{})
+}
+
+// ReleaseHandshakes lets the Handshake calls held by BlockHandshakes complete.
+func (m *PerNodeChannels) ReleaseHandshakes() {
+	close(m.handshakeGate)
 }
 
 type RpcProvider struct {
@@ -401,19 +564,28 @@ func (r *RpcProvider) GetInfo(_ context.Context, node *proto.DataServerIdentity,
 	}, nil
 }
 
-func (r *RpcProvider) Handshake(_ context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+func (r *RpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity, _ *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 	r.Lock()
-	defer r.Unlock()
-
 	n := r.getNode(node)
 	n.HandshakeCount.Add(1)
-	if n.handshakeErr != nil {
-		return nil, n.handshakeErr
-	}
-	return &proto.HandshakeResponse{
+	gate, err := n.handshakeGate, n.handshakeErr
+	response := &proto.HandshakeResponse{
 		Status:            n.handshakeStatus,
 		FeaturesSupported: n.supportedFeatures,
-	}, nil
+	}
+	r.Unlock()
+
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 func (r *RpcProvider) RecoverNode(node *proto.DataServerIdentity) {
@@ -447,6 +619,7 @@ func (r *RpcProvider) PushShardAssignments(ctx context.Context, node *proto.Data
 	defer r.Unlock()
 
 	n := r.getNode(node)
+	n.PushShardAssignmentsCount.Add(1)
 	if n.err != nil {
 		return nil, n.err
 	}
@@ -487,8 +660,13 @@ func (r *RpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerId
 		r.Unlock()
 		return nil, s.err
 	}
+	enabledFeatures := s.enabledFeatures
 
 	r.Unlock()
+
+	if len(feature.Missing(enabledFeatures, req.FeaturesSupported)) > 0 {
+		return nil, constant.ErrUnsupportedFeatures
+	}
 
 	select {
 	case response := <-s.becomeLeaderResponses:
@@ -556,8 +734,13 @@ func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 		r.Unlock()
 		return nil, s.err
 	}
+	enabledFeatures := s.enabledFeatures
 
 	r.Unlock()
+
+	if req.FollowerFeatures != nil && len(feature.Missing(enabledFeatures, req.FollowerFeatures.GetSupported())) > 0 {
+		return nil, constant.ErrUnsupportedFeatures
+	}
 
 	select {
 	case response := <-s.addFollowerResponses:
@@ -596,7 +779,7 @@ func (r *RpcProvider) FreezeShard(_ context.Context, node *proto.DataServerIdent
 	r.Lock()
 
 	s := r.getNode(node)
-	s.freezeShardRequests <- req
+	s.FreezeShardRequests <- req
 
 	if s.err != nil {
 		r.Unlock()

@@ -69,8 +69,9 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	resource := mock.StatusSnapshot(t, coordinatorInstance.Metadata())
-	shardMetadata := resource.Namespaces["default"].Shards[0]
+	// The client can connect before the shard leader is elected
+	shardMetadata := waitForLeaderFeature(t, coordinatorInstance.Metadata(), serverInstanceIndex,
+		proto.Feature_FEATURE_DB_CHECKSUM)
 	leader := shardMetadata.Leader
 
 	// Write entries. The replication messages for these writes also carry

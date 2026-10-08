@@ -25,6 +25,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// meterName is the instrumentation scope of the oxia metrics.
+const meterName = "oxia"
+
 var (
 	meter metric.Meter
 	once  sync.Once
@@ -32,9 +35,7 @@ var (
 
 func GetMeter() metric.Meter {
 	once.Do(func() {
-		meter = otel.GetMeterProvider().Meter(
-			"oxia",
-		)
+		meter = otel.GetMeterProvider().Meter(meterName)
 	})
 	return meter
 }
@@ -61,6 +62,10 @@ func fatalOnErr(err error, name string) {
 }
 
 func getAttrs(labels map[string]any) (options metric.MeasurementOption) {
+	return metric.WithAttributeSet(getAttrSet(labels))
+}
+
+func getAttrSet(labels map[string]any) attribute.Set {
 	attrs := make([]attribute.KeyValue, 0, len(labels))
 	for k, v := range labels {
 		key := attribute.Key(k)
@@ -87,5 +92,5 @@ func getAttrs(labels map[string]any) (options metric.MeasurementOption) {
 		attrs = append(attrs, attr)
 	}
 
-	return metric.WithAttributes(attrs...)
+	return attribute.NewSet(attrs...)
 }

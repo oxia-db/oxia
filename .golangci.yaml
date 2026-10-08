@@ -50,10 +50,18 @@ linters:
   settings:
     goconst:
       ignore-string-values: "localhost:0"
+      exclude-types:
+        - Call
+        - CompositeLit
     gosec:
       excludes:
         - G115
+        - G118
+        - G602
         - G703
+    govet:
+      disable:
+        - inline
     revive:
       enable-all-rules: true
       rules:
@@ -119,6 +127,25 @@ linters:
         - name: bare-return
           severity: warning
           disabled: false
+        - name: package-naming
+          severity: warning
+          disabled: true
+        - name: use-slices-sort
+          severity: warning
+          disabled: true
+        - name: epoch-naming
+          severity: warning
+          disabled: true
+        # Workaround for https://github.com/mgechev/revive/issues/1718, fixed in revive v1.16.0 while
+        # golangci-lint v2.13.2 still bundles v1.15.0. Under golangci-lint revive's own type-check always
+        # fails, and this rule (like epoch-naming above) turns that error into an internal failure: when it
+        # happens to be the first rule to type-check a package (revive's rule order is random), the remaining
+        # rules are silently skipped for one file of that package. The lost reports make nolintlint flag, and
+        # auto-remove, `//nolint:revive` directives that are needed. Keep both rules disabled until
+        # golangci-lint bundles revive >= v1.16.0.
+        - name: inefficient-map-lookup
+          severity: warning
+          disabled: true
     gomoddirectives:
       replace-local: true
   exclusions:
@@ -133,6 +160,7 @@ linters:
           - contextcheck
           - gosec
           - noctx
+          - prealloc
           - unparam
         path: _test\.go
       - linters:
@@ -165,13 +193,6 @@ linters:
           - revive
         path: _grpc\.go
         text: blank-imports
-      - linters:
-          - revive
-        path: oxiad/coordinator/metadata/common/
-        text: avoid meaningless package names
-      - linters:
-          - revive
-        text: "avoid package names that conflict with Go standard library"
       - linters:
           - goconst
         path: (.+)_test\.go

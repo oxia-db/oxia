@@ -64,7 +64,7 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Int32HashRange:          &proto.HashRange{Min: 2000, Max: 100000},
 	}
 	metadataView := coordinatorInstance.Metadata()
-	metadataView.UpdateShardStatus("default", 1, shardMetadata)
+	assert.NoError(t, metadataView.UpdateShardStatus("default", 1, shardMetadata))
 
 	status := mock.StatusSnapshot(t, metadataView)
 	assert.True(t, gproto.Equal(status.Namespaces["default"].Shards[1], shardMetadata))

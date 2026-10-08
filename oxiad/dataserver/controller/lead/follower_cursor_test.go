@@ -40,6 +40,37 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+func TestFollowerCursor_SplitMetadata(t *testing.T) {
+	childRange := &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100}
+	parentRange := &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 200}
+	for _, test := range []struct {
+		name     string
+		cursor   *followerCursor
+		expected map[string]string
+	}{
+		{"follower", &followerCursor{}, map[string]string{}},
+		{"observer without the parent range", &followerCursor{splitHashRange: childRange}, map[string]string{
+			constant.MetadataSplitHashRangeMin: "0",
+			constant.MetadataSplitHashRangeMax: "100",
+		}},
+		{"observer", &followerCursor{splitHashRange: childRange, splitParentHashRange: parentRange}, map[string]string{
+			constant.MetadataSplitHashRangeMin:       "0",
+			constant.MetadataSplitHashRangeMax:       "100",
+			constant.MetadataSplitParentHashRangeMin: "0",
+			constant.MetadataSplitParentHashRangeMax: "200",
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			md, _ := metadata.FromOutgoingContext(test.cursor.withSplitMetadata(context.Background()))
+			actual := map[string]string{}
+			for key, values := range md {
+				actual[key] = values[0]
+			}
+			assert.Equal(t, test.expected, actual)
+		})
+	}
+}
+
 func TestFollowerCursor(t *testing.T) {
 	var term int64 = 1
 	var shard int64 = 2
@@ -178,12 +209,13 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 	assert.NoError(t, w.Clear())
 
 	// Append one more entry so there is something to stream after the snapshot
-	assert.NoError(t, w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+	_, err = w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
 		Term:      1,
 		Offset:    n,
 		Value:     []byte("post-snapshot"),
 		Timestamp: uint64(n),
-	}, &lastCrc))
+	}, &lastCrc)
+	assert.NoError(t, err)
 	assert.NoError(t, w.Sync(context.Background()))
 
 	ackTracker := NewQuorumAckTracker(3, n, n-1)
@@ -219,6 +251,64 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 		"first Append after snapshot must have non-zero PreviousEntryCrc")
 	assert.EqualValues(t, n, firstAppend.Entry.Offset)
 
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
+}
+
+// A follower that holds every entry before the first one of the leader's wal,
+// like a follower seeded from a snapshot at that offset, gets the next entries
+// from the wal. Another snapshot would only wipe the data it has until it is
+// installed.
+func TestFollowerCursor_StreamToFollowerRightBeforeWalStart(t *testing.T) {
+	var term int64 = 1
+	var shard int64 = 2
+
+	n := int64(10)
+	stream := rpc.NewMockRpcClient()
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
+	assert.NoError(t, err)
+	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	// The entries up to n-1 are only in the database, and the wal starts at n
+	for i := int64(0); i < n; i++ {
+		wr := &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: fmt.Sprintf("key-%d", i), Value: []byte("value")}},
+		}
+		_, err := db.ProcessWrite(wr, i, uint64(i), database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	previousCrc := uint32(1)
+	_, err = w.AppendAsyncWithPreviousCrc(&proto.LogEntry{
+		Term:      1,
+		Offset:    n,
+		Value:     []byte("after-snapshot"),
+		Timestamp: uint64(n),
+	}, &previousCrc)
+	assert.NoError(t, err)
+	assert.NoError(t, w.Sync(context.Background()))
+
+	ackTracker := NewQuorumAckTracker(3, n, n-1)
+	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, n-1)
+	assert.NoError(t, err)
+
+	select {
+	case req := <-stream.AppendReqs:
+		assert.EqualValues(t, n, req.Entry.Offset)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the follower got no entry")
+	}
+	assert.Empty(t, stream.SendSnapshotStream.Requests, "the follower got a snapshot")
+
+	// Complete a snapshot in progress: closing the cursor waits for it
+	stream.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: n - 1}
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, w.Close())
 	assert.NoError(t, wf.Close())
@@ -466,7 +556,8 @@ func TestObserverFollowerCursor_AdvertisesCommitOffsetAtHead(t *testing.T) {
 	var shard int64 = 2
 
 	stream := rpc.NewMockRpcClient()
-	ackTracker := NewQuorumAckTracker(3, wal.InvalidOffset, wal.InvalidOffset)
+	// Entry 0 is committed, entry 1 is not
+	ackTracker := NewQuorumAckTracker(3, 0, 0)
 	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour, time2.SystemClock)
@@ -475,35 +566,38 @@ func TestObserverFollowerCursor_AdvertisesCommitOffsetAtHead(t *testing.T) {
 	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
 	assert.NoError(t, err)
 
-	assert.NoError(t, w.Append(&proto.LogEntry{
-		Term:   1,
-		Offset: 0,
-		Value:  []byte("v1"),
-	}))
+	for offset := int64(0); offset <= 1; offset++ {
+		assert.NoError(t, w.Append(&proto.LogEntry{
+			Term:   1,
+			Offset: offset,
+			Value:  []byte("v1"),
+		}))
+	}
 
 	// A regular follower acking through the quorum tracker
-	regular, err := ackTracker.NewCursorAcker(wal.InvalidOffset)
+	regular, err := ackTracker.NewCursorAcker(0)
 	assert.NoError(t, err)
 
+	// The observer was seeded with a snapshot up to entry 0
 	fc, err := NewObserverFollowerCursor("child-1", term, constant.DefaultNamespace, shard, stream, ackTracker,
-		w, db, wal.InvalidOffset, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100})
+		w, db, 0, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100}, nil)
 	assert.NoError(t, err)
 
-	// The observer streams entry 0 with the commit offset of that moment (-1)
+	// The observer streams entry 1 with the commit offset of that moment (0)
 	// and parks at the head of the wal
 	req := <-stream.AppendReqs
-	assert.EqualValues(t, 0, req.Entry.Offset)
-	assert.Equal(t, wal.InvalidOffset, req.CommitOffset)
+	assert.EqualValues(t, 1, req.Entry.Offset)
+	assert.EqualValues(t, 0, req.CommitOffset)
 
 	// The quorum ack advances the commit offset with no new writes
-	ackTracker.AdvanceHeadOffset(0)
-	regular.Ack(0)
-	assert.EqualValues(t, 0, ackTracker.CommitOffset())
+	ackTracker.AdvanceHeadOffset(1)
+	regular.Ack(1)
+	assert.EqualValues(t, 1, ackTracker.CommitOffset())
 
 	// The parked observer sends the advertisement on its own
 	req = <-stream.AppendReqs
 	assert.Nil(t, req.Entry)
-	assert.EqualValues(t, 0, req.CommitOffset)
+	assert.EqualValues(t, 1, req.CommitOffset)
 	assert.EqualValues(t, term, req.Term)
 
 	// No repeated advertisement while nothing advances
@@ -514,6 +608,101 @@ func TestObserverFollowerCursor_AdvertisesCommitOffsetAtHead(t *testing.T) {
 	default:
 		// Expected. There should be nothing in the channel
 	}
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, w.Close())
+	assert.NoError(t, wf.Close())
+	assert.NoError(t, db.Close())
+	assert.NoError(t, kvf.Close())
+}
+
+// snapshotStreamsProvider gives each snapshot a stream of its own, and uses
+// the replicate streams of a mock rpc client.
+type snapshotStreamsProvider struct {
+	*rpc.MockRpcClient
+	snapshots chan *rpc.MockSendSnapshotClientStream
+}
+
+func (p *snapshotStreamsProvider) SendSnapshot(ctx context.Context, _ string, _ string, _ int64,
+	_ int64) (proto.OxiaLogReplication_SendSnapshotClient, error) {
+	stream := rpc.NewMockSendSnapshotClientStream(ctx)
+	p.snapshots <- stream
+	return stream, nil
+}
+
+// A split child must start from a snapshot that holds an entry of the parent:
+// the followers of the child would otherwise get the parent's entries from the
+// child's wal, and apply them without the split filter. The observer of a
+// leader that has committed no entry waits for one, and sends another snapshot
+// if the one it sent holds no entry yet.
+func TestObserverFollowerCursor_SeedsChildWithAnEntry(t *testing.T) {
+	var term int64 = 1
+	var shard int64 = 2
+
+	provider := &snapshotStreamsProvider{
+		MockRpcClient: rpc.NewMockRpcClient(),
+		snapshots:     make(chan *rpc.MockSendSnapshotClientStream, 10),
+	}
+	ackTracker := NewQuorumAckTracker(3, wal.InvalidOffset, wal.InvalidOffset)
+	kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour,
+		time2.SystemClock)
+	assert.NoError(t, err)
+	wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+	assert.NoError(t, err)
+
+	// Entry 0 is in the wal, but not committed
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term:   1,
+		Offset: 0,
+		Value:  []byte("v1"),
+	}))
+	regular, err := ackTracker.NewCursorAcker(wal.InvalidOffset)
+	assert.NoError(t, err)
+
+	fc, err := NewObserverFollowerCursor("child-1", term, constant.DefaultNamespace, shard, provider, ackTracker,
+		w, db, wal.InvalidOffset, &proto.Int32HashRange{MinHashInclusive: 0, MaxHashInclusive: 100}, nil)
+	assert.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Empty(t, provider.snapshots, "snapshot sent before the first commit")
+	assert.Empty(t, provider.AppendReqs, "entries sent before the first commit")
+
+	ackTracker.AdvanceHeadOffset(0)
+	regular.Ack(0)
+
+	// The first snapshot is taken before the database applies entry 0
+	for _, ackOffset := range []int64{wal.InvalidOffset, 0} {
+		select {
+		case snapshot := <-provider.snapshots:
+			for chunk := range snapshot.Requests {
+				assert.EqualValues(t, term, chunk.Term)
+			}
+			snapshot.Response <- &proto.SnapshotResponse{AckOffset: ackOffset}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the observer did not send a snapshot")
+		}
+	}
+
+	// The observer streams the entries after the snapshot
+	assert.NoError(t, w.Append(&proto.LogEntry{
+		Term:   1,
+		Offset: 1,
+		Value:  []byte("v2"),
+	}))
+	ackTracker.AdvanceHeadOffset(1)
+	var req *proto.Append
+	for req == nil || req.Entry == nil {
+		select {
+		case req = <-provider.AppendReqs:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the observer did not send entry 1")
+		}
+	}
+	assert.EqualValues(t, 1, req.Entry.Offset)
+	assert.Empty(t, provider.snapshots)
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, w.Close())

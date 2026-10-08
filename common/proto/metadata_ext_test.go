@@ -71,3 +71,10 @@ func TestClusterConfigurationValidateCoordinators(t *testing.T) {
 		}).Validate(), `coordinator "coordinator-0" publicAddress must not be empty`)
 	})
 }
+
+func TestKeySortingTypeToKeySorting(t *testing.T) {
+	require.Equal(t, KeySorting_KEY_SORTING_NATURAL, KeySortingType_NATURAL.ToKeySorting())
+	require.Equal(t, KeySorting_KEY_SORTING_HIERARCHICAL, KeySortingType_HIERARCHICAL.ToKeySorting())
+	// The data servers keep the keys in hierarchical order when the key sorting is not set
+	require.Equal(t, KeySorting_KEY_SORTING_HIERARCHICAL, KeySortingType_UNKNOWN.ToKeySorting())
+}

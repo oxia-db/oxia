@@ -34,6 +34,7 @@ var (
 		Use:   "create-schema",
 		Short: "Create configuration schema",
 		Long:  `Create configuration schema`,
+		Args:  cobra.NoArgs,
 		RunE:  exec,
 	}
 )

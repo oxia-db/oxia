@@ -1,0 +1,179 @@
+# Adapted from etcd server/storage/mvcc/kv_test.go: TestKVOperationInSequence.
+# The original repeats ten times; five explicit rounds here check current
+# state without etcd historical revision reads. [foo, fop) selects foo because
+# this fixture has only flat keys, in both Oxia sorting modes.
+# Saved versions, stale CAS, and an unaffected neighbor are Oxia additions.
+
+put key=bar value=neighbor save=neighbor
+----
+ok key="bar" modifications=0
+
+# Round 1.
+put key=foo value=round-1 create-only save=first
+----
+ok key="foo" modifications=0
+
+range start=foo end=fop
+----
+key="foo" value="round-1" modifications=0
+
+delete key=foo expected-version=@first
+----
+ok
+
+get key=foo
+----
+error: key not found
+
+range start=foo end=fop
+----
+(empty)
+
+range start="" end=""
+----
+key="bar" value="neighbor" modifications=0
+
+# Round 2: the first incarnation's version cannot write or delete the new one.
+put key=foo value=round-2 create-only save=second
+----
+ok key="foo" modifications=0
+
+put key=foo value=rejected expected-version=@first
+----
+error: unexpected version id
+
+delete key=foo expected-version=@first
+----
+error: unexpected version id
+
+range start=foo end=fop
+----
+key="foo" value="round-2" modifications=0
+
+delete key=foo expected-version=@second
+----
+ok
+
+get key=foo
+----
+error: key not found
+
+range start=foo end=fop
+----
+(empty)
+
+range start="" end=""
+----
+key="bar" value="neighbor" modifications=0
+
+# Round 3: the previous incarnation's version stays invalid.
+put key=foo value=round-3 create-only save=third
+----
+ok key="foo" modifications=0
+
+put key=foo value=rejected expected-version=@second
+----
+error: unexpected version id
+
+delete key=foo expected-version=@second
+----
+error: unexpected version id
+
+range start=foo end=fop
+----
+key="foo" value="round-3" modifications=0
+
+delete key=foo expected-version=@third
+----
+ok
+
+get key=foo
+----
+error: key not found
+
+range start=foo end=fop
+----
+(empty)
+
+range start="" end=""
+----
+key="bar" value="neighbor" modifications=0
+
+# Round 4: test a version from the first round again, after several recreations.
+put key=foo value=round-4 create-only save=fourth
+----
+ok key="foo" modifications=0
+
+put key=foo value=rejected expected-version=@first
+----
+error: unexpected version id
+
+delete key=foo expected-version=@first
+----
+error: unexpected version id
+
+range start=foo end=fop
+----
+key="foo" value="round-4" modifications=0
+
+delete key=foo expected-version=@fourth
+----
+ok
+
+get key=foo
+----
+error: key not found
+
+range start=foo end=fop
+----
+(empty)
+
+range start="" end=""
+----
+key="bar" value="neighbor" modifications=0
+
+# Round 5.
+put key=foo value=round-5 create-only save=fifth
+----
+ok key="foo" modifications=0
+
+put key=foo value=rejected expected-version=@fourth
+----
+error: unexpected version id
+
+delete key=foo expected-version=@fourth
+----
+error: unexpected version id
+
+range start=foo end=fop
+----
+key="foo" value="round-5" modifications=0
+
+delete key=foo expected-version=@fifth
+----
+ok
+
+get key=foo
+----
+error: key not found
+
+range start=foo end=fop
+----
+(empty)
+
+range start="" end=""
+----
+key="bar" value="neighbor" modifications=0
+
+# The neighbor's original version survived all five cycles and failed CAS calls.
+put key=bar value=neighbor-updated expected-version=@neighbor
+----
+ok key="bar" modifications=1
+
+range start="" end=""
+----
+key="bar" value="neighbor-updated" modifications=1
+
+list start="" end="" unordered
+----
+key="bar"

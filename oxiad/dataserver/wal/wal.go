@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/proto"
+	time2 "github.com/oxia-db/oxia/common/time"
 )
 
 var (
@@ -40,6 +41,12 @@ type FactoryOptions struct {
 	Retention   time.Duration
 	SegmentSize int32
 	SyncData    bool
+
+	// The trimming checks the retention against Clock, every
+	// TrimmerCheckInterval: the system clock and DefaultCheckInterval when not
+	// set
+	Clock                time2.Clock
+	TrimmerCheckInterval time.Duration
 }
 
 var DefaultFactoryOptions = &FactoryOptions{
@@ -84,8 +91,9 @@ type Wal interface {
 
 	// AppendAsyncWithPreviousCrc appends an entry without syncing, using the given
 	// previousCrc to seed the CRC chain when the WAL is empty (e.g. after snapshot install).
-	// Pass nil when no CRC seed is needed.
-	AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error
+	// Pass nil when no CRC seed is needed. The returned entryCrc is the chained
+	// CRC of the WAL after appending this entry.
+	AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) (entryCrc uint32, err error)
 
 	// AppendAndSync an entry and forces the sync on the WAL
 	// The operation is perfomed in background and the callback is

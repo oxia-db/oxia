@@ -15,10 +15,16 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"math"
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +37,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	grpcmetadata "google.golang.org/grpc/metadata"
 
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -42,11 +49,19 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/hash"
 	"github.com/oxia-db/oxia/common/rpc"
+	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxia"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
+	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	rpc2 "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
+	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
+	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 	"github.com/oxia-db/oxia/tests/mock"
 )
 
@@ -306,7 +321,19 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 // (freeze stops writes but keeps observers streaming) before fencing the
 // parent — otherwise the children could never reach the parent's final offset
 // and the split would hang, or acknowledged writes would be lost.
+//
+// The children must also have applied the tail by then: they apply the
+// parent's entries with the split filter only while they observe the parent,
+// and a child leader replays the entries it did not apply yet without it. A
+// child would then hold the records of the other one.
 func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
+	// The children apply an entry once the parent advertises a commit offset
+	// that covers it. Hold the advertisement back, unless a new entry carries
+	// it: once the parent is frozen, the children receive its tail long before
+	// they can apply it.
+	lead.SetObserverCommitAdvertisementDelay(2 * time.Second)
+	defer lead.SetObserverCommitAdvertisementDelay(0)
+
 	c := setupSplitCluster(t)
 	defer c.close(t)
 
@@ -325,8 +352,22 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 		initialKeys[key] = value
 	}
 
+	// A partition key on each side of the split point, the midpoint of the
+	// hash range
+	var leftPk, rightPk string
+	for i := 0; leftPk == "" || rightPk == ""; i++ {
+		pk := fmt.Sprintf("pk-%d", i)
+		if h := hash.Xxh332(pk); h < math.MaxUint32/4 {
+			leftPk = pk
+		} else if h > math.MaxUint32/4*3 {
+			rightPk = pk
+		}
+	}
+
 	// Background writer: keep writing new keys for the entire duration of the
-	// split, recording only the writes the server acknowledged.
+	// split, recording only the writes the server acknowledged. Besides the
+	// records routed by their key, it writes records under each partition key,
+	// both with a secondary index, and records of a sequence.
 	writerClient, err := oxia.NewSyncClient(c.sa1.Public)
 	require.NoError(t, err)
 
@@ -336,17 +377,24 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 		stop    atomic.Bool
 		wg      sync.WaitGroup
 	)
+	put := func(key string, value []byte, opts ...oxia.PutOption) {
+		putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		// The key of a record of a sequence is the one the server assigned
+		key, _, putErr := writerClient.Put(putCtx, key, value, opts...)
+		if putErr == nil {
+			mu.Lock()
+			written[key] = value
+			mu.Unlock()
+		}
+	}
 	wg.Go(func() {
 		for i := 0; !stop.Load(); i++ {
-			key := fmt.Sprintf("live-%06d", i)
 			value := []byte(fmt.Sprintf("live-value-%06d", i))
-			putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			_, _, putErr := writerClient.Put(putCtx, key, value)
-			cancel()
-			if putErr == nil {
-				mu.Lock()
-				written[key] = value
-				mu.Unlock()
+			put(fmt.Sprintf("live-%06d", i), value, oxia.SecondaryIndex("live", fmt.Sprintf("%06d", i)))
+			for _, pk := range []string{leftPk, rightPk} {
+				put(fmt.Sprintf("%s/rec-%06d", pk, i), value, oxia.PartitionKey(pk), oxia.SecondaryIndex("pk", pk))
+				put(pk+"/seq", value, oxia.PartitionKey(pk), oxia.SequenceKeysDeltas(1))
 			}
 			time.Sleep(2 * time.Millisecond)
 		}
@@ -382,7 +430,7 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	for key, expected := range written {
-		_, value, _, err := client.Get(ctx, key)
+		_, value, _, err := client.Get(ctx, key, oxia.PartitionKey(splitPartitionKey(key)))
 		if assert.NoError(t, err, "acknowledged live key %s missing after split", key) {
 			assert.Equal(t, expected, value, "live value mismatch for %s", key)
 		}
@@ -390,6 +438,317 @@ func TestCoordinator_ShardSplit_WritesDuringSplit(t *testing.T) {
 
 	slog.Info("All acknowledged writes survived the split", slog.Int("verified", len(written)+len(initialKeys)))
 	assert.NoError(t, client.Close())
+
+	c.assertChildrenHoldOnlyTheirRecords(t)
+}
+
+// splitPartitionKey returns the partition key of a record written by the split
+// tests: the part of the key before the first "/", if any, or else the key.
+func splitPartitionKey(key string) string {
+	partitionKey, _, _ := strings.Cut(key, "/")
+	return partitionKey
+}
+
+// assertChildrenHoldOnlyTheirRecords checks that each child holds only the
+// records in its hash range, with their secondary index entries, and that no
+// key is in both children, like the key of a record of a sequence of the other
+// child.
+func (c *splitTestCluster) assertChildrenHoldOnlyTheirRecords(t *testing.T) {
+	t.Helper()
+	childOfKey := make(map[string]int64)
+	for child, childMeta := range map[int64]*proto.ShardMetadata{c.leftChild: c.leftMeta, c.rightChild: c.rightMeta} {
+		for _, key := range c.listShardKeys(t, child) {
+			record := key
+			if strings.HasPrefix(key, constant.InternalKeyPrefix) {
+				primaryKey, _, err := database.ParseSecondaryIndexKey(key)
+				if err != nil {
+					// Not a secondary index entry
+					continue
+				}
+				record = primaryKey
+			} else {
+				if other, found := childOfKey[key]; found {
+					assert.Fail(t, "key in both children", "key %q is in shard %d and shard %d", key, other, child)
+				}
+				childOfKey[key] = child
+			}
+
+			hashRange := childMeta.Int32HashRange
+			partitionKey := splitPartitionKey(record)
+			h := hash.Xxh332(partitionKey)
+			assert.True(t, h >= hashRange.Min && h <= hashRange.Max,
+				"shard %d [%d, %d] holds %q, of partition key %q (hash %d)",
+				child, hashRange.Min, hashRange.Max, key, partitionKey, h)
+		}
+	}
+}
+
+// listShardKeys lists all the keys of a shard on its leader, the internal keys
+// included.
+func (c *splitTestCluster) listShardKeys(t *testing.T, shard int64) []string {
+	t.Helper()
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer func() { assert.NoError(t, clientPool.Close()) }()
+
+	rpcClient, err := clientPool.GetClientRpc(c.shardStatus(t, shard).Leader.Public)
+	require.NoError(t, err)
+	stream, err := rpcClient.List(context.Background(), &proto.ListRequest{
+		Shard:               &shard,
+		IncludeInternalKeys: true,
+	})
+	require.NoError(t, err)
+
+	var keys []string
+	for {
+		res, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return keys
+		}
+		require.NoError(t, err, "list the keys of shard %d", shard)
+		keys = append(keys, res.Keys...)
+	}
+}
+
+// TestCoordinator_ShardSplit_WriteOrder checks that the puts a client issues
+// to the same key are applied in the order they were issued, across a split.
+// The async client pipelines the puts: when the split cuts over, some of them
+// are still queued or in flight to the parent and get rerouted to the
+// children, while the puts issued after the client received the post-split
+// assignments go to the children directly.
+func TestCoordinator_ShardSplit_WriteOrder(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	client, err := oxia.NewAsyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	type putOp struct {
+		key    string
+		seq    int
+		result <-chan oxia.PutResult
+	}
+	const numKeys = 16
+	// Large enough not to throttle the writer: it must keep issuing puts
+	// while the rerouted ones are still pending
+	const maxOutstanding = 64 * 1024
+
+	var stop atomic.Bool
+	ops := make(chan putOp, maxOutstanding)
+	go func() {
+		defer close(ops)
+		for seq := 0; !stop.Load(); seq++ {
+			key := fmt.Sprintf("key-%02d", seq%numKeys)
+			ops <- putOp{key, seq, client.Put(key, []byte(fmt.Sprintf("%d", seq)))}
+		}
+	}()
+
+	// Among the successful puts to a key, taken in issue order, the
+	// modifications count reports the order in which they were applied
+	type applied struct {
+		seq   int
+		count int64
+	}
+	var (
+		succeeded, failed int
+		firstErr          error
+		outOfOrder        []string
+		lastApplied       = make(map[string]applied)
+		checked           = make(chan struct{})
+	)
+	go func() {
+		defer close(checked)
+		for op := range ops {
+			result := <-op.result
+			if result.Err != nil {
+				if failed == 0 {
+					firstErr = result.Err
+				}
+				failed++
+				continue
+			}
+			succeeded++
+			if last, ok := lastApplied[op.key]; ok && result.Version.ModificationsCount <= last.count {
+				outOfOrder = append(outOfOrder, fmt.Sprintf("%s: put #%d applied as modification %d, before put #%d (modification %d)",
+					op.key, op.seq, result.Version.ModificationsCount, last.seq, last.count))
+			}
+			lastApplied[op.key] = applied{op.seq, result.Version.ModificationsCount}
+		}
+	}()
+
+	c.splitAndWait(t)
+	// Keep writing to the children for a while
+	time.Sleep(time.Second)
+	stop.Store(true)
+	<-checked
+
+	slog.Info("Checked the order of the puts across the split",
+		slog.Int("succeeded", succeeded),
+		slog.Int("failed", failed),
+		slog.Any("first-error", firstErr),
+		slog.Int("out-of-order", len(outOfOrder)),
+	)
+	assert.Positive(t, succeeded)
+	assert.Empty(t, outOfOrder, "puts applied out of the order they were issued")
+	assert.NoError(t, client.Close())
+}
+
+// TestCoordinator_ShardSplit_VersionIDs checks that the records written to the
+// parent while the split is in progress keep, on the children, the version the
+// parent returned to the writer, although each child applies only part of the
+// parent's puts. The writer updates every record it creates with a conditional
+// write on the version it got back, as a read-modify-write client does; after
+// the split, reads, conditional writes and the notifications of the children
+// must all see the versions the writer saw.
+func TestCoordinator_ShardSplit_VersionIDs(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	ctx := context.Background()
+
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	for i := 0; i < 50; i++ {
+		_, _, err := client.Put(ctx, fmt.Sprintf("seed-%04d", i), []byte("seed"))
+		require.NoError(t, err)
+	}
+
+	writerClient, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+
+	var (
+		mu sync.Mutex
+		// The versions of the acknowledged writes of each record, in order
+		versions = make(map[string][]oxia.Version)
+		// The conditional writes rejected although they used the version
+		// that the previous write of the record returned
+		rejected []string
+		stop     atomic.Bool
+		wg       sync.WaitGroup
+	)
+	wg.Go(func() {
+		for i := 0; !stop.Load(); i++ {
+			key := fmt.Sprintf("live-%06d", i)
+			putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			_, created, err := writerClient.Put(putCtx, key, []byte("created"))
+			if err == nil {
+				_, updated, updateErr := writerClient.Put(putCtx, key, []byte("updated"),
+					oxia.ExpectedVersionId(created.VersionId))
+				mu.Lock()
+				switch {
+				case updateErr == nil:
+					versions[key] = []oxia.Version{created, updated}
+				case errors.Is(updateErr, oxia.ErrUnexpectedVersionId):
+					rejected = append(rejected, fmt.Sprintf("%s: version %d", key, created.VersionId))
+				default:
+					// The update may or may not have been applied: the record
+					// is not checked
+				}
+				mu.Unlock()
+			}
+			cancel()
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+
+	c.splitAndWait(t)
+	stop.Store(true)
+	wg.Wait()
+	assert.NoError(t, writerClient.Close())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Positive(t, len(versions), "expected some acknowledged writes during the split")
+	assert.Empty(t, rejected, "conditional writes rejected with the version the previous write returned")
+
+	client = c.reconnectClient(t, client, "seed-0000")
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	for key, acked := range versions {
+		_, value, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "record %s", key) {
+			last := acked[len(acked)-1]
+			assert.Equal(t, "updated", string(value), "value of %s", key)
+			assert.Equal(t, last.VersionId, version.VersionId, "version id of %s", key)
+			assert.Equal(t, last.ModificationsCount, version.ModificationsCount, "modifications count of %s", key)
+		}
+	}
+
+	for _, childId := range []int64{c.leftChild, c.rightChild} {
+		c.assertNotificationVersions(t, childId, versions)
+	}
+
+	for key, acked := range versions {
+		_, _, err := client.Put(ctx, key, []byte("after-split"), oxia.ExpectedVersionId(acked[len(acked)-1].VersionId))
+		assert.NoError(t, err, "conditional write on %s after the split", key)
+	}
+}
+
+// assertNotificationVersions checks that the notifications of a child carry,
+// for each of the records in its hash range, the versions of its writes.
+func (c *splitTestCluster) assertNotificationVersions(t *testing.T, childId int64, versions map[string][]oxia.Version) {
+	t.Helper()
+
+	childMeta := c.shardStatus(t, childId)
+	expected := make(map[string][]int64)
+	for key, acked := range versions {
+		h := hash.Xxh332(key)
+		if h >= childMeta.Int32HashRange.Min && h <= childMeta.Int32HashRange.Max {
+			for _, version := range acked {
+				expected[key] = append(expected[key], version.VersionId)
+			}
+		}
+	}
+
+	clientPool := rpc.NewClientPool(nil, nil)
+	defer func() { assert.NoError(t, clientPool.Close()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	received := make(map[string][]int64)
+	pending := len(expected)
+	// All the retained notifications, from those of the parent in the snapshot
+	// the child was seeded with
+	lastOffset := int64(-1)
+	for pending > 0 {
+		// The leader of the child can move: subscribe again, to the current
+		// leader, from where the previous subscription got to
+		require.NoError(t, ctx.Err(), "notifications of child %d: %d records still missing", childId, pending)
+		leader := c.shardStatus(t, childId).GetLeader()
+		if leader == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		rpcClient, err := clientPool.GetClientRpc(leader.Public)
+		require.NoError(t, err)
+		stream, err := rpcClient.GetNotifications(ctx, &proto.NotificationsRequest{
+			Shard:                childId,
+			StartOffsetExclusive: &lastOffset,
+		})
+		require.NoError(t, err)
+
+		for pending > 0 {
+			batch, err := stream.Recv()
+			if err != nil {
+				time.Sleep(100 * time.Millisecond)
+				break
+			}
+			lastOffset = batch.Offset
+			for _, n := range batch.Notifications {
+				want, ok := expected[n.GetKey()]
+				if !ok {
+					continue
+				}
+				received[n.GetKey()] = append(received[n.GetKey()], n.GetValue().GetVersionId())
+				if len(received[n.GetKey()]) == len(want) {
+					pending--
+				}
+			}
+		}
+	}
+	for key, want := range expected {
+		assert.Equal(t, want, received[key], "version ids in the notifications of %s", key)
+	}
 }
 
 // splitTestCluster holds references to a 3-node test cluster with a
@@ -409,6 +768,26 @@ type splitTestCluster struct {
 // be ready, and returns the cluster handle. Callers must call close() when done.
 func setupSplitCluster(t *testing.T) *splitTestCluster {
 	t.Helper()
+	return setupSplitClusterWithRpc(t, rpc2.NewRpcProviderFactory(nil))
+}
+
+// setupSplitClusterWithRpc is setupSplitCluster, with a coordinator that uses
+// the given rpc provider factory.
+func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ProviderFactory) *splitTestCluster {
+	t.Helper()
+	return setupSplitClusterWithRpcAndShardCount(t, rpcProviderFactory, 1)
+}
+
+// setupSplitClusterWithShardCount is setupSplitCluster, with a namespace of
+// initialShardCount shards.
+func setupSplitClusterWithShardCount(t *testing.T, initialShardCount uint32) *splitTestCluster {
+	t.Helper()
+	return setupSplitClusterWithRpcAndShardCount(t, rpc2.NewRpcProviderFactory(nil), initialShardCount)
+}
+
+func setupSplitClusterWithRpcAndShardCount(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+	initialShardCount uint32) *splitTestCluster {
+	t.Helper()
 
 	s1, sa1 := newServer(t)
 	s2, sa2 := newServer(t)
@@ -418,13 +797,30 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		sa2.GetNameOrDefault(): s2,
 		sa3.GetNameOrDefault(): s3,
 	}
+	return setupSplitClusterWithShards(t, rpcProviderFactory, servers, []*proto.DataServerIdentity{sa1, sa2, sa3},
+		initialShardCount)
+}
+
+// setupSplitClusterWith is setupSplitClusterWithRpc, on the given data servers.
+func setupSplitClusterWith(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+	servers map[string]*dataserver.Server, addresses []*proto.DataServerIdentity) *splitTestCluster {
+	t.Helper()
+	return setupSplitClusterWithShards(t, rpcProviderFactory, servers, addresses, 1)
+}
+
+// setupSplitClusterWithShards is setupSplitClusterWith, with a namespace of
+// initialShardCount shards.
+func setupSplitClusterWithShards(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+	servers map[string]*dataserver.Server, addresses []*proto.DataServerIdentity,
+	initialShardCount uint32) *splitTestCluster {
+	t.Helper()
 
 	metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
 	clusterConfig := newClusterConfig([]*proto.Namespace{{
 		Name:              constant.DefaultNamespace,
 		ReplicationFactor: 3,
-		InitialShardCount: 1,
-	}}, []*proto.DataServerIdentity{sa1, sa2, sa3})
+		InitialShardCount: initialShardCount,
+	}}, addresses)
 	configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
 	_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
 		Value:   clusterConfig,
@@ -436,20 +832,28 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc2.NewRpcProviderFactory(nil),
+		rpcProviderFactory,
 	)
 
 	metadata := coordinatorInstance.Metadata()
 	require.Eventually(t, func() bool {
-		shard := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards[0]
-		return shard.GetStatusOrDefault() == proto.ShardStatusSteadyState
+		shards := mock.StatusSnapshot(t, metadata).Namespaces[constant.DefaultNamespace].Shards
+		if len(shards) != int(initialShardCount) {
+			return false
+		}
+		for _, shard := range shards {
+			if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+				return false
+			}
+		}
+		return true
 	}, 30*time.Second, 100*time.Millisecond)
 	slog.Info("Initial cluster is ready")
 
 	return &splitTestCluster{
 		servers:     servers,
-		addresses:   []*proto.DataServerIdentity{sa1, sa2, sa3},
-		sa1:         sa1,
+		addresses:   addresses,
+		sa1:         addresses[0],
 		coordinator: coordinatorInstance,
 		metadata:    metadata,
 	}
@@ -459,6 +863,13 @@ func setupSplitCluster(t *testing.T) *splitTestCluster {
 // to reach steady state with leaders and no split metadata.
 func (c *splitTestCluster) splitAndWait(t *testing.T) {
 	t.Helper()
+	c.initiateSplit(t)
+	c.waitForSplit(t)
+}
+
+// initiateSplit triggers a shard split on shard 0.
+func (c *splitTestCluster) initiateSplit(t *testing.T) {
+	t.Helper()
 
 	var err error
 	c.leftChild, c.rightChild, err = c.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
@@ -467,6 +878,12 @@ func (c *splitTestCluster) splitAndWait(t *testing.T) {
 		slog.Int64("left-child", c.leftChild),
 		slog.Int64("right-child", c.rightChild),
 	)
+}
+
+// waitForSplit waits for both children of the split to reach steady state with
+// leaders and no split metadata.
+func (c *splitTestCluster) waitForSplit(t *testing.T) {
+	t.Helper()
 
 	require.Eventually(t, func() bool {
 		status := mock.StatusSnapshot(t, c.metadata)
@@ -687,6 +1104,217 @@ collectLoop:
 	slog.Info("Notifications test passed")
 }
 
+// notificationEvent is what a notification reports: the record, its change,
+// and the version the change produced, or -1 for a deletion.
+type notificationEvent struct {
+	key       string
+	eventType oxia.NotificationType
+	versionId int64
+}
+
+// TestCoordinator_ShardSplit_SubscriptionFollowsSplit checks that a
+// subscription created before a split delivers every notification once across
+// it: the notifications of the parent that it hasn't read when the split
+// completes, which both children inherited, and those of the writes to each
+// child afterwards.
+func TestCoordinator_ShardSplit_SubscriptionFollowsSplit(t *testing.T) {
+	c := setupSplitCluster(t)
+	defer c.close(t)
+
+	checkSubscriptionFollowsSplit(t, c, nil)
+}
+
+// TestCoordinator_ShardSplit_SubscriptionFollowsSplitPartitionKey is
+// TestCoordinator_ShardSplit_SubscriptionFollowsSplit in a namespace of two
+// shards, where the records written to the split shard are placed by a
+// partition key: their keys hash anywhere, inside the range of the shard and
+// outside of it. Each child delivers the notifications it inherited whose key
+// hash is on its side of the split, the ones outside the range of the parent
+// included: the child that reaches neither bound of the hash space tells its
+// side from the range of the parent.
+func TestCoordinator_ShardSplit_SubscriptionFollowsSplitPartitionKey(t *testing.T) {
+	c := setupSplitClusterWithShardCount(t, 2)
+	defer c.close(t)
+
+	parentRange := c.shardStatus(t, 0).Int32HashRange
+	var partitionKey string
+	for i := 0; ; i++ {
+		partitionKey = fmt.Sprintf("partition-key-%d", i)
+		if h := hash.Xxh332(partitionKey); h >= parentRange.Min && h <= parentRange.Max {
+			break
+		}
+	}
+	checkSubscriptionFollowsSplit(t, c, &partitionKey)
+}
+
+// checkSubscriptionFollowsSplit splits shard 0 with a subscription created
+// before, and checks that it delivers the notification of every write once:
+// before the split, while it doesn't read them, during the split, and to both
+// children afterwards. The records written to shard 0 before the split are
+// placed by partitionKey, if not nil.
+func checkSubscriptionFollowsSplit(t *testing.T, c *splitTestCluster, partitionKey *string) {
+	t.Helper()
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	notifications, err := client.GetNotifications()
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, notifications.Close()) }()
+
+	var (
+		mu sync.Mutex
+		// The notifications of the acknowledged writes
+		expected []notificationEvent
+	)
+	record := func(event notificationEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		expected = append(expected, event)
+	}
+	// put and del write the record at key, placed by partitionKey if
+	// partitioned, and record the notification of the write
+	put := func(key string, partitioned bool) bool {
+		var options []oxia.PutOption
+		if partitioned && partitionKey != nil {
+			options = append(options, oxia.PartitionKey(*partitionKey))
+		}
+		putCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		_, version, err := client.Put(putCtx, key, []byte(key), options...)
+		if err != nil {
+			return false
+		}
+		eventType := oxia.KeyModified
+		if version.ModificationsCount == 0 {
+			eventType = oxia.KeyCreated
+		}
+		record(notificationEvent{key: key, eventType: eventType, versionId: version.VersionId})
+		return true
+	}
+	del := func(key string, partitioned bool) {
+		var options []oxia.DeleteOption
+		if partitioned && partitionKey != nil {
+			options = append(options, oxia.PartitionKey(*partitionKey))
+		}
+		delCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if err := client.Delete(delCtx, key, options...); err == nil {
+			record(notificationEvent{key: key, eventType: oxia.KeyDeleted, versionId: -1})
+		}
+	}
+
+	received := make(map[notificationEvent]int)
+	allReceived := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, event := range expected {
+			if received[event] == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	// receive reads the notifications until it got all the expected ones, and
+	// then for as long as quiet, to catch duplicates
+	receive := func(timeout time.Duration, quiet time.Duration) {
+		deadline := time.After(timeout)
+		var quietCh <-chan time.Time
+		for {
+			if quietCh == nil && allReceived() {
+				if quiet == 0 {
+					return
+				}
+				quietCh = time.After(quiet)
+			}
+			select {
+			case n := <-notifications.Ch():
+				require.NotNil(t, n, "the subscription was closed")
+				received[notificationEvent{key: n.Key, eventType: n.Type, versionId: n.VersionId}]++
+			case <-quietCh:
+				return
+			case <-deadline:
+				return
+			}
+		}
+	}
+
+	// The subscription reads the notifications of these writes from the parent
+	for i := 0; i < 20; i++ {
+		require.True(t, put(fmt.Sprintf("before-%03d", i), true))
+	}
+	receive(30*time.Second, 0)
+	require.True(t, allReceived(), "notifications before the split")
+
+	// The subscription stops reading: the notifications of these writes fill
+	// its channel, and the flow-control window of its stream, with their long
+	// keys, so that the rest of them are still on the parent when the split
+	// completes, along with those of the writes during the split
+	padding := strings.Repeat("x", 1000)
+	for i := 0; i < 300; i++ {
+		require.True(t, put(fmt.Sprintf("unread-%03d-%s", i, padding), true))
+	}
+	var (
+		stop atomic.Bool
+		wg   sync.WaitGroup
+	)
+	wg.Go(func() {
+		for i := 0; !stop.Load(); i++ {
+			key := fmt.Sprintf("during-%05d", i)
+			if put(key, true) && i%3 == 0 && put(key, true) && i%2 == 0 {
+				del(key, true)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+	c.splitAndWait(t)
+	stop.Store(true)
+	wg.Wait()
+
+	// Writes to both children, of new records and of records of the parent
+	for i := 0; i < 30; i++ {
+		for _, child := range []int64{c.leftChild, c.rightChild} {
+			key := c.childKey(child, fmt.Sprintf("after-%03d", i))
+			require.True(t, put(key, false))
+			if i%3 == 0 {
+				require.True(t, put(key, false))
+			}
+			if i%4 == 0 {
+				del(key, false)
+			}
+		}
+	}
+	for i := 0; i < 20; i += 2 {
+		require.True(t, put(fmt.Sprintf("before-%03d", i), true))
+		del(fmt.Sprintf("before-%03d", i+1), true)
+	}
+
+	receive(60*time.Second, 2*time.Second)
+
+	mu.Lock()
+	defer mu.Unlock()
+	var missing, duplicated []string
+	for _, event := range expected {
+		if received[event] == 0 {
+			missing = append(missing, fmt.Sprintf("%s %v %d", strings.TrimSuffix(event.key, padding),
+				event.eventType, event.versionId))
+		}
+	}
+	for event, count := range received {
+		if count > 1 {
+			duplicated = append(duplicated, fmt.Sprintf("%s %v %d: %d times", strings.TrimSuffix(event.key, padding),
+				event.eventType, event.versionId, count))
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(duplicated)
+	t.Logf("%d notifications expected, %d received, %d missing, %d duplicated",
+		len(expected), len(received), len(missing), len(duplicated))
+	assert.Empty(t, missing, "notifications not received")
+	assert.Empty(t, duplicated, "notifications received more than once")
+}
+
 // ---- Ephemeral records test ----
 
 func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
@@ -724,6 +1352,18 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Written ephemeral keys", slog.Int("count", numEphemeral))
 
+	// Ephemeral records written with a partition key are placed by it,
+	// whatever the hash of their keys, and their session shadow keys, which
+	// delete them with the session, must follow them.
+	partitionKey := "pk-7"
+	var partitionedEphemeralKeys []string
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s/ephemeral-%06d", partitionKey, i)
+		_, _, err := ephemeralClient.Put(ctx, key, []byte(key), oxia.Ephemeral(), oxia.PartitionKey(partitionKey))
+		require.NoError(t, err)
+		partitionedEphemeralKeys = append(partitionedEphemeralKeys, key)
+	}
+
 	// Perform split
 	cluster.splitAndWait(t)
 
@@ -733,8 +1373,7 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond)
 
 	// Verify all ephemeral keys survived the split and retained their
-	// ephemeral property before the inherited pre-split session can expire
-	// on the child shards.
+	// ephemeral property
 	for key, expectedValue := range ephemeralKeys {
 		_, value, version, err := ephemeralClient.Get(ctx, key)
 		if !assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
@@ -742,6 +1381,12 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 		}
 		assert.Equal(t, []byte(expectedValue), value, "value mismatch for %s", key)
 		assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+	}
+	for _, key := range partitionedEphemeralKeys {
+		_, _, version, err := ephemeralClient.Get(ctx, key, oxia.PartitionKey(partitionKey))
+		if assert.NoError(t, err, "ephemeral key %s should still exist after split", key) {
+			assert.True(t, version.Ephemeral, "key %s should still be ephemeral after split", key)
+		}
 	}
 	slog.Info("Ephemeral keys verified after split")
 
@@ -754,31 +1399,6 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Regular keys verified after split")
 
-	// Reconnect the ephemeral client to pick up new shard assignments
-	// We must NOT close the old client first (that would delete ephemeral
-	// records), so we create a new one and close the old one only after.
-	var newEphemeralClient oxia.SyncClient
-	require.Eventually(t, func() bool {
-		var err2 error
-		newEphemeralClient, err2 = oxia.NewSyncClient(cluster.sa1.Public,
-			oxia.WithSessionTimeout(30*time.Second),
-			oxia.WithIdentity("ephemeral-test-client"),
-		)
-		if err2 != nil {
-			return false
-		}
-		_, _, _, err2 = newEphemeralClient.Get(ctx, "regular-0000")
-		if err2 != nil {
-			_ = newEphemeralClient.Close()
-			return false
-		}
-		return true
-	}, 30*time.Second, 500*time.Millisecond)
-	// Close old client — may error because shard 0 no longer exists for
-	// session cleanup, but that's expected after a split.
-	_ = ephemeralClient.Close()
-	ephemeralClient = newEphemeralClient
-
 	// Write new ephemeral records to child shards
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("post-split-eph-%04d", i)
@@ -788,15 +1408,15 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 	slog.Info("Post-split ephemeral writes verified")
 
-	// Close the ephemeral client — all ephemeral records should eventually
-	// be deleted by session expiry. Verify using a separate non-ephemeral client.
+	// Close the ephemeral client: it closes its session on both child shards,
+	// which deletes all its ephemeral records. Verify using a separate
+	// non-ephemeral client.
 	assert.NoError(t, ephemeralClient.Close())
 
 	readerClient, err := oxia.NewSyncClient(cluster.sa1.Public)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, readerClient.Close()) }()
 
-	// Wait for ephemeral records to be cleaned up (session expiry)
 	require.Eventually(t, func() bool {
 		for key := range ephemeralKeys {
 			_, _, _, err := readerClient.Get(ctx, key)
@@ -804,8 +1424,14 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 				return false // still exists
 			}
 		}
+		for _, key := range partitionedEphemeralKeys {
+			_, _, _, err := readerClient.Get(ctx, key, oxia.PartitionKey(partitionKey))
+			if err == nil {
+				return false // still exists
+			}
+		}
 		return true
-	}, 60*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
+	}, 10*time.Second, 500*time.Millisecond, "ephemeral records should be deleted after client close")
 
 	slog.Info("Ephemeral records cleaned up after client close")
 
@@ -817,6 +1443,371 @@ func TestCoordinator_ShardSplit_EphemeralRecords(t *testing.T) {
 	}
 
 	slog.Info("Ephemeral records test passed")
+}
+
+// Both children of a split inherit the sessions of the parent, with the
+// ephemeral records of each session that fall in their hash range. The records
+// must live as long as the client that wrote them, and go away when it closes.
+func TestCoordinator_ShardSplit_InheritedSessionKeptAlive(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+
+	ctx := context.Background()
+	sessionTimeout := 10 * time.Second
+	client, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithSessionTimeout(sessionTimeout))
+	require.NoError(t, err)
+
+	var keys []string
+	var sessionId int64
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("ephemeral-%04d", i)
+		_, version, err := client.Put(ctx, key, []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		keys = append(keys, key)
+		sessionId = version.SessionId
+	}
+
+	cluster.splitAndWait(t)
+	keysPerChild := map[int64]int{}
+	for _, key := range keys {
+		if hash.Xxh332(key) <= cluster.leftMeta.Int32HashRange.Max {
+			keysPerChild[cluster.leftChild]++
+		} else {
+			keysPerChild[cluster.rightChild]++
+		}
+	}
+	require.Len(t, keysPerChild, 2, "the records must be in both children")
+
+	// The children restart the timeout of the sessions they inherit when they
+	// are elected, before the split completes
+	time.Sleep(2 * sessionTimeout)
+
+	for _, key := range keys {
+		_, _, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "ephemeral record %s lost while its client is alive", key) {
+			assert.True(t, version.Ephemeral)
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+
+	// The new ephemeral records of the client on the children belong to the
+	// session they inherited
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		key := cluster.childKey(child, "post-split")
+		_, version, err := client.Put(ctx, key, []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		assert.Equal(t, sessionId, version.SessionId)
+		keys = append(keys, key)
+	}
+
+	require.NoError(t, client.Close())
+
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	// Closing the client deletes them, without waiting for the session to expire
+	assert.Eventually(t, func() bool {
+		for _, key := range keys {
+			if _, _, _, err := reader.Get(ctx, key); !errors.Is(err, oxia.ErrKeyNotFound) {
+				return false
+			}
+		}
+		return true
+	}, sessionTimeout/2, 100*time.Millisecond, "ephemeral records left after the client closed")
+}
+
+// fenceHookRpcProvider calls afterFence once a data server is fenced in a new
+// term of a shard. The new term waits for it to return.
+type fenceHookRpcProvider struct {
+	rpc2.Provider
+	afterFence func(req *proto.NewTermRequest)
+}
+
+func (p *fenceHookRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *fenceHookRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	response, err := p.Provider.NewTerm(ctx, node, req)
+	if err == nil {
+		p.afterFence(req)
+	}
+	return response, err
+}
+
+// The Finalize of a split fences the parent, then it re-elects the children and
+// publishes them: meanwhile, the clients keep their sessions alive on the
+// parent. The fenced parent must reject those keep-alives like a node that is
+// not the leader, which the client retries until it moves the session to the
+// children. If it answers that the session doesn't exist, the client gives up
+// the session, and the children expire it, with its ephemeral records.
+func TestCoordinator_ShardSplit_KeepAliveOnFencedParent(t *testing.T) {
+	// Once the split started, the only new term of the parent is the fence of
+	// the Finalize: hold it for longer than the client waits between two
+	// keep-alives, 2s at least
+	var splitting atomic.Bool
+	holdFinalize := sync.OnceFunc(func() { time.Sleep(3 * time.Second) })
+	rpcProvider := &fenceHookRpcProvider{afterFence: func(req *proto.NewTermRequest) {
+		if splitting.Load() && req.Shard == 0 {
+			holdFinalize()
+		}
+	}}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer c.close(t)
+
+	ctx := context.Background()
+	sessionTimeout := 5 * time.Second
+	client, err := oxia.NewSyncClient(c.sa1.Public, oxia.WithSessionTimeout(sessionTimeout))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	var keys []string
+	var sessionId int64
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("ephemeral-%04d", i)
+		_, version, err := client.Put(ctx, key, []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		keys = append(keys, key)
+		sessionId = version.SessionId
+	}
+
+	splitting.Store(true)
+	c.splitAndWait(t)
+
+	// The client kept the session: its new ephemeral records belong to it
+	for _, child := range []int64{c.leftChild, c.rightChild} {
+		_, version, err := client.Put(ctx, c.childKey(child, "post-split"), []byte("value"), oxia.Ephemeral())
+		require.NoError(t, err)
+		assert.Equal(t, sessionId, version.SessionId, "new session on shard %d", child)
+	}
+
+	// The children restart the timeout of the session when they are re-elected
+	time.Sleep(2 * sessionTimeout)
+
+	for _, key := range keys {
+		_, _, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "ephemeral record %s lost while its client is alive", key) {
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+}
+
+// TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp checks that a session
+// created on the parent while the children catch up from its log reaches both
+// children, like the sessions in the parent's snapshot. A child without it
+// rejects the ephemeral records of the session in its hash range, which the
+// parent acknowledged.
+func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
+	// The cutover freezes the parent once both children have loaded its
+	// snapshot and caught up with its log. Hold it there: what is written
+	// before it resumes reaches the children through the parent's log only.
+	reachedFreeze := make(chan struct{})
+	resumeFreeze := make(chan struct{})
+	rpcProvider := &freezeHookRpcProvider{beforeFreeze: sync.OnceFunc(func() {
+		close(reachedFreeze)
+		<-resumeFreeze
+	})}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer c.close(t)
+	resume := sync.OnceFunc(func() { close(resumeFreeze) })
+	defer resume()
+
+	ctx := context.Background()
+
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	_, _, err = client.Put(ctx, "seed", []byte("seed"))
+	require.NoError(t, err)
+
+	c.initiateSplit(t)
+	select {
+	case <-reachedFreeze:
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A record on each side of the split point: one of them is in the child
+	// that the session key doesn't hash to, whatever the session id
+	var leftKey, rightKey string
+	for i := 0; leftKey == "" || rightKey == ""; i++ {
+		key := fmt.Sprintf("catch-up-%d", i)
+		if h := hash.Xxh332(key); h < math.MaxUint32/4 {
+			leftKey = key
+		} else if h > math.MaxUint32/4*3 {
+			rightKey = key
+		}
+	}
+	keys := []string{leftKey, rightKey}
+
+	sessionClient, err := oxia.NewSyncClient(c.sa1.Public,
+		oxia.WithSessionTimeout(time.Minute),
+		oxia.WithIdentity("catch-up-client"),
+	)
+	require.NoError(t, err)
+	var sessionId int64
+	for _, key := range keys {
+		_, version, err := sessionClient.Put(ctx, key, []byte(key), oxia.Ephemeral())
+		require.NoError(t, err)
+		sessionId = version.SessionId
+	}
+
+	resume()
+	c.waitForSplit(t)
+
+	// Each child holds the session, and the records of the session in its hash
+	// range, with the shadow keys that delete them with the session
+	sessionKey := lead.SessionKey(lead.SessionId(sessionId))
+	for child, childMeta := range map[int64]*proto.ShardMetadata{c.leftChild: c.leftMeta, c.rightChild: c.rightMeta} {
+		childKeys := make(map[string]bool)
+		for _, key := range c.listShardKeys(t, child) {
+			childKeys[key] = true
+		}
+		assert.True(t, childKeys[sessionKey], "shard %d lacks session %d", child, sessionId)
+
+		hashRange := childMeta.Int32HashRange
+		for _, key := range keys {
+			h := hash.Xxh332(key)
+			inRange := h >= hashRange.Min && h <= hashRange.Max
+			assert.Equal(t, inRange, childKeys[key], "record %q in shard %d", key, child)
+			assert.Equal(t, inRange, childKeys[lead.ShadowKey(lead.SessionId(sessionId), key)],
+				"shadow key of %q in shard %d", key, child)
+		}
+	}
+
+	// The records that the parent acknowledged are readable from the children
+	client = c.reconnectClient(t, client, "seed")
+	for _, key := range keys {
+		_, value, version, err := client.Get(ctx, key)
+		if assert.NoError(t, err, "acknowledged record %q missing after the split", key) {
+			assert.Equal(t, []byte(key), value)
+			assert.True(t, version.Ephemeral)
+			assert.Equal(t, sessionId, version.SessionId)
+		}
+	}
+	assert.NoError(t, client.Close())
+
+	// The client closes the session on both children
+	assert.NoError(t, sessionClient.Close())
+}
+
+// freezeHookRpcProvider calls beforeFreeze before freezing a shard, as the
+// cutover of a split does with the parent, and afterFreeze once the shard is
+// frozen. The cutover waits for them to return.
+type freezeHookRpcProvider struct {
+	rpc2.Provider
+	beforeFreeze func()
+	afterFreeze  func()
+}
+
+func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen && p.beforeFreeze != nil {
+		p.beforeFreeze()
+	}
+	response, err := p.Provider.FreezeShard(ctx, node, req)
+	if err == nil && req.Frozen && p.afterFreeze != nil {
+		p.afterFreeze()
+	}
+	return response, err
+}
+
+// The first ephemeral put of a client creates its session, on the shard of the
+// key, and the next ephemeral puts wait for it. A put issued while the cutover
+// of a split freezes the parent can't create it there: the parent rejects it,
+// then the parent is deleted. The put must create the session on the child that
+// took over its key instead.
+func TestCoordinator_ShardSplit_SessionCreatedDuringCutover(t *testing.T) {
+	// Hold the cutover once it has frozen the parent
+	frozen := make(chan struct{})
+	resumeCutover := make(chan struct{})
+	rpcProvider := &freezeHookRpcProvider{afterFreeze: sync.OnceFunc(func() {
+		close(frozen)
+		<-resumeCutover
+	})}
+	c := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer c.close(t)
+	resume := sync.OnceFunc(func() { close(resumeCutover) })
+	defer resume()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+	_, _, err = client.Put(ctx, "seed", []byte("seed"))
+	require.NoError(t, err)
+
+	c.initiateSplit(t)
+	select {
+	case <-frozen:
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A key on each side of the split point
+	var leftKey, rightKey string
+	for i := 0; leftKey == "" || rightKey == ""; i++ {
+		key := fmt.Sprintf("cutover-%d", i)
+		if h := hash.Xxh332(key); h < math.MaxUint32/4 {
+			leftKey = key
+		} else if h > math.MaxUint32/4*3 {
+			rightKey = key
+		}
+	}
+
+	type putResult struct {
+		version oxia.Version
+		err     error
+	}
+	put := func(key string) <-chan putResult {
+		ch := make(chan putResult, 1)
+		go func() {
+			_, version, err := client.Put(ctx, key, []byte(key), oxia.Ephemeral())
+			ch <- putResult{version, err}
+		}()
+		return ch
+	}
+	await := func(ch <-chan putResult, key string) oxia.Version {
+		select {
+		case result := <-ch:
+			require.NoError(t, result.err, "ephemeral put of %s", key)
+			assert.True(t, result.version.Ephemeral)
+			return result.version
+		case <-time.After(30 * time.Second):
+			require.FailNow(t, "ephemeral put stuck after the split", "key %s", key)
+			return oxia.Version{}
+		}
+	}
+
+	leftPut := put(leftKey)
+	select {
+	case result := <-leftPut:
+		require.FailNow(t, "ephemeral put completed on the frozen parent", "%+v", result)
+	case <-time.After(time.Second):
+	}
+
+	resume()
+	c.waitForSplit(t)
+	rightPut := put(rightKey)
+	versions := map[string]oxia.Version{
+		leftKey:  await(leftPut, leftKey),
+		rightKey: await(rightPut, rightKey),
+	}
+
+	for key, expected := range versions {
+		_, value, version, err := client.Get(ctx, key)
+		require.NoError(t, err)
+		assert.Equal(t, []byte(key), value)
+		assert.Equal(t, expected.SessionId, version.SessionId)
+	}
 }
 
 // ---- Secondary indexes test ----
@@ -857,6 +1848,20 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 		require.NoError(t, err)
 	}
 	slog.Info("Written records with secondary indexes", slog.Int("count", len(records)))
+
+	// Records written with a partition key are placed by it, whatever the
+	// hash of their keys, and their index entries must follow them.
+	partitionKey := "pk-7"
+	var partitionedKeys []string
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s/rec-%06d", partitionKey, i)
+		_, _, err := client.Put(ctx, key, []byte(key),
+			oxia.PartitionKey(partitionKey),
+			oxia.SecondaryIndex("pk", partitionKey),
+		)
+		require.NoError(t, err)
+		partitionedKeys = append(partitionedKeys, key)
+	}
 
 	// Verify secondary indexes work before split (baseline)
 	alphaKeysBefore, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category"))
@@ -924,6 +1929,23 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 		assert.Equal(t, expectedVal, rangeScanResults[key],
 			"range scan value mismatch for %s", key)
 	}
+
+	// ---- Verify the index of the records written with a partition key ----
+	// Queried in the child that holds the partition, the index must have an
+	// entry for every record, and each entry must resolve to its record.
+	partitionIndexKeys, err := client.List(ctx, partitionKey, partitionKey+"\xff",
+		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, partitionedKeys, partitionIndexKeys)
+
+	var partitionScanKeys []string
+	for res := range client.RangeScan(ctx, partitionKey, partitionKey+"\xff",
+		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey)) {
+		require.NoError(t, res.Err)
+		assert.Equal(t, res.Key, string(res.Value))
+		partitionScanKeys = append(partitionScanKeys, res.Key)
+	}
+	assert.ElementsMatch(t, partitionedKeys, partitionScanKeys)
 
 	// ---- Verify new writes with secondary indexes after split ----
 	for i := 60; i < 70; i++ {
@@ -1033,6 +2055,69 @@ func TestCoordinator_KeySorting(t *testing.T) {
 	}
 }
 
+// A range scan without a partition key goes to every shard, and the client
+// merges the records of the shards in the key sorting of the namespace, which
+// the coordinator sends through the data servers with the shard assignments.
+func TestCoordinator_MultiShardKeySorting(t *testing.T) {
+	keys := []string{"b", "a/y/z", "ab/y", "a0", "a/x"}
+	for _, test := range []struct {
+		keySorting string
+		expected   []string
+	}{
+		// Natural sorting compares the bytes: '/' sorts before '0'
+		{"natural", []string{"a/x", "a/y/z", "a0", "ab/y", "b"}},
+		// Hierarchical sorting puts the keys with fewer '/' first, then sorts '/'
+		// after any other byte
+		{"hierarchical", []string{"a0", "b", "ab/y", "a/x", "a/y/z"}},
+	} {
+		t.Run(test.keySorting, func(t *testing.T) {
+			s1, sa1 := newServer(t)
+			defer s1.Close()
+
+			metadataProvider := memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, "")
+			configProvider := memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, "")
+			_, err := configProvider.Store(provider.Versioned[*proto.ClusterConfiguration]{
+				Value: newClusterConfig([]*proto.Namespace{{
+					Name:              constant.DefaultNamespace,
+					ReplicationFactor: 1,
+					InitialShardCount: 4,
+					KeySorting:        test.keySorting,
+				}}, []*proto.DataServerIdentity{sa1}),
+				Version: metadatacommon.NotExists,
+			})
+			require.NoError(t, err)
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+			defer coordinatorInstance.Close()
+
+			require.Eventually(t, func() bool {
+				shards := mock.StatusSnapshot(t, coordinatorInstance.Metadata()).Namespaces[constant.DefaultNamespace].Shards
+				for _, shard := range shards {
+					if shard.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+						return false
+					}
+				}
+				return len(shards) == 4
+			}, 10*time.Second, 10*time.Millisecond)
+
+			client, err := oxia.NewSyncClient(sa1.Public, oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, key := range keys {
+				_, _, err = client.Put(t.Context(), key, []byte(key))
+				require.NoError(t, err)
+			}
+
+			var scanned []string
+			for result := range client.RangeScan(t.Context(), "", "") {
+				require.NoError(t, result.Err)
+				scanned = append(scanned, result.Key)
+			}
+			assert.Equal(t, test.expected, scanned)
+		})
+	}
+}
+
 // --- Split Failure E2E Tests ---
 
 // waitForSplitPhase waits until the parent shard's split metadata reaches the
@@ -1132,6 +2217,303 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 		assert.Equal(t, []byte(fmt.Sprintf("value-%d", i)), value)
 	}
 	assert.NoError(t, client.Close())
+}
+
+// cutoverHoldingRpcProvider holds the first cutover of a split before it
+// freezes the parent, and records the BecomeLeader requests that data servers
+// refused because of the features enabled on the shard.
+//
+// Once delayChildSnapshots is called, it also delays the snapshots that the
+// parent sends to the members of the children when the split adds them as
+// observers again: the parent gets a member as observer only once the member
+// reports that it has no data, or once the split fences the parent past the
+// point of no return. That fence then waits until the members are installing
+// the snapshot, or have installed it. This is the worst timing for a member
+// that still reports the data that it received in an earlier term of the
+// parent.
+type cutoverHoldingRpcProvider struct {
+	rpc2.Provider
+	cutoverReached chan struct{}
+	resumeCutover  chan struct{}
+	holdOnce       sync.Once
+	resumeOnce     sync.Once
+	fenceOnce      sync.Once
+
+	mu                  sync.Mutex
+	refusedBecomeLeader map[int64]int
+	// parentTerm is the term of the parent whose observers are delayed, -1
+	// until delayChildSnapshots
+	parentTerm       int64
+	delayedObservers map[childMember]*delayedObserver
+	childMembers     map[childMember]bool
+}
+
+// childMember is a member of the ensemble of a split child.
+type childMember struct {
+	child    int64
+	internal string
+}
+
+type delayedObserver struct {
+	parentLeader *proto.DataServerIdentity
+	req          *proto.AddFollowerRequest
+}
+
+func newCutoverHoldingRpcProvider() *cutoverHoldingRpcProvider {
+	return &cutoverHoldingRpcProvider{
+		cutoverReached:      make(chan struct{}),
+		resumeCutover:       make(chan struct{}),
+		refusedBecomeLeader: make(map[int64]int),
+		parentTerm:          -1,
+		delayedObservers:    make(map[childMember]*delayedObserver),
+		childMembers:        make(map[childMember]bool),
+	}
+}
+
+func (p *cutoverHoldingRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *cutoverHoldingRpcProvider) resume() {
+	p.resumeOnce.Do(func() { close(p.resumeCutover) })
+}
+
+// delayChildSnapshots delays the snapshots that the parent, led in the given
+// term, sends to the children.
+func (p *cutoverHoldingRpcProvider) delayChildSnapshots(parentTerm int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.parentTerm = parentTerm
+}
+
+func (p *cutoverHoldingRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	p.mu.Lock()
+	if req.Observer && p.parentTerm >= 0 && req.Term == p.parentTerm {
+		member := childMember{child: req.GetTargetShard(), internal: req.FollowerName}
+		p.delayedObservers[member] = &delayedObserver{parentLeader: node, req: req}
+		p.childMembers[member] = true
+		p.mu.Unlock()
+		return &proto.AddFollowerResponse{}, nil
+	}
+	p.mu.Unlock()
+	return p.Provider.AddFollower(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	res, err := p.Provider.GetStatus(ctx, node, req)
+	if err == nil && res.CommitOffset < 0 {
+		// The member of the child has no data: the parent must send it a
+		// snapshot
+		p.addDelayedObserver(ctx, childMember{child: req.Shard, internal: node.GetInternal()})
+	}
+	return res, err
+}
+
+func (p *cutoverHoldingRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
+	p.mu.Lock()
+	finalizeFence := req.Shard == 0 && p.parentTerm >= 0 && req.Term > p.parentTerm
+	p.mu.Unlock()
+	if finalizeFence {
+		p.fenceOnce.Do(func() { p.startChildSnapshots(ctx) })
+	}
+	return p.Provider.NewTerm(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, member childMember) {
+	p.mu.Lock()
+	observer := p.delayedObservers[member]
+	delete(p.delayedObservers, member)
+	p.mu.Unlock()
+	if observer == nil {
+		return
+	}
+	if _, err := p.Provider.AddFollower(ctx, observer.parentLeader, observer.req); err != nil {
+		slog.Warn("Failed to add the delayed observer", slog.Int64("child-shard", member.child),
+			slog.String("member", member.internal), slog.Any("error", err))
+	}
+}
+
+// startChildSnapshots lets the parent send the delayed snapshots, and waits
+// until the members of the children are installing them, or have installed
+// them.
+func (p *cutoverHoldingRpcProvider) startChildSnapshots(ctx context.Context) {
+	p.mu.Lock()
+	childMembers := maps.Clone(p.childMembers)
+	p.mu.Unlock()
+	for member := range childMembers {
+		p.addDelayedObserver(ctx, member)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for member := range childMembers {
+		node := &proto.DataServerIdentity{Internal: member.internal}
+		for ; time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			res, err := p.Provider.GetStatus(ctx, node, &proto.GetStatusRequest{Shard: member.child})
+			if err == nil && (res.Status == proto.ServingStatus_FOLLOWER || res.CommitOffset < 0) {
+				break
+			}
+		}
+	}
+}
+
+func (p *cutoverHoldingRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen {
+		p.holdOnce.Do(func() {
+			close(p.cutoverReached)
+			select {
+			case <-p.resumeCutover:
+			case <-ctx.Done():
+			}
+		})
+	}
+	return p.Provider.FreezeShard(ctx, node, req)
+}
+
+func (p *cutoverHoldingRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+	res, err := p.Provider.BecomeLeader(ctx, node, req)
+	if errors.Is(err, constant.ErrUnsupportedFeatures) {
+		p.mu.Lock()
+		p.refusedBecomeLeader[req.Shard]++
+		p.mu.Unlock()
+	}
+	return res, err
+}
+
+func (p *cutoverHoldingRpcProvider) refusedBecomeLeaderCount(shard int64) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refusedBecomeLeader[shard]
+}
+
+// A leader election of the parent, once the children have received its data,
+// sends the split back to Bootstrap. It fences the children again in the
+// parent's new term, and the parent sends their members a new snapshot. The
+// split must not pass the point of no return before a majority of each child
+// has installed it: fencing the parent aborts the installation, which would
+// leave the members without their data. The child leaders must also accept to
+// lead the new term, though they got the features enabled on the parent with
+// the first snapshot.
+func TestCoordinator_ShardSplit_ParentElectionAfterSnapshot(t *testing.T) {
+	rpcProvider := newCutoverHoldingRpcProvider()
+	cluster := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer cluster.close(t)
+	// Runs before close: the split controller must not stay held
+	defer rpcProvider.resume()
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	// Incompressible values, so that installing a snapshot of the parent
+	// takes a while
+	random := rand.New(rand.NewPCG(1, 2))
+	keys := make(map[string][]byte)
+	for i := 0; i < 50; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), make([]byte, 128*1024)
+		for j := range value {
+			value[j] = byte(random.Uint32())
+		}
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+
+	cluster.leftChild, cluster.rightChild, err = cluster.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
+	require.NoError(t, err)
+
+	// The children have caught up with the parent, starting from its snapshot
+	select {
+	case <-rpcProvider.cutoverReached:
+	case <-time.After(60 * time.Second):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+
+	// A write after the snapshot, which the members of the children receive as
+	// observers
+	_, _, err = client.Put(ctx, "key-after-snapshot", []byte("value"))
+	require.NoError(t, err)
+	keys["key-after-snapshot"] = []byte("value")
+	assert.NoError(t, client.Close())
+	parent := cluster.shardStatus(t, 0)
+	parentStatus, err := rpcProvider.GetStatus(ctx, parent.Leader, &proto.GetStatusRequest{Shard: 0})
+	require.NoError(t, err)
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		childLeader := cluster.shardStatus(t, child).Leader
+		require.Eventually(t, func() bool {
+			childStatus, err := rpcProvider.GetStatus(ctx, childLeader, &proto.GetStatusRequest{Shard: child})
+			return err == nil && childStatus.HeadOffset >= parentStatus.HeadOffset
+		}, 30*time.Second, 100*time.Millisecond)
+	}
+
+	// A new leader election of the parent sends the split back to Bootstrap.
+	// The new snapshots reach the children as late as possible, right before
+	// the split fences the parent, unless a child reports that it needs one.
+	slog.Info("Electing a new parent leader during the cutover", slog.Any("leader", parent.Leader))
+	cluster.coordinator.BecameUnavailable(parent.Leader)
+	cluster.waitForNewTerm(t, 0, parent.Term)
+	rpcProvider.delayChildSnapshots(cluster.shardStatus(t, 0).Term)
+	rpcProvider.resume()
+
+	require.Eventually(t, func() bool {
+		ns := mock.StatusSnapshot(t, cluster.metadata).Namespaces[constant.DefaultNamespace]
+		parentShard, exists := ns.Shards[0]
+		if exists && parentShard.GetStatusOrDefault() != proto.ShardStatusDeleting {
+			return false
+		}
+		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+			if sm, ok := ns.Shards[child]; !ok || sm.Split != nil {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Minute, 500*time.Millisecond, "the split did not complete")
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		assert.Zero(t, rpcProvider.refusedBecomeLeaderCount(child),
+			"the leader of child %d refused to lead because of the features enabled on it", child)
+	}
+
+	// Reads of a child without a leader give up, instead of retrying until
+	// the client is closed
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+	var unreadable []string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+		if unreadable = unreadableKeys(ctx, reader, keys); len(unreadable) == 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	assert.Empty(t, unreadable, "keys lost by the split")
+}
+
+// unreadableKeys returns the keys that can't be read with their expected value,
+// with the reason.
+func unreadableKeys(ctx context.Context, client oxia.SyncClient, expected map[string][]byte) []string {
+	var (
+		mu         sync.Mutex
+		unreadable []string
+		wg         sync.WaitGroup
+	)
+	for key, value := range expected {
+		wg.Go(func() {
+			getCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			_, actual, _, err := client.Get(getCtx, key)
+			if err == nil && bytes.Equal(actual, value) {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			unreadable = append(unreadable, fmt.Sprintf("%s (%d bytes read, error: %v)", key, len(actual), err))
+		})
+	}
+	wg.Wait()
+	slices.Sort(unreadable)
+	return unreadable
 }
 
 func TestCoordinator_ShardSplit_FollowerKillDuringSplit(t *testing.T) {
@@ -1246,4 +2628,730 @@ func TestCoordinator_ShardSplit_ConcurrentSplitRejected(t *testing.T) {
 		return true
 	}, 2*time.Minute, 500*time.Millisecond)
 	slog.Info("First split completed successfully")
+}
+
+// ---- Writes to split children ----
+
+// splitWithKeys writes some keys, splits the shard, and returns a client that
+// uses the children's assignments.
+func (c *splitTestCluster) splitWithKeys(t *testing.T) oxia.SyncClient {
+	t.Helper()
+	client, err := oxia.NewSyncClient(c.sa1.Public)
+	require.NoError(t, err)
+	for i := 0; i < 30; i++ {
+		_, _, err = client.Put(context.Background(), fmt.Sprintf("key-%04d", i), []byte("value"))
+		require.NoError(t, err)
+	}
+	c.splitAndWait(t)
+	return c.reconnectClient(t, client, "key-0000")
+}
+
+// childKey returns a key, starting with prefix, that belongs to the given child.
+func (c *splitTestCluster) childKey(child int64, prefix string) string {
+	hashRange := c.leftMeta.Int32HashRange
+	if child == c.rightChild {
+		hashRange = c.rightMeta.Int32HashRange
+	}
+	for i := 0; ; i++ {
+		key := fmt.Sprintf("%s-%d", prefix, i)
+		if h := hash.Xxh332(key); h >= hashRange.Min && h <= hashRange.Max {
+			return key
+		}
+	}
+}
+
+func (c *splitTestCluster) shardStatus(t *testing.T, shard int64) *proto.ShardMetadata {
+	t.Helper()
+	return mock.StatusSnapshot(t, c.metadata).Namespaces[constant.DefaultNamespace].Shards[shard]
+}
+
+// waitForNewTerm waits for the shard to be led again in a term after the given one.
+func (c *splitTestCluster) waitForNewTerm(t *testing.T, shard int64, term int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		sm := c.shardStatus(t, shard)
+		return sm.Term > term && sm.Leader != nil && sm.GetStatusOrDefault() == proto.ShardStatusSteadyState
+	}, 30*time.Second, 100*time.Millisecond)
+}
+
+// The first leader of a split child is seeded from a snapshot of the parent,
+// with an empty WAL. The child must keep committing writes after it gets
+// re-elected, like leader balancing does.
+func TestCoordinator_ShardSplit_ChildWritesAfterReelection(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+	client := cluster.splitWithKeys(t)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	_, _, err := client.Put(context.Background(), cluster.childKey(cluster.leftChild, "before"), []byte("value"))
+	require.NoError(t, err)
+
+	// Reporting the leader as unavailable runs the same election as leader balancing
+	before := cluster.shardStatus(t, cluster.leftChild)
+	cluster.coordinator.BecameUnavailable(before.Leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _, err = client.Put(ctx, cluster.childKey(cluster.leftChild, "after"), []byte("value"))
+	require.NoError(t, err, "write to the split child after its re-election")
+}
+
+// A write acknowledged by a split child must be on a quorum of the child's
+// ensemble, and survive the loss of the child's leader.
+func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
+	cluster := setupSplitCluster(t)
+	defer cluster.close(t)
+	client := cluster.splitWithKeys(t)
+
+	ctx := context.Background()
+	key := cluster.childKey(cluster.leftChild, "acked")
+	_, _, err := client.Put(ctx, key, []byte("value"))
+	require.NoError(t, err)
+	assert.NoError(t, client.Close())
+
+	before := cluster.shardStatus(t, cluster.leftChild)
+	leader := before.Leader.GetNameOrDefault()
+	assert.NoError(t, cluster.servers[leader].Close())
+	delete(cluster.servers, leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, before.Term)
+
+	var reader oxia.SyncClient
+	require.Eventually(t, func() bool {
+		reader, err = oxia.NewSyncClient(cluster.liveAddressExcluding(leader).Public)
+		if err != nil {
+			return false
+		}
+		if _, _, _, err = reader.Get(ctx, "key-0000"); err != nil {
+			_ = reader.Close()
+			return false
+		}
+		return true
+	}, 30*time.Second, 500*time.Millisecond)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	_, value, _, err := reader.Get(ctx, key)
+	require.NoError(t, err, "write acknowledged by the split child lost with its leader")
+	assert.Equal(t, []byte("value"), value)
+}
+
+// leaderOnlyChildObservers adds only the leader of each split child as an
+// observer of the parent, and reports the other members of the child as
+// holding the parent's data while the split runs: the split completes with
+// the data of each child on its leader only, as if the other members had
+// missed it. They get it from a snapshot of the child leader once the split
+// elects it in a clean term.
+type leaderOnlyChildObservers struct {
+	rpc2.Provider
+
+	// The coordinator's metadata, once the cluster is up
+	metadata atomic.Value
+}
+
+// splittingChildLeader returns the leader of a split child, or nil for a shard
+// that isn't the child of a running split.
+func (p *leaderOnlyChildObservers) splittingChildLeader(shard int64) *proto.DataServerIdentity {
+	metadata, _ := p.metadata.Load().(coordmetadata.Metadata)
+	if metadata == nil {
+		return nil
+	}
+	status, exists := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	if !exists {
+		return nil
+	}
+	child := status.UnsafeBorrow()
+	if child.GetSplit() == nil || len(child.GetSplit().GetChildShardIds()) > 0 {
+		return nil
+	}
+	return child.GetLeader()
+}
+
+func (p *leaderOnlyChildObservers) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	if leader := p.splittingChildLeader(req.GetTargetShard()); req.Observer && leader != nil &&
+		leader.GetInternal() != req.FollowerName {
+		return &proto.AddFollowerResponse{}, nil
+	}
+	return p.Provider.AddFollower(ctx, node, req)
+}
+
+func (p *leaderOnlyChildObservers) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	res, err := p.Provider.GetStatus(ctx, node, req)
+	if leader := p.splittingChildLeader(req.Shard); err == nil && leader != nil &&
+		leader.GetNameOrDefault() != node.GetNameOrDefault() {
+		res = res.CloneVT()
+		res.CommitOffset = math.MaxInt64
+	}
+	return res, err
+}
+
+// followerlessChildRpcProvider elects the leaders of the split children
+// without their followers, which never get the children's data: the children
+// stay as they are right after the split, while the followers are still
+// installing the snapshot that the child leader sends them.
+type followerlessChildRpcProvider struct {
+	leaderOnlyChildObservers
+}
+
+func (p *followerlessChildRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *followerlessChildRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+	if req.Shard != 0 {
+		req = req.CloneVT()
+		req.FollowerMaps = nil
+	}
+	return p.Provider.BecomeLeader(ctx, node, req)
+}
+
+func (p *followerlessChildRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	if req.Shard != 0 {
+		return &proto.AddFollowerResponse{}, nil
+	}
+	return p.leaderOnlyChildObservers.AddFollower(ctx, node, req)
+}
+
+// The leader of a split child can be the only member seeded from a snapshot of
+// the parent, e.g. when the other members were down during the split, and it
+// sends one to the child's followers once the split elects it in a clean term.
+// A leader election of the child in the meantime, like the one that
+// BecameUnavailable runs, fences the leader, which aborts the installation of
+// the snapshot on the followers. The election must still elect the child
+// leader, the only member with the child's data, though the wal of a member
+// seeded from a snapshot is as empty as the one of a member without any data.
+func TestCoordinator_ShardSplit_ChildElectionBeforeFollowersSeeded(t *testing.T) {
+	rpcProvider := &followerlessChildRpcProvider{}
+	cluster := setupSplitClusterWithRpc(t, rpcProvider.factory)
+	defer cluster.close(t)
+	rpcProvider.metadata.Store(cluster.metadata)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	keys := make(map[string][]byte)
+	for i := 0; i < 30; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), []byte(fmt.Sprintf("value-%d", i))
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+	assert.NoError(t, client.Close())
+	cluster.splitAndWait(t)
+
+	// A read that a child can't serve fails after a while, instead of retrying
+	// until the client is closed
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+
+	// Among the members with the highest head entry, the election can pick any:
+	// elect the leader of each child a few times. Check the keys after every
+	// election, before the next one: an election that moves the leader of a child
+	// to the data server that leads the other child would get it elected again
+	// by the next BecameUnavailable
+	for range 3 {
+		for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+			// The children can have the same leader, and get elected together
+			var before *proto.ShardMetadata
+			require.Eventually(t, func() bool {
+				before = cluster.shardStatus(t, child)
+				return before.Leader != nil && before.GetStatusOrDefault() == proto.ShardStatusSteadyState
+			}, 30*time.Second, 100*time.Millisecond)
+			cluster.coordinator.BecameUnavailable(before.Leader)
+			cluster.waitForNewTerm(t, child, before.Term)
+
+			for key, expected := range keys {
+				_, value, _, err := reader.Get(ctx, key)
+				require.NoError(t, err, "key %s lost by a leader election of a split child", key)
+				assert.Equal(t, expected, value)
+			}
+		}
+	}
+}
+
+// slowChildSnapshotProvider delays the end of the snapshots that the leader of
+// a split child sends to the followers of the child, as if the child were big.
+// The snapshots that the parent sends to the children, its observers, are not
+// delayed.
+type slowChildSnapshotProvider struct {
+	dataserverrpc.ReplicationRpcProvider
+	delay time.Duration
+}
+
+func (p *slowChildSnapshotProvider) SendSnapshot(ctx context.Context, follower string, namespace string,
+	shard int64, term int64) (proto.OxiaLogReplication_SendSnapshotClient, error) {
+	stream, err := p.ReplicationRpcProvider.SendSnapshot(ctx, follower, namespace, shard, term)
+	md, _ := grpcmetadata.FromOutgoingContext(ctx)
+	if err != nil || shard == 0 || len(md.Get(constant.MetadataSplitHashRangeMin)) > 0 {
+		return stream, err
+	}
+	return &slowSnapshotStream{OxiaLogReplication_SendSnapshotClient: stream, ctx: ctx, delay: p.delay}, nil
+}
+
+type slowSnapshotStream struct {
+	proto.OxiaLogReplication_SendSnapshotClient
+	ctx   context.Context
+	delay time.Duration
+}
+
+func (s *slowSnapshotStream) CloseAndRecv() (*proto.SnapshotResponse, error) {
+	select {
+	case <-time.After(s.delay):
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
+	return s.OxiaLogReplication_SendSnapshotClient.CloseAndRecv()
+}
+
+// newServerWithSlowChildSnapshots is newServer, with the snapshots of the split
+// children delayed by slowChildSnapshotProvider, and a checksum of each shard
+// recorded every second: a split child writes an entry soon after it starts
+// leading.
+func newServerWithSlowChildSnapshots(t *testing.T, delay time.Duration) (*dataserver.Server,
+	*proto.DataServerIdentity) {
+	t.Helper()
+	options := option.NewDefaultOptions()
+	options.Server.Public.BindAddress = "localhost:0"
+	options.Server.Internal.BindAddress = "localhost:0"
+	options.Observability.Metric.Enabled = &constant.FlagFalse
+	options.Storage.Database.Dir = t.TempDir()
+	options.Storage.WAL.Dir = t.TempDir()
+	options.Scheduler.Checksum.Interval = commonoption.Duration(time.Second)
+
+	manifest, err := manifestpkg.NewManifest(options.Storage.Database.Dir)
+	require.NoError(t, err)
+	replication, err := dataserverrpc.NewReplicationRpcProvider(&options.Replication.TLS, manifest)
+	require.NoError(t, err)
+	s, err := dataserver.NewWithGrpcProvider(t.Context(), commonwatch.New(options), commonrpc.Default,
+		&slowChildSnapshotProvider{ReplicationRpcProvider: replication, delay: delay}, manifest)
+	require.NoError(t, err)
+	return s, &proto.DataServerIdentity{
+		Public:   fmt.Sprintf("localhost:%d", s.PublicPort()),
+		Internal: fmt.Sprintf("localhost:%d", s.InternalPort()),
+	}
+}
+
+// finalizeRetryRpcProvider makes a split run Finalize again once it elected the
+// left child in its clean term: it fails the first election of the right child,
+// as soon as the left child leader has an entry that its followers didn't ack.
+// It counts the elections of each child by Finalize.
+type finalizeRetryRpcProvider struct {
+	leaderOnlyChildObservers
+
+	mu sync.Mutex
+	// The term of the parent when the split started: Finalize elects the
+	// children in later terms
+	parentTerm            int64
+	leftChild, rightChild int64
+	leftLeader            *proto.DataServerIdentity
+	failedRight           bool
+	leftPendingEntry      bool
+	finalizeElections     map[int64]int
+}
+
+func (p *finalizeRetryRpcProvider) initiateSplit(t *testing.T, c *splitTestCluster) {
+	t.Helper()
+	p.mu.Lock()
+	p.parentTerm = c.shardStatus(t, 0).Term
+	p.mu.Unlock()
+	c.initiateSplit(t)
+	p.mu.Lock()
+	p.leftChild, p.rightChild = c.leftChild, c.rightChild
+	p.mu.Unlock()
+}
+
+func (p *finalizeRetryRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
+	p.mu.Lock()
+	finalize := req.Shard != 0 && req.Term > p.parentTerm
+	if finalize {
+		p.finalizeElections[req.Shard]++
+	}
+	if req.Shard == p.leftChild {
+		p.leftLeader = node
+	}
+	failRight := finalize && req.Shard == p.rightChild && !p.failedRight
+	p.failedRight = p.failedRight || failRight
+	leftChild, leftLeader := p.leftChild, p.leftLeader
+	p.mu.Unlock()
+	if !failRight {
+		return p.Provider.BecomeLeader(ctx, node, req)
+	}
+
+	// The left child leader records a checksum within a second, an entry that
+	// its followers can only ack once they installed the snapshot of the child
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		res, err := p.GetStatus(ctx, leftLeader, &proto.GetStatusRequest{Shard: leftChild})
+		if err == nil && res.Status == proto.ServingStatus_LEADER && res.HeadOffset > res.CommitOffset {
+			p.mu.Lock()
+			p.leftPendingEntry = true
+			p.mu.Unlock()
+			break
+		}
+	}
+	return nil, errors.New("injected failure of the election of the right child")
+}
+
+func (p *finalizeRetryRpcProvider) elections(child int64) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.finalizeElections[child]
+}
+
+func (p *finalizeRetryRpcProvider) sawLeftPendingEntry() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.leftPendingEntry
+}
+
+// Finalize elects each child of a split in a clean term. A child leader that
+// has entries left to commit through followers that miss the child's data,
+// e.g. because they were down during the split, only leads once one of them
+// installed the snapshot of the child, which takes as long as the child is big.
+// The leader of the left child has such an entry when Finalize runs again after
+// electing it: a checksum it recorded while its followers were installing the
+// snapshot. Bounded by the rpc timeout, the election of a child that takes
+// longer to install failed, and the next attempt of Finalize fenced the child
+// in a new term, which aborted the installation: the split completed only once
+// the retry backoff left a whole installation the time to complete, if ever,
+// and the parent's hash range was unavailable until then.
+func TestCoordinator_ShardSplit_ChildElectionSlowerThanRpcTimeout(t *testing.T) {
+	// The rpc timeout of the coordinator, and the time the followers of a child
+	// take to install its snapshot, scaled down
+	const rpcTimeout = 2 * time.Second
+	servers := make(map[string]*dataserver.Server)
+	var addresses []*proto.DataServerIdentity
+	for range 3 {
+		s, addr := newServerWithSlowChildSnapshots(t, 3*rpcTimeout)
+		servers[addr.GetNameOrDefault()] = s
+		addresses = append(addresses, addr)
+	}
+	rpcProvider := &finalizeRetryRpcProvider{finalizeElections: make(map[int64]int)}
+	cluster := setupSplitClusterWith(t, func(instanceID string) rpc2.Provider {
+		rpcProvider.Provider = rpc2.NewRpcProviderWithTimeout(nil, instanceID, rpcTimeout)
+		return rpcProvider
+	}, servers, addresses)
+	defer cluster.close(t)
+	rpcProvider.metadata.Store(cluster.metadata)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	keys := make(map[string][]byte)
+	for i := 0; i < 30; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), []byte(fmt.Sprintf("value-%d", i))
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+	assert.NoError(t, client.Close())
+
+	// Finalize elects the left child twice: before and after the failed
+	// election of the right child
+	rpcProvider.initiateSplit(t, cluster)
+	require.Eventually(t, func() bool {
+		parent := cluster.shardStatus(t, 0)
+		return rpcProvider.elections(cluster.leftChild) > 2 ||
+			parent == nil || parent.GetStatusOrDefault() == proto.ShardStatusDeleting
+	}, time.Minute, 100*time.Millisecond, "the split did not complete")
+	require.True(t, rpcProvider.sawLeftPendingEntry(), "the left child leader had no entry left to commit")
+	require.LessOrEqual(t, rpcProvider.elections(cluster.leftChild), 2,
+		"Finalize kept electing the left child, and its followers kept installing the snapshot over")
+	cluster.waitForSplit(t)
+
+	reader, err := oxia.NewSyncClient(cluster.sa1.Public, oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+	var unreadable []string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+		if unreadable = unreadableKeys(ctx, reader, keys); len(unreadable) == 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	assert.Empty(t, unreadable, "keys lost by the split")
+}
+
+// The split deletes the parent once it completes: from then on, the data of a
+// child must survive the loss of the child's leader, even right away. A
+// majority of the child must hold it by then, which takes as long as the child
+// is big: the members of the child get it as observers of the parent, and the
+// child leader must not send them the whole child again once the split elects
+// it in a clean term.
+func TestCoordinator_ShardSplit_ChildDataSurvivesLeaderLossAfterSplit(t *testing.T) {
+	// The followers of a child take a few seconds to install a snapshot of the
+	// child leader, as if the child were big
+	servers := make(map[string]*dataserver.Server)
+	var addresses []*proto.DataServerIdentity
+	for range 3 {
+		s, addr := newServerWithSlowChildSnapshots(t, 3*time.Second)
+		servers[addr.GetNameOrDefault()] = s
+		addresses = append(addresses, addr)
+	}
+	cluster := setupSplitClusterWith(t, rpc2.NewRpcProviderFactory(nil), servers, addresses)
+	defer cluster.close(t)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	keys := make(map[string][]byte)
+	for i := 0; i < 30; i++ {
+		key, value := fmt.Sprintf("key-%04d", i), []byte(fmt.Sprintf("value-%d", i))
+		_, _, err = client.Put(ctx, key, value)
+		require.NoError(t, err)
+		keys[key] = value
+	}
+	assert.NoError(t, client.Close())
+
+	// Lose the leader of the left child as soon as the split publishes the
+	// children
+	assignments := cluster.coordinator.SubscribeShardAssignments()
+	cluster.initiateSplit(t)
+	leftAssigned := func() bool {
+		return slices.ContainsFunc(assignments.Load().GetNamespaces()[constant.DefaultNamespace].GetAssignments(),
+			func(assignment *proto.ShardAssignment) bool { return assignment.GetShard() == cluster.leftChild })
+	}
+	for !leftAssigned() {
+		select {
+		case <-assignments.Changed():
+		case <-time.After(time.Minute):
+			require.FailNow(t, "the split did not complete")
+		}
+	}
+	left := cluster.shardStatus(t, cluster.leftChild)
+	leader := left.Leader.GetNameOrDefault()
+	slog.Info("Losing the leader of the left child right after the split", slog.String("leader", leader))
+	assert.NoError(t, cluster.servers[leader].Close())
+	delete(cluster.servers, leader)
+	cluster.coordinator.BecameUnavailable(left.Leader)
+	cluster.waitForNewTerm(t, cluster.leftChild, left.Term)
+
+	reader, err := oxia.NewSyncClient(cluster.liveAddressExcluding(leader).Public,
+		oxia.WithRequestTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reader.Close()) }()
+	var unreadable []string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+		if unreadable = unreadableKeys(ctx, reader, keys); len(unreadable) == 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	assert.Empty(t, unreadable, "keys lost with the leader of the left child")
+}
+
+// ---- Split of a parent without committed entries ----
+
+// featurelessServerRpcProvider makes the coordinator see a data server as
+// supporting no feature, as it sees one whose features it doesn't know yet,
+// e.g. while it is down: a term of an ensemble with that data server pins no
+// feature, so its leader enables none with an entry, and a shard that gets no
+// write has no committed entry. It also holds the first cutover of a split
+// before it freezes the parent and, once given the coordinator's metadata, adds
+// only the leader of each child as an observer of the parent (see
+// leaderOnlyChildObservers).
+type featurelessServerRpcProvider struct {
+	leaderOnlyChildObservers
+	featurelessServer string
+	cutoverReached    chan struct{}
+	resumeCutover     chan struct{}
+	holdOnce          sync.Once
+	resumeOnce        sync.Once
+}
+
+func newFeaturelessServerRpcProvider(featurelessServer string) *featurelessServerRpcProvider {
+	return &featurelessServerRpcProvider{
+		featurelessServer: featurelessServer,
+		cutoverReached:    make(chan struct{}),
+		resumeCutover:     make(chan struct{}),
+	}
+}
+
+func (p *featurelessServerRpcProvider) factory(instanceID string) rpc2.Provider {
+	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+	return p
+}
+
+func (p *featurelessServerRpcProvider) resume() {
+	p.resumeOnce.Do(func() { close(p.resumeCutover) })
+}
+
+func (p *featurelessServerRpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
+	res, err := p.Provider.Handshake(ctx, node, req)
+	if res != nil && node.GetNameOrDefault() == p.featurelessServer {
+		res.FeaturesSupported = nil
+	}
+	return res, err
+}
+
+func (p *featurelessServerRpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+	if req.Frozen {
+		p.holdOnce.Do(func() {
+			close(p.cutoverReached)
+			select {
+			case <-p.resumeCutover:
+			case <-ctx.Done():
+			}
+		})
+	}
+	return p.Provider.FreezeShard(ctx, node, req)
+}
+
+// setupSplitClusterWithDbDirs is setupSplitClusterWithRpc, with data servers
+// named s1, s2 and s3. It also returns the database directory of each data
+// server.
+func setupSplitClusterWithDbDirs(t *testing.T,
+	rpcProviderFactory rpc2.ProviderFactory) (*splitTestCluster, map[string]string) {
+	t.Helper()
+
+	servers := make(map[string]*dataserver.Server)
+	dbDirs := make(map[string]string)
+	var addresses []*proto.DataServerIdentity
+	for _, name := range []string{"s1", "s2", "s3"} {
+		s, addr := mock.NewServerWithOptions(t, name, func(options *option.Options) {
+			dbDirs[name] = options.Storage.Database.Dir
+		})
+		servers[name] = s
+		addresses = append(addresses, addr)
+	}
+	return setupSplitClusterWith(t, rpcProviderFactory, servers, addresses), dbDirs
+}
+
+// readShardKeys reads the keys of a shard from the database directory of a
+// data server that was closed.
+func readShardKeys(t *testing.T, dbDir string, shard int64) []string {
+	t.Helper()
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(&kvstore.FactoryOptions{DataDir: dbDir, CacheSizeMB: 1})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_UNKNOWN,
+		time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
+
+	it, err := db.List(&proto.ListRequest{})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, it.Close()) }()
+	var keys []string
+	for ; it.Valid(); it.Next() {
+		keys = append(keys, it.Key())
+	}
+	require.NoError(t, it.Error())
+	return keys
+}
+
+// A member of a split child observes the parent, starting from a snapshot of
+// it: installing it records the split filter in the member's database, and the
+// member's wal starts after the entries in the snapshot. A member that missed
+// the parent's data gets the child's data from the child leader once the split
+// completes, with a snapshot of the leader, as the leader's wal lacks the first
+// entries. A parent that has committed no entry, like a shard that got no write
+// and whose ensemble pins no feature, must not send its observers its entries
+// from the first one on: that member would get them from the leader's wal too,
+// and apply them without the filter, keeping the records of the other child.
+func TestCoordinator_ShardSplit_ParentWithoutCommittedEntries(t *testing.T) {
+	rpcProvider := newFeaturelessServerRpcProvider("s3")
+	cluster, dbDirs := setupSplitClusterWithDbDirs(t, rpcProvider.factory)
+	rpcProvider.metadata.Store(cluster.metadata)
+	closed := false
+	defer func() {
+		if !closed {
+			cluster.close(t)
+		}
+	}()
+	// Runs before close: the split controller must not stay held
+	defer rpcProvider.resume()
+
+	parent := cluster.shardStatus(t, 0)
+	parentLeader, err := cluster.servers[parent.Leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
+	require.NoError(t, err)
+	parentStatus, err := parentLeader.GetStatus(&proto.GetStatusRequest{Shard: 0})
+	require.NoError(t, err)
+	require.EqualValues(t, -1, parentStatus.HeadOffset, "the parent has entries")
+
+	cluster.leftChild, cluster.rightChild, err = cluster.coordinator.InitiateSplit(constant.DefaultNamespace, 0, nil)
+	require.NoError(t, err)
+
+	// The leaders of the children observe the parent: write to it on both sides
+	// of the split point before its cutover
+	select {
+	case <-rpcProvider.cutoverReached:
+	case <-time.After(60 * time.Second):
+		require.FailNow(t, "the split did not reach the cutover")
+	}
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	var keys []string
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key-%03d", i)
+		_, _, err = client.Put(ctx, key, []byte("value"))
+		require.NoError(t, err)
+		keys = append(keys, key)
+	}
+	assert.NoError(t, client.Close())
+	parentStatus, err = parentLeader.GetStatus(&proto.GetStatusRequest{Shard: 0})
+	require.NoError(t, err)
+
+	rpcProvider.resume()
+	cluster.waitForSplit(t)
+	children := map[int64]*proto.ShardMetadata{cluster.leftChild: cluster.leftMeta, cluster.rightChild: cluster.rightMeta}
+
+	// Every member of the ensemble of a child gets the data of the child
+	for child, childMeta := range children {
+		for _, member := range childMeta.Ensemble {
+			require.Eventually(t, func() bool {
+				status, err := rpcProvider.GetStatus(ctx, member, &proto.GetStatusRequest{Shard: child})
+				return err == nil && status.CommitOffset >= parentStatus.HeadOffset
+			}, 30*time.Second, 100*time.Millisecond, "%s did not get the data of shard %d",
+				member.GetNameOrDefault(), child)
+		}
+	}
+
+	// Closing the data servers flushes their databases
+	cluster.close(t)
+	closed = true
+	for child, childMeta := range children {
+		var expected []string
+		for _, key := range keys {
+			if h := hash.Xxh332(key); h >= childMeta.Int32HashRange.Min && h <= childMeta.Int32HashRange.Max {
+				expected = append(expected, key)
+			}
+		}
+		require.NotEmpty(t, expected)
+		for _, member := range childMeta.Ensemble {
+			assert.ElementsMatch(t, expected, readShardKeys(t, dbDirs[member.GetNameOrDefault()], child),
+				"keys of shard %d on %s", child, member.GetNameOrDefault())
+		}
+	}
+}
+
+// The split of a parent that never commits an entry completes as well: its
+// observers have nothing to send to the members of the children.
+func TestCoordinator_ShardSplit_ParentWithoutEntries(t *testing.T) {
+	rpcProvider := newFeaturelessServerRpcProvider("s3")
+	rpcProvider.resume()
+	cluster, _ := setupSplitClusterWithDbDirs(t, rpcProvider.factory)
+	defer cluster.close(t)
+
+	cluster.splitAndWait(t)
+
+	ctx := context.Background()
+	client, err := oxia.NewSyncClient(cluster.sa1.Public)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+	for _, child := range []int64{cluster.leftChild, cluster.rightChild} {
+		key := cluster.childKey(child, "key")
+		_, _, err = client.Put(ctx, key, []byte("value"))
+		require.NoError(t, err, "write to shard %d", child)
+		_, value, _, err := client.Get(ctx, key)
+		require.NoError(t, err, "read from shard %d", child)
+		assert.Equal(t, []byte("value"), value)
+	}
 }

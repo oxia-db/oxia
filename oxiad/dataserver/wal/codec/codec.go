@@ -49,9 +49,6 @@ type Codec interface {
 	// multiple versions for txn file.
 	GetTxnExtension() string
 
-	// GetRecordSize returns the size of the record in bytes which includes the header.
-	GetRecordSize(buf []byte, startFileOffset uint32) (payloadSize uint32, err error)
-
 	// ReadRecordWithValidation reads a record starting at the specified
 	// file offset in the buffer. It also validates the record's integrity
 	// (e.g., CRC checks) before returning the payload.
@@ -61,7 +58,9 @@ type Codec interface {
 	// - startFileOffset: The file offset to start reading from.
 	//
 	// Returns:
-	// - payload: The actual data (payload) of the record.
+	// - payload: The actual data (payload) of the record, copied into a newly
+	//   allocated buffer owned by the caller. The WAL reader relies on this to
+	//   decode it zero-copy, so it must never alias buf.
 	// - previousCrc: The CRC value of the previous record (0 for V1 which has no CRC).
 	// - payloadCrc: The CRC value of the current payload (0 for V1 which has no CRC).
 	// - err: Error if any issues occur during reading or validation.

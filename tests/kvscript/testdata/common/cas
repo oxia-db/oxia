@@ -1,0 +1,79 @@
+# Version aliases express CAS conditions without depending on numeric IDs.
+
+put key=a value="one" create-only save=created
+----
+ok key="a" modifications=0
+
+put key=a value=("must not replace one") create-only
+----
+error: unexpected version id
+
+get key=a
+----
+key="a" value="one" modifications=0
+
+put key=a value="two" expected-version=@created save=updated
+----
+ok key="a" modifications=1
+
+put key=a value=("must not replace two") expected-version=@created
+----
+error: unexpected version id
+
+get key=a save=read
+----
+key="a" value="two" modifications=1
+
+delete key=a expected-version=@created
+----
+error: unexpected version id
+
+get key=a
+----
+key="a" value="two" modifications=1
+
+# A version saved by get is valid for a subsequent conditional put.
+put key=a value="three" expected-version=@read save=latest
+----
+ok key="a" modifications=2
+
+get key=a
+----
+key="a" value="three" modifications=2
+
+delete key=a expected-version=@latest
+----
+ok
+
+get key=a
+----
+error: key not found
+
+put key=a value=("must not recreate") expected-version=@latest
+----
+error: unexpected version id
+
+get key=a
+----
+error: key not found
+
+# Deleting and recreating never makes an old version valid again.
+put key=a value="reborn" create-only save=reborn
+----
+ok key="a" modifications=0
+
+put key=a value=("must not replace reborn") expected-version=@latest
+----
+error: unexpected version id
+
+get key=a
+----
+key="a" value="reborn" modifications=0
+
+delete key=a expected-version=@reborn
+----
+ok
+
+get key=a
+----
+error: key not found

@@ -52,7 +52,15 @@ func NewWalFactory(options *FactoryOptions) Factory {
 }
 
 func (f *walFactory) NewWal(namespace string, shard int64, commitOffsetProvider CommitOffsetProvider) (Wal, error) {
-	impl, err := newWal(namespace, shard, f.options, commitOffsetProvider, time2.SystemClock, DefaultCheckInterval)
+	clock := f.options.Clock
+	if clock == nil {
+		clock = time2.SystemClock
+	}
+	trimmerCheckInterval := f.options.TrimmerCheckInterval
+	if trimmerCheckInterval == 0 {
+		trimmerCheckInterval = DefaultCheckInterval
+	}
+	impl, err := newWal(namespace, shard, f.options, commitOffsetProvider, clock, trimmerCheckInterval)
 	return impl, err
 }
 
@@ -84,6 +92,11 @@ type wal struct {
 
 	// The last offset synced in the Wal.
 	lastSyncedOffset atomic.Int64
+
+	// Incremented, while holding the lock, when Clear or TruncateLog drop
+	// entries: the trimmer trims nothing once the entries it computed the trim
+	// offset on got dropped (see trim)
+	generation atomic.Int64
 
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -161,6 +174,11 @@ func newWal(namespace string, shard int64, options *FactoryOptions, commitOffset
 		})
 
 	if err := w.recoverWal(); err != nil {
+		w.activeEntries.Unregister()
+		// readOnlySegments is nil if discardTrailingSegment failed to rebuild it
+		if w.readOnlySegments != nil {
+			err = multierr.Append(err, w.readOnlySegments.Close())
+		}
 		return nil, errors.Wrapf(err, "failed to recover wal for shard %s / %d", namespace, shard)
 	}
 
@@ -215,10 +233,12 @@ func (t *wal) readAtIndex(index int64) (entry *proto.LogEntry, previousCrc uint3
 	}
 
 	entry = &proto.LogEntry{}
-	// Keep the copying unmarshal: entry.Value must be a private heap buffer,
-	// because ApplyLogEntry decodes it zero-copy and the aliases must survive
-	// segment unmap/close. (The codec also copies records out of the mmap.)
-	if err = entry.UnmarshalVT(val); err != nil {
+	// The codec already copies the record out of the mmap into a private heap
+	// buffer that nothing else references or mutates, so entry.Value can alias
+	// it instead of being copied again. ApplyLogEntry relies on this: it
+	// decodes entry.Value zero-copy, and the aliases must survive segment
+	// unmap/close.
+	if err = entry.UnmarshalVTUnsafe(val); err != nil {
 		t.readErrors.Inc()
 		return nil, 0, 0, err
 	}
@@ -246,15 +266,30 @@ func (t *wal) FirstOffset() int64 {
 	return t.firstOffset.Load()
 }
 
-func (t *wal) trim(firstOffset int64) error {
-	if firstOffset <= t.firstOffset.Load() {
+// trim moves the first offset to firstOffset, and deletes the segments that end
+// before the one holding it, calling beforeDelete first. The trimmer computes
+// firstOffset without holding the lock, on the entries of the given generation:
+// once Clear or TruncateLog dropped them, it must not apply to the entries the
+// wal holds instead.
+func (t *wal) trim(firstOffset int64, generation int64, beforeDelete func() error) error {
+	t.RLock()
+	segments := t.readOnlySegments
+	dropped := t.generation.Load() != generation
+	t.RUnlock()
+	if dropped || firstOffset <= t.firstOffset.Load() {
 		return nil
 	}
 
-	if err := t.readOnlySegments.TrimSegments(firstOffset); err != nil {
+	if err := segments.TrimSegments(firstOffset, beforeDelete); err != nil {
 		return err
 	}
 
+	t.Lock()
+	defer t.Unlock()
+	// Clear and TruncateLog can also run while the segments get deleted
+	if t.generation.Load() != generation {
+		return nil
+	}
 	t.trimOps.Inc()
 	t.firstOffset.Store(firstOffset)
 	return nil
@@ -310,10 +345,13 @@ func (t *wal) AppendAsync(entry *proto.LogEntry) error {
 	return t.appendAsync0(entry, nil)
 }
 
-func (t *wal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) error {
+func (t *wal) AppendAsyncWithPreviousCrc(entry *proto.LogEntry, previousCrc *uint32) (uint32, error) {
 	t.Lock()
 	defer t.Unlock()
-	return t.appendAsync0(entry, previousCrc)
+	if err := t.appendAsync0(entry, previousCrc); err != nil {
+		return 0, err
+	}
+	return t.currentSegment.LastCrc(), nil
 }
 
 func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
@@ -607,6 +645,7 @@ func (t *wal) Clear() error {
 }
 
 func (t *wal) clearWithoutLock() error {
+	t.generation.Add(1)
 	err := multierr.Combine(
 		t.drainPendingCloseSegments(),
 		t.currentSegment.Close(),
@@ -660,6 +699,8 @@ func (t *wal) TruncateLog(lastSafeOffset int64) (int64, error) { //nolint:revive
 
 	t.Lock()
 	defer t.Unlock()
+
+	t.generation.Add(1)
 
 	// Bring any rolled-over segment still pending close into the read-only
 	// group, so that the truncation below sees the complete set of segments

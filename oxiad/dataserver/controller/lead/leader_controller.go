@@ -19,13 +19,17 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
@@ -63,7 +67,8 @@ type LeaderController interface {
 
 	GetSequenceUpdates(ctx context.Context, request *proto.GetSequenceUpdatesRequest) (database.SequenceWaiter, error)
 
-	GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch])
+	GetNotifications(ctx context.Context, req *proto.NotificationsRequest,
+		cb concurrent.StreamCallback[*proto.EncodedNotificationBatch])
 
 	// NewTerm Handle new term requests
 	NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error)
@@ -93,13 +98,18 @@ type LeaderController interface {
 	KeepAlive(sessionId int64) error
 	CloseSession(*proto.CloseSessionRequest) (*proto.CloseSessionResponse, error)
 
-	IsFeatureEnabled(feature proto.Feature) bool
+	IsFeatureEnabled(f proto.Feature) bool
 
 	ProposeRecordChecksum(ctx context.Context)
 }
 
 type leaderController struct {
 	sync.RWMutex
+
+	// proposeMu serializes the proposals, which only hold the read lock, so
+	// that the reads don't wait for them. The write lock is for the state
+	// changes, like a new term: it waits for the proposals in progress.
+	proposeMu sync.Mutex
 
 	namespace         string
 	shardId           int64
@@ -121,6 +131,15 @@ type leaderController struct {
 	// truncate the followers.
 	leaderElectionHeadEntryId *proto.EntryId
 
+	// The database commit offset: the last entry applied to the database. It's
+	// the commit offset reported to the WAL, starting from the WAL recovery.
+	dbCommitOffset atomic.Int64
+
+	// Done when the node stops leading the term, before the quorum ack tracker
+	// is closed: the leader doesn't apply the committed entries it has left.
+	termCtx    context.Context
+	termCancel context.CancelFunc
+
 	ctx            context.Context
 	cancel         context.CancelFunc
 	waitGroup      sync.WaitGroup
@@ -132,8 +151,8 @@ type leaderController struct {
 	sessionManager SessionManager
 	log            *slog.Logger
 
-	// Reusable serialization buffer: only accessed by propose, while holding
-	// the leader write lock
+	// Reusable serialization buffer: only accessed by proposeLocked, while
+	// holding proposeMu
 	marshalBuf []byte
 
 	writeLatencyHisto       metric.LatencyHistogram
@@ -188,26 +207,42 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 		"The current WAL checksum value", "count", labels)
 
 	lc.ctx, lc.cancel = context.WithCancel(context.Background())
+	lc.log = slog.With(
+		slog.String("component", "leader-controller"),
+		slog.String("namespace", lc.namespace),
+		slog.Int64("shard", lc.shardId),
+	)
 
 	lc.sessionManager = NewSessionManager(lc.ctx, namespace, shardId, lc)
 
+	// The session manager already runs its expiry goroutine: Close the
+	// controller on any failure from here on
 	var err error
-	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
-		return nil, err
-	}
-
 	keySorting := proto.KeySortingType_UNKNOWN
 	if newTermOptions != nil {
 		keySorting = newTermOptions.KeySorting
 	}
 
 	if lc.db, err = database.NewDB(namespace, shardId, kvFactory, keySorting, storageOptions.Notification.Retention.ToDuration(), time2.SystemClock); err != nil {
-		return nil, err
+		return nil, multierr.Append(err, lc.Close())
+	}
+
+	// Open the WAL after the database: the WAL recovery only discards the
+	// corrupted entries above the database commit offset, as never committed,
+	// and fails on the ones below it
+	dbCommitOffset, err := lc.db.ReadCommitOffset()
+	if err != nil {
+		return nil, multierr.Append(err, lc.Close())
+	}
+	lc.dbCommitOffset.Store(dbCommitOffset)
+
+	if lc.wal, err = walFactory.NewWal(namespace, shardId, lc); err != nil {
+		return nil, multierr.Append(err, lc.Close())
 	}
 
 	var termVal int64
 	if termVal, lc.termOptions, err = lc.db.ReadTerm(); err != nil {
-		return nil, err
+		return nil, multierr.Append(err, lc.Close())
 	}
 	lc.term.Store(termVal)
 
@@ -216,11 +251,6 @@ func NewLeaderController(storageOptions *option.StorageOptions, namespace string
 	}
 
 	lc.db.EnableNotifications(lc.termOptions.NotificationsEnabled)
-	lc.log = slog.With(
-		slog.String("component", "leader-controller"),
-		slog.String("namespace", lc.namespace),
-		slog.Int64("shard", lc.shardId),
-	)
 	lc.log.Info("Created leader controller", slog.Int64("term", lc.term.Load()))
 	return lc, nil
 }
@@ -251,13 +281,13 @@ func (lc *leaderController) Term() int64 {
 	return lc.term.Load()
 }
 
-func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
+func (lc *leaderController) IsFeatureEnabled(f proto.Feature) bool {
 	lc.RLock()
 	defer lc.RUnlock()
 	if lc.db == nil {
 		return false
 	}
-	return lc.db.IsFeatureEnabled(feature)
+	return lc.db.IsFeatureEnabled(f)
 }
 
 // NewTerm
@@ -276,8 +306,24 @@ func (lc *leaderController) IsFeatureEnabled(feature proto.Feature) bool {
 // regarding reconfigurations.
 func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	lc.Lock()
-	defer lc.Unlock()
+	res, err := lc.newTerm(req)
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
+	// newTerm stopped the session manager: wait for its expiry scheduler only
+	// once the leader lock is released, see sessionManager.stop.
+	if err = sessionManager.Close(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// newTerm must be called while holding the leader lock. On success, it leaves
+// the session manager stopped.
+func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	if lc.closed {
 		return nil, constant.ErrResourceUnavailable
 	}
@@ -297,6 +343,16 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		return nil, constant.ErrInvalidStatus
 	}
 
+	if unsupported := feature.Unsupported(req.GetOptions().GetFeatures()); len(unsupported) > 0 {
+		lc.log.Error(
+			"Rejecting new term: it pins features not supported by this binary",
+			slog.Int64("new-term", req.Term),
+			slog.Any("unsupported-features", unsupported),
+		)
+		return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"term %d pins features %v not supported by this binary", req.Term, unsupported)
+	}
+
 	lc.termOptions = database.ToDbOption(req.Options)
 	if err := lc.db.UpdateTerm(req.Term, lc.termOptions); err != nil {
 		return nil, err
@@ -314,6 +370,9 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	lc.commitOffsetGauge.Unregister()
 
 	if lc.quorumAckTracker != nil {
+		// Closing the tracker waits for the callback that is running, which
+		// can be retrying an entry that failed to apply
+		lc.termCancel()
 		if err := lc.quorumAckTracker.Close(); err != nil {
 			return nil, err
 		}
@@ -338,15 +397,20 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 
 	lc.followers = nil
 	lc.observers = nil
-	headEntryId, err := getLastEntryIdInWal(lc.wal)
+
+	// The proposals return once their entry is appended to the wal, before it
+	// is synced, while the head is read from the last synced entry: wait for
+	// the syncs in progress, so that the head covers every entry of the wal.
+	// The election, and the truncation of the followers, rely on it.
+	if err := lc.wal.Sync(lc.ctx); err != nil {
+		return nil, err
+	}
+	headEntryId, err := HeadEntryId(lc.wal, lc.db)
 	if err != nil {
 		return nil, err
 	}
 
-	err = lc.sessionManager.Close()
-	if err != nil {
-		return nil, err
-	}
+	lc.sessionManager.stop()
 
 	lc.log.Info(
 		"Leader successfully initialized in new term",
@@ -355,25 +419,26 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	)
 
 	return &proto.NewTermResponse{
-		HeadEntryId: headEntryId,
+		HeadEntryId:     headEntryId,
+		FeaturesEnabled: lc.db.EnabledFeatures(),
 	}, nil
 }
 
-func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) ([]proto.Feature, error) {
+func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) error {
 	lc.Lock()
 	defer lc.Unlock()
 
 	if lc.closed {
-		return nil, constant.ErrResourceUnavailable
+		return constant.ErrResourceUnavailable
 	}
 
 	if lc.status != proto.ServingStatus_FENCED {
-		return nil, constant.ErrInvalidStatus
+		return constant.ErrInvalidStatus
 	}
 
 	term := lc.term.Load()
 	if req.Term != term {
-		return nil, constant.ErrInvalidTerm
+		return constant.ErrInvalidTerm
 	}
 
 	lc.replicationFactor = req.GetReplicationFactor()
@@ -383,20 +448,27 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	var err error
 	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	leaderCommitOffset, err := lc.db.ReadCommitOffset()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
+	// A leader seeded from a snapshot, like the first leader of a split child,
+	// has an empty wal while its database is already at the snapshot's commit
+	// offset. Its entries must continue after that offset: the tracker would
+	// take the ones at or below it as committed without any ack, and the
+	// followers seeded from the same snapshot drop them as duplicates.
+	headOffset := max(lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
+	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), headOffset, leaderCommitOffset)
+	lc.termCtx, lc.termCancel = context.WithCancel(lc.ctx)
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
 
 	for follower, followerHeadEntryId := range req.FollowerMaps {
 		if err := lc.addFollower(follower, followerHeadEntryId); err != nil { //nolint:contextcheck
-			return nil, err
+			return err
 		}
 	}
 
@@ -405,11 +477,35 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	// by the moment we make the leader controller accepting new propose/read
 	// requests
 	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, lc.leaderElectionHeadEntryId.Offset); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err = lc.applyAllEntriesIntoDB(); err != nil {
-		return nil, err
+		return err
+	}
+
+	orphanedEphemerals, err := lc.sessionManager.Initialize()
+	if err != nil {
+		lc.log.Error(
+			"Failed to initialize session manager",
+			slog.Any("error", err),
+			slog.Int64("term", term),
+		)
+		return err
+	}
+
+	// A feature already enabled in the database must be supported by the
+	// whole new ensemble: a member that doesn't implement it would apply the
+	// following entries with different semantics and silently diverge.
+	if missing := feature.Missing(lc.db.EnabledFeatures(), req.FeaturesSupported); len(missing) > 0 {
+		lc.log.Error(
+			"Refusing to lead: the ensemble does not support features already enabled on the shard",
+			slog.Int64("term", term),
+			slog.Any("missing-features", missing),
+			slog.Any("negotiated-features", req.FeaturesSupported),
+		)
+		return errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"cannot lead term %d: features %v are enabled in the database but not supported by the whole ensemble", term, missing)
 	}
 
 	lc.log.Info(
@@ -421,12 +517,26 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.status = proto.ServingStatus_LEADER
 
 	proposeEnabledFeature := make([]proto.Feature, 0)
-	for _, feature := range req.FeaturesSupported {
-		if !lc.db.IsFeatureEnabled(feature) {
-			proposeEnabledFeature = append(proposeEnabledFeature, feature)
+	for _, f := range req.FeaturesSupported {
+		if !lc.db.IsFeatureEnabled(f) {
+			proposeEnabledFeature = append(proposeEnabledFeature, f)
 		}
 	}
-	return proposeEnabledFeature, nil
+	if len(proposeEnabledFeature) > 0 {
+		// The term's feature set is pinned before any write: the FeatureEnable
+		// entry is appended while still holding the leader lock, so it lands
+		// in the log ahead of every write of this term and the effective
+		// feature set never changes mid-term.
+		if err := lc.proposeFeaturesEnableLocked(ctx, proposeEnabledFeature); err != nil {
+			// Nothing was appended: fall back to the fenced state so the
+			// failed BecomeLeader leaves the controller where it found it.
+			lc.status = proto.ServingStatus_FENCED
+			return err
+		}
+	}
+	lc.proposeOrphanedEphemeralsDeleteLocked(ctx, orphanedEphemerals)
+	lc.startDeferredSplitFilter(lc.termCtx, term)
+	return nil
 }
 
 // BecomeLeader : Node handles a Become Leader request
@@ -455,13 +565,8 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 //     possible that their head entry id is higher than the leader and
 //     therefore need truncating.
 func (lc *leaderController) BecomeLeader(ctx context.Context, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
-	proposeEnabledFeature, err := lc.becomeLeader(ctx, req)
-	if err != nil {
+	if err := lc.becomeLeader(ctx, req); err != nil {
 		return nil, err
-	}
-	// post become leader without the lock
-	if len(proposeEnabledFeature) > 0 {
-		lc.proposeFeaturesEnable(ctx, proposeEnabledFeature)
 	}
 	return &proto.BecomeLeaderResponse{}, nil
 }
@@ -476,6 +581,28 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 
 	if lc.status != proto.ServingStatus_LEADER {
 		return nil, errors.Wrap(constant.ErrNodeIsNotLeader, "Node is not leader")
+	}
+
+	// When the coordinator reports the joiner's supported features, refuse
+	// any follower whose binary does not cover the features required by the
+	// shard: it would apply the replicated entries with different semantics
+	// and silently diverge. The requirement is the term's pinned feature set
+	// plus what is already enabled in the database (the latter matters for
+	// terms created by a coordinator that predates feature pinning).
+	if req.FollowerFeatures != nil {
+		required := slices.Concat(lc.termOptions.Features, lc.db.EnabledFeatures())
+		slices.Sort(required)
+		required = slices.Compact(required)
+		if missing := feature.Missing(required, req.FollowerFeatures.GetSupported()); len(missing) > 0 {
+			lc.log.Error(
+				"Rejecting follower: it does not support features required by the shard",
+				slog.String("follower", req.FollowerName),
+				slog.Int64("term", req.Term),
+				slog.Any("missing-features", missing),
+			)
+			return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+				"follower %s does not support features %v required by the shard", req.FollowerName, missing)
+		}
 	}
 
 	if req.Observer {
@@ -498,6 +625,10 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 }
 
 func (lc *leaderController) addObserverFollower(req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
+	if req.SplitHashRange != nil && lc.db.DeferredSplitFilter() != nil {
+		return nil, errSplitFilterPending
+	}
+
 	// Use target_shard if set (for split observers), otherwise use the parent shard ID
 	targetShardId := lc.shardId
 	if req.TargetShard != nil {
@@ -512,7 +643,8 @@ func (lc *leaderController) addObserverFollower(req *proto.AddFollowerRequest) (
 		return &proto.AddFollowerResponse{}, nil
 	}
 
-	if err := lc.addObserver(observerKey, req.FollowerName, req.FollowerHeadEntryId, targetShardId, req.SplitHashRange); err != nil {
+	if err := lc.addObserver(observerKey, req.FollowerName, req.FollowerHeadEntryId, targetShardId,
+		req.SplitHashRange, req.SplitParentHashRange); err != nil {
 		return nil, err
 	}
 
@@ -554,7 +686,8 @@ func (lc *leaderController) RemoveObserver(req *proto.RemoveObserverRequest) (*p
 // keep streaming the existing WAL while the head offset stops advancing. It is
 // used during split cutover to quiesce the parent shard so the children can
 // drain the final tail before the parent is fenced. Returns the leader's head
-// offset, which while frozen is the final offset the children must reach.
+// offset, which while frozen is the final offset the children must reach: a
+// freeze returns once the writes accepted before it are synced in the wal.
 func (lc *leaderController) Freeze(req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
 	lc.Lock()
 	defer lc.Unlock()
@@ -572,6 +705,14 @@ func (lc *leaderController) Freeze(req *proto.FreezeShardRequest) (*proto.Freeze
 	}
 
 	lc.frozen.Store(req.Frozen)
+
+	// The writes accepted before the freeze are in the wal, but the head offset
+	// covers them only once they are synced
+	if req.Frozen {
+		if err := lc.wal.Sync(lc.ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	headOffset := wal.InvalidOffset
 	if lc.quorumAckTracker != nil {
@@ -633,7 +774,7 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 }
 
 func (lc *leaderController) addObserver(observerKey string, follower string, followerHeadEntryId *proto.EntryId,
-	targetShardId int64, splitHashRange *proto.Int32HashRange) error {
+	targetShardId int64, splitHashRange *proto.Int32HashRange, splitParentHashRange *proto.Int32HashRange) error {
 	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, targetShardId, followerHeadEntryId)
 	if err != nil {
 		lc.log.Error(
@@ -651,7 +792,7 @@ func (lc *leaderController) addObserver(observerKey string, follower string, fol
 	// can validate incoming entries. If the parent gets a new election (term
 	// advances), stale entries from old observer cursors are rejected.
 	cursor, err := NewObserverFollowerCursor(follower, lc.term.Load(), lc.namespace, targetShardId,
-		lc.rpcClient, lc.quorumAckTracker, lc.wal, lc.db, followerHeadEntryId.Offset, splitHashRange)
+		lc.rpcClient, lc.quorumAckTracker, lc.wal, lc.db, followerHeadEntryId.Offset, splitHashRange, splitParentHashRange)
 	if err != nil {
 		lc.log.Error(
 			"Failed to create observer follower cursor",
@@ -716,19 +857,11 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 		if err != nil {
 			return errors.Wrap(err, "failed to applies wal entries to db")
 		}
+		lc.dbCommitOffset.Store(entry.Offset)
 		if resp.Checksum != nil {
 			lc.checksumGauge.Record(int64(*resp.Checksum))
 			lc.walChecksumGauge.Record(int64(entryCrc))
 		}
-	}
-
-	if err = lc.sessionManager.Initialize(); err != nil {
-		lc.log.Error(
-			"Failed to initialize session manager",
-			slog.Any("error", err),
-			slog.Int64("term", term),
-		)
-		return err
 	}
 	return nil
 }
@@ -742,6 +875,19 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		slog.Any("leader-head-entry", lc.leaderElectionHeadEntryId),
 		slog.Any("follower-head-entry", followerHeadEntryId),
 	)
+	if followerHeadEntryId.Term == wal.InvalidTerm {
+		// There is nothing to truncate in the empty wal of the follower. If it
+		// was seeded from a snapshot, it reports the snapshot's commit offset,
+		// and its database holds the committed entries up to it: it gets the
+		// next entries from the wal of the leader, when the leader has them.
+		// Otherwise it starts over, like one without any data, from a snapshot
+		// of the leader, whose installation wipes the data it has.
+		if lc.canStreamAfter(followerHeadEntryId.Offset) {
+			return followerHeadEntryId, nil
+		}
+		return constant2.InvalidEntryId, nil
+	}
+
 	if followerHeadEntryId.Term == lc.leaderElectionHeadEntryId.Term &&
 		followerHeadEntryId.Offset <= lc.leaderElectionHeadEntryId.Offset {
 		// No need for truncation
@@ -792,6 +938,24 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	)
 
 	return tr.HeadEntryId, nil
+}
+
+// canStreamAfter reports whether the leader can bring up to date, with the
+// entries of its wal, a follower whose database holds the committed entries up
+// to offset, and that has no other entry. The leader committed that offset, so
+// its own entries up to it are the same, and its wal must have every entry
+// after it, or the leader must have none.
+func (lc *leaderController) canStreamAfter(offset int64) bool {
+	commitOffset := lc.quorumAckTracker.CommitOffset()
+	if offset == wal.InvalidOffset || offset > commitOffset {
+		return false
+	}
+	walFirstOffset := lc.wal.FirstOffset()
+	if walFirstOffset == wal.InvalidOffset {
+		// The entries of the leader are all in its database
+		return offset == commitOffset
+	}
+	return offset+1 >= walFirstOffset
 }
 
 func getHighestEntryOfTerm(w wal.Wal, term int64) (*proto.EntryId, error) {
@@ -983,7 +1147,7 @@ func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, onNext
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	return lc.writeBlock(ctx, func(_ int64) *proto.WriteRequest { return request })
+	return lc.writeBlock(ctx, nil, func(_ int64) *proto.WriteRequest { return request })
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
@@ -993,34 +1157,63 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
 }
 
-func (lc *leaderController) writeBlock(ctx context.Context, requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
-	res := make(chan *entity.TWithError[*proto.WriteResponse], 1)
-	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
-		res <- &entity.TWithError[*proto.WriteResponse]{Err: nil, T: response.WriteResponse}
-	}, func(err error) {
-		res <- &entity.TWithError[*proto.WriteResponse]{Err: err, T: nil}
-	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+// writeBlock proposes the write built by requestSupplier and waits for its
+// result. If closed is done by the time the leader lock is held, the write is
+// rejected without being appended; a nil closed is never done. The session
+// manager passes its own done channel: it is stopped while holding the leader
+// write lock, so none of its writes can be appended once it is stopped.
+func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
+	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
+	response, err := lc.proposeBlock(ctx, closed, func(offset int64) statemachine.Proposal {
 		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
-	}, deferPropose)
+	})
+	return response.WriteResponse, err
+}
+
+// proposeBlock proposes the proposal built by proposalSupplier and waits for
+// its result, like writeBlock.
+func (lc *leaderController) proposeBlock(ctx context.Context, closed <-chan struct{},
+	proposalSupplier func(offset int64) statemachine.Proposal) (statemachine.ApplyResponse, error) {
+	res := make(chan *entity.TWithError[statemachine.ApplyResponse], 1)
+	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
+		res <- &entity.TWithError[statemachine.ApplyResponse]{Err: nil, T: response}
+	}, func(err error) {
+		res <- &entity.TWithError[statemachine.ApplyResponse]{Err: err}
+	})
+
+	lc.RLock()
+	var err error
+	select {
+	case <-closed:
+		err = constant.ErrNodeIsNotLeader
+	default:
+		err = lc.proposeLocked(ctx, proposalSupplier, deferPropose)
+	}
+	lc.RUnlock()
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+
 	response := <-res
 	return response.T, response.Err
 }
 
-// proposeFeaturesEnable broadcasts a control command to all replicas to enable
-// specific protocol features.
+// proposeFeaturesEnableLocked broadcasts a control command to all replicas to
+// enable specific protocol features. The caller must hold the leader write
+// lock: by appending the entry under the same critical section that completes
+// the election, it is guaranteed to precede every write of the term.
 //
 // This proposal will be replicated to all the replicas, but we will not wait for log sync.
 // As a result, the underlying State Machine must handle these requests
 // idempotently to ensure consistency across retries or leader transitions.
-func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features []proto.Feature) {
+func (lc *leaderController) proposeFeaturesEnableLocked(ctx context.Context, features []proto.Feature) error {
 	term := lc.term.Load()
 	deferPropose := concurrent.NewOnce(func(statemachine.ApplyResponse) {
 		lc.log.Info("Proposed feature enable", slog.Int64("term", term), slog.Any("features", features))
 	}, func(err error) {
 		lc.log.Error("Failed to propose feature enable", slog.Int64("term", term), slog.Any("features", features), slog.Any("error", err))
 	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+	return lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
 		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
 			Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{
@@ -1029,6 +1222,47 @@ func (lc *leaderController) proposeFeaturesEnable(ctx context.Context, features 
 			},
 		})
 	}, deferPropose)
+}
+
+// orphanedEphemeralsBatchSize caps how many ephemeral records of sessions that
+// are gone get deleted in a single write.
+const orphanedEphemeralsBatchSize = 1000
+
+// proposeOrphanedEphemeralsDeleteLocked deletes the ephemeral records whose
+// session is gone, read by the session manager on the new leader. The caller
+// must have held the leader write lock since they were read: the deletes are
+// appended ahead of every write of the term, so they apply on the state they
+// were read from, and need no version check. They are a cleanup, so a failure
+// doesn't fail the election: the next leader finds the records again.
+func (lc *leaderController) proposeOrphanedEphemeralsDeleteLocked(ctx context.Context, deletes []*proto.DeleteRequest) {
+	if len(deletes) == 0 {
+		return
+	}
+	term := lc.term.Load()
+	lc.log.Info(
+		"Deleting the ephemeral records of sessions that are gone",
+		slog.Int64("term", term),
+		slog.Int("count", len(deletes)),
+	)
+	onError := func(err error) {
+		lc.log.Warn(
+			"Failed to delete the ephemeral records of sessions that are gone",
+			slog.Int64("term", term),
+			slog.Any("error", err),
+		)
+	}
+	for start := 0; start < len(deletes); start += orphanedEphemeralsBatchSize {
+		request := &proto.WriteRequest{
+			Shard:   &lc.shardId,
+			Deletes: deletes[start:min(start+orphanedEphemeralsBatchSize, len(deletes))],
+		}
+		if err := lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+			return statemachine.NewWriteProposal(offset, request)
+		}, concurrent.NewOnce(func(statemachine.ApplyResponse) {}, onError)); err != nil {
+			onError(err)
+			return
+		}
+	}
 }
 
 func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
@@ -1048,32 +1282,49 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 }
 
 func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
-	timer := lc.writeLatencyHisto.Timer()
-	lc.Lock()
-	if err := checkStatusIsLeader(lc.status); err != nil {
-		lc.Unlock()
+	lc.RLock()
+	err := lc.proposeLocked(ctx, proposalSupplier, cb)
+	lc.RUnlock()
+	if err != nil {
 		cb.OnCompleteError(err)
-		return
+	}
+}
+
+// proposeLocked appends a proposal to the WAL. The caller must hold the
+// leader lock, the read or the write one: the leader state can't change until
+// the proposal is appended. A non-nil return means the proposal was not
+// appended and the callback will not be invoked.
+func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
+	// One proposal at a time: the entries must be appended in the order of
+	// their offsets, and their syncs requested in the same order, since the
+	// sync callbacks queue the entries for the database apply.
+	lc.proposeMu.Lock()
+	defer lc.proposeMu.Unlock()
+
+	timer := lc.writeLatencyHisto.Timer()
+	if err := checkStatusIsLeader(lc.status); err != nil {
+		return err
 	}
 	if lc.frozen.Load() {
 		// The shard is frozen for split cutover: reject new writes with a
 		// retryable error so clients re-resolve and route to the child shards
 		// once the cutover completes. Head must not advance while frozen.
-		lc.Unlock()
-		cb.OnCompleteError(constant.ErrNodeIsNotLeader)
-		return
+		return constant.ErrNodeIsNotLeader
 	}
 	newOffset := lc.quorumAckTracker.NextOffset()
 	walLog := lc.wal
 	tracker := lc.quorumAckTracker
+	termCtx := lc.termCtx
 	term := lc.term.Load()
 	proposal := proposalSupplier(newOffset)
 
-	lc.log.Debug("Appending proposal to WAL",
-		slog.Int64("term", term),
-		slog.Int64("offset", newOffset),
-		slog.Uint64("timestamp", proposal.GetTimestamp()),
-	)
+	if lc.log.Enabled(ctx, slog.LevelDebug) {
+		lc.log.Debug("Appending proposal to WAL",
+			slog.Int64("term", term),
+			slog.Int64("offset", newOffset),
+			slog.Uint64("timestamp", proposal.GetTimestamp()),
+		)
+	}
 
 	entryValue := proto.LogEntryValueFromVTPool()
 	defer entryValue.ReturnToVTPool()
@@ -1084,13 +1335,11 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	// This is safe: value is consumed synchronously by AppendAndSync below,
 	// on this goroutine (serialized into the wal before it returns, per the
 	// Wal interface contract), and the next proposal can only overwrite the
-	// buffer once this one releases the lock. The completion callbacks never
+	// buffer once this one releases proposeMu. The completion callbacks never
 	// reference value: the database apply uses the proposal object.
 	marshalBuf, value, err := proto.MarshalToBuffer(lc.marshalBuf, entryValue)
 	if err != nil {
-		lc.Unlock()
-		cb.OnCompleteError(err)
-		return
+		return err
 	}
 	lc.marshalBuf = marshalBuf
 
@@ -1106,7 +1355,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
 				defer timer.DoneCtx(ctx)
-				response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+				response, err := lc.applyCommitted(termCtx, walLog, proposal)
 				if err != nil {
 					lc.waitGroup.Done()
 					cb.OnCompleteError(err)
@@ -1125,19 +1374,103 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 			}))
 	}
 	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
-	lc.Unlock()
+	return nil
+}
+
+// applyCommitted applies a committed entry to the database while the node leads
+// the term. A failure that doesn't reject the request, like a storage error, is
+// retried until the entry is applied, as on the followers: moving on would
+// apply the next entries without it, and move the commit offset of the
+// database past it, so the database would miss it for good. The entries left
+// when the term ends are applied from the wal, by the next leader, and by this
+// node as a follower.
+func (lc *leaderController) applyCommitted(ctx context.Context, w wal.Wal, proposal statemachine.Proposal) (statemachine.ApplyResponse, error) {
+	if ctx.Err() != nil {
+		// An earlier entry could have failed to apply, and must come first
+		return statemachine.ApplyResponse{}, errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: the term ended before applying the entry %d", proposal.GetOffset())
+	}
+
+	response, err := proposal.Apply(lc.db, WrapperUpdateOperationCallback)
+	if !isApplied(err) {
+		response, err = lc.retryApply(ctx, w, proposal.GetOffset(), err)
+	}
+	if isApplied(err) {
+		lc.dbCommitOffset.Store(proposal.GetOffset())
+	}
+	return response, err
+}
+
+// isApplied reports whether the apply of an entry returning err is complete: a
+// rejected request has no effect, but its entry is applied.
+func isApplied(err error) bool {
+	return err == nil || errors.Is(err, database.ErrWriteRejected)
+}
+
+// retryApply applies again the entry at offset, which failed to apply with
+// cause, until it's applied or rejected, or the term ends.
+func (lc *leaderController) retryApply(ctx context.Context, w wal.Wal, offset int64, cause error) (statemachine.ApplyResponse, error) {
+	var response statemachine.ApplyResponse
+	err := cause
+	bo := time2.NewBackOff(ctx)
+	// backoff.Retry does it before use: the intervals are 0 until then
+	bo.Reset()
+	for !isApplied(err) {
+		retryAfter := bo.NextBackOff()
+		if retryAfter == backoff.Stop {
+			return statemachine.ApplyResponse{}, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err),
+				"oxia: the term ended before applying the entry %d", offset)
+		}
+		lc.log.Error(
+			"Failed to apply a committed entry, retrying",
+			slog.Int64("term", lc.term.Load()),
+			slog.Int64("offset", offset),
+			slog.Any("error", err),
+			slog.Duration("retry-after", retryAfter),
+		)
+		select {
+		case <-ctx.Done():
+		case <-time.After(retryAfter):
+			// The failed apply can have modified the request, like the key of
+			// a sequential put: apply the entry as it was appended to the wal
+			response, err = lc.applyFromWal(w, offset)
+		}
+	}
+	return response, err
+}
+
+func (lc *leaderController) applyFromWal(w wal.Wal, offset int64) (statemachine.ApplyResponse, error) {
+	r, err := w.NewReader(offset - 1)
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	defer r.Close()
+
+	if !r.HasNext() {
+		return statemachine.ApplyResponse{}, errors.Wrapf(wal.ErrEntryNotFound, "offset %d", offset)
+	}
+	entry, _, _, err := r.ReadNext()
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	proposal, err := statemachine.NewProposalFromLogEntry(entry)
+	if err != nil {
+		return statemachine.ApplyResponse{}, err
+	}
+	return proposal.Apply(lc.db, WrapperUpdateOperationCallback)
 }
 
 //nolint:revive
-func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.NotificationsRequest, cb concurrent.StreamCallback[*proto.NotificationBatch]) {
-	lc.Lock()
+func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.NotificationsRequest,
+	cb concurrent.StreamCallback[*proto.EncodedNotificationBatch]) {
+	lc.RLock()
 	if err := checkStatusIsLeader(lc.status); err != nil {
-		lc.Unlock()
+		lc.RUnlock()
 		cb.OnComplete(err)
 		return
 	}
 	if !lc.termOptions.NotificationsEnabled {
-		lc.Unlock()
+		lc.RUnlock()
 		cb.OnComplete(constant.ErrNotificationsNotEnabled)
 		return
 	}
@@ -1146,33 +1479,18 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 	var offsetExclusive int64
 	if req.StartOffsetExclusive != nil {
 		offsetExclusive = *req.StartOffsetExclusive
+		// The subscriber can't get the batches that the retention deleted: its
+		// cursor starts after them, which the first batch tells it
+		if trimmed := lc.db.TrimmedNotificationsOffset(); trimmed >= 0 && trimmed > offsetExclusive {
+			offsetExclusive = trimmed
+		}
 	} else {
 		if qat == nil {
-			lc.Unlock()
+			lc.RUnlock()
 			cb.OnComplete(constant.ErrInvalidStatus)
 			return
 		}
-		commitOffset := qat.CommitOffset()
-
-		// In order to ensure the client will positioned on a given offset, we need to send a first "dummy"
-		// notification. The client will wait for this first notification before making the notification
-		// channel available to the application
-		lc.log.Debug(
-			"Sending first dummy notification",
-			slog.Int64("term", lc.term.Load()),
-			slog.Int64("commit-offset", commitOffset),
-		)
-		if err := cb.OnNext(&proto.NotificationBatch{
-			Shard:         lc.shardId,
-			Offset:        commitOffset,
-			Timestamp:     0,
-			Notifications: nil,
-		}); err != nil {
-			lc.Unlock()
-			cb.OnComplete(err)
-			return
-		}
-		offsetExclusive = commitOffset
+		offsetExclusive = qat.CommitOffset()
 	}
 
 	lc.waitGroup.Go(func() {
@@ -1184,6 +1502,31 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 				"peer":  commonrpc.GetPeer(ctx),
 			},
 			func() {
+				// Confirms that the subscription was accepted and where its cursor
+				// sits: a rejection is only reported by the first Recv(), so without
+				// this an accepted subscription with nothing to send looks rejected.
+				// It goes out from here, rather than before the goroutine starts, to
+				// keep the leader lock off a stream write; later batches follow it
+				// from here too.
+				lc.log.Debug(
+					"Sending first dummy notification",
+					slog.Int64("term", lc.term.Load()),
+					slog.Int64("offset", offsetExclusive),
+				)
+				confirmation, err := (&proto.NotificationBatch{
+					Shard:         lc.shardId,
+					Offset:        offsetExclusive,
+					Timestamp:     0,
+					Notifications: nil,
+				}).MarshalVT()
+				if err == nil {
+					err = cb.OnNext(&proto.EncodedNotificationBatch{Offset: offsetExclusive, Data: confirmation})
+				}
+				if err != nil {
+					cb.OnComplete(err)
+					return
+				}
+
 				lc.log.Debug("Dispatch notifications", slog.Int64("term", lc.term.Load()), slog.Any("start-offset-include", offsetExclusive))
 				offset := offsetExclusive
 				for {
@@ -1197,17 +1540,21 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 					default:
 						notifications, err := lc.db.ReadNextNotifications(ctx, offset+1)
 						if err != nil {
+							// When the retention deleted batches the subscriber hasn't
+							// read, its next subscription tells it
 							cb.OnComplete(err)
 							return
 						}
-						lc.log.Debug(
-							"Got a new list of notification batches",
-							slog.Int64("term", lc.term.Load()),
-							slog.Int("list-size", len(notifications)),
-						)
+						if lc.log.Enabled(ctx, slog.LevelDebug) {
+							lc.log.Debug(
+								"Got a new list of notification batches",
+								slog.Int64("term", lc.term.Load()),
+								slog.Int("list-size", len(notifications)),
+							)
+						}
 						if len(notifications) > 0 {
 							for idx := range notifications {
-								notification := notifications[idx]
+								notification := &notifications[idx]
 								if err := cb.OnNext(notification); err != nil {
 									cb.OnComplete(err)
 									return
@@ -1220,13 +1567,18 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 			},
 		)
 	})
-	lc.Unlock()
+	lc.RUnlock()
 }
 
 func (lc *leaderController) Close() error {
 	lc.Lock()
-	defer lc.Unlock()
-	return lc.close()
+	err := lc.close()
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+
+	// close stopped the session manager: wait for its expiry scheduler only
+	// once the leader lock is released, see sessionManager.stop.
+	return multierr.Append(err, sessionManager.Close())
 }
 
 func (lc *leaderController) close() error {
@@ -1258,7 +1610,7 @@ func (lc *leaderController) close() error {
 	}
 	lc.followerAckOffsetGauges = map[string]metric.Gauge{}
 
-	err = lc.sessionManager.Close()
+	lc.sessionManager.stop()
 
 	if lc.wal != nil {
 		err = multierr.Append(err, lc.wal.Close())
@@ -1290,14 +1642,44 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
 
+// HeadEntryId returns the head entry that a node reports when it gets fenced
+// with a new term: the leader election picks the node with the highest one, by
+// term and then by offset. It's the last entry of the wal, except for a node
+// seeded from a snapshot, whose wal is empty while its database holds the
+// entries up to the snapshot's commit offset. The term of those entries is not
+// known: the node reports the offset with an invalid term, which ranks it above
+// the nodes that hold fewer entries, or none, and below every node with entries
+// in its wal.
+func HeadEntryId(walObject wal.Wal, db database.DB) (*proto.EntryId, error) {
+	headEntryId, err := getLastEntryIdInWal(walObject)
+	if err != nil || headEntryId.Offset != wal.InvalidOffset {
+		return headEntryId, err
+	}
+	commitOffset, err := db.ReadCommitOffset()
+	switch {
+	case err != nil:
+		return nil, err
+	case commitOffset == wal.InvalidOffset:
+		return headEntryId, nil
+	}
+	return &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}, nil
+}
+
+// CommitOffset is the offset of the last entry applied to the database, rather
+// than the commit offset of the quorum: the WAL trimming must keep the entries
+// after it, which get applied from the WAL when their apply fails, or once the
+// term ends.
 func (lc *leaderController) CommitOffset() int64 {
 	// WAL trimming can call back into this provider while leader close holds the
 	// leader lock and waits for WAL close. Do not take the leader lock here.
-	qat := lc.quorumAckTracker
-	if qat != nil {
-		return qat.CommitOffset()
-	}
-	return wal.InvalidOffset
+	return lc.dbCommitOffset.Load()
+}
+
+// FlushDatabase is called by the WAL trimming as well, and doesn't take the
+// leader lock either: the database is opened before the WAL, and closed after
+// it.
+func (lc *leaderController) FlushDatabase() error {
+	return lc.db.Flush()
 }
 
 func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
@@ -1324,12 +1706,24 @@ func (lc *leaderController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStat
 		HeadOffset:   headOffset,
 		CommitOffset: commitOffset,
 		ShardStats:   shardStats,
+		TermFeatures: &proto.TermFeatures{Features: lc.termOptions.Features},
 	}, nil
 }
 
 func (lc *leaderController) DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	lc.Lock()
-	defer lc.Unlock()
+	res, err := lc.deleteShard(request)
+	sessionManager := lc.sessionManager
+	lc.Unlock()
+
+	// deleteShard leaves the controller closed, and so the session manager
+	// stopped: wait for its expiry scheduler only once the leader lock is
+	// released, see sessionManager.stop.
+	return res, multierr.Append(err, sessionManager.Close())
+}
+
+// deleteShard must be called while holding the leader lock.
+func (lc *leaderController) deleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	if lc.closed {
 		return nil, constant.ErrResourceUnavailable
 	}
@@ -1364,15 +1758,43 @@ func (lc *leaderController) DeleteShard(request *proto.DeleteShardRequest) (*pro
 }
 
 func (lc *leaderController) CreateSession(request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
-	return lc.sessionManager.CreateSession(request)
+	sessionManager, err := lc.currentSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	return sessionManager.CreateSession(request)
 }
 
 func (lc *leaderController) KeepAlive(sessionId int64) error {
-	return lc.sessionManager.KeepAlive(sessionId)
+	sessionManager, err := lc.currentSessionManager()
+	if err != nil {
+		return err
+	}
+	return sessionManager.KeepAlive(sessionId)
 }
 
 func (lc *leaderController) CloseSession(request *proto.CloseSessionRequest) (*proto.CloseSessionResponse, error) {
-	return lc.sessionManager.CloseSession(request)
+	sessionManager, err := lc.currentSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	return sessionManager.CloseSession(request)
+}
+
+// currentSessionManager returns the session manager of the current term, which
+// becomeLeader replaces while holding the leader lock. The session calls use it
+// once the lock is released: the session writes take the leader lock, see
+// writeBlock. A node that doesn't lead the shard fails them with
+// ErrNodeIsNotLeader, and so does a manager that a new term stopped after the
+// call got it: the leader of the shard restores the sessions, and the clients
+// retry the calls there.
+func (lc *leaderController) currentSessionManager() (SessionManager, error) {
+	lc.RLock()
+	defer lc.RUnlock()
+	if err := checkStatusIsLeader(lc.status); err != nil {
+		return nil, err
+	}
+	return lc.sessionManager, nil
 }
 
 func (lc *leaderController) Checksum() crc.Checksum {

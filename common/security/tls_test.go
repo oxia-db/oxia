@@ -15,6 +15,7 @@
 package security
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -22,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -172,4 +174,88 @@ func TestMakeCommonConfig_ValidVersions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint16(libtls.VersionTLS12), conf.MinVersion)
 	assert.Equal(t, uint16(libtls.VersionTLS13), conf.MaxVersion)
+}
+
+func TestTryIntoServerTLSConf_ClientAuthTrust(t *testing.T) {
+	dir := t.TempDir()
+	certPEM, keyPEM := generateSelfSignedCert(t, "server")
+	certPath := writeTempFile(t, dir, "cert.pem", certPEM)
+	keyPath := writeTempFile(t, dir, "key.pem", keyPEM)
+	caPEM, _ := generateSelfSignedCert(t, "ClientCA")
+	caPath := writeTempFile(t, dir, "ca.pem", caPEM)
+
+	var logOutput bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	disabled := false
+	tests := []struct {
+		name           string
+		enabled        *bool
+		clientAuth     bool
+		trustedCaFile  string
+		wantClientAuth libtls.ClientAuthType
+		wantWarning    bool
+	}{
+		{
+			name:           "required client authentication with system roots",
+			clientAuth:     true,
+			wantClientAuth: libtls.RequireAndVerifyClientCert,
+			wantWarning:    true,
+		},
+		{
+			name:           "required client authentication with explicit CA",
+			clientAuth:     true,
+			trustedCaFile:  caPath,
+			wantClientAuth: libtls.RequireAndVerifyClientCert,
+		},
+		{
+			name:           "no client authentication",
+			wantClientAuth: libtls.NoClientCert,
+		},
+		{
+			name:           "optional client authentication with explicit CA",
+			trustedCaFile:  caPath,
+			wantClientAuth: libtls.VerifyClientCertIfGiven,
+		},
+		{
+			name:       "TLS disabled",
+			enabled:    &disabled,
+			clientAuth: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logOutput.Reset()
+			opts := &TLSOptions{
+				Enabled:       tt.enabled,
+				CertFile:      certPath,
+				KeyFile:       keyPath,
+				TrustedCaFile: tt.trustedCaFile,
+				ClientAuth:    tt.clientAuth,
+			}
+			conf, err := opts.TryIntoServerTLSConf()
+			require.NoError(t, err)
+			if tt.wantWarning {
+				assert.Contains(t, logOutput.String(), "level=WARN")
+				assert.Contains(t, logOutput.String(), "using system roots")
+				assert.Contains(t, logOutput.String(), "trustedCaFile")
+			} else {
+				assert.Empty(t, logOutput.String())
+			}
+			if !opts.IsEnabled() {
+				assert.Nil(t, conf)
+				return
+			}
+			require.NotNil(t, conf)
+			assert.Equal(t, tt.wantClientAuth, conf.ClientAuth)
+			if tt.trustedCaFile == "" {
+				assert.Nil(t, conf.ClientCAs)
+			} else {
+				require.NotNil(t, conf.ClientCAs)
+				assert.Len(t, conf.ClientCAs.Subjects(), 1) //nolint:staticcheck
+			}
+		})
+	}
 }

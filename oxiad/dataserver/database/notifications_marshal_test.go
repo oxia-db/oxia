@@ -26,7 +26,7 @@ import (
 )
 
 func notificationsFromMap(shard, offset int64, timestamp uint64, byKey map[string]*proto.Notification) *Notifications {
-	n := newNotifications(shard, offset, timestamp)
+	n := newNotifications(shard, offset, timestamp, len(byKey))
 	for k, v := range byKey {
 		n.add(k, v)
 	}
@@ -118,7 +118,7 @@ func TestNotificationBatchGoldenBytes(t *testing.T) {
 // put followed by a delete): the last operation must win, matching the
 // semantics of the map field this replaced.
 func TestNotificationsSealDeduplicates(t *testing.T) {
-	n := newNotifications(1, 5, 100)
+	n := newNotifications(1, 5, 100, 0)
 	n.Modified("a", 7, 0)
 	n.Modified("b", 8, 1)
 	n.Deleted("a")
@@ -131,7 +131,7 @@ func TestNotificationsSealDeduplicates(t *testing.T) {
 	assert.Equal(t, proto.NotificationType_KEY_MODIFIED, sealed.Notifications[1].Value.Type)
 
 	// The bytes equal a batch where only the surviving operations happened
-	direct := newNotifications(1, 5, 100)
+	direct := newNotifications(1, 5, 100, 0)
 	direct.Deleted("a")
 	direct.Modified("b", 8, 1)
 	assert.Equal(t, marshalSealed(t, direct), marshalSealed(t, n))

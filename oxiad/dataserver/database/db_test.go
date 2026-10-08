@@ -16,11 +16,15 @@ package database
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
@@ -284,6 +288,36 @@ func TestDBSameKeyMutations(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDBGetClientIdentity(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "k",
+		Value:            []byte("v"),
+		PartitionKey:     pb.String("pk"),
+		ClientIdentity:   pb.String("client-1"),
+		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "s"}},
+	}}}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
+
+	withValue, err := db.Get(&proto.GetRequest{Key: "k", IncludeValue: true})
+	assert.NoError(t, err)
+	assert.Equal(t, "v", string(withValue.Value))
+	assert.Equal(t, "client-1", withValue.Version.GetClientIdentity())
+
+	withoutValue, err := db.Get(&proto.GetRequest{Key: "k"})
+	assert.NoError(t, err)
+	assert.Nil(t, withoutValue.Value)
+	assert.Equal(t, "client-1", withoutValue.Version.GetClientIdentity())
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDBList(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -425,6 +459,266 @@ func TestDBDeleteRange(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A delete range that fails to apply must close its iterator: a leaked one
+// keeps the sstables it read referenced, and closing the DB then panics.
+func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+
+	// UpdateTerm flushes, so the delete range scan reads from an sstable
+	require.NoError(t, db.UpdateTerm(1, TermOptions{NotificationsEnabled: true}))
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{
+			Key:   "a",
+			Value: []byte("a"),
+		}, {
+			Key:   "b",
+			Value: []byte("b"),
+		}},
+	}, 0, 0, NoOpCallback)
+	require.NoError(t, err)
+
+	// Without an end, the range reaches the internal keys, and the notifications
+	// value is not a storage entry
+	_, err = db.ProcessWrite(&proto.WriteRequest{
+		DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+		}},
+	}, 1, 0, NoOpCallback)
+	assert.ErrorContains(t, err, "failed to Deserialize storage entry")
+
+	assert.NotPanics(t, func() {
+		assert.NoError(t, db.Close())
+	})
+	assert.NoError(t, factory.Close())
+}
+
+// A delete range whose start sorts after its end deletes nothing. Its scan used
+// to trip a Pebble invariant, which exits the process in the race and
+// invariants builds.
+func TestDBDeleteRangeInvertedRange(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		keySorting proto.KeySortingType
+		start, end string
+	}{
+		{"natural", proto.KeySortingType_NATURAL, "c", "a"},
+		{"hierarchical", proto.KeySortingType_HIERARCHICAL, "c", "a"},
+		// The empty key sorts first with the hierarchical encoder
+		{"hierarchical empty end", proto.KeySortingType_HIERARCHICAL, "b", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, test.keySorting, 0, time.SystemClock)
+			require.NoError(t, err)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{
+				Puts: []*proto.PutRequest{{Key: "a"}, {Key: "b"}, {Key: "c"}},
+			}, 0, 0, NoOpCallback)
+			require.NoError(t, err)
+
+			res, err := db.ProcessWrite(&proto.WriteRequest{
+				DeleteRanges: []*proto.DeleteRangeRequest{{
+					StartInclusive: test.start,
+					EndExclusive:   test.end,
+				}},
+			}, 1, 0, NoOpCallback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+			assert.Equal(t, []string{"a", "b", "c"}, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// A write request that can't be applied is rejected: it has no effect, and
+// only its offset is recorded, so that its log entry counts as applied. The
+// database must stay the same as on a replica that dropped the request without
+// recording it, like a leader that answered the client with the error.
+func TestDB_RejectedWrite(t *testing.T) {
+	setup := &proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:   "a",
+		Value: []byte("a"),
+	}, {
+		Key:              "s",
+		Value:            []byte("s"),
+		PartitionKey:     pb.String("s"),
+		SequenceKeyDelta: []uint64{1, 1},
+	}, {
+		Key:   "t-",
+		Value: []byte("t"),
+	}}}
+	next := &proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:   "b",
+		Value: []byte("b"),
+	}}}
+
+	for _, test := range []struct {
+		name     string
+		rejected *proto.WriteRequest
+		cause    error
+	}{{
+		name: "missing-sequence-deltas",
+		rejected: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("s"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: []uint64{1},
+		}}},
+		cause: ErrMissingSequenceDeltas,
+	}, {
+		// The last key of the prefix is "t-"
+		name: "invalid-sequence-key",
+		rejected: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "t",
+			Value:            []byte("t"),
+			PartitionKey:     pb.String("t"),
+			SequenceKeyDelta: []uint64{1},
+		}}},
+		cause: ErrInvalidSequenceKey,
+	}, {
+		// Without an end, the range reaches the notification records
+		name: "delete-range-without-end",
+		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+		}}},
+		cause: ErrNotificationRecord,
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			newDB := func() DB {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, factory.Close()) })
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, db.Close()) })
+				db.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+				return db
+			}
+			rejecting, dropping := newDB(), newDB()
+
+			for _, db := range []DB{rejecting, dropping} {
+				_, err := db.ProcessWrite(pb.Clone(setup).(*proto.WriteRequest), 0, 100, NoOpCallback)
+				require.NoError(t, err)
+			}
+			checksum := rejecting.ReadChecksum()
+
+			_, err := rejecting.ProcessWrite(test.rejected, 1, 101, NoOpCallback)
+			assert.ErrorIs(t, err, ErrWriteRejected)
+			assert.ErrorIs(t, err, test.cause)
+			commitOffset, err := rejecting.ReadCommitOffset()
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, commitOffset)
+			assert.Equal(t, checksum, rejecting.ReadChecksum())
+
+			for _, db := range []DB{rejecting, dropping} {
+				_, err := db.ProcessWrite(pb.Clone(next).(*proto.WriteRequest), 2, 102, NoOpCallback)
+				require.NoError(t, err)
+			}
+			assert.Equal(t, dropping.ReadChecksum(), rejecting.ReadChecksum())
+			assert.Equal(t, dumpKV(t, dropping), dumpKV(t, rejecting))
+		})
+	}
+}
+
+// A failure that is not caused by the request leaves the request to be
+// retried, with nothing recorded: a storage error, or a value that fails to
+// deserialize without being a notification record, i.e. a damaged one.
+func TestDB_FailedWriteIsNotRejected(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		request  *proto.WriteRequest
+		callback UpdateOperationCallback
+		cause    string
+	}{{
+		name: "storage-failure",
+		request: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:   "b",
+			Value: []byte("b"),
+		}}},
+		callback: &failingCallback{err: errors.New("storage failure")},
+		cause:    "storage failure",
+	}, {
+		name: "put-over-damaged-value",
+		request: &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:   "x",
+			Value: []byte("x"),
+		}}},
+		callback: NoOpCallback,
+		cause:    "failed to Deserialize storage entry",
+	}, {
+		name: "delete-range-over-damaged-value",
+		request: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
+			StartInclusive: "a",
+			EndExclusive:   "z",
+		}}},
+		callback: NoOpCallback,
+		cause:    "failed to Deserialize storage entry",
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			require.NoError(t, err)
+
+			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+				Key:   "a",
+				Value: []byte("a"),
+			}}}, 0, 0, NoOpCallback)
+			require.NoError(t, err)
+
+			// A value that is not a storage entry, at a regular key
+			batch := db.RawKV().NewWriteBatch()
+			require.NoError(t, batch.Put("x", []byte{0x08, 0x01}))
+			require.NoError(t, batch.Commit())
+			require.NoError(t, batch.Close())
+
+			_, err = db.ProcessWrite(test.request, 1, 0, test.callback)
+			assert.ErrorContains(t, err, test.cause)
+			assert.NotErrorIs(t, err, ErrWriteRejected)
+
+			commitOffset, err := db.ReadCommitOffset()
+			require.NoError(t, err)
+			assert.EqualValues(t, 0, commitOffset)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+type failingCallback struct {
+	noopCallback
+	err error
+}
+
+func (c *failingCallback) OnPut(kvstore.WriteBatch, *Notifications, *proto.PutRequest, *proto.StorageEntry, feature.Checker) (proto.Status, error) {
+	return proto.Status_OK, c.err
+}
+
+// dumpKV returns every key of the database, internal ones included, with its
+// raw value.
+func dumpKV(t *testing.T, db DB) map[string]string {
+	t.Helper()
+	it, err := db.RawKV().RangeScan("", "", kvstore.ShowInternalKeys)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, it.Close()) }()
+
+	kvs := map[string]string{}
+	for ; it.Valid(); it.Next() {
+		value, err := it.Value()
+		require.NoError(t, err)
+		kvs[it.Key()] = string(value)
+	}
+	return kvs
+}
+
 func TestDB_ReadCommitOffset(t *testing.T) {
 	offset := int64(13)
 
@@ -460,6 +754,13 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 	for _, enabledFeature := range []proto.Feature{
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+		proto.Feature_FEATURE_ORDERED_WRITES,
+		proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
+		proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
+		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
+		proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
+		proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
+		proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED,
 	} {
 		t.Run(enabledFeature.String(), func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -487,6 +788,85 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 			restoredCommitOffset, err := db.ReadCommitOffset()
 			assert.NoError(t, err)
 			assert.Equal(t, commitOffset, restoredCommitOffset)
+
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+func TestDB_OrderedWrites(t *testing.T) {
+	// The client issued: put(k, v1), delete(k), put(k, v2) expecting k to
+	// not exist, put(r/1), delete-range(r/), put(r/2)
+	newRequest := func(withOpIndex bool) *proto.WriteRequest {
+		opIndex := func(i uint32) uint32 {
+			if withOpIndex {
+				return i
+			}
+			return 0
+		}
+		return &proto.WriteRequest{
+			Puts: []*proto.PutRequest{
+				{Key: "k", Value: []byte("v1"), OpIndex: opIndex(0)},
+				{Key: "k", Value: []byte("v2"), ExpectedVersionId: pb.Int64(-1), OpIndex: opIndex(2)},
+				{Key: "r/1", Value: []byte("r1"), OpIndex: opIndex(3)},
+				{Key: "r/2", Value: []byte("r2"), OpIndex: opIndex(5)},
+			},
+			Deletes: []*proto.DeleteRequest{
+				{Key: "k", OpIndex: opIndex(1)},
+			},
+			DeleteRanges: []*proto.DeleteRangeRequest{
+				{StartInclusive: "r/", EndExclusive: "r/~", OpIndex: opIndex(4)},
+			},
+		}
+	}
+
+	legacyPutStatuses := []proto.Status{proto.Status_OK, proto.Status_UNEXPECTED_VERSION_ID, proto.Status_OK, proto.Status_OK}
+	for _, test := range []struct {
+		name              string
+		enabled           bool
+		withOpIndex       bool
+		expectPutStatuses []proto.Status
+		expectValues      map[string]string // Keys not listed must not exist
+	}{
+		{"feature disabled", false, true, legacyPutStatuses, map[string]string{}},
+		{"no op index", true, false, legacyPutStatuses, map[string]string{}},
+		{"ordered", true, true,
+			[]proto.Status{proto.Status_OK, proto.Status_OK, proto.Status_OK, proto.Status_OK},
+			map[string]string{"k": "v2", "r/2": "r2"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			assert.NoError(t, err)
+			if test.enabled {
+				db.EnableFeature(proto.Feature_FEATURE_ORDERED_WRITES)
+			}
+
+			res, err := db.ProcessWrite(newRequest(test.withOpIndex), 0, 0, NoOpCallback)
+			assert.NoError(t, err)
+
+			// The responses stay grouped by type, in the order of the requests
+			assert.Len(t, res.Puts, len(test.expectPutStatuses))
+			for i, status := range test.expectPutStatuses {
+				assert.Equal(t, status, res.Puts[i].Status, "put %d", i)
+			}
+			assert.Len(t, res.Deletes, 1)
+			assert.Equal(t, proto.Status_OK, res.Deletes[0].Status)
+			assert.Len(t, res.DeleteRanges, 1)
+			assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
+
+			for _, key := range []string{"k", "r/1", "r/2"} {
+				getRes, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+				assert.NoError(t, err)
+				if value, ok := test.expectValues[key]; ok {
+					assert.Equal(t, proto.Status_OK, getRes.Status, key)
+					assert.Equal(t, value, string(getRes.Value), key)
+				} else {
+					assert.Equal(t, proto.Status_KEY_NOT_FOUND, getRes.Status, key)
+				}
+			}
 
 			assert.NoError(t, db.Close())
 			assert.NoError(t, factory.Close())
@@ -596,6 +976,91 @@ func TestDB_RecoverFeatureFlagsRejectsMalformedKeys(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDB_RecoverFeatureFlagsRejectsUnsupportedFeature(t *testing.T) {
+	const unknownFeature = proto.Feature(999)
+
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	// Plant a flag for a feature id this binary does not implement, as an
+	// upgraded leader would have written before this binary was rolled back.
+	batch := testDB.(*db).kv.NewWriteBatch()
+	err = testDB.(*db).addASCIILong(featureFlagKey(unknownFeature), int64(unknownFeature), batch, 0)
+	assert.NoError(t, err)
+	assert.NoError(t, batch.Commit())
+	assert.NoError(t, batch.Close())
+	assert.NoError(t, testDB.Close())
+
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.Nil(t, testDB)
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+
+	// A store leaked by the failed open would still hold the Pebble lock and
+	// fail the re-open.
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	assert.NoError(t, kv.Close())
+
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_ProcessControlRequestRejectsUnsupportedFeature(t *testing.T) {
+	const unknownFeature = proto.Feature(999)
+
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	_, err = testDB.ProcessControlRequest(&proto.ControlRequest{
+		Value: &proto.ControlRequest_FeatureEnable{
+			FeatureEnable: &proto.FeatureEnableRequest{
+				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, unknownFeature},
+			},
+		},
+	}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
+	assert.False(t, testDB.IsFeatureEnabled(unknownFeature))
+	assert.False(t, testDB.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
+	assert.Empty(t, testDB.EnabledFeatures())
+
+	// The rejected flags must not have been persisted either.
+	assert.NoError(t, testDB.Close())
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.Empty(t, testDB.EnabledFeatures())
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDb_UpdateTermPinnedFeatures(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	options := ToDbOption(&proto.NewTermOptions{
+		EnableNotifications: true,
+		Features:            []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
+	})
+	assert.NoError(t, testDB.UpdateTerm(4, options))
+	assert.NoError(t, testDB.Close())
+
+	// Reopen and verify the pinned feature set survives restarts.
+	testDB, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	term, restored, err := testDB.ReadTerm()
+	assert.NoError(t, err)
+	assert.EqualValues(t, 4, term)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, restored.Features)
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDb_UpdateTerm(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
@@ -625,6 +1090,27 @@ func TestDb_UpdateTerm(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, 1, term)
 
+	assert.NoError(t, factory.Close())
+}
+
+func TestDb_SetSplitFilter(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.Nil(t, db.SplitFilter())
+
+	filter := &SplitFilter{MinHash: 100, MaxHash: 200, ParentTerm: 3}
+	assert.NoError(t, db.SetSplitFilter(filter))
+	assert.Equal(t, filter, db.SplitFilter())
+	assert.NoError(t, db.Close())
+
+	// Reopen and verify the filter is maintained
+	db, err = NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	assert.Equal(t, filter, db.SplitFilter())
+
+	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
 }
 
@@ -944,26 +1430,67 @@ func TestDB_SequentialKeys(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 20, 18, 15), resp.GetPuts()[0].GetKey())
 }
 
+// A sequential key is the last key of the sequence plus the delta. When
+// reading the last key fails, the put must fail: taking the sequence for empty
+// would restart it and overwrite its first keys.
+func TestDB_SequentialKeysReadFailure(t *testing.T) {
+	options := kvstore.NewFactoryOptionsForTest(t)
+	factory, err := kvstore.NewPebbleKVFactory(options)
+	require.NoError(t, err)
+	defer factory.Close()
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// The keys of the sequence go into an sstable of their own, which the
+	// notifications trimmer doesn't read
+	for _, key := range []string{fmt.Sprintf("a-%020d", 1), fmt.Sprintf("a-%020d", 2)} {
+		putStorageEntry(t, db.RawKV(), key, pb.String("x"))
+	}
+	require.NoError(t, db.RawKV().Flush())
+
+	// Make the sstable unreadable, so that reading it fails with an I/O error.
+	// Pebble doesn't open a table it just flushed: the put below is the first
+	// to open it.
+	ssts, err := filepath.Glob(filepath.Join(options.DataDir, constant.DefaultNamespace, "shard-1", "*.sst"))
+	require.NoError(t, err)
+	require.Len(t, ssts, 1)
+	require.NoError(t, os.Chmod(ssts[0], 0))
+	t.Cleanup(func() { _ = os.Chmod(ssts[0], 0600) })
+	if f, err := os.Open(ssts[0]); err == nil {
+		assert.NoError(t, f.Close())
+		t.Skip("the sstable is still readable, as when running as root")
+	}
+
+	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "a",
+		Value:            []byte("3"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, os.ErrPermission, "response: %v", resp)
+}
+
 func TestDB_SequentialKeysOverflow(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
 	assert.NoError(t, err)
 
-	// A delta that lands exactly on the max sequence value is still fine.
-	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+	// A delta that lands exactly on the max sequence value overflows too: the
+	// last key of a sequence is looked up below "<prefix>-<max>", so the next
+	// put would restart the sequence below it.
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "a",
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence},
 	}}}, 0, 0, NoOpCallback)
-	assert.NoError(t, err)
-	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
-	assert.Equal(t, fmt.Sprintf("a-%020d", maxSequence), resp.GetPuts()[0].GetKey())
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
 
 	// Seed a small sequence, then a huge delta that would wrap uint64 back onto
 	// an earlier key must be rejected instead of silently overwriting it.
-	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "b",
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
@@ -980,7 +1507,15 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 	}}}, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, ErrSequenceOverflow)
 
-	// The rejected put left the tail untouched: a normal delta keeps advancing
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "b",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{maxSequence - 5},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	// The rejected puts left the tail untouched: a normal delta keeps advancing
 	// from 5, so no earlier entry was clobbered.
 	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "b",
@@ -1008,6 +1543,180 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		SequenceKeyDelta: []uint64{1, maxSequence},
 	}}}, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "c",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1, maxSequence - 4},
+	}}}, 0, 0, NoOpCallback)
+	assert.ErrorIs(t, err, ErrSequenceOverflow)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestDB_SequenceTailSharedPrefix(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		for _, test := range []struct {
+			enabled bool
+			keys    []string
+		}{
+			// Without the feature, the puts continue the sequences from the plain
+			// keys, like on the versions that take them as their last keys, so
+			// that the replicas apply the same keys. "users" can't continue from
+			// "users+eu-west": its put is rejected.
+			{false, []string{"orders-00000000000000002026", "orders-00000000000000002027", ""}},
+			{true, []string{"orders-00000000000000000001", "orders-00000000000000000002",
+				"users-00000000000000000001"}},
+		} {
+			t.Run(fmt.Sprintf("%v/enabled=%v", keySorting, test.enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 0, time.SystemClock)
+				require.NoError(t, err)
+				if test.enabled {
+					db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR)
+				}
+
+				// Plain keys made of the prefix of an empty sequence, then a byte
+				// that sorts before "-": they are the last keys below the sequence
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+					{Key: "orders+archive-2025"},
+					{Key: "users+eu-west"},
+				}}, 0, 0, NoOpCallback)
+				require.NoError(t, err)
+
+				var keys []string
+				for _, prefix := range []string{"orders", "orders", "users"} {
+					res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: prefix, PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
+					}}, 0, 0, NoOpCallback)
+					if err != nil {
+						assert.ErrorIs(t, err, ErrInvalidSequenceKey)
+						keys = append(keys, "")
+					} else {
+						keys = append(keys, res.Puts[0].GetKey())
+					}
+				}
+				assert.Equal(t, test.keys, keys)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+func TestDB_SequenceKeyValidation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		put         *proto.PutRequest
+		expectedErr error
+	}{
+		{"missing partition key", &proto.PutRequest{Key: "a", SequenceKeyDelta: []uint64{1}}, ErrMissingPartitionKey},
+		{"first delta is zero", &proto.PutRequest{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{0}},
+			ErrSequenceDeltaIsZero},
+		{"overflow", &proto.PutRequest{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{2}},
+			ErrSequenceOverflow},
+		{"not a sequence key", &proto.PutRequest{Key: "plain", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
+			ErrInvalidSequenceKey},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			assert.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+			assert.NoError(t, err)
+
+			// A sequence close to the max value, and a key with the prefix of a
+			// sequence that is not part of it
+			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+				{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{maxSequence - 1}},
+				{Key: "plain-"},
+			}}, 0, 0, NoOpCallback)
+			assert.NoError(t, err)
+			keys := keyIteratorToSlice(db.List(&proto.ListRequest{}))
+
+			sw, err := db.GetSequenceUpdates(test.put.Key)
+			assert.NoError(t, err)
+			select { // Drop the current last key of the sequence
+			case <-sw.Ch():
+			default:
+			}
+
+			// Without the feature, the whole write request is rejected
+			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+				test.put,
+				{Key: "valid", Value: []byte("0")},
+			}}, 1, 0, NoOpCallback)
+			assert.ErrorIs(t, err, ErrWriteRejected)
+			assert.ErrorIs(t, err, test.expectedErr)
+			assert.Equal(t, keys, keyIteratorToSlice(db.List(&proto.ListRequest{})))
+
+			// With the feature, only the put is rejected, and the rest of the
+			// request applies
+			db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+			res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+				test.put,
+				{Key: "valid", Value: []byte("0")},
+			}}, 2, 0, NoOpCallback)
+			require.NoError(t, err)
+			assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.Puts[0].Status)
+			assert.Nil(t, res.Puts[0].Key)
+			assert.Equal(t, proto.Status_OK, res.Puts[1].Status)
+			commitOffset, err := db.ReadCommitOffset()
+			assert.NoError(t, err)
+			assert.EqualValues(t, 2, commitOffset)
+
+			assert.Equal(t, append(keys, "valid"), keyIteratorToSlice(db.List(&proto.ListRequest{})))
+			assert.Empty(t, sw.Ch())
+
+			assert.NoError(t, sw.Close())
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
+// With FEATURE_SEQUENCE_KEY_VALIDATION, a part of the sequence without a delta
+// in the put keeps its value.
+func TestDB_SequenceKeyMissingDeltas(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	put := func(offset int64, deltas ...uint64) (string, error) {
+		res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("0"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: deltas,
+		}}}, offset, 0, NoOpCallback)
+		if err != nil {
+			return "", err
+		}
+		assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
+		return res.Puts[0].GetKey(), nil
+	}
+
+	key, err := put(0, 1, 2, 3)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 1, 2, 3), key)
+
+	// Without the feature, the whole write request is rejected
+	_, err = put(1, 1)
+	assert.ErrorIs(t, err, ErrWriteRejected)
+	assert.ErrorIs(t, err, ErrMissingSequenceDeltas)
+
+	db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
+	key, err = put(2, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 2, 2, 3), key)
+
+	key, err = put(3, 5, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 7, 3, 3), key)
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
@@ -1154,25 +1863,16 @@ func (FailureCallback) ValidatePut(req *proto.PutRequest, features feature.Check
 	return proto.Status_OK
 }
 
-func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry) (proto.Status, error) {
+func (f FailureCallback) OnPut(_ kvstore.WriteBatch, _ *Notifications, req *proto.PutRequest, _ *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
 	if req.Key == FailureCallbackKey {
 		return proto.Status_SESSION_DOES_NOT_EXIST, errors.New("failure injection")
 	}
 	return proto.Status_OK, nil
 }
-func (f FailureCallback) OnDelete(_ kvstore.WriteBatch, _ *Notifications, key string) error {
+func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry, _ feature.Checker) error {
 	if key == FailureCallbackKey {
 		return errors.New("failure injection")
 	}
-	return nil
-}
-func (f FailureCallback) OnDeleteWithEntry(_ kvstore.WriteBatch, _ *Notifications, key string, _ *proto.StorageEntry) error {
-	if key == FailureCallbackKey {
-		return errors.New("failure injection")
-	}
-	return nil
-}
-func (f FailureCallback) OnDeleteRange(kvstore.WriteBatch, *Notifications, string, string) error {
 	return nil
 }
 
@@ -1290,6 +1990,58 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	n2 = <-sw2.Ch()
 	assert.Equal(t, fmt.Sprintf("a-%020d", 18), n2)
 
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
+// The sequence waiters are only notified of the keys of a committed batch:
+// neither a rejected sequential put nor a request rejected after its
+// sequential put leaves a key behind.
+func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+
+	sw, err := db.GetSequenceUpdates("a")
+	require.NoError(t, err)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key:              "a",
+		Value:            []byte("0"),
+		PartitionKey:     pb.String("x"),
+		SequenceKeyDelta: []uint64{1, 1},
+	}}}, 0, 0, NoOpCallback)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 1, 1), <-sw.Ch())
+
+	for offset, request := range []*proto.WriteRequest{{
+		// Fewer deltas than the parts of the sequence
+		Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("1"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: []uint64{1},
+		}},
+	}, {
+		Puts: []*proto.PutRequest{{
+			Key:              "a",
+			Value:            []byte("1"),
+			PartitionKey:     pb.String("x"),
+			SequenceKeyDelta: []uint64{1, 1},
+		}, {
+			// No partition key
+			Key:              "b",
+			Value:            []byte("1"),
+			SequenceKeyDelta: []uint64{1},
+		}},
+	}} {
+		_, err = db.ProcessWrite(request, int64(offset)+1, 0, NoOpCallback)
+		assert.ErrorIs(t, err, ErrWriteRejected)
+		assert.Empty(t, sw.Ch())
+	}
+
+	assert.NoError(t, sw.Close())
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
 }
@@ -1678,4 +2430,59 @@ func TestDeserializeMetadata(t *testing.T) {
 	assert.Equal(t, 1, len(se.SecondaryIndexes))
 	assert.Equal(t, "idx", se.SecondaryIndexes[0].IndexName)
 	assert.Equal(t, "sk", se.SecondaryIndexes[0].SecondaryKey)
+}
+
+// A record can fail to deserialize after its value: the entry must not keep the
+// value, which aliases the source buffer, as the pool keeps the Value capacity.
+func TestDeserializeMetadataFailureDropsValue(t *testing.T) {
+	buf, err := (&proto.StorageEntry{Value: []byte("payload-bytes")}).MarshalVT()
+	assert.NoError(t, err)
+	// Then the version id, field 2, with the wire type of a length-delimited field
+	buf = append(buf, 2<<3|2, 0)
+
+	se := proto.StorageEntryFromVTPool()
+	defer se.ReturnToVTPool()
+	assert.ErrorContains(t, DeserializeMetadata(buf, se), "wrong wireType")
+	assert.Nil(t, se.Value)
+}
+
+// applyPut must detach the request's value from the pooled entry before
+// returning it: ResetVT keeps the Value capacity, and a pooled Deserialize, like
+// the split filter's, appends into it. In the zero-copy apply of a WAL entry,
+// that capacity runs to the end of the entry payload, which the other
+// operations of the entry still alias.
+func TestApplyPutDetachesRequestValue(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	testDB, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+	d := testDB.(*db)
+
+	stored, err := (&proto.StorageEntry{Value: []byte("overwritten")}).MarshalVT()
+	assert.NoError(t, err)
+
+	// Several rounds: the Deserialize needs the pool Get to return the entry
+	// that applyPut just recycled, which holds on the same P but is not
+	// guaranteed by sync.Pool (preemption or a GC can break the chain in any
+	// single round)
+	const payloadText = "value, then the rest of the payload"
+	for range 10 {
+		payload := []byte(payloadText)
+		batch := d.kv.NewWriteBatch()
+		err := d.applyPut(batch, &atomic.Int64{}, nil, &proto.PutRequest{
+			Key:   "key",
+			Value: payload[:len("value")],
+		}, 0, NoOpCallback, false, &proto.PutResponse{}, &proto.Version{}, nil)
+		assert.NoError(t, err)
+		assert.NoError(t, batch.Close())
+
+		se := proto.StorageEntryFromVTPool()
+		assert.NoError(t, Deserialize(stored, se))
+		se.ReturnToVTPool()
+
+		assert.Equal(t, payloadText, string(payload))
+	}
+
+	assert.NoError(t, testDB.Close())
+	assert.NoError(t, factory.Close())
 }

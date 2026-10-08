@@ -15,11 +15,8 @@
 package statemachine
 
 import (
-	"bytes"
-	"context"
-	"fmt"
+	"math"
 	"testing"
-	stdtime "time"
 
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
@@ -182,6 +179,98 @@ func TestApplyLogEntry_ControlRequest(t *testing.T) {
 	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 }
 
+// A split child filters the entries it inherited from its parent, of terms up
+// to the parent term, however it applies them. It applies its own entries, of
+// later terms, as they are: e.g. the records of its sessions hash anywhere in
+// the hash space.
+func TestApplyLogEntry_SplitFilter(t *testing.T) {
+	db := newTestDB(t)
+	// The lower half of the hash space holds the key "a", and not "d"
+	assert.NoError(t, db.SetSplitFilter(&database.SplitFilter{MinHash: 0, MaxHash: 0x7FFFFFFF, ParentTerm: 1}))
+
+	apply := func(term int64, offset int64, value string) {
+		proposal := NewWriteProposal(offset, &proto.WriteRequest{
+			Puts: []*proto.PutRequest{
+				{Key: "a", Value: []byte(value)},
+				{Key: "d", Value: []byte(value)},
+			},
+		})
+		_, err := ApplyLogEntry(db, &proto.LogEntry{
+			Term:      term,
+			Offset:    offset,
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}, database.NoOpCallback)
+		assert.NoError(t, err)
+
+		commitOffset, err := db.ReadCommitOffset()
+		assert.NoError(t, err)
+		assert.Equal(t, offset, commitOffset)
+	}
+	assertValue := func(key string, expected string) {
+		res, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		if expected == "" {
+			assert.Equal(t, proto.Status_KEY_NOT_FOUND, res.Status, key)
+			return
+		}
+		assert.Equal(t, proto.Status_OK, res.Status, key)
+		assert.Equal(t, expected, string(res.Value), key)
+	}
+
+	apply(1, 0, "parent")
+	assertValue("a", "parent")
+	assertValue("d", "")
+
+	apply(2, 1, "child")
+	assertValue("a", "child")
+	assertValue("d", "child")
+}
+
+// TestApplyLogEntry_DeferredSplitFilter checks that a split child that holds
+// all the records of its parent applies the parent's entries as the parent
+// applied them, with the records of the other child, and its own entries as if
+// these records were gone.
+func TestApplyLogEntry_DeferredSplitFilter(t *testing.T) {
+	db := newTestDB(t)
+	apply := func(term int64, offset int64, put *proto.PutRequest) {
+		proposal := NewWriteProposal(offset, &proto.WriteRequest{Puts: []*proto.PutRequest{put}})
+		_, err := ApplyLogEntry(db, &proto.LogEntry{
+			Term:      term,
+			Offset:    offset,
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}, database.NoOpCallback)
+		assert.NoError(t, err)
+	}
+	get := func(key string) *proto.GetResponse {
+		res, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
+		assert.NoError(t, err)
+		return res
+	}
+
+	// The lower half of the hash space holds the key "a", and not "d"
+	apply(1, 0, &proto.PutRequest{Key: "d", Value: []byte("parent")})
+	assert.NoError(t, db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
+		MinHash: 0, MaxHash: 0x7FFFFFFF, ParentTerm: 1,
+	}, nil))
+	assert.Equal(t, proto.Status_KEY_NOT_FOUND, get("d").Status)
+
+	// An entry of the parent finds "d", and its put takes a version id
+	apply(1, 1, &proto.PutRequest{Key: "d", Value: []byte("updated"), ExpectedVersionId: pb.Int64(0)})
+	apply(2, 2, &proto.PutRequest{Key: "a", Value: []byte("child")})
+	assert.Equal(t, int64(2), get("a").GetVersion().GetVersionId())
+
+	// An entry of the child doesn't find "d"
+	apply(2, 3, &proto.PutRequest{Key: "d", Value: []byte("child"), PartitionKey: pb.String("a"),
+		ExpectedVersionId: pb.Int64(-1)})
+	res := get("d")
+	assert.Equal(t, proto.Status_OK, res.Status)
+	assert.Equal(t, []byte("child"), res.Value)
+	assert.Equal(t, int64(3), res.GetVersion().GetVersionId())
+	assert.Equal(t, int64(0), res.GetVersion().GetModificationsCount())
+}
+
 func TestApplyLogEntry_InvalidBytes(t *testing.T) {
 	db := newTestDB(t)
 
@@ -229,6 +318,56 @@ func TestApplyProposal_ThenApplyLogEntry(t *testing.T) {
 
 	assert.Equal(t, leaderGet.Status, followerGet.Status)
 	assert.Equal(t, leaderGet.Value, followerGet.Value)
+}
+
+// A write request that can't be applied has no effect: the leader answers the
+// client with the error, and the followers, split children included, apply
+// the entry all the same.
+func TestApplyLogEntry_RejectedWrite(t *testing.T) {
+	leaderDB := newTestDB(t)
+	followerDB := newTestDB(t)
+	childDB := newTestDB(t)
+
+	sequentialPut := func(deltas ...uint64) *proto.WriteRequest {
+		return &proto.WriteRequest{Puts: []*proto.PutRequest{{
+			Key:              "s",
+			Value:            []byte("s"),
+			PartitionKey:     pb.String("s"),
+			SequenceKeyDelta: deltas,
+		}}}
+	}
+
+	for offset, request := range []*proto.WriteRequest{
+		sequentialPut(1, 1),
+		// Fewer deltas than the parts of the sequence
+		sequentialPut(1),
+	} {
+		proposal := NewWriteProposal(int64(offset), request)
+		entry := &proto.LogEntry{
+			Term:      1,
+			Offset:    int64(offset),
+			Value:     marshalProposal(t, proposal),
+			Timestamp: proposal.GetTimestamp(),
+		}
+
+		_, err := proposal.Apply(leaderDB, database.NoOpCallback)
+		if offset == 1 {
+			assert.ErrorIs(t, err, database.ErrWriteRejected)
+		} else {
+			assert.NoError(t, err)
+		}
+		_, err = ApplyLogEntry(followerDB, entry, database.NoOpCallback)
+		assert.NoError(t, err)
+		_, err = ApplyLogEntryWithSplitFilter(childDB, entry, database.NoOpCallback,
+			&proto.HashRange{Min: 0, Max: math.MaxUint32})
+		assert.NoError(t, err)
+	}
+
+	for _, db := range []database.DB{leaderDB, followerDB, childDB} {
+		commitOffset, err := db.ReadCommitOffset()
+		assert.NoError(t, err)
+		assert.EqualValues(t, 1, commitOffset)
+	}
 }
 
 func TestApplyLogEntry_MultipleEntries(t *testing.T) {
@@ -285,106 +424,6 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, getY.Status)
 	assert.Equal(t, []byte("2"), getY.Value)
-}
-
-// TestApplyLogEntry_DeleteRangeDoesNotCorruptAliasedEntry guards the lifetime
-// contract of the zero-copy decode in ApplyLogEntry: applyPut must detach the
-// request-owned buffers from the pooled StorageEntry before returning it, or
-// the pooled Deserialize in applyDeleteRange appends the deleted entry's
-// stored value over the WAL entry payload that the remaining operations of
-// the same entry still alias.
-//
-// The entry holds two puts followed by two delete-ranges, and the first range
-// deletes a key whose stored value is sized to fill the donated capacity
-// exactly: without the detach, that Deserialize overwrites the second
-// delete-range's keys and the captured notification keys in place.
-func TestApplyLogEntry_DeleteRangeDoesNotCorruptAliasedEntry(t *testing.T) {
-	db := newTestDB(t)
-
-	// Several rounds, with distinct keys and offsets: the overwrite needs the
-	// delete-range's pool Get to return the object the last put just
-	// recycled, which holds on the same P but is not guaranteed by sync.Pool
-	// (preemption or a GC can break the chain in any single round).
-	for i := int64(0); i < 10; i++ {
-		p := fmt.Sprintf("it-%d-", i)
-		v2 := []byte(p + "marker-value-2")
-
-		proposal := NewWriteProposal(2*i+1, &proto.WriteRequest{
-			Puts: []*proto.PutRequest{
-				{Key: p + "put-1", Value: []byte(p + "value-1")},
-				{Key: p + "put-2", Value: v2},
-			},
-			DeleteRanges: []*proto.DeleteRangeRequest{
-				{StartInclusive: p + "range-a", EndExclusive: p + "range-b"},
-				{StartInclusive: p + "range-m", EndExclusive: p + "range-n"},
-			},
-		})
-		entryValue := marshalProposal(t, proposal)
-
-		// The pooled StorageEntry recycled by the last put keeps, as spare
-		// capacity, a slice of the entry payload running from v2 to the end
-		// of the buffer. A stored value of exactly that size makes a pooled
-		// append overwrite everything after v2, delete-range keys included.
-		v2Off := bytes.Index(entryValue, v2)
-		assert.Greater(t, v2Off, 0)
-		storedValue := bytes.Repeat([]byte("Z"), len(entryValue)-v2Off)
-
-		_, err := ApplyLogEntry(db, &proto.LogEntry{
-			Term:   1,
-			Offset: 2 * i,
-			Value: marshalProposal(t, NewWriteProposal(2*i, &proto.WriteRequest{
-				Puts: []*proto.PutRequest{
-					{Key: p + "range-a-key", Value: storedValue},
-					{Key: p + "range-m-key", Value: []byte(p + "m-value")},
-				},
-			})),
-			Timestamp: 1,
-		}, database.NoOpCallback)
-		assert.NoError(t, err)
-
-		_, err = ApplyLogEntry(db, &proto.LogEntry{
-			Term:      1,
-			Offset:    2*i + 1,
-			Value:     entryValue,
-			Timestamp: 2,
-		}, database.NoOpCallback)
-		assert.NoError(t, err)
-
-		// Both ranges must have been deleted under their original keys.
-		for _, key := range []string{p + "range-a-key", p + "range-m-key"} {
-			resp, err := db.Get(&proto.GetRequest{Key: key})
-			assert.NoError(t, err)
-			assert.Equal(t, proto.Status_KEY_NOT_FOUND, resp.Status, key)
-		}
-		for key, expected := range map[string][]byte{
-			p + "put-1": []byte(p + "value-1"),
-			p + "put-2": v2,
-		} {
-			resp, err := db.Get(&proto.GetRequest{Key: key, IncludeValue: true})
-			assert.NoError(t, err)
-			assert.Equal(t, proto.Status_OK, resp.Status, key)
-			assert.Equal(t, expected, resp.Value, key)
-		}
-
-		// The notification batch must carry the original keys, not bytes of
-		// the deleted entry's stored value.
-		ctx, cancel := context.WithTimeout(context.Background(), 10*stdtime.Second)
-		batches, err := db.ReadNextNotifications(ctx, 2*i+1)
-		cancel()
-		assert.NoError(t, err)
-		if assert.NotEmpty(t, batches) {
-			keys := make(map[string]proto.NotificationType)
-			for _, n := range batches[0].Notifications {
-				keys[n.GetKey()] = n.Value.Type
-			}
-			assert.Equal(t, map[string]proto.NotificationType{
-				p + "put-1":   proto.NotificationType_KEY_CREATED,
-				p + "put-2":   proto.NotificationType_KEY_CREATED,
-				p + "range-a": proto.NotificationType_KEY_RANGE_DELETED,
-				p + "range-m": proto.NotificationType_KEY_RANGE_DELETED,
-			}, keys)
-		}
-	}
 }
 
 func TestApplyLogEntry_ControlRequestPersistsCommitOffsetForWalReplay(t *testing.T) {

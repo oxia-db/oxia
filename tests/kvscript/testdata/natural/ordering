@@ -1,0 +1,54 @@
+# Natural sorting follows byte order, independently of insertion order.
+
+put key=a/z value="z"
+----
+ok key="a/z" modifications=0
+
+put key=ab/y value="b"
+----
+ok key="ab/y" modifications=0
+
+put key=a0 value="zero"
+----
+ok key="a0" modifications=0
+
+put key=a/y/z value="nested"
+----
+ok key="a/y/z" modifications=0
+
+put key=a/x value="x"
+----
+ok key="a/x" modifications=0
+
+range start=a end=""
+----
+key="a/x" value="x" modifications=0
+key="a/y/z" value="nested" modifications=0
+key="a/z" value="z" modifications=0
+key="a0" value="zero" modifications=0
+key="ab/y" value="b" modifications=0
+
+list start=a end="" unordered
+----
+key="a/x"
+key="a/y/z"
+key="a/z"
+key="a0"
+key="ab/y"
+
+# The same boundaries select different records with hierarchical sorting.
+range start=a/x end=a/y/z
+----
+key="a/x" value="x" modifications=0
+
+list start=a/x end=a/y/z unordered
+----
+key="a/x"
+
+get key=b/x comparison=floor
+----
+key="ab/y" value="b" modifications=0
+
+get key=a/z comparison=higher
+----
+key="a0" value="zero" modifications=0

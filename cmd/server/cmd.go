@@ -45,6 +45,7 @@ var (
 		Use:   "server",
 		Short: "Start a server",
 		Long:  `Long description`,
+		Args:  cobra.NoArgs,
 		Run:   exec,
 	}
 )
@@ -64,7 +65,7 @@ func init() {
 	var walRetention = 1 * time.Hour
 	var notificationRetention = 1 * time.Hour
 
-	Cmd.Flags().StringVar(&storageWal.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs")
+	Cmd.Flags().StringVar(&storageWal.Dir, "wal-dir", "./data/wal", "Directory for write-ahead-logs, different from --data-dir")
 	Cmd.Flags().BoolVar(storageWal.Sync, "wal-sync-data", true, "Whether to sync data in write-ahead-log")
 	Cmd.Flags().DurationVar(&walRetention, "wal-retention-time", 1*time.Hour, "Retention time for the entries in the write-ahead-log")
 

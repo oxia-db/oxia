@@ -93,6 +93,8 @@ const (
 	SplitPhase_Bootstrap SplitPhase = 0
 	SplitPhase_CatchUp   SplitPhase = 1
 	SplitPhase_Cutover   SplitPhase = 2
+	// The cutover passed the point of no return: the split can only complete.
+	SplitPhase_Finalize SplitPhase = 3
 )
 
 // Enum value maps for SplitPhase.
@@ -101,11 +103,13 @@ var (
 		0: "Bootstrap",
 		1: "CatchUp",
 		2: "Cutover",
+		3: "Finalize",
 	}
 	SplitPhase_value = map[string]int32{
 		"Bootstrap": 0,
 		"CatchUp":   1,
 		"Cutover":   2,
+		"Finalize":  3,
 	}
 )
 
@@ -1292,12 +1296,13 @@ const file_metadata_proto_rawDesc = "" +
 	"\x1dDATA_SERVER_STATE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19DATA_SERVER_STATE_RUNNING\x10\x01\x12!\n" +
 	"\x1dDATA_SERVER_STATE_UNAVAILABLE\x10\x02\x12\x1e\n" +
-	"\x1aDATA_SERVER_STATE_DRAINING\x10\x03*5\n" +
+	"\x1aDATA_SERVER_STATE_DRAINING\x10\x03*C\n" +
 	"\n" +
 	"SplitPhase\x12\r\n" +
 	"\tBootstrap\x10\x00\x12\v\n" +
 	"\aCatchUp\x10\x01\x12\v\n" +
-	"\aCutover\x10\x02*R\n" +
+	"\aCutover\x10\x02\x12\f\n" +
+	"\bFinalize\x10\x03*R\n" +
 	"\vShardStatus\x12\x16\n" +
 	"\x12ShardStatusUnknown\x10\x00\x12\x0f\n" +
 	"\vSteadyState\x10\x01\x12\f\n" +

@@ -41,4 +41,10 @@ type ShardAssignmentsProvider interface {
 
 type DataServerEventListener interface {
 	BecameUnavailable(dataServer *commonproto.DataServerIdentity)
+
+	// FeaturesDiscovered is called when a handshake with the data server
+	// makes known the features it supports, if they differ from the ones
+	// known before: at the first handshake, and when the data server restarts
+	// with a binary that supports other features, e.g. in a rolling upgrade
+	FeaturesDiscovered(dataServer *commonproto.DataServerIdentity)
 }

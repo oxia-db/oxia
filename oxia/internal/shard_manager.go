@@ -40,32 +40,62 @@ type ShardManager interface {
 	GetAll() []int64
 	Leader(shardId int64) string
 	Exists(shardId int64) bool
+
+	// GetSuccessors returns the shards that replaced a shard when it was
+	// removed from the shard map, after a split. It returns nil if the shard
+	// was never removed.
+	GetSuccessors(shardId int64) []int64
+
+	// GetSuccessor returns the shard that took over the key, among the ones
+	// that replaced a shard removed from the shard map.
+	GetSuccessor(shardId int64, key string) (int64, bool)
+
+	// Changed returns a channel that is closed when the shard map changes.
+	Changed() <-chan struct{}
+
+	// KeySorting returns the order of the keys in the shards of the namespace,
+	// or KEY_SORTING_UNKNOWN when the server does not report it.
+	KeySorting() proto.KeySorting
 }
+
+// ShardsReplacedListener is invoked with the shards removed from the shard map
+// and the shards that replaced each of them, while the shard map is locked:
+// before any operation can be routed with the new shard map. It must not call
+// the ShardManager.
+type ShardsReplacedListener func(replaced map[int64][]int64)
 
 type shardManagerImpl struct {
 	sync.RWMutex
 	updatedWg concurrent.WaitGroup
 
-	shardStrategy  ShardStrategy
-	rpcProvider    RpcProvider
-	serviceAddress string
-	namespace      string
-	shards         map[int64]Shard
-	ctx            context.Context
-	cancel         context.CancelFunc
-	logger         *slog.Logger
-	requestTimeout time.Duration
+	shardStrategy    ShardStrategy
+	rpcProvider      RpcProvider
+	serviceAddress   string
+	namespace        string
+	shards           map[int64]Shard
+	successors       map[int64][]Shard
+	keySorting       proto.KeySorting
+	changed          chan struct{}
+	initialized      bool
+	onShardsReplaced ShardsReplacedListener
+	ctx              context.Context
+	cancel           context.CancelFunc
+	logger           *slog.Logger
+	requestTimeout   time.Duration
 }
 
-func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
-	serviceAddress string, namespace string, requestTimeout time.Duration) (ShardManager, error) {
+func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider, serviceAddress string, namespace string,
+	requestTimeout time.Duration, onShardsReplaced ShardsReplacedListener) (ShardManager, error) {
 	sm := &shardManagerImpl{
-		namespace:      namespace,
-		shardStrategy:  shardStrategy,
-		rpcProvider:    rpcProvider,
-		serviceAddress: serviceAddress,
-		shards:         make(map[int64]Shard),
-		requestTimeout: requestTimeout,
+		namespace:        namespace,
+		shardStrategy:    shardStrategy,
+		rpcProvider:      rpcProvider,
+		serviceAddress:   serviceAddress,
+		shards:           make(map[int64]Shard),
+		successors:       make(map[int64][]Shard),
+		changed:          make(chan struct{}),
+		onShardsReplaced: onShardsReplaced,
+		requestTimeout:   requestTimeout,
 		logger: slog.With(
 			slog.String("component", "shardManager"),
 		),
@@ -75,6 +105,7 @@ func NewShardManager(shardStrategy ShardStrategy, rpcProvider RpcProvider,
 	sm.ctx, sm.cancel = context.WithCancel(context.Background())
 
 	if err := sm.start(); err != nil {
+		_ = sm.Close()
 		return nil, errors.Wrap(err, "oxia: failed to retrieve the initial list of shard assignments")
 	}
 
@@ -146,6 +177,46 @@ func (s *shardManagerImpl) Exists(shardId int64) bool {
 	return ok
 }
 
+func (s *shardManagerImpl) GetSuccessors(shardId int64) []int64 {
+	s.RLock()
+	defer s.RUnlock()
+
+	successors, ok := s.successors[shardId]
+	if !ok {
+		return nil
+	}
+	ids := make([]int64, len(successors))
+	for i, shard := range successors {
+		ids[i] = shard.Id
+	}
+	return ids
+}
+
+func (s *shardManagerImpl) GetSuccessor(shardId int64, key string) (int64, bool) {
+	s.RLock()
+	defer s.RUnlock()
+
+	predicate := s.shardStrategy.Get(key)
+	for _, shard := range s.successors[shardId] {
+		if predicate(shard) {
+			return shard.Id, true
+		}
+	}
+	return 0, false
+}
+
+func (s *shardManagerImpl) Changed() <-chan struct{} {
+	s.RLock()
+	defer s.RUnlock()
+	return s.changed
+}
+
+func (s *shardManagerImpl) KeySorting() proto.KeySorting {
+	s.RLock()
+	defer s.RUnlock()
+	return s.keySorting
+}
+
 func (s *shardManagerImpl) isClosed() bool {
 	return s.ctx.Err() != nil
 }
@@ -163,7 +234,11 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 				return nil
 			}
 
-			if errors.Is(err, constant.ErrNamespaceNotFound) || status.Code(err) == codes.Unauthenticated {
+			// These errors fail NewShardManager right away. Once the initial
+			// assignments are received, there is no caller to report them to,
+			// and they are retried like the others: they can be transient, e.g.
+			// until the authentication token is renewed.
+			if !s.initialized && (errors.Is(err, constant.ErrNamespaceNotFound) || status.Code(err) == codes.Unauthenticated) {
 				return backoff.Permanent(err)
 			}
 			return err
@@ -179,7 +254,10 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 			}
 		},
 	)
-	if err != nil {
+	// Closing the shard manager also interrupts the wait before a retry, which
+	// is not a failure. The retries only return the context error once the
+	// context is canceled, so this check cannot miss a Close that stopped them.
+	if err != nil && !s.isClosed() {
 		s.logger.Error(
 			"Failed receiving shard assignments",
 			slog.Any("error", err),
@@ -211,6 +289,9 @@ func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 		for i, assignment := range assignments.Assignments {
 			shards[i] = toShard(assignment)
 		}
+		s.Lock()
+		s.keySorting = assignments.KeySorting
+		s.Unlock()
 		s.update(shards)
 		backOff.Reset()
 	}
@@ -220,6 +301,7 @@ func (s *shardManagerImpl) update(updates []Shard) {
 	s.Lock()
 	defer s.Unlock()
 
+	var removed []Shard
 	for _, update := range updates {
 		if _, ok := s.shards[update.Id]; !ok {
 			// delete overlaps
@@ -231,13 +313,42 @@ func (s *shardManagerImpl) update(updates []Shard) {
 						slog.Any("Update", update),
 					)
 					delete(s.shards, shardId)
+					removed = append(removed, existing)
 				}
 			}
 		}
 		s.shards[update.Id] = update
 	}
 
+	if len(removed) > 0 {
+		s.recordSuccessors(removed)
+	}
+	close(s.changed)
+	s.changed = make(chan struct{})
+	s.initialized = true
 	s.updatedWg.Done()
+}
+
+// recordSuccessors records the shards that replaced each removed shard: the
+// operations still pending on a removed shard are rerouted to them.
+func (s *shardManagerImpl) recordSuccessors(removed []Shard) {
+	replaced := make(map[int64][]int64, len(removed))
+	for _, removedShard := range removed {
+		var successors []Shard
+		var ids []int64
+		for _, shard := range s.shards {
+			if overlap(shard.HashRange, removedShard.HashRange) {
+				successors = append(successors, shard)
+				ids = append(ids, shard.Id)
+			}
+		}
+		s.successors[removedShard.Id] = successors
+		replaced[removedShard.Id] = ids
+	}
+
+	if s.onShardsReplaced != nil {
+		s.onShardsReplaced(replaced)
+	}
 }
 
 func overlap(a HashRange, b HashRange) bool {

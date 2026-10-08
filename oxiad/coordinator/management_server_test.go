@@ -87,6 +87,8 @@ func (*testRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.Sha
 
 func (*testRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
+func (*testRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
+
 func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*testRuntime) DeleteDataServer(string) {}
@@ -97,7 +99,9 @@ func (*testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { 
 
 func (*testRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) { return nil, false }
 
-func (*testRuntime) CreateNamespace(string, *proto.Namespace) bool { return false }
+func (*testRuntime) CreateNamespace(string, *proto.Namespace) error {
+	return errors.New("unexpected namespace creation")
+}
 
 func (*testRuntime) DeleteNamespace(string) {}
 
@@ -467,7 +471,7 @@ func TestManagementServerGetNamespace(t *testing.T) {
 			KeySorting:        proto.KeySortingType_NATURAL.String(),
 		}},
 	})
-	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {Status: proto.ShardStatusSteadyState},
@@ -503,13 +507,13 @@ func TestManagementServerListNamespaces(t *testing.T) {
 			},
 		},
 	})
-	require.True(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("ns-1", &proto.NamespaceStatus{
 		ReplicationFactor: 3,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {Status: proto.ShardStatusSteadyState},
 		},
 	}))
-	require.True(t, metadata.CreateNamespaceStatus("ns-2", &proto.NamespaceStatus{
+	require.NoError(t, metadata.CreateNamespaceStatus("ns-2", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			1: {Status: proto.ShardStatusElection},
@@ -631,6 +635,36 @@ func TestManagementServerCreateNamespaceRejectsInvalidRequest(t *testing.T) {
 			_, err := management.CreateNamespace(context.Background(), tt.req)
 			require.Error(t, err)
 			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+}
+
+func TestManagementServerCreateNamespaceRejectsReservedName(t *testing.T) {
+	serverName := "server-1"
+	management := newReadyManagementServer(
+		newTestMetadata(t, &proto.ClusterConfiguration{
+			Servers: []*proto.DataServerIdentity{
+				dataServer(&serverName, "public-1", "internal-1"),
+			},
+		}),
+		nil,
+	)
+
+	for _, name := range []string{"MANIFEST", "manifest"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
+				Namespace: &proto.Namespace{
+					Name:              name,
+					InitialShardCount: 1,
+					ReplicationFactor: 1,
+					KeySorting:        "natural",
+				},
+			})
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+
+			_, found := management.metadata.GetNamespace(name)
+			assert.False(t, found)
 		})
 	}
 }
@@ -998,6 +1032,26 @@ func TestManagementServerGetNamespaceRejectsEmptyLookup(t *testing.T) {
 	_, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+}
+
+type namespaceStatusFailingMetadata struct {
+	coordmetadata.Metadata
+}
+
+func (namespaceStatusFailingMetadata) GetNamespaceStatus(string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
+	return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, errors.New("status unavailable")
+}
+
+func TestManagementServerGetNamespaceStatusLoadError(t *testing.T) {
+	metadata := namespaceStatusFailingMetadata{Metadata: newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 1}},
+	})}
+	management := newReadyManagementServer(metadata, nil)
+
+	_, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "ns-1"})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, grpcstatus.Code(err))
+	assert.ErrorContains(t, err, "status unavailable")
 }
 
 func TestManagementServerGetNamespaceNotFound(t *testing.T) {

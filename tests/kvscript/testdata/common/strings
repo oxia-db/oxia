@@ -1,0 +1,26 @@
+# Quoted arguments preserve spaces, escapes, and arbitrary bytes in values.
+
+put key=("space key") value="line1\nline2\t\"quoted\"\x2c\x28\x29"
+----
+ok key="space key" modifications=0
+
+get key=("space key")
+----
+key="space key" value="line1\nline2\t\"quoted\",()" modifications=0
+
+put key=binary value="a\x00\xff"
+----
+ok key="binary" modifications=0
+
+get key=binary
+----
+key="binary" value="a\x00\xff" modifications=0
+
+# Keys must be valid UTF-8; a rejected write leaves existing data untouched.
+put key="\xff" value=invalid
+----
+error: invalid options
+
+get key=binary
+----
+key="binary" value="a\x00\xff" modifications=0

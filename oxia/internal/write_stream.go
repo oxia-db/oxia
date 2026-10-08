@@ -78,10 +78,12 @@ func (sw *streamWrapper) handleResponses() {
 			return
 		}
 
-		slog.Debug("got response",
-			slog.Any("res", response),
-			slog.Any("err", err),
-		)
+		if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+			slog.Debug("got response",
+				slog.Any("res", response),
+				slog.Any("err", err),
+			)
+		}
 
 		var f concurrent.Future[*proto.WriteResponse]
 		f, sw.pendingRequests = sw.pendingRequests[0], sw.pendingRequests[1:]

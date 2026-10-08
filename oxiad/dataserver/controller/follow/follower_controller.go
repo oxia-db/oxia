@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,11 +30,11 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/crc"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/statemachine"
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
-	constant2 "github.com/oxia-db/oxia/oxiad/dataserver/constant"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -42,6 +44,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/process"
 	commontime "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/common/validation"
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
@@ -81,13 +84,18 @@ type FollowerController interface {
 	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
 	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
 
-	IsFeatureEnabled(feature proto.Feature) bool
+	IsFeatureEnabled(f proto.Feature) bool
 	Checksum() crc.Checksum
 
 	// SetSplitHashRange marks this follower as a split child. After loading
 	// a snapshot, the database will be filtered to retain only keys within
 	// the given hash range. WAL entries will also be filtered at apply time.
-	SetSplitHashRange(hashRange *proto.HashRange)
+	// A child that holds all the records of its parent until the split
+	// completes only records the filter (see filterSplitSnapshot), along with
+	// the range of the parent, if known, for the notifications it inherits.
+	// The range comes with a stream of the parent in the given term, and
+	// only holds in that term: a new term clears it.
+	SetSplitHashRange(hashRange *proto.HashRange, parentHashRange *proto.HashRange, term int64)
 }
 
 type followerController struct {
@@ -116,6 +124,9 @@ type followerController struct {
 	wal             wal.Wal
 	db              database.DB
 	logSynchronizer *LogSynchronizer
+	// Incremented when InstallSnapshot replaces the WAL and database content:
+	// the state applier discards the entries it read before.
+	snapshotGeneration int64
 
 	stateApplierCond  chan struct{}
 	writeLatencyHisto metric.LatencyHistogram
@@ -124,8 +135,14 @@ type followerController struct {
 
 	// splitHashRange, when non-nil, indicates this follower is a child shard
 	// in a split. The snapshot will be filtered after loading, and WAL entries
-	// will be filtered at state machine apply time.
+	// will be filtered at state machine apply time, unless the child holds all
+	// the records of its parent until the split completes (see
+	// filterSplitSnapshot). Set by the streams of the parent, and cleared by a
+	// new term.
 	splitHashRange *proto.HashRange
+	// The range of the parent, set with splitHashRange when the coordinator
+	// sent it
+	splitParentHashRange *proto.HashRange
 }
 
 func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTermOptions, storageOptions *option.StorageOptions,
@@ -145,7 +162,7 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 	}
 	term, dbTermOptions, err := db.ReadTerm()
 	if err != nil {
-		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil, multierr.Append(err, db.Close())
 	}
 	if newTermOptions == nil {
 		to = &dbTermOptions
@@ -154,7 +171,7 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 
 	commitOffset, err = db.ReadCommitOffset()
 	if err != nil {
-		return constant.I64NegativeOne, constant.I64NegativeOne, db, err
+		return constant.I64NegativeOne, constant.I64NegativeOne, nil, multierr.Append(err, db.Close())
 	}
 	return term, commitOffset, db, nil
 }
@@ -162,23 +179,16 @@ func initDatabase(namespace string, shardId int64, newTermOptions *proto.NewTerm
 func NewFollowerController(storageOptions *option.StorageOptions, namespace string, shardId int64, wf wal.Factory, kvFactory kvstore.Factory,
 	newTermOptions *proto.NewTermOptions,
 ) (FollowerController, error) {
+	if err := validation.ValidateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
 	rawTerm, rawCommitOffset, db, err := initDatabase(namespace, shardId, newTermOptions, storageOptions, kvFactory)
 	if err != nil {
 		return nil, err
 	}
 	commitOffset := &atomic.Int64{}
 	commitOffset.Store(rawCommitOffset)
-
-	writeAheadLog, err := wf.NewWal(namespace, shardId, wal.NewCommitOffsetObserver(commitOffset))
-	if err != nil {
-		return nil, err
-	}
-	lastAppendedOffset := &atomic.Int64{}
-	lastAppendedOffset.Store(writeAheadLog.LastOffset())
-
-	if lastAppendedOffset.Load() == constant.I64NegativeOne {
-		lastAppendedOffset.Store(rawCommitOffset)
-	}
 	advertisedCommitOffset := &atomic.Int64{}
 	advertisedCommitOffset.Store(rawCommitOffset)
 
@@ -203,8 +213,7 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 		term:                   term,
 		commitOffset:           commitOffset,
 		advertisedCommitOffset: advertisedCommitOffset,
-		lastAppendedOffset:     lastAppendedOffset,
-		wal:                    writeAheadLog,
+		lastAppendedOffset:     &atomic.Int64{},
 		db:                     db,
 		stateApplierCond:       make(chan struct{}, 1),
 		writeLatencyHisto: metric.NewLatencyHistogram("oxia_server_follower_write_latency",
@@ -213,6 +222,17 @@ func NewFollowerController(storageOptions *option.StorageOptions, namespace stri
 			"The current DB checksum value", "count", metric.LabelsForShard(namespace, shardId)),
 		walChecksumGauge: metric.NewSyncGauge("oxia_dataserver_wal_checksum",
 			"The current WAL checksum value", "count", metric.LabelsForShard(namespace, shardId)),
+	}
+
+	// The WAL trimming gets the commit offset from the follower, which flushes
+	// the database for it
+	if fc.wal, err = wf.NewWal(namespace, shardId, fc); err != nil {
+		cancel()
+		return nil, multierr.Append(err, db.Close())
+	}
+	fc.lastAppendedOffset.Store(fc.wal.LastOffset())
+	if fc.lastAppendedOffset.Load() == constant.I64NegativeOne {
+		fc.lastAppendedOffset.Store(rawCommitOffset)
 	}
 
 	if rawTerm != constant.I64NegativeOne {
@@ -275,6 +295,18 @@ func (fc *followerController) Term() int64 {
 
 func (fc *followerController) CommitOffset() int64 {
 	return fc.commitOffset.Load()
+}
+
+// FlushDatabase is called by the WAL trimming, while Close can hold the lock
+// and wait for the WAL to close: it doesn't wait for the lock. When a writer
+// holds it or waits for it, like a snapshot install or Close, the trimming
+// deletes no segment, and retries later.
+func (fc *followerController) FlushDatabase() error {
+	if !fc.rwMutex.TryRLock() {
+		return errors.Wrap(constant.ErrResourceConflict, "the follower is busy")
+	}
+	defer fc.rwMutex.RUnlock()
+	return fc.db.Flush()
 }
 
 func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
@@ -341,12 +373,30 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		return nil, constant.ErrInvalidTerm
 	}
 
+	if unsupported := feature.Unsupported(newTermOptions.GetFeatures()); len(unsupported) > 0 {
+		fc.log.Error(
+			"Rejecting new term: it pins features not supported by this binary",
+			slog.Int64("new-term", newTerm),
+			slog.Any("unsupported-features", unsupported),
+		)
+		return nil, errors.Wrapf(constant.ErrUnsupportedFeatures,
+			"term %d pins features %v not supported by this binary", newTerm, unsupported)
+	}
+
 	if fc.logSynchronizer.IsValid() {
 		if err := fc.logSynchronizer.Close(); err != nil {
 			return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to close log synchronizer")
 		}
 		fc.logSynchronizer = nil
 	}
+
+	// The split range only holds in the parent's term. A node that still
+	// observes the parent gets it again with the next stream, while one that
+	// stays a follower of the child must apply the child's entries, and
+	// install its snapshots, as they are. The split filter recorded in the
+	// database tells how it applies the parent's entries it replays later.
+	fc.splitHashRange = nil
+	fc.splitParentHashRange = nil
 
 	dbOption := database.ToDbOption(newTermOptions)
 	fc.db.EnableNotifications(dbOption.NotificationsEnabled)
@@ -355,13 +405,24 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	}
 	fc.term.Store(newTerm)
 	fc.status.Store(int32(proto.ServingStatus_FENCED))
-	lastEntryId, err := getLastEntryIdInWal(fc.wal) // todo: consider support it in the WAL directly
-	if err != nil {
-		fc.log.Warn("Failed to get last entry from WAL", slog.Any("error", err), slog.Int64("new-term", req.Term))
-		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get last entry from WAL failed")
+
+	// A closed stream of the leader can leave entries appended to the wal and
+	// not synced yet, while the head is read from the last synced entry: wait
+	// for their sync, so that the head covers every entry of the wal
+	if err = fc.wal.Sync(fc.ctx); err != nil {
+		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "wal sync failed")
 	}
-	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()), slog.Any("last-entry", lastEntryId))
-	return &proto.NewTermResponse{HeadEntryId: lastEntryId}, nil
+	headEntryId, err := lead.HeadEntryId(fc.wal, fc.db)
+	if err != nil {
+		fc.log.Warn("Failed to get the head entry", slog.Any("error", err), slog.Int64("new-term", req.Term))
+		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get head entry failed")
+	}
+	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()),
+		slog.Any("last-entry", headEntryId))
+	return &proto.NewTermResponse{
+		HeadEntryId:     headEntryId,
+		FeaturesEnabled: fc.db.EnabledFeatures(),
+	}, nil
 }
 
 func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error) {
@@ -427,7 +488,8 @@ func (fc *followerController) stateApplier() {
 	})
 }
 
-func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, maxInclusive int64) error {
+func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, snapshotGeneration int64,
+	maxInclusive int64) error {
 	for reader.HasNext() {
 		entry, _, entryCrc, err := reader.ReadNext()
 
@@ -439,10 +501,12 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 			return err
 		}
 
-		fc.log.Debug(
-			"Reading entry",
-			slog.Int64("offset", entry.Offset),
-		)
+		if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
+			fc.log.Debug(
+				"Reading entry",
+				slog.Int64("offset", entry.Offset),
+			)
+		}
 
 		if entry.Offset > maxInclusive {
 			// We read up to the max point
@@ -450,40 +514,125 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, max
 		}
 
 		fc.rwMutex.RLock()
-		var resp statemachine.ApplyResponse
-		if fc.splitHashRange != nil {
-			resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
-				lead.WrapperUpdateOperationCallback, fc.splitHashRange)
-		} else {
-			resp, err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+		if fc.snapshotGeneration != snapshotGeneration {
+			// A snapshot replaced the WAL and the database since the entry
+			// was read: it must not be applied on top of the snapshot
+			fc.rwMutex.RUnlock()
+			fc.log.Info(
+				"Discarded the committed entries read before the snapshot install",
+				slog.Int64("offset", entry.Offset),
+			)
+			return nil
 		}
+		resp, err := fc.applyEntry(entry)
 		fc.rwMutex.RUnlock()
 		if err != nil {
 			return err
 		}
-		if resp.Checksum != nil {
-			fc.checksumGauge.Record(int64(*resp.Checksum))
-			fc.walChecksumGauge.Record(int64(entryCrc))
+		fc.recordChecksums(resp, entryCrc)
+		if entry.Offset == maxInclusive {
+			// Stop at the max point, not at the WAL head: the next entry
+			// would only be discarded, and read again by the next pass
+			return nil
 		}
-
-		fc.commitOffset.Store(entry.Offset)
 	}
 
 	return nil
 }
 
+// applyCommittedEntries applies the committed entries up to maxInclusive. It
+// takes them from the replication stream, which keeps the entries it appends to
+// the WAL, and reads back from the WAL only the ones the stream doesn't keep:
+// the entries appended before it, e.g. before a restart or a reconnection, and
+// those it had no room for, e.g. while catching up.
 func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
-	fc.log.Debug(
-		"Apply committed entries",
-		slog.Int64("min-exclusive", fc.commitOffset.Load()),
-		slog.Int64("max-inclusive", maxInclusive),
-		slog.Int64("head-offset", fc.wal.LastOffset()),
-	)
+	if fc.log.Enabled(fc.ctx, slog.LevelDebug) {
+		fc.log.Debug(
+			"Apply committed entries",
+			slog.Int64("min-exclusive", fc.commitOffset.Load()),
+			slog.Int64("max-inclusive", maxInclusive),
+			slog.Int64("head-offset", fc.wal.LastOffset()),
+		)
+	}
 	if maxInclusive <= fc.commitOffset.Load() {
 		return nil
 	}
 
+	// The entries are applied from the WAL and database content of the same
+	// snapshot generation, and only once synced in the WAL
+	fc.rwMutex.RLock()
+	snapshotGeneration := fc.snapshotGeneration
+	maxInclusive = min(maxInclusive, fc.wal.LastOffset())
+	fc.rwMutex.RUnlock()
+
+	for fc.commitOffset.Load() < maxInclusive {
+		firstAppended, err := fc.applyAppendedEntries(snapshotGeneration, maxInclusive)
+		if err != nil {
+			return err
+		}
+		// The stream doesn't keep the next entry: read it from the WAL, with
+		// the ones after it up to the first entry the stream keeps
+		commitOffset := fc.commitOffset.Load()
+		walMaxInclusive := min(maxInclusive, firstAppended-1)
+		if walMaxInclusive <= commitOffset {
+			// All applied, or a snapshot replaced the WAL
+			return nil
+		}
+		if err = fc.applyWalEntries(snapshotGeneration, walMaxInclusive); err != nil {
+			return err
+		}
+		if fc.commitOffset.Load() == commitOffset {
+			// A snapshot replaced the WAL
+			return nil
+		}
+	}
+	return nil
+}
+
+// applyAppendedEntries applies the committed entries up to maxInclusive that
+// the replication stream keeps, as long as it keeps the next one. It returns
+// the offset of the first entry the stream keeps after them, or math.MaxInt64
+// when it keeps none.
+func (fc *followerController) applyAppendedEntries(snapshotGeneration int64, maxInclusive int64) (int64, error) {
+	for {
+		fc.rwMutex.RLock()
+		// A closed stream doesn't keep the entries: the WAL can get truncated
+		// or cleared once it is closed
+		if fc.snapshotGeneration != snapshotGeneration || !fc.logSynchronizer.IsValid() {
+			fc.rwMutex.RUnlock()
+			return math.MaxInt64, nil
+		}
+		offset := fc.commitOffset.Load() + 1
+		if offset > maxInclusive {
+			fc.rwMutex.RUnlock()
+			return math.MaxInt64, nil
+		}
+		next, firstOffset, ok := fc.logSynchronizer.appended.take(offset)
+		if !ok {
+			fc.rwMutex.RUnlock()
+			return firstOffset, nil
+		}
+		resp, err := fc.applyEntry(next.entry)
+		fc.rwMutex.RUnlock()
+		if err != nil {
+			return 0, err
+		}
+		fc.recordChecksums(resp, next.entryCrc)
+	}
+}
+
+// applyWalEntries applies the committed entries up to maxInclusive that it
+// reads from the WAL.
+func (fc *followerController) applyWalEntries(snapshotGeneration int64, maxInclusive int64) error {
+	// Open the reader under the lock, so that it starts from the commit
+	// offset of the WAL and database content of the same snapshot generation
+	fc.rwMutex.RLock()
+	if fc.snapshotGeneration != snapshotGeneration {
+		fc.rwMutex.RUnlock()
+		return nil
+	}
 	reader, err := fc.wal.NewReader(fc.commitOffset.Load())
+	fc.rwMutex.RUnlock()
 	if err != nil {
 		fc.log.Error(
 			"Error opening reader used for applying committed entries",
@@ -501,13 +650,48 @@ func (fc *followerController) applyCommittedEntries(maxInclusive int64) error {
 		}
 	}()
 
-	return fc.processCommittedEntriesLoop(reader, maxInclusive)
+	return fc.processCommittedEntriesLoop(reader, snapshotGeneration, maxInclusive)
 }
 
-func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange) {
+// applyEntry applies the committed entry that follows the commit offset. Must
+// be called while holding the read lock: a snapshot installed after it is
+// released sets its own commit offset, which must not be moved back.
+func (fc *followerController) applyEntry(entry *proto.LogEntry) (statemachine.ApplyResponse, error) {
+	var resp statemachine.ApplyResponse
+	var err error
+	// A split child that holds all the records of its parent applies the
+	// parent's entries as they are (see database.DeferredSplitFilter)
+	if fc.splitHashRange != nil && fc.db.DeferredSplitFilter() == nil {
+		resp, err = statemachine.ApplyLogEntryWithSplitFilter(fc.db, entry,
+			lead.WrapperUpdateOperationCallback, fc.splitHashRange)
+	} else {
+		resp, err = statemachine.ApplyLogEntry(fc.db, entry, lead.WrapperUpdateOperationCallback)
+	}
+	if err != nil {
+		return resp, err
+	}
+	fc.commitOffset.Store(entry.Offset)
+	return resp, nil
+}
+
+func (fc *followerController) recordChecksums(resp statemachine.ApplyResponse, entryCrc uint32) {
+	if resp.Checksum != nil {
+		fc.checksumGauge.Record(int64(*resp.Checksum))
+		fc.walChecksumGauge.Record(int64(entryCrc))
+	}
+}
+
+func (fc *followerController) SetSplitHashRange(hashRange *proto.HashRange, parentHashRange *proto.HashRange,
+	term int64) {
 	fc.rwMutex.Lock()
 	defer fc.rwMutex.Unlock()
+	// A stream of another term, e.g. a late one of a parent fenced since,
+	// doesn't set the range again: its entries are rejected as well
+	if current := fc.term.Load(); term != constant.I64NegativeOne && current != constant.I64NegativeOne && term != current {
+		return
+	}
 	fc.splitHashRange = hashRange
+	fc.splitParentHashRange = parentHashRange
 }
 
 func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error { //nolint:revive // cyclomatic complexity justified by sequential error handling
@@ -555,26 +739,42 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		return err
 	}
 
+	// From here on the WAL and the database content get replaced, even if
+	// the install fails: the state applier must not apply what it read before
+	fc.snapshotGeneration++
 	if err = fc.wal.Clear(); err != nil {
 		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to clear WAL")
 	}
-	oldDb := fc.db
-	fc.db = nil
-	if err = oldDb.Close(); err != nil {
-		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to close Database")
-	}
+	// The database gets replaced as well: until the snapshot is installed, the
+	// follower has no entries
+	fc.lastAppendedOffset.Store(wal.InvalidOffset)
+	fc.commitOffset.Store(wal.InvalidOffset)
+	fc.advertisedCommitOffset.Store(wal.InvalidOffset)
 	// If anything below fails, recover by re-opening the database from disk
 	// so the follower controller remains usable for retries.
 	defer func() {
 		if err != nil && fc.db == nil {
 			fc.log.Warn("Recovering database after failed snapshot install", slog.Any("error", err))
-			if _, _, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory); initErr == nil {
+			_, commitOffset, db, initErr := initDatabase(fc.namespace, fc.shardId, nil, fc.storageOptions, fc.kvFactory)
+			if initErr == nil {
 				fc.db = db
+				// The follower is left with the entries of the recovered
+				// database: none if the snapshot loader wiped it already
+				fc.lastAppendedOffset.Store(commitOffset)
+				fc.commitOffset.Store(commitOffset)
+				fc.advertisedCommitOffset.Store(commitOffset)
 			} else {
 				fc.log.Error("Failed to recover database, follower is in a broken state", slog.Any("error", initErr))
 			}
 		}
 	}()
+	// Pebble closes the database even when Close reports an error (e.g. leaked
+	// iterators), so a failed close is recovered by re-opening it as well
+	oldDb := fc.db
+	fc.db = nil
+	if err = oldDb.Close(); err != nil {
+		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to close Database")
+	}
 	var loader kvstore.SnapshotLoader
 	loader, err = fc.kvFactory.NewSnapshotLoader(fc.namespace, fc.shardId)
 	if err != nil {
@@ -588,7 +788,9 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	if err != nil {
 		return err
 	}
-	loader.Complete()
+	if err = loader.Complete(); err != nil {
+		return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to complete snapshot")
+	}
 
 	var db database.DB
 	var rawTerm, rawCommitOffset int64
@@ -604,12 +806,9 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 	// If this follower is a split child, filter the snapshot to only retain
 	// keys within the child's hash range.
 	if fc.splitHashRange != nil {
-		if err = database.FilterDBForSplit(db.RawKV(), fc.splitHashRange); err != nil {
+		if err = filterSplitSnapshot(db, fc.splitHashRange, fc.splitParentHashRange); err != nil {
 			return errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "failed to filter snapshot for split")
 		}
-		// FilterDBForSplit deletes the checksum key (it's invalid after
-		// filtering), so reset the in-memory cached checksum state.
-		db.ResetChecksum()
 	}
 
 	if err = stream.SendAndClose(&proto.SnapshotResponse{
@@ -625,6 +824,45 @@ func (fc *followerController) InstallSnapshot(stream proto.OxiaLogReplication_Se
 		slog.Int64("commit-offset", rawCommitOffset),
 	)
 	return nil
+}
+
+// filterSplitSnapshot filters the snapshot of its parent that a split child
+// installed to the child's hash range. When the term of the parent pins
+// FEATURE_SPLIT_DEFERRED_FILTER, the child keeps all the records of its parent
+// until the split completes, and only records the filter, which it applies
+// afterwards (see database.DeferredSplitFilter): the parent accepts as
+// observers only the members of a child that support the features of its
+// term, and every member gets a snapshot of the same term. The range of the
+// parent, if known, places the notifications that such a child inherits.
+func filterSplitSnapshot(db database.DB, hashRange *proto.HashRange, parentHashRange *proto.HashRange) error {
+	parentTerm, termOptions, err := db.ReadTerm()
+	if err != nil {
+		return err
+	}
+	if slices.Contains(termOptions.Features, proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER) {
+		return db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
+			MinHash:    hashRange.GetMin(),
+			MaxHash:    hashRange.GetMax(),
+			ParentTerm: parentTerm,
+		}, parentHashRange)
+	}
+
+	if err = database.FilterDBForSplit(db.RawKV(), hashRange); err != nil {
+		return err
+	}
+	// FilterDBForSplit deletes the checksum key (it's invalid after
+	// filtering), so reset the in-memory cached checksum state.
+	db.ResetChecksum()
+	// Record the filter too, for the parent's entries that the child
+	// applies other than as the follower of the parent, e.g. when it
+	// replays them after a restart. Recording it flushes the database,
+	// which runs without the Pebble WAL: once acked, the filtered snapshot
+	// must survive a crash, as the parent doesn't send it again.
+	return db.SetSplitFilter(&database.SplitFilter{
+		MinHash:    hashRange.GetMin(),
+		MaxHash:    hashRange.GetMax(),
+		ParentTerm: parentTerm,
+	})
 }
 
 func (fc *followerController) loadSnapshotChunks(loader kvstore.SnapshotLoader, firstChunk *proto.SnapshotChunk, stream proto.OxiaLogReplication_SendSnapshotServer) (int64, error) {
@@ -709,31 +947,14 @@ func (fc *followerController) Delete(request *proto.DeleteShardRequest) (*proto.
 	return &proto.DeleteShardResponse{}, nil
 }
 
-func (fc *followerController) IsFeatureEnabled(feature proto.Feature) bool {
+func (fc *followerController) IsFeatureEnabled(f proto.Feature) bool {
 	fc.rwMutex.RLock()
 	defer fc.rwMutex.RUnlock()
-	return fc.db.IsFeatureEnabled(feature)
+	return fc.db.IsFeatureEnabled(f)
 }
 
 func (fc *followerController) Checksum() crc.Checksum {
 	fc.rwMutex.RLock()
 	defer fc.rwMutex.RUnlock()
 	return fc.db.ReadChecksum()
-}
-
-func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
-	reader, err := walObject.NewReverseReader()
-	if err != nil {
-		return nil, err
-	}
-
-	if !reader.HasNext() {
-		return constant2.InvalidEntryId, nil
-	}
-
-	entry, _, _, err := reader.ReadNext()
-	if err != nil {
-		return nil, err
-	}
-	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }

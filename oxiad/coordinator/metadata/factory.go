@@ -66,8 +66,8 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
-		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name)
-		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name)
+		factory.statusProvider = memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name) //nolint:contextcheck // the memory provider owns its context
+		factory.configProvider = memory.NewProvider(metadatacodec.ClusterConfigCodec, metadatacommon.WatchEnabled, meta.Name)  //nolint:contextcheck // the memory provider owns its context
 	case metadatacommon.NameFile:
 		if factory.statusProvider, err = file.NewProvider(ctx, meta.File.StatusPath(), metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, meta.Name); err != nil {
 			return nil, err

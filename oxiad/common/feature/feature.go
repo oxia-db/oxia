@@ -29,5 +29,54 @@ func SupportedFeatures() []proto.Feature {
 	return []proto.Feature{
 		proto.Feature_FEATURE_DB_CHECKSUM,
 		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
+		proto.Feature_FEATURE_ORDERED_WRITES,
+		proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP,
+		proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR,
+		proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING,
+		proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS,
+		proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
+		proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED,
+		proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER,
 	}
+}
+
+// IsSupported reports whether this binary implements the given feature.
+func IsSupported(feature proto.Feature) bool {
+	for _, f := range SupportedFeatures() {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+
+// Unsupported returns the subset of features that this binary does not
+// implement. An empty result means all the features are supported.
+func Unsupported(features []proto.Feature) []proto.Feature {
+	var unsupported []proto.Feature
+	for _, f := range features {
+		if !IsSupported(f) {
+			unsupported = append(unsupported, f)
+		}
+	}
+	return unsupported
+}
+
+// Missing returns the features in required that are not contained in
+// available. An empty result means all the required features are available.
+func Missing(required []proto.Feature, available []proto.Feature) []proto.Feature {
+	var missing []proto.Feature
+	for _, r := range required {
+		found := false
+		for _, a := range available {
+			if a == r {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, r)
+		}
+	}
+	return missing
 }

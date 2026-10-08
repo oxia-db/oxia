@@ -62,6 +62,37 @@ enum Feature {
   FEATURE_UNKNOWN = 0;
   FEATURE_DB_CHECKSUM = 1;
   FEATURE_SECONDARY_INDEX_NAME_VALIDATION = 2;
+  // Apply the requests of a WriteRequest in op_index order
+  FEATURE_ORDERED_WRITES = 3;
+  // Delete the secondary index entries of the ephemeral records deleted when
+  // their session ends
+  FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP = 4;
+  // Continue the sequence of a sequential put on a prefix only from a key
+  // that starts with "<prefix>-", not from any key that starts with the prefix
+  FEATURE_SEQUENCE_LAST_KEY_SEPARATOR = 5;
+  // When a session ends, delete all its ephemeral records with the natural
+  // key sorting too
+  FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING = 6;
+  // A delete range covers either regular keys or internal keys: one without an
+  // end stops before the internal keys, and one that covers both gets the
+  // INVALID_ARGUMENT status. One over the internal keys deletes the
+  // notification records, which are not storage entries, instead of rejecting
+  // the write request
+  FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS = 7;
+  // Sequential puts: a part of the sequence without a delta keeps its value,
+  // and an invalid put, e.g. overflowing the sequence, gets the
+  // INVALID_ARGUMENT status instead of rejecting the whole write request
+  FEATURE_SEQUENCE_KEY_VALIDATION = 8;
+  // A put that overwrites a record deletes only the secondary index entries
+  // of the indexes that it drops, and writes only the ones of the indexes that
+  // it adds, instead of deleting and writing again all the entries of the
+  // record
+  FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED = 9;
+  // A split child copies all the data of its parent, instead of filtering the
+  // parent's snapshot and log entries to its hash range, and deletes the
+  // records outside its hash range once the split completes. A child does so
+  // when the term of its parent pins the feature
+  FEATURE_SPLIT_DEFERRED_FILTER = 10;
 }
 
 message GetInfoRequest {
@@ -119,6 +150,13 @@ enum KeySortingType {
 message NewTermOptions {
   bool enable_notifications = 1;
   KeySortingType key_sorting = 2;
+
+  // The feature set negotiated across the shard ensemble, pinned for the
+  // whole duration of the term: every entry of the term is applied with
+  // exactly these semantics, and changing the set requires a new term.
+  // A data server that does not support all the listed features must
+  // reject the NewTerm request.
+  repeated Feature features = 3;
 }
 
 message NewTermRequest {
@@ -131,6 +169,11 @@ message NewTermRequest {
 
 message NewTermResponse {
   EntryId head_entry_id = 1;
+
+  // The features already enabled in the node's database. The coordinator
+  // verifies that the term's negotiated feature set covers all of them
+  // before proceeding with the election.
+  repeated Feature features_enabled = 2;
 }
 
 message BecomeLeaderRequest {
@@ -170,6 +213,24 @@ message AddFollowerRequest {
   // The child filters its database and WAL entries to only keep keys
   // whose hash falls within this range.
   optional io.oxia.proto.v1.Int32HashRange split_hash_range = 8;
+
+  // The features supported by the joining follower's binary, as observed
+  // by the coordinator during the handshake. When present, the leader
+  // rejects the follower unless it covers every feature enabled for the
+  // shard. Absent when the request comes from a coordinator that predates
+  // feature-checked joins, in which case the leader skips the validation.
+  FollowerFeatures follower_features = 9;
+
+  // For observer followers during shard split: the hash range of the parent
+  // shard. Both children keep the notifications of the parent, and each
+  // delivers those whose key hash is on its side of the split, which a child
+  // tells from the bounds of its range that it shares with the parent. Absent
+  // when the request comes from a coordinator that predates it.
+  optional io.oxia.proto.v1.Int32HashRange split_parent_hash_range = 10;
+}
+
+message FollowerFeatures {
+  repeated Feature supported = 1;
 }
 
 message BecomeLeaderResponse {}
@@ -266,10 +327,22 @@ message GetStatusResponse {
   int64 commit_offset = 4;
 
   ShardStats shard_stats = 5;
+
+  // The features pinned by the term of the node. Only the leader reports
+  // them: absent on the followers, and on the data servers that predate the
+  // report.
+  TermFeatures term_features = 6;
+}
+
+message TermFeatures {
+  repeated Feature features = 1;
 }
 
 message ShardStats {
   uint64 db_size_bytes = 1;
   uint64 read_ops_total = 2;
   uint64 write_ops_total = 3;
+  // The shard is a split child that still holds records of its parent outside
+  // its hash range: it can't be split until it deletes them
+  bool split_filter_pending = 4;
 }

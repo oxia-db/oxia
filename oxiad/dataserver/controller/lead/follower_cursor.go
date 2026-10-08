@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,6 +86,9 @@ type followerCursor struct {
 	log            *slog.Logger
 	observer       bool                  // true for split observer cursors
 	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
+	// The range of the parent of a split, for split observer cursors, if the
+	// coordinator sent it
+	splitParentHashRange *proto.Int32HashRange
 
 	snapshotsTransferTime     metric.LatencyHistogram
 	snapshotsStartedCounter   metric.Counter
@@ -181,6 +185,7 @@ func NewObserverFollowerCursor( //nolint:revive
 	db database.DB,
 	ackOffset int64,
 	splitHashRange *proto.Int32HashRange,
+	splitParentHashRange *proto.Int32HashRange,
 ) (FollowerCursor, error) {
 	labels := map[string]any{
 		"namespace": namespace,
@@ -199,6 +204,7 @@ func NewObserverFollowerCursor( //nolint:revive
 		shardId:                 shardId,
 		observer:                true,
 		splitHashRange:          splitHashRange,
+		splitParentHashRange:    splitParentHashRange,
 
 		log: slog.With(
 			slog.String("component", "observer-cursor"),
@@ -270,7 +276,7 @@ func (fc *followerCursor) shouldSendSnapshot() bool {
 			slog.Int64("leader-commit-offset", fc.ackTracker.CommitOffset()),
 		)
 		return true
-	} else if walFirstOffset > 0 && ackOffset < walFirstOffset {
+	} else if walFirstOffset > 0 && ackOffset+1 < walFirstOffset {
 		fc.log.Info(
 			"The follower is behind the first available entry in the leader WAL",
 			slog.Int64("follower-ack-offset", ackOffset),
@@ -323,6 +329,27 @@ func (fc *followerCursor) run() {
 }
 
 func (fc *followerCursor) runOnce() error {
+	// A member of a split child must start from a snapshot of the parent that
+	// holds an entry: installing it records the split filter in the member's
+	// database, and the member's wal starts after that entry. A member that
+	// tails the parent's wal from the first entry instead only filters it
+	// while it observes the parent, and a member of the child that missed the
+	// parent's data then tails the child's wal from that first entry as well
+	// (see shouldSendSnapshot), without the filter. Until the parent has
+	// committed an entry, its snapshot holds none.
+	seeding := fc.observer && fc.ackOffset.Load() == wal.InvalidOffset
+	if seeding {
+		// The head offset never reaches math.MaxInt64: wait for the commit
+		// offset only
+		if err := fc.ackTracker.WaitForHeadOffsetOrCommitAdvance(fc.ctx, math.MaxInt64, wal.InvalidOffset); err != nil {
+			return err
+		}
+		if fc.ackTracker.CommitOffset() == wal.InvalidOffset {
+			// The tracker was closed: the term ended, and the cursor is closing
+			return nil
+		}
+	}
+
 	if fc.shouldSendSnapshot() {
 		timer := fc.snapshotsTransferTime.Timer()
 
@@ -334,7 +361,31 @@ func (fc *followerCursor) runOnce() error {
 		timer.Done()
 	}
 
+	if seeding && fc.ackOffset.Load() == wal.InvalidOffset {
+		// The database had not applied the committed entry yet when the
+		// snapshot was taken
+		return errors.New("the snapshot sent to the split child holds no entry of the parent")
+	}
 	return fc.streamEntries()
+}
+
+// withSplitMetadata adds to the metadata of the streams of a split observer
+// cursor the hash range of the child, and the one of the parent if known.
+func (fc *followerCursor) withSplitMetadata(ctx context.Context) context.Context {
+	if fc.splitHashRange == nil {
+		return ctx
+	}
+	ctx = metadata.AppendToOutgoingContext(ctx,
+		constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
+		constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
+	)
+	if fc.splitParentHashRange != nil {
+		ctx = metadata.AppendToOutgoingContext(ctx,
+			constant.MetadataSplitParentHashRangeMin, fmt.Sprintf("%d", fc.splitParentHashRange.MinHashInclusive),
+			constant.MetadataSplitParentHashRangeMax, fmt.Sprintf("%d", fc.splitParentHashRange.MaxHashInclusive),
+		)
+	}
+	return ctx
 }
 
 func (fc *followerCursor) sendSnapshot() error {
@@ -348,12 +399,7 @@ func (fc *followerCursor) sendSnapshot() error {
 
 	// Inject split hash range into gRPC metadata so the child follower
 	// can activate split filtering before loading the snapshot.
-	if fc.splitHashRange != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx,
-			constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
-			constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
-		)
-	}
+	ctx = fc.withSplitMetadata(ctx)
 
 	stream, err := fc.replicateStreamProvider.SendSnapshot(ctx, fc.follower, fc.namespace, fc.shardId, fc.term)
 	if err != nil {
@@ -501,6 +547,9 @@ func (fc *followerCursor) waitAtHead(ctx context.Context, reader wal.Reader, cur
 	if err := fc.ackTracker.WaitForHeadOffsetOrCommitAdvance(ctx, currentOffset+1, lastSentCommitOffset); err != nil {
 		return lastSentCommitOffset, err
 	}
+	if err := holdBackCommitAdvertisement(ctx, fc.ackTracker, currentOffset); err != nil {
+		return lastSentCommitOffset, err
+	}
 
 	commitOffset := fc.ackTracker.CommitOffset()
 	if commitOffset <= lastSentCommitOffset || reader.HasNext() {
@@ -524,12 +573,7 @@ func (fc *followerCursor) streamEntries() error {
 	defer cancel()
 
 	// Inject split hash range for WAL catch-up filtering on the child
-	if fc.splitHashRange != nil {
-		ctx = metadata.AppendToOutgoingContext(ctx,
-			constant.MetadataSplitHashRangeMin, fmt.Sprintf("%d", fc.splitHashRange.MinHashInclusive),
-			constant.MetadataSplitHashRangeMax, fmt.Sprintf("%d", fc.splitHashRange.MaxHashInclusive),
-		)
-	}
+	ctx = fc.withSplitMetadata(ctx)
 
 	fc.Lock()
 	var err error

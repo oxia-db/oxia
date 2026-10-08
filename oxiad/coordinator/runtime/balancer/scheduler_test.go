@@ -16,6 +16,7 @@ package balancer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -23,10 +24,11 @@ import (
 
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
-	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/common/cache"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
@@ -42,6 +44,8 @@ type mockMetadata struct {
 	nsConfigs map[string]*proto.Namespace
 	nodeMap   map[string]*proto.DataServerIdentity
 	lbConfig  *proto.LoadBalancer
+
+	namespaceStatusErr error
 }
 
 func dataServer(id string) *proto.DataServerIdentity {
@@ -66,30 +70,31 @@ func (*mockMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 	return nil, nil //nolint:nilnil
 }
 
-func (m *mockMetadata) GetInstanceID() string { return m.status.GetInstanceId() }
+func (m *mockMetadata) GetInstanceID() (string, error) { return m.status.GetInstanceId(), nil }
 
-func (*mockMetadata) ReserveShardIDs(uint32) int64 { return 0 }
+func (*mockMetadata) AllocateShardIDs(uint32) (int64, error) { return 0, nil }
 
-func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) bool {
-	return false
+func (*mockMetadata) CreateNamespaceStatus(string, *proto.NamespaceStatus) error {
+	return errors.New("not implemented")
 }
 
-func (*mockMetadata) UpdateNamespaceStatus(string, *proto.NamespaceStatus) {}
-
-func (m *mockMetadata) ListNamespaceStatus() map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
+func (m *mockMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(m.status.GetNamespaces()))
 	for name, status := range m.status.GetNamespaces() {
 		statuses[name] = commonobject.Borrow(status)
 	}
-	return statuses
+	return statuses, nil
 }
 
-func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool) {
+func (m *mockMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
+	if m.namespaceStatusErr != nil {
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, m.namespaceStatusErr
+	}
 	status, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false
+		return commonobject.Borrowed[*proto.NamespaceStatus]{}, false, nil
 	}
-	return commonobject.Borrow(status), true
+	return commonobject.Borrow(status), true, nil
 }
 
 func (m *mockMetadata) GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool) {
@@ -108,15 +113,23 @@ func (*mockMetadata) DeleteNamespaceStatus(string) commonobject.Borrowed[*proto.
 	return commonobject.Borrowed[*proto.NamespaceStatus]{}
 }
 
-func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) {
+func (m *mockMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error {
 	ns, exists := m.status.GetNamespaces()[namespace]
 	if !exists {
-		return
+		return nil
 	}
 	ns.Shards[shard] = shardMetadata
+	return nil
 }
 
-func (*mockMetadata) DeleteShardStatus(string, int64) {}
+func (m *mockMetadata) UpdateShardStatuses(namespace string, update func(map[int64]*proto.ShardMetadata) bool) error {
+	if ns, exists := m.status.GetNamespaces()[namespace]; exists {
+		update(ns.Shards)
+	}
+	return nil
+}
+
+func (*mockMetadata) DeleteShardStatus(string, int64) error { return nil }
 
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
@@ -150,11 +163,9 @@ func (m *mockMetadata) GetConfig() commonobject.Borrowed[*proto.ClusterConfigura
 	})
 }
 
-func (*mockMetadata) SubscribeConfig() *commonwatch.Receiver[provider.Versioned[*proto.ClusterConfiguration]] {
-	return commonwatch.New(provider.Versioned[*proto.ClusterConfiguration]{
-		Value:   &proto.ClusterConfiguration{},
-		Version: "",
-	}).Subscribe()
+// SubscribeConfig is not used by these tests.
+func (*mockMetadata) SubscribeConfig() *cache.Subscription[provider.Versioned[*proto.ClusterConfiguration]] {
+	return nil
 }
 
 func (m *mockMetadata) GetLoadBalancer() commonobject.Borrowed[*proto.LoadBalancer] {
@@ -438,6 +449,47 @@ func TestIsBalancedRequiresNamespaceStatus(t *testing.T) {
 		"ns":      {},
 		"deleted": {},
 	}
+	assert.False(t, b.IsBalanced())
+}
+
+func TestIsBalancedFalseOnNamespaceStatusError(t *testing.T) {
+	sv1 := dataServer("sv-1")
+	sv2 := dataServer("sv-2")
+	sv3 := dataServer("sv-3")
+	ensemble := []*proto.DataServerIdentity{sv1, sv2, sv3}
+
+	metadata := &mockMetadata{
+		status: &proto.ClusterStatus{
+			Namespaces: map[string]*proto.NamespaceStatus{
+				"ns": {
+					ReplicationFactor: 3,
+					Shards: map[int64]*proto.ShardMetadata{
+						0: {Status: proto.ShardStatusSteadyState, Leader: sv1, Ensemble: ensemble},
+						1: {Status: proto.ShardStatusSteadyState, Leader: sv2, Ensemble: ensemble},
+						2: {Status: proto.ShardStatusSteadyState, Leader: sv3, Ensemble: ensemble},
+					},
+				},
+			},
+		},
+		nodes:    linkedhashset.New("sv-1", "sv-2", "sv-3"),
+		metadata: map[string]*proto.DataServerMetadata{},
+		nsConfigs: map[string]*proto.Namespace{
+			"ns": {Name: "ns", ReplicationFactor: 3},
+		},
+		nodeMap: map[string]*proto.DataServerIdentity{
+			"sv-1": sv1,
+			"sv-2": sv2,
+			"sv-3": sv3,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b := newTestBalancer(ctx, cancel, metadata, &alwaysErrorSelector{})
+	assert.True(t, b.IsBalanced())
+
+	metadata.namespaceStatusErr = errors.New("status unavailable")
 	assert.False(t, b.IsBalanced())
 }
 
@@ -739,12 +791,16 @@ func TestLeaderBalanceByNamespace(t *testing.T) {
 	defer cancel()
 	balancer := newTestBalancer(ctx, cancel, metadata, single.NewSelector())
 	assert.False(t, balancer.IsBalanced(), "global leader counts hide namespace skew")
-	_, found := balancer.bestLeaderMove(metadata.nodes, metadata.ListNamespaceStatus(), nil)
+	statuses, err := metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	_, found := balancer.bestLeaderMove(metadata.nodes, statuses, nil)
 	assert.True(t, found, "must find a move despite globally equal leader counts")
 	metadata.status.Namespaces["hot"].Shards[1].Leader = b
 	metadata.status.Namespaces["cold"].Shards[3].Leader = a
 	assert.True(t, balancer.IsBalanced())
-	_, found = balancer.bestLeaderMove(metadata.nodes, metadata.ListNamespaceStatus(), nil)
+	statuses, err = metadata.ListNamespaceStatus()
+	require.NoError(t, err)
+	_, found = balancer.bestLeaderMove(metadata.nodes, statuses, nil)
 	assert.False(t, found, "balanced namespaces must not oscillate")
 }
 

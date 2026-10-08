@@ -78,3 +78,21 @@ func TestGetCallEmptyPartitionKey(t *testing.T) {
 
 	assert.Equal(t, partitionKey, call.PartitionKeyOrKey())
 }
+
+func TestInOpIndexOrder(t *testing.T) {
+	calls := InOpIndexOrder(
+		[]PutCall{{Key: "put-0", OpIndex: 0}, {Key: "put-2", OpIndex: 2}},
+		[]DeleteCall{{Key: "delete-1", OpIndex: 1}, {Key: "delete-4", OpIndex: 4}},
+		[]DeleteRangeCall{{MinKeyInclusive: "range-3", OpIndex: 3}},
+	)
+
+	assert.Equal(t, []any{
+		PutCall{Key: "put-0", OpIndex: 0},
+		DeleteCall{Key: "delete-1", OpIndex: 1},
+		PutCall{Key: "put-2", OpIndex: 2},
+		DeleteRangeCall{MinKeyInclusive: "range-3", OpIndex: 3},
+		DeleteCall{Key: "delete-4", OpIndex: 4},
+	}, calls)
+
+	assert.Empty(t, InOpIndexOrder(nil, nil, nil))
+}

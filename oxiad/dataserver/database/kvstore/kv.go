@@ -48,12 +48,22 @@ type WriteBatch interface {
 	// committing.
 	PutMarshalable(key string, m ProtoMarshalable) error
 	Delete(key string) error
+	// Get returns the value of key with the mutations of the batch applied.
+	// The value is only valid until the closer is closed, and until the next
+	// Get of the batch, which holds a db iterator from its second Get until
+	// it is committed or closed.
 	Get(key string) ([]byte, io.Closer, error)
 	FindLower(key string) (lowerKey string, err error)
 
 	DeleteRange(lowerBound, upperBound string) error
 	KeyRangeScan(lowerBound, upperBound string) (KeyIterator, error)
 	RangeScan(lowerBound, upperBound string) (KeyValueIterator, error)
+
+	// RangeOverlaps reports whether the range [lowerBound, upperBound), with
+	// the bounds read as RangeScan reads them, overlaps the region of the
+	// internal keys, and the regular keys outside of it. The answer depends
+	// only on the bounds, not on the keys stored.
+	RangeOverlaps(lowerBound, upperBound string) (internalKeys, regularKeys bool)
 
 	// Count is the number of transactions that are currently in the batch
 	Count() int
@@ -76,6 +86,11 @@ type KeyIterator interface {
 
 	SeekGE(key string) bool
 	SeekLT(key string) bool
+
+	// Error returns the error of a failed read. The iterator becomes invalid
+	// both at the end of the range and when a read fails, so a scan must check
+	// Error before taking what it read as the complete range.
+	Error() error
 }
 
 type ReverseKeyIterator interface {
@@ -114,8 +129,8 @@ type SnapshotLoader interface {
 
 	AddChunk(fileName string, chunkIndex int32, chunkCount int32, content []byte) error
 
-	// Complete signals that the snapshot is now complete
-	Complete()
+	// Complete signals that the snapshot is now complete, and makes it durable
+	Complete() error
 }
 
 type ComparisonType proto.KeyComparisonType
@@ -137,9 +152,30 @@ type KV interface {
 
 	KeyRangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyIterator, error)
 	KeyRangeScanReverse(lowerBound, upperBound string, opts IteratorOpts) (ReverseKeyIterator, error)
-	KeyIterator(opts IteratorOpts) (KeyIterator, error)
+
+	// KeyPrefixIterator returns an iterator over the keys that start with
+	// prefix, internal keys included, to position with SeekGE or SeekLT
+	KeyPrefixIterator(prefix string) (KeyIterator, error)
 
 	RangeScan(lowerBound, upperBound string, opts IteratorOpts) (KeyValueIterator, error)
+
+	// Seek returns an iterator over the regular keys, positioned on the key
+	// that Get finds with the comparison, but EQUAL, if any. The iterator moves
+	// away from key: with Next for CEILING and HIGHER, and with Prev for FLOOR
+	// and LOWER.
+	Seek(key string, comparisonType ComparisonType) (KeyValueIterator, error)
+
+	// Scan visits the regular keys, with their values, in order from the
+	// stored key start on, or from the first key if start is nil, until visit
+	// returns false. It returns the stored key to start the next scan from,
+	// right after the last key visited, or nil if that was the last key. A
+	// stored key keeps its position, which the key decoded from it can lose
+	// (see compare.Encoder.Decode).
+	Scan(start []byte, visit func(key string, value []byte) (bool, error)) (next []byte, err error)
+
+	// CompareKeys compares two keys in the order the store sorts them, which
+	// depends on the key sorting
+	CompareKeys(a, b string) int
 
 	Snapshot() (Snapshot, error)
 
