@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/auth"
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/rpc"
@@ -181,7 +180,7 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, request *proto.WriteRequ
 
 func (p *rpcProvider) ExecuteWriteAsync(ctx context.Context, request *proto.WriteRequest) func() (*proto.WriteResponse, error) {
 	stream := p.getAsyncWriteStream(*request.Shard)
-	var response concurrent.Future[*proto.WriteResponse]
+	var write *asyncWrite
 	// Only a request that was not sent is retried: it cannot have been
 	// applied. The wait for the next attempt ends on a change of the shard
 	// map, as for ExecuteWrite.
@@ -192,17 +191,17 @@ func (p *rpcProvider) ExecuteWriteAsync(ctx context.Context, request *proto.Writ
 			return struct{}{}, err
 		}
 		var err error
-		response, err = stream.send(ctx, hint, request)
+		write, err = stream.send(ctx, hint, request)
 		return struct{}{}, err
 	}, isRetryableShardRequest)
 	if err != nil {
 		return func() (*proto.WriteResponse, error) { return nil, err }
 	}
 	return func() (*proto.WriteResponse, error) {
-		res, err := response.Wait(ctx)
+		res, err := write.response.Wait(ctx)
 		if err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			// The writes in flight behind this one would wait for it
-			stream.abort(fmt.Errorf("an earlier write got no response before its deadline: %w", err))
+			stream.abortWith(write, fmt.Errorf("an earlier write got no response before its deadline: %w", err))
 		}
 		if err != nil {
 			err, _ = constant.FromGrpcError(err)

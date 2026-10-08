@@ -180,10 +180,14 @@ func WithMaxBatchSize(maxBatchSize int) ClientOption {
 // completed in order. While the limit is reached, the next batch keeps taking
 // the writes that arrive, so that a busy shard gets fewer, larger batches.
 //
-// A write batch that was sent is never sent again: if its stream fails, it
-// fails with the writes in flight behind it, since the server may have applied
-// them. Zero sends each write batch once the previous one completed, and
-// retries a batch whose stream fails.
+// A write batch that was sent is sent again, in order, only when the server
+// proves it did not process it: a node that is not the leader rejected the
+// stream before reading it, or the server marked it unprocessed. In every
+// other case, e.g. the connection breaks or the leader steps down while
+// batches are in flight, the batches in flight fail together, in order, and
+// are never sent again, since the server may have applied them. Zero sends
+// each write batch once the previous one completed, and retries a batch whose
+// stream fails.
 func WithMaxWriteBatchesInFlight(maxWriteBatchesInFlight int) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		if maxWriteBatchesInFlight < 0 {
