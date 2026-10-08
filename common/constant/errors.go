@@ -30,6 +30,11 @@ const (
 	ErrorMetadataShard             = "shard"
 	ErrorMetadataLeader            = "leader"
 	ErrorMetadataCoordinatorLeader = "coordinator-leader"
+	// ErrorMetadataUnprocessed marks the end of a write stream after which
+	// none of the writes left unanswered on it was applied: the server
+	// answered every write it appended before rejecting one, and appended
+	// none after it.
+	ErrorMetadataUnprocessed = "unprocessed"
 )
 
 type ErrorMetadata map[string]string
@@ -95,6 +100,20 @@ func WithLeaderHint(shard int64, leader string) GrpcStatusOption {
 		}
 		metadata[ErrorMetadataShard] = strconv.FormatInt(shard, 10)
 		metadata[ErrorMetadataLeader] = leader
+	}
+}
+
+// Unprocessed reports whether the error ends a write stream after which none
+// of the writes left unanswered on it was applied.
+func (m ErrorMetadata) Unprocessed() bool {
+	return m[ErrorMetadataUnprocessed] == "true"
+}
+
+// WithUnprocessed marks the end of a write stream after which none of the
+// writes left unanswered on it was applied.
+func WithUnprocessed() GrpcStatusOption {
+	return func(metadata ErrorMetadata) {
+		metadata[ErrorMetadataUnprocessed] = "true"
 	}
 }
 

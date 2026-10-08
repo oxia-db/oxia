@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -49,11 +50,12 @@ type asyncWrite struct {
 // writes in the order they were sent.
 //
 // When the stream ends, the writes in flight are settled together, in order:
-//   - the leader rejected the writes, e.g. it is no longer the leader: it
-//     applied none from the rejected one on, so they are sent again, in order,
-//     on a new stream, steered by the leader hint, before any newer write;
-//   - otherwise, e.g. the connection broke, the leader may have applied any of
-//     them: they fail, and are never sent again.
+//   - the end proves that the server processed none of them (see
+//     unprocessed): they are sent again, in order, on a new stream, steered by
+//     the leader hint, before any newer write;
+//   - otherwise, e.g. the connection broke or the leader stepped down
+//     mid-stream, the server may have applied any of them: they fail, and are
+//     never sent again.
 //
 // A write that is not answered before its deadline aborts the stream: the
 // writes in flight fail at once instead of each waiting for its own deadline.
@@ -76,6 +78,10 @@ type asyncWriteStream struct {
 	// resendBackoff spaces the attempts to send the writes in flight again,
 	// also when the new leader rejects them too; a response resets it
 	resendBackoff backoff.BackOff
+	// hint is the leader hint of the last stream that ended unprocessed: the
+	// next stream follows it unless its send brings its own; a response
+	// clears it
+	hint constant.ErrorMetadata
 }
 
 func newAsyncWriteStream(ctx context.Context, shard int64, open openWriteStream) *asyncWriteStream {
@@ -83,14 +89,18 @@ func newAsyncWriteStream(ctx context.Context, shard int64, open openWriteStream)
 }
 
 // send sends the request, opening a stream if there is none, and returns the
-// future of its response. An error means that the request was not sent.
-func (s *asyncWriteStream) send(ctx context.Context, hint constant.ErrorMetadata, request *proto.WriteRequest) (concurrent.Future[*proto.WriteResponse], error) {
+// write in flight, whose response completes it. An error means that the
+// request was not sent.
+func (s *asyncWriteStream) send(ctx context.Context, hint constant.ErrorMetadata, request *proto.WriteRequest) (*asyncWrite, error) {
 	if err := s.lockSettled(ctx); err != nil {
 		return nil, err
 	}
 	defer s.mu.Unlock()
 
 	if s.stream == nil {
+		if _, _, ok := hint.GetLeaderHint(); !ok {
+			hint = s.hint
+		}
 		stream, cancel, err := s.openStream(hint) //nolint:contextcheck // The stream outlives the request.
 		if err != nil {
 			return nil, err
@@ -105,7 +115,7 @@ func (s *asyncWriteStream) send(ctx context.Context, hint constant.ErrorMetadata
 	}
 	write := &asyncWrite{request: request, response: concurrent.NewFuture[*proto.WriteResponse]()}
 	s.inflight = append(s.inflight, write)
-	return write.response, nil
+	return write, nil
 }
 
 // lockSettled locks the stream once no writes in flight are being settled.
@@ -125,17 +135,35 @@ func (s *asyncWriteStream) lockSettled(ctx context.Context) error {
 	}
 }
 
+// abortWith fails the writes in flight with err, and ends the stream, if the
+// write is still in flight: a write that was settled since must not end the
+// stream that replaced its own.
+func (s *asyncWriteStream) abortWith(write *asyncWrite, err error) {
+	s.mu.Lock()
+	if !slices.Contains(s.inflight, write) {
+		s.mu.Unlock()
+		return
+	}
+	inflight := s.detachLocked()
+	s.mu.Unlock()
+	failAll(inflight, err)
+}
+
 // abort fails the writes in flight with err, and ends the stream.
 func (s *asyncWriteStream) abort(err error) {
 	s.mu.Lock()
+	inflight := s.detachLocked()
+	s.mu.Unlock()
+	failAll(inflight, err)
+}
+
+// detachLocked ends the stream and returns the writes that were in flight on
+// it, for the caller to fail once it released the lock.
+func (s *asyncWriteStream) detachLocked() []*asyncWrite {
 	inflight := s.inflight
 	s.inflight = nil
 	s.endLocked()
-	s.mu.Unlock()
-
-	for _, write := range inflight {
-		write.response.Fail(err)
-	}
+	return inflight
 }
 
 func (s *asyncWriteStream) openStream(hint constant.ErrorMetadata) (proto.OxiaClient_WriteStreamClient, context.CancelFunc, error) {
@@ -196,7 +224,7 @@ func (s *asyncWriteStream) read(generation uint64, stream proto.OxiaClient_Write
 		}
 		write := s.inflight[0]
 		s.inflight = s.inflight[1:]
-		s.resendBackoff = nil
+		s.resendBackoff, s.hint = nil, nil
 		s.mu.Unlock()
 
 		write.response.Complete(response)
@@ -215,8 +243,13 @@ func (s *asyncWriteStream) settleLocked(err error) {
 	}
 	s.stream, s.cancel = nil, nil
 
-	rejection, hint := constant.FromGrpcError(err)
-	if !isRejection(rejection) || len(s.inflight) == 0 {
+	translated, md := constant.FromGrpcError(err)
+	unprocessed := s.unprocessed(md, translated)
+	if unprocessed {
+		// The next stream follows the hint, also when nothing is in flight
+		s.hint = md
+	}
+	if !unprocessed || len(s.inflight) == 0 {
 		inflight := s.inflight
 		s.inflight = nil
 		close(s.settled)
@@ -228,7 +261,7 @@ func (s *asyncWriteStream) settleLocked(err error) {
 		return
 	}
 
-	// The first rejection after a response is retried at once; a new leader
+	// The first rejection after a response is retried at once; a leader
 	// that rejects the writes too is retried with a growing delay
 	immediate := s.resendBackoff == nil
 	if immediate {
@@ -239,13 +272,33 @@ func (s *asyncWriteStream) settleLocked(err error) {
 	generation := s.generation
 	s.mu.Unlock()
 
-	slog.Info("The leader rejected the writes in flight, sending them again",
+	slog.Info("The server processed none of the writes in flight, sending them again",
 		slog.Int64("shard", s.shard),
-		slog.Any("error", rejection))
+		slog.Any("error", translated))
 	if !immediate && !s.waitToResend(generation, bo) {
 		return
 	}
-	s.resend(generation, hint, bo)
+	s.resend(generation, md, bo)
+}
+
+// unprocessed reports whether the end of a stream proves that the server
+// processed none of the writes still in flight on it, so that sending them
+// again cannot apply any twice:
+//   - the server marked the end as such: it answered every write it appended
+//     before rejecting one, and appended none after;
+//   - a node that is not the leader rejected the stream at its setup, before
+//     reading any write, and hinted the leader of the shard. A leader that
+//     rejects a write mid-stream gives no hint: it may have appended the writes
+//     before it.
+func (s *asyncWriteStream) unprocessed(md constant.ErrorMetadata, translated error) bool {
+	if md.Unprocessed() {
+		return true
+	}
+	if !errors.Is(translated, constant.ErrNodeIsNotLeader) {
+		return false
+	}
+	shard, _, ok := md.GetLeaderHint()
+	return ok && shard == s.shard
 }
 
 // resend sends the writes in flight again, in order, on a new stream, until it
@@ -266,7 +319,8 @@ func (s *asyncWriteStream) resend(generation uint64, hint constant.ErrorMetadata
 				cancel()
 				return
 			}
-			if err = sendAll(stream, s.inflight); err == nil {
+			var sent int
+			if sent, err = sendAll(stream, s.inflight); err == nil {
 				s.install(stream, cancel)
 				close(s.settled)
 				s.settled = nil
@@ -274,14 +328,24 @@ func (s *asyncWriteStream) resend(generation uint64, hint constant.ErrorMetadata
 				return
 			}
 			s.mu.Unlock()
+			// The stream ended while taking the writes: its status says
+			// whether the server processed any of those it took
+			err = streamStatus(stream, err)
 			cancel()
+			translated, md := constant.FromGrpcError(err)
+			if sent > 0 && !s.unprocessed(md, translated) {
+				// Some writes went out and may be applied: none can be
+				// sent again
+				s.abortGeneration(generation, err)
+				return
+			}
 		}
 
-		// A failed attempt sent nothing that could be applied: no stream
-		// was opened, or it ended before taking the writes. Its leader hint
-		// steers the next attempt, else the shard assignments do. An error
-		// that another attempt cannot fix, e.g. the shard is gone after a
-		// split, fails the writes, which their batches reroute.
+		// The attempt applied nothing: no stream was opened, or the server
+		// processed none of the writes. Its leader hint steers the next
+		// attempt, else the shard assignments do. An error that another
+		// attempt cannot fix, e.g. the shard is gone after a split, fails
+		// the writes, which their batches reroute.
 		var translated error
 		translated, hint = constant.FromGrpcError(err)
 		if !isRetryableShardRequest(translated) {
@@ -313,29 +377,45 @@ func (s *asyncWriteStream) waitToResend(generation uint64, bo backoff.BackOff) b
 }
 
 // abortGeneration aborts the stream unless it was replaced or aborted since
-// the given generation.
+// the given generation: the check and the abort are one critical section, so
+// that a stale abort never ends a newer stream.
 func (s *asyncWriteStream) abortGeneration(generation uint64, err error) {
 	s.mu.Lock()
 	if s.generation != generation {
 		s.mu.Unlock()
 		return
 	}
+	inflight := s.detachLocked()
 	s.mu.Unlock()
-	s.abort(err)
+	failAll(inflight, err)
 }
 
-func sendAll(stream proto.OxiaClient_WriteStreamClient, writes []*asyncWrite) error {
-	for _, write := range writes {
+// sendAll sends the writes in order, and reports how many it handed to the
+// stream before an error.
+func sendAll(stream proto.OxiaClient_WriteStreamClient, writes []*asyncWrite) (int, error) {
+	for i, write := range writes {
 		if err := stream.Send(write.request); err != nil {
+			return i, err
+		}
+	}
+	return len(writes), nil
+}
+
+// streamStatus returns the status a stream ended with, after one of its sends
+// failed: gRPC reports io.EOF on the send, and the status on the receive.
+func streamStatus(stream proto.OxiaClient_WriteStreamClient, sendErr error) error {
+	if !errors.Is(sendErr, io.EOF) {
+		return sendErr
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
 			return err
 		}
 	}
-	return nil
 }
 
-// isRejection reports whether a stream ended because the leader rejected the
-// writes, so that it applied none of them from the rejected one on: the
-// retryable errors the server returns, as opposed to a broken connection.
-func isRejection(err error) bool {
-	return !errors.Is(err, io.EOF) && constant.IsRetryable(err)
+func failAll(writes []*asyncWrite, err error) {
+	for _, write := range writes {
+		write.response.Fail(err)
+	}
 }

@@ -178,14 +178,69 @@ func TestRpcProvider_AsyncWriteDeadlineClosesTheStream(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// A leader that rejects the writes of a stream, e.g. because it is no longer
-// the leader, applied none of the writes it rejected: the writes in flight are
-// sent again, in order, to the leader it hints, and the writes issued since
+// A leader that steps down while writes are in flight rejects the stream
+// mid-way, without a hint: it may have appended the writes before the one it
+// rejected, and they may still commit. Every write in flight fails, in order,
+// and none is sent again.
+func TestRpcProvider_AsyncWritesInFlightFailWhenTheLeaderStepsDown(t *testing.T) {
+	server := newHeldWriteServer()
+	provider := newHeldWriteProvider(t, server)
+	shardId := int64(0)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	first := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "a"))
+	second := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "b"))
+	require.Eventually(t, func() bool { return len(server.receivedKeys()) == 2 }, 10*time.Second, time.Millisecond)
+
+	server.answer <- constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
+	_, err := first()
+	require.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+	_, err = second()
+	require.ErrorIs(t, err, constant.ErrNodeIsNotLeader)
+
+	third := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "c"))
+	require.Eventually(t, func() bool { return len(server.receivedKeys()) == 3 }, 10*time.Second, time.Millisecond)
+	server.answer <- nil
+	_, err = third()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c"}, server.receivedKeys(), "no write was sent again")
+}
+
+// A server that marks the end of a stream as unprocessed answered every write
+// it appended before rejecting one, and appended none after: the writes left in
+// flight are sent again, in order.
+func TestRpcProvider_AsyncWritesLeftUnprocessedAreSentAgain(t *testing.T) {
+	server := newHeldWriteServer()
+	provider := newHeldWriteProvider(t, server)
+	shardId := int64(0)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	first := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "a"))
+	second := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "b"))
+	require.Eventually(t, func() bool { return len(server.receivedKeys()) == 2 }, 10*time.Second, time.Millisecond)
+
+	server.answer <- constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithUnprocessed())
+	require.Eventually(t, func() bool { return len(server.receivedKeys()) == 4 }, 10*time.Second, time.Millisecond)
+	assert.Equal(t, []string{"a", "b", "a", "b"}, server.receivedKeys())
+	server.answer <- nil
+	server.answer <- nil
+	_, err := first()
+	require.NoError(t, err)
+	_, err = second()
+	require.NoError(t, err)
+}
+
+// A node that is not the leader rejects a write stream at its setup, before
+// reading any of its writes, and hints the leader: the writes in flight are
+// sent again, in order, to the hinted leader, and the writes issued since
 // follow them.
-func TestRpcProvider_AsyncWritesRejectedByTheLeaderAreSentToTheNewOne(t *testing.T) {
+func TestRpcProvider_AsyncWritesRejectedAtSetupAreSentToTheHintedLeader(t *testing.T) {
 	newLeader := newHeldWriteServer()
 	newLeaderAddress := startTestOxiaClientServer(t, newLeader)
-	oldLeader := newHeldWriteServer()
+	oldLeader := &setupRejectingServer{}
+	oldLeader.hint.Store(&newLeaderAddress)
 	oldLeaderAddress := startTestOxiaClientServer(t, oldLeader)
 
 	shardManager := &testShardManager{}
@@ -199,10 +254,6 @@ func TestRpcProvider_AsyncWritesRejectedByTheLeaderAreSentToTheNewOne(t *testing
 	defer cancel()
 	first := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "a"))
 	second := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "b"))
-	require.Eventually(t, func() bool { return len(oldLeader.receivedKeys()) == 2 }, 10*time.Second, time.Millisecond)
-
-	oldLeader.answer <- constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader,
-		constant.WithLeaderHint(shardId, newLeaderAddress))
 	third := provider.ExecuteWriteAsync(ctx, putRequest(&shardId, "c"))
 
 	require.Eventually(t, func() bool { return len(newLeader.receivedKeys()) == 3 }, 10*time.Second, time.Millisecond)
@@ -216,19 +267,28 @@ func TestRpcProvider_AsyncWritesRejectedByTheLeaderAreSentToTheNewOne(t *testing
 	}
 }
 
-// rejectingWriteServer rejects every write stream as a node that is not the
-// leader, without a hint, and counts the streams.
-type rejectingWriteServer struct {
+// setupRejectingServer rejects every write stream at its setup, as a node that
+// is not the leader, before reading any of its writes, and hints the leader in
+// hint. It counts the streams.
+type setupRejectingServer struct {
 	proto.UnimplementedOxiaClientServer
+	hint    atomic.Pointer[string]
 	streams atomic.Int32
 }
 
-func (s *rejectingWriteServer) WriteStream(stream proto.OxiaClient_WriteStreamServer) error {
+func (s *setupRejectingServer) WriteStream(proto.OxiaClient_WriteStreamServer) error {
 	s.streams.Add(1)
-	if _, err := stream.Recv(); err != nil {
-		return err
-	}
-	return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
+	return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithLeaderHint(0, *s.hint.Load()))
+}
+
+// startSelfRejectingServer starts a setupRejectingServer that hints itself.
+func startSelfRejectingServer(t *testing.T) (*setupRejectingServer, string) {
+	t.Helper()
+
+	server := &setupRejectingServer{}
+	address := startTestOxiaClientServer(t, server)
+	server.hint.Store(&address)
+	return server, address
 }
 
 // removableShardManager is a testShardManager whose shard can be removed, as
@@ -243,8 +303,8 @@ func (m *removableShardManager) Exists(int64) bool { return !m.removed.Load() }
 // A leader that keeps rejecting the writes in flight gets them again with a
 // growing delay, not in a busy loop.
 func TestRpcProvider_AsyncWritesRejectedAgainAreResentWithABackoff(t *testing.T) {
-	server := &rejectingWriteServer{}
-	provider := newHeldWriteProviderAt(t, startTestOxiaClientServer(t, server), &testShardManager{})
+	server, address := startSelfRejectingServer(t)
+	provider := newHeldWriteProviderAt(t, address, &testShardManager{})
 	shardId := int64(0)
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -257,9 +317,9 @@ func TestRpcProvider_AsyncWritesRejectedAgainAreResentWithABackoff(t *testing.T)
 // When the shard of the writes that its leader rejected is gone, e.g. after a
 // split, the writes fail with ErrShardNotFound, so that they are rerouted.
 func TestRpcProvider_AsyncWritesRejectedByAGoneShardFail(t *testing.T) {
-	server := &rejectingWriteServer{}
+	server, address := startSelfRejectingServer(t)
 	shardManager := &removableShardManager{}
-	provider := newHeldWriteProviderAt(t, startTestOxiaClientServer(t, server), &shardManager.testShardManager)
+	provider := newHeldWriteProviderAt(t, address, &shardManager.testShardManager)
 	provider.(*rpcProvider).shardManagerSupplier = func() ShardManager { return shardManager }
 	shardId := int64(0)
 
