@@ -335,7 +335,8 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	log.Debug("Write request")
 
 	var lc lead.LeaderController
-	lc, err = s.resolveLeader(stream.Context(), &shardId)
+	// A stream rejected here read none of its writes
+	lc, err = s.resolveLeader(stream.Context(), &shardId, constant.WithUnprocessed())
 	if err != nil {
 		return err
 	}
@@ -380,8 +381,30 @@ func (s *publicRpcServer) WriteStream(stream proto.OxiaClient_WriteStreamServer)
 	// retryable error, as the plain context error would reach the client as a
 	// non-retryable Canceled status, failing the in-flight writes.
 	case <-leaderCtx.Done():
-		return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader)
+		return endAfterLeaderClosed(streamCtx, finished, pipeline)
 	}
+}
+
+// endAfterLeaderClosed is the status of a write stream whose leader controller
+// closed. The controller accepts no write anymore: once every write it had
+// appended is answered or failed, the end is marked unprocessed, unless one of
+// them failed, whose outcome is unknown.
+func endAfterLeaderClosed(streamCtx context.Context, finished <-chan error, pipeline *writeStreamPipeline) error {
+	for pipeline.unanswered.Load() > 0 {
+		select {
+		case <-pipeline.answeredC:
+		case <-streamCtx.Done():
+			return streamCtx.Err()
+		}
+	}
+	select {
+	case err := <-finished:
+		if err != nil {
+			return writeStreamStatus(err)
+		}
+	default:
+	}
+	return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithUnprocessed())
 }
 
 // warnOnStreamError logs failures of streaming data operations, except the
@@ -631,7 +654,9 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 	}
 }
 
-func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (lead.LeaderController, error) {
+// resolveLeader returns the leader controller of the shard, or the status to
+// reject the request with, which carries opts.
+func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64, opts ...constant.GrpcStatusOption) (lead.LeaderController, error) {
 	if shardId == nil {
 		return nil, status.Error(codes.InvalidArgument, "shard id is required")
 	}
@@ -642,10 +667,11 @@ func (s *publicRpcServer) resolveLeader(ctx context.Context, shardId *int64) (le
 	lc, err := s.shardsDirector.GetLeader(shardID)
 	if err != nil {
 		if errors.Is(err, constant.ErrNodeIsNotLeader) {
-			return nil, constant.IntoGrpcStatusError(err, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID)))
+			opts = append(opts, constant.WithLeaderHint(shardID, s.assignmentDispatcher.GetLeader(shardID)))
+			return nil, constant.IntoGrpcStatusError(err, opts...)
 		}
 		s.log.Warn("Failed to get the leader controller", slog.Any("error", err))
-		return nil, constant.IntoGrpcStatusError(err)
+		return nil, constant.IntoGrpcStatusError(err, opts...)
 	}
 	return lc, nil
 }

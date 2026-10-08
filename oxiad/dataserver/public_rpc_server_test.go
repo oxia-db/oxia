@@ -182,9 +182,41 @@ func TestWriteStreamLeaderControllerClosed(t *testing.T) {
 	require.NoError(t, lc.Close())
 
 	_, err = stream.Recv()
-	oxiaErr, _ := constant.FromGrpcError(err)
+	oxiaErr, md := constant.FromGrpcError(err)
 	assert.ErrorIs(t, oxiaErr, constant.ErrNodeIsNotLeader)
 	assert.True(t, constant.IsRetryable(oxiaErr), "the client does not retry on: %v", err)
+	assert.True(t, md.Unprocessed(), "every write appended on the stream was answered")
+}
+
+// A write stream rejected at its setup read none of its writes: the end is
+// marked unprocessed, whatever the reason.
+func TestWriteStreamRejectedAtSetupIsUnprocessed(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(map[string]string{
+		"shard-id":  "99",
+		"namespace": "default",
+	}))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := client.WriteStream(ctx)
+	require.NoError(t, err)
+	// The send may fail if the rejection arrived first: either way, the
+	// receive reports the stream's end
+	_ = stream.Send(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "k", Value: []byte("v")}}})
+
+	_, err = stream.Recv()
+	require.Error(t, err)
+	_, md := constant.FromGrpcError(err)
+	assert.True(t, md.Unprocessed(), "a stream rejected at its setup processed no write: %v", err)
 }
 
 type mockWriteStream struct {

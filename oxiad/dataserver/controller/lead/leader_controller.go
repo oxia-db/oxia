@@ -1291,6 +1291,39 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 	}
 }
 
+// drain lets a leader that is closing complete the writes in flight, within
+// closeDrainTimeout, instead of abandoning them: an abandoned write may still
+// commit on the next leader, so its client cannot tell whether it was applied.
+// The writes that arrive meanwhile are rejected before being appended, and the
+// clients send them to the next leader. A fence (NewTerm) does not drain: it
+// stops the leader at once.
+func (lc *leaderController) drain() {
+	lc.Lock()
+	draining := !lc.closed && lc.status == proto.ServingStatus_LEADER
+	if draining {
+		lc.status = proto.ServingStatus_NOT_MEMBER
+	}
+	lc.Unlock()
+	if !draining {
+		return
+	}
+
+	// No proposal or read starts once the status is no longer LEADER, so
+	// waiting for the ones in flight races with no Add. The reads in flight
+	// are waited for too: they are single requests, and bounded by the timeout
+	// all the same.
+	drained := make(chan struct{})
+	go func() {
+		lc.waitGroup.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(closeDrainTimeout):
+		lc.log.Warn("Closing with writes in flight: they are abandoned", slog.Duration("timeout", closeDrainTimeout))
+	}
+}
+
 // notAppendedError is the error of a write that the leader rejected before
 // appending it to its log: the write was not applied.
 type notAppendedError struct {
@@ -1596,7 +1629,13 @@ func (lc *leaderController) GetNotifications(ctx context.Context, req *proto.Not
 	lc.RUnlock()
 }
 
+// closeDrainTimeout bounds how long Close waits for the writes in flight to
+// complete before it abandons them.
+const closeDrainTimeout = 5 * time.Second
+
 func (lc *leaderController) Close() error {
+	lc.drain()
+
 	lc.Lock()
 	err := lc.close()
 	sessionManager := lc.sessionManager
