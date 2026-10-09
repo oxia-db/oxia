@@ -49,7 +49,8 @@ linters:
     - wastedassign
   settings:
     goconst:
-      ignore-string-values: "localhost:0"
+      ignore-string-values:
+        - "localhost:0"
       exclude-types:
         - Call
         - CompositeLit
