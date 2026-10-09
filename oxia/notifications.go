@@ -119,7 +119,7 @@ func (nm *notifications) Close() error {
 
 	// Ensure the channel is empty, so that the user will not see any notifications
 	// after the close
-	for range nm.multiplexCh { //nolint:revive
+	for range nm.multiplexCh {
 	}
 
 	return nil
