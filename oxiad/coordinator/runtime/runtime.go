@@ -1047,6 +1047,11 @@ func New(
 
 	c.rpc = rpcProvider(c.insID)
 
+	// The data server controllers start running as soon as they are created,
+	// and call back into the runtime under its lock: hold it until every
+	// controller below is in place, so they never see the maps half-built.
+	c.Lock()
+
 	// init node controller
 	for _, node := range dataServersFromStatus(clusterStatus) {
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
@@ -1080,6 +1085,7 @@ func New(
 
 	// Restart any in-progress splits from persisted state
 	c.restartInProgressSplits(clusterStatus)
+	c.Unlock()
 
 	c.wg.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{

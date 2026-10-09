@@ -93,6 +93,9 @@ type coordinatorMetadata struct {
 
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
 	statusLock     sync.Mutex
+	// leadershipLost is the channel WaitToBecomeLeader returned: closed once
+	// this coordinator lost the leadership. Guarded by statusLock.
+	leadershipLost <-chan struct{}
 
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
 	configLock     sync.Mutex
@@ -135,9 +138,35 @@ func (m *coordinatorMetadata) computeStatus(fn func(*commonproto.ClusterStatus, 
 		Version: current.Version,
 	})
 	if errors.Is(err, metadatacommon.ErrBadVersion) {
-		panic(err)
+		// Another coordinator wrote the status. The version check refused
+		// this write, so nothing is lost: the write fails, and its caller
+		// retries over the fresh state, or stops once this coordinator learns
+		// that it lost the leadership. A new leader can write before that
+		// happens, during a handover.
+		if !m.stoppedLeadingLocked() {
+			m.logger.Error("Cluster status written by another coordinator while this one leads",
+				slog.Any("error", err))
+		}
+		return fmt.Errorf("cluster status written by another coordinator: %w", err)
 	}
 	return err
+}
+
+// stoppedLeadingLocked reports whether this coordinator lost the leadership or
+// is closing. The caller holds statusLock.
+func (m *coordinatorMetadata) stoppedLeadingLocked() bool {
+	if m.ctx.Err() != nil {
+		return true
+	}
+	if m.leadershipLost == nil {
+		return false
+	}
+	select {
+	case <-m.leadershipLost:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *coordinatorMetadata) computeConfig(fn func(*commonproto.ClusterConfiguration, metadatacommon.Version) (*commonproto.ClusterConfiguration, error)) error {
@@ -227,6 +256,9 @@ func (m *coordinatorMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return nil, errors.New("lost the leadership while reloading the metadata")
 	default:
 	}
+	m.statusLock.Lock()
+	m.leadershipLost = leadershipLost
+	m.statusLock.Unlock()
 	// Initialize the instance id of a new cluster. The reloads just succeeded,
 	// so a failed write fails the takeover rather than being retried.
 	if err := m.computeStatus(func(status *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {

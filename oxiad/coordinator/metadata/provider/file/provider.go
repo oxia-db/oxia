@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
@@ -37,6 +38,10 @@ var _ provider.Provider[*commonproto.ClusterStatus] = (*Provider[*commonproto.Cl
 var _ provider.Provider[*commonproto.ClusterConfiguration] = (*Provider[*commonproto.ClusterConfiguration])(nil)
 
 const parentDirectoryMode = 0o755
+
+// lockRetryDelay is how often a coordinator waiting for the leadership retries
+// taking the file lock.
+const lockRetryDelay = 100 * time.Millisecond
 
 type Provider[T gproto.Message] struct {
 	mu           sync.Mutex
@@ -92,11 +97,16 @@ func NewProvider[T gproto.Message](
 }
 
 func (m *Provider[T]) Close() error {
+	// Cancelling first ends a pending WaitToBecomeLeader: a wait that takes
+	// the lock after this point releases it by itself.
 	m.ctxCancel()
 	_ = m.cache.Close()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if !m.lockAcquired {
 		return nil
 	}
+	m.lockAcquired = false
 	if err := m.fileLock.Unlock(); err != nil {
 		m.logger.Warn(
 			"Failed to release file lock on metadata",
@@ -108,8 +118,18 @@ func (m *Provider[T]) Close() error {
 }
 
 func (m *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
-	if err := m.fileLock.Lock(); err != nil {
+	// Another coordinator may hold the lock indefinitely: poll it under the
+	// provider context, so that closing the provider ends the wait.
+	if _, err := m.fileLock.TryLockContext(m.ctx, lockRetryDelay); err != nil {
 		return nil, errors.Wrapf(err, "failed to acquire lock on %s", m.path)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.ctx.Err(); err != nil {
+		// Closed while the lock was being taken: Close found no lock to
+		// release, so release it here.
+		_ = m.fileLock.Unlock()
+		return nil, errors.Wrapf(err, "provider closed while acquiring lock on %s", m.path)
 	}
 	m.lockAcquired = true
 

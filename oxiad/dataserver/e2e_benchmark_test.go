@@ -107,7 +107,7 @@ func newE2EBench(b *testing.B) *e2eBench {
 		options.Storage.WAL.Dir = fmt.Sprintf("%s/s%d/wal", tmp, i)
 		options.Storage.WAL.Sync = &constant.FlagFalse
 
-		server, err := New(context.Background(), commonwatch.New(options))
+		server, err := New(context.Background(), options)
 		require.NoError(b, err)
 		b.Cleanup(func() { require.NoError(b, server.Close()) })
 		servers[i] = server

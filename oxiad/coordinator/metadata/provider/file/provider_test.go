@@ -15,6 +15,7 @@
 package file
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,4 +132,35 @@ func TestWaitToBecomeLeaderFailsWhenLockFileCannotBeOpened(t *testing.T) {
 
 	// A failed acquisition leaves nothing to release
 	require.NoError(t, p.Close())
+}
+
+// A coordinator waiting for the leadership while another holds it can be
+// stopped: closing its provider ends the wait with an error, and leaves the
+// leader's lock in place.
+func TestCloseEndsWaitToBecomeLeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata")
+
+	leader := newTestProvider(t, path)
+	_, err := leader.WaitToBecomeLeader()
+	require.NoError(t, err)
+
+	waiting := newTestProvider(t, path)
+	acquired := startWaitToBecomeLeader(waiting)
+	requireStillWaiting(t, acquired)
+
+	require.NoError(t, waiting.Close())
+	select {
+	case err := <-acquired:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the wait did not end after the provider was closed")
+	}
+
+	follower := newTestProvider(t, path)
+	acquired = startWaitToBecomeLeader(follower)
+	requireStillWaiting(t, acquired)
+
+	require.NoError(t, leader.Close())
+	requireBecomesLeader(t, acquired)
+	require.NoError(t, follower.Close())
 }
