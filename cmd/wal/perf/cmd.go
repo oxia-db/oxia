@@ -108,13 +108,15 @@ func runWriter(writeAheadLog wal.Wal, data []byte, threadTimesArray, writeEntryT
 			Value:     data,
 			Timestamp: uint64(time.Now().UnixMicro()),
 		}
-		writeAheadLog.AppendAndSync(entry, func(_ uint32, err error) {
+		if err := writeAheadLog.AppendAndSync(entry, func(_ uint32, err error) {
 			writeGroup.Done()
 			writeEntryTimesArray[i] = time.Now().UnixMicro() - int64(entry.Timestamp)
 			if err != nil {
 				panic(err)
 			}
-		})
+		}); err != nil {
+			panic(err)
+		}
 	}
 	writeGroup.Wait()
 	threadTimesArray[0] = time.Now().UnixMicro() - n
