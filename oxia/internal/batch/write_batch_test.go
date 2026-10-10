@@ -224,6 +224,42 @@ func TestWriteBatchComplete(t *testing.T) {
 	}
 }
 
+func TestWriteBatchResponseCountMismatch(t *testing.T) {
+	// The reply is missing the delete response, so its per-type counts no
+	// longer line up with the request. Before the length check the delete loop
+	// indexed past the end of response.Deletes and panicked the client; now the
+	// batch fails and every callback sees the error.
+	execute := func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error) {
+		return &proto.WriteResponse{
+			Puts:    []*proto.PutResponse{{Status: proto.Status_OK}},
+			Deletes: nil,
+		}, nil
+	}
+
+	factory := &writeBatchFactory{
+		execute:     execute,
+		metrics:     metrics.NewMetrics(noop.NewMeterProvider()),
+		maxByteSize: 1024,
+	}
+	batch := factory.newBatch(&shardId)
+
+	var putErr, deleteErr error
+	batch.Add(model.PutCall{
+		Key:      "/a",
+		Value:    []byte{0},
+		Callback: func(_ *proto.PutResponse, err error) { putErr = err },
+	})
+	batch.Add(model.DeleteCall{
+		Key:      "/b",
+		Callback: func(_ *proto.DeleteResponse, err error) { deleteErr = err },
+	})
+
+	assert.NotPanics(t, batch.Complete)
+
+	assert.Error(t, putErr)
+	assert.Error(t, deleteErr)
+}
+
 func TestWriteBatchRerouteOnShardDeleted(t *testing.T) {
 	executeCount := 0
 
