@@ -1,0 +1,63 @@
+# a's default shard and q's default shard differ, as checked on actual records.
+
+put key=a value=original save=current
+----
+ok key="a" modifications=0
+
+put key=q value=other-shard
+----
+ok key="q" modifications=0
+
+placement keys=(a,q) min-shards=2
+----
+ok
+
+get key=a save-record=original
+----
+key="a" value="original" modifications=0
+
+get key=a partition=q
+----
+error: key not found
+
+delete key=a partition=q
+----
+error: key not found
+
+# The same key's saved version cannot update an absent record on the wrong shard.
+# A failed write must not overwrite the already saved version alias.
+put key=a value=wrong partition=q expected-version=@current save=current
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@original
+----
+ok
+
+assert-record key=a partition=q missing
+----
+ok
+
+get key=a partition=q
+----
+error: key not found
+
+put key=a value=updated expected-version=@current save=updated
+----
+ok key="a" modifications=1
+
+get key=q
+----
+key="q" value="other-shard" modifications=0
+
+delete key=a expected-version=@updated
+----
+ok
+
+get key=a
+----
+error: key not found
+
+assert-record key=a missing
+----
+ok

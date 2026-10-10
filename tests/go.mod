@@ -12,6 +12,7 @@ require (
 	github.com/oxia-db/oxia/oxiad v0.0.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.12.1
+	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/time v0.11.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
@@ -95,7 +96,6 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/exporters/prometheus v0.68.0 // indirect

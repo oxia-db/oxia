@@ -1,0 +1,87 @@
+# Saved versions and full records must survive a leader election.
+# The same client continues after stop-server observes a healthy new leader.
+
+put key=a value=before create-only save=created
+----
+ok key="a" modifications=0
+
+get key=a save-record=before
+----
+key="a" value="before" modifications=0
+
+put key=a value=must-not-create create-only save=created
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@before
+----
+ok
+
+wait-replicated
+----
+ok
+
+stop-server role=leader key=a save=original-leader
+----
+ok
+
+assert-record key=a unchanged=@before
+----
+ok
+
+put key=a value=must-not-create create-only save=created
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@before
+----
+ok
+
+# An alias captured before election remains usable for CAS after election.
+put key=a value=after expected-version=@created save=updated
+----
+ok key="a" modifications=1
+
+get key=a save-record=after
+----
+key="a" value="after" modifications=1
+
+put key=a value=must-not-update expected-version=@created save=updated
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@after
+----
+ok
+
+delete key=a expected-version=@created
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@after
+----
+ok
+
+restart-server saved=@original-leader
+----
+ok
+
+wait-replicated
+----
+ok
+
+assert-record key=a unchanged=@after
+----
+ok
+
+delete key=a expected-version=@updated
+----
+ok
+
+assert-record key=a missing
+----
+ok
+
+wait-replicated
+----
+ok

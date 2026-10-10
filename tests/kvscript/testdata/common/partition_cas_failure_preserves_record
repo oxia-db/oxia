@@ -1,0 +1,90 @@
+# Full snapshots include the opaque version and timestamp metadata.
+# Failed puts carrying save= must preserve existing version aliases as well.
+
+put key=qa value=one partition=tenant create-only save=created
+----
+ok key="qa" modifications=0
+
+get key=qa partition=tenant save-record=initial
+----
+key="qa" value="one" modifications=0
+
+put key=qa value=must-not-create partition=tenant create-only save=created
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@initial
+----
+ok
+
+put key=qa value=two partition=tenant expected-version=@created save=current
+----
+ok key="qa" modifications=1
+
+get key=qa partition=tenant save-record=updated
+----
+key="qa" value="two" modifications=1
+
+put key=qa value=must-not-update partition=tenant expected-version=@created save=current
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@updated
+----
+ok
+
+delete key=qa partition=tenant expected-version=@created
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@updated
+----
+ok
+
+put key=qa value=three partition=tenant expected-version=@current save=current
+----
+ok key="qa" modifications=2
+
+delete key=qa partition=tenant expected-version=@current
+----
+ok
+
+assert-record key=qa partition=tenant missing
+----
+ok
+
+put key=qa value=reborn partition=tenant create-only save=reborn
+----
+ok key="qa" modifications=0
+
+get key=qa partition=tenant save-record=reborn
+----
+key="qa" value="reborn" modifications=0
+
+put key=qa value=must-not-replace partition=tenant expected-version=@current save=reborn
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@reborn
+----
+ok
+
+delete key=qa partition=tenant expected-version=@current
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@reborn
+----
+ok
+
+delete key=qa partition=tenant expected-version=@reborn
+----
+ok
+
+get key=qa partition=tenant
+----
+error: key not found
+
+assert-record key=qa partition=tenant missing
+----
+ok
