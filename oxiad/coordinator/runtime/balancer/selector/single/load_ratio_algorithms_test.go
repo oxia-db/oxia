@@ -95,3 +95,11 @@ func TestDefaultShardsRank(t *testing.T) {
 	shardRatios = nodeRatio.ShardRatios
 	assert.Equal(t, 1, shardRatios.Size())
 }
+
+func TestDefaultShardsRankEmptyNamespace(t *testing.T) {
+	ratio := DefaultShardsRank(&model.RatioParams{NodeShardsInfos: map[string][]model.ShardInfo{"a": nil, "b": nil}})
+	assert.True(t, ratio.IsBalanced())
+	for iter := ratio.NodeIterator(); iter.Next(); {
+		assert.Equal(t, 0.0, iter.Value().Ratio)
+	}
+}

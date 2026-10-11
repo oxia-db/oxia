@@ -75,18 +75,25 @@ func TestClientPool_RemovesConnectionWhenHealthPingHangs(t *testing.T) {
 }
 
 func TestClientPool_KeepsConnectionOnTransientHealthFailures(t *testing.T) {
-	_, target := newTestFlakyHealthServer(t, connectionHealthFailureThreshold-1)
+	healthServer, target := newTestFlakyHealthServer(t, connectionHealthFailureThreshold-1)
 
 	pool := NewClientPool(nil, nil).(*clientPool)
 	defer pool.Close()
 
 	conn, err := newTestConnectionWithHealthConfig(pool, target,
-		10*time.Millisecond, 10*time.Millisecond)
+		10*time.Millisecond, time.Second)
 	require.NoError(t, err)
 
 	pool.Lock()
 	pool.connections[target] = conn
 	pool.Unlock()
+
+	// Allow the initial connection to become ready before counting the
+	// server-injected failures, including under the race detector. Verify
+	// that a successful check actually follows those transient failures.
+	require.Eventually(t, func() bool {
+		return healthServer.remainingFailures.Load() < 0
+	}, 5*time.Second, 10*time.Millisecond)
 
 	// Fewer consecutive failures than the threshold must not tear the
 	// connection down
@@ -232,7 +239,7 @@ func (f *flakyHealthServer) Check(
 	return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
 }
 
-func newTestFlakyHealthServer(t *testing.T, failures int32) (*grpc.Server, string) {
+func newTestFlakyHealthServer(t *testing.T, failures int32) (*flakyHealthServer, string) {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -252,7 +259,7 @@ func newTestFlakyHealthServer(t *testing.T, failures int32) (*grpc.Server, strin
 		server.Stop()
 	})
 
-	return server, listener.Addr().String()
+	return healthServer, listener.Addr().String()
 }
 
 type blockingHealthServer struct {

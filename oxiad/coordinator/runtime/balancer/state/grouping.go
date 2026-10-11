@@ -163,3 +163,12 @@ func GroupingValueWithLabel(candidates *linkedhashset.Set[string], candidatesMet
 	}
 	return selectedLabelValues
 }
+
+// ForNamespace limits placement and balancing decisions to one namespace.
+func ForNamespace(status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], namespace string) map[string]commonobject.Borrowed[*commonproto.NamespaceStatus] {
+	result := make(map[string]commonobject.Borrowed[*commonproto.NamespaceStatus], 1)
+	if ns, exists := status[namespace]; exists {
+		result[namespace] = ns
+	}
+	return result
+}

@@ -36,6 +36,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
+	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -316,7 +317,7 @@ func (e *Election) selectNewLeader(candidatesStatus map[*proto.DataServerIdentit
 	}
 	server, err := e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
-		Namespaces: namespaces,
+		Namespaces: state.ForNamespace(namespaces, e.namespace),
 	})
 	if err != nil {
 		return nil, nil, err

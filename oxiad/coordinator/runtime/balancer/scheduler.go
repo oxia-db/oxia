@@ -43,6 +43,11 @@ const defaultThreshElectedThreshold = 0.75
 
 var _ LoadBalancer = &nodeBasedBalancer{}
 
+type namespaceNode struct {
+	namespace string
+	nodeID    string
+}
+
 type nodeBasedBalancer struct {
 	logger    *slog.Logger
 	ctx       context.Context
@@ -75,10 +80,13 @@ func (r *nodeBasedBalancer) Close() error {
 	return nil
 }
 
-func (r *nodeBasedBalancer) quarantineNodes() *linkedhashset.Set[string] {
+func (r *nodeBasedBalancer) quarantineNodes(namespace string) *linkedhashset.Set[string] {
 	nodes := linkedhashset.New[string]()
-	r.nodeQuarantineNodeMap.Range(func(nodeID, _ any) bool {
-		nodes.Add(nodeID.(string))
+	r.nodeQuarantineNodeMap.Range(func(key, _ any) bool {
+		node, ok := key.(namespaceNode)
+		if ok && node.namespace == namespace {
+			nodes.Add(node.nodeID)
+		}
 		return true
 	})
 	return nodes
@@ -114,22 +122,34 @@ func (r *nodeBasedBalancer) quarantineShards() *linkedhashset.Set[int64] {
 func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	r.checkQuarantineNodes()
 
-	swapGroup := &sync.WaitGroup{}
 	currentStatus, err := r.metadata.ListNamespaceStatus()
 	if err != nil {
 		r.logger.Warn("Failed to rebalance the shard ensembles", slog.Any("error", err))
 		return false
 	}
-	dataServers := r.metadata.ListDataServer()
-	candidates, metadata := dataServersToCandidatesAndMetadata(dataServers)
+	candidates, metadata := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
+	balanced := true
+	for namespace := range currentStatus {
+		if !r.rebalanceNamespaceEnsemble(namespace, state.ForNamespace(currentStatus, namespace), candidates, metadata) {
+			balanced = false
+		}
+	}
+	return balanced
+}
+
+func (r *nodeBasedBalancer) rebalanceNamespaceEnsemble(namespace string,
+	currentStatus map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
+	candidates *linkedhashset.Set[string], metadata map[string]*commonproto.DataServerMetadata) bool {
+	swapGroup := &sync.WaitGroup{}
 	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, currentStatus)
 	loadRatios := r.loadRatioAlgorithm(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
 
 	if r.logger.Enabled(r.ctx, slog.LevelDebug) {
 		r.logger.Debug("start shard rebalance",
+			slog.String("namespace", namespace),
 			slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
 			slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
-			slog.Any("quarantine-nodes", r.quarantineNodes()),
+			slog.Any("quarantine-nodes", r.quarantineNodes(namespace)),
 			slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
 		)
 	}
@@ -138,6 +158,7 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 		swapGroup.Wait()
 		if r.logger.Enabled(r.ctx, slog.LevelDebug) {
 			r.logger.Debug("end shard rebalance",
+				slog.String("namespace", namespace),
 				slog.Float64("max-node-load-ratio", loadRatios.MaxNodeLoadRatio()),
 				slog.Float64("min-node-load-ratio", loadRatios.MinNodeLoadRatio()),
 				slog.Float64("avg-shard-ratio", loadRatios.AvgShardLoadRatio()),
@@ -150,11 +171,11 @@ func (r *nodeBasedBalancer) rebalanceEnsemble() bool {
 	if loadRatios.RatioGap() <= loadRatios.AvgShardLoadRatio() {
 		return true
 	}
-	r.balanceHighestNode(loadRatios, candidates, metadata, swapGroup)
+	r.balanceHighestNode(namespace, loadRatios, candidates, metadata, swapGroup)
 	return false
 }
 
-func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidates *linkedhashset.Set[string], metadata map[string]*commonproto.DataServerMetadata, swapGroup *sync.WaitGroup) {
+func (r *nodeBasedBalancer) balanceHighestNode(namespace string, loadRatios *model.Ratio, candidates *linkedhashset.Set[string], metadata map[string]*commonproto.DataServerMetadata, swapGroup *sync.WaitGroup) {
 	nodeIter := loadRatios.NodeIterator()
 	if !nodeIter.Last() {
 		return
@@ -164,7 +185,7 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 		if highestLoadRatioNode = nodeIter.Value(); highestLoadRatioNode == nil {
 			return // unexpected
 		}
-		if !r.IsNodeQuarantined(highestLoadRatioNode) {
+		if !r.isNodeQuarantined(namespace, highestLoadRatioNode) {
 			break
 		}
 		if nodeIter.Prev() {
@@ -196,8 +217,9 @@ func (r *nodeBasedBalancer) balanceHighestNode(loadRatios *model.Ratio, candidat
 		}
 	}
 	if highestLoadRatioNode.Ratio-loadRatios.MinNodeLoadRatio() > loadRatios.AvgShardLoadRatio() {
-		r.nodeQuarantineNodeMap.Store(highestLoadRatioNode.NodeID, time.Now())
+		r.nodeQuarantineNodeMap.Store(namespaceNode{namespace, highestLoadRatioNode.NodeID}, time.Now())
 		r.logger.Info("can't rebalance the current node, quarantine it.",
+			slog.String("namespace", namespace),
 			slog.Float64("highest-load-node-ratio", highestLoadRatioNode.Ratio),
 			slog.String("highest-load-node", highestLoadRatioNode.NodeID))
 	}
@@ -307,11 +329,11 @@ func (r *nodeBasedBalancer) swapShard(
 }
 
 func (r *nodeBasedBalancer) checkQuarantineNodes() {
-	deletedKeys := make([]string, 0)
+	deletedKeys := make([]namespaceNode, 0)
 	r.nodeQuarantineNodeMap.Range(func(key, value any) bool {
 		timestamp := value.(time.Time) //nolint: revive
 		if time.Since(timestamp) >= r.loadBalancerConf.GetQuarantineTimeDurationOrDefault() {
-			deletedKeys = append(deletedKeys, key.(string))
+			deletedKeys = append(deletedKeys, key.(namespaceNode))
 		}
 		return true
 	})
@@ -334,8 +356,8 @@ func (r *nodeBasedBalancer) checkQuarantineShards() {
 	}
 }
 
-func (r *nodeBasedBalancer) IsNodeQuarantined(highestLoadRatioNode *model.NodeLoadRatio) bool {
-	_, found := r.nodeQuarantineNodeMap.Load(highestLoadRatioNode.NodeID)
+func (r *nodeBasedBalancer) isNodeQuarantined(namespace string, highestLoadRatioNode *model.NodeLoadRatio) bool {
+	_, found := r.nodeQuarantineNodeMap.Load(namespaceNode{namespace, highestLoadRatioNode.NodeID})
 	return found
 }
 
@@ -352,16 +374,18 @@ func (r *nodeBasedBalancer) IsBalanced() bool {
 	}
 
 	candidates, _ := dataServersToCandidatesAndMetadata(r.metadata.ListDataServer())
-	groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, status)
-	shardsBalanced := r.loadRatioAlgorithm(
-		&model.RatioParams{
-			NodeShardsInfos: groupedStatus,
-			HistoryNodes:    historyNodes,
-			QuarantineNodes: r.quarantineNodes(),
-		},
-	).IsBalanced()
-	if !shardsBalanced {
-		return false
+	for namespace := range status {
+		groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(candidates, state.ForNamespace(status, namespace))
+		shardsBalanced := r.loadRatioAlgorithm(
+			&model.RatioParams{
+				NodeShardsInfos: groupedStatus,
+				HistoryNodes:    historyNodes,
+				QuarantineNodes: r.quarantineNodes(namespace),
+			},
+		).IsBalanced()
+		if !shardsBalanced {
+			return false
+		}
 	}
 	return r.leaderBalanced(candidates, status)
 }
@@ -385,14 +409,26 @@ func (r *nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string]
 	return !found
 }
 
-// bestLeaderMove looks for the shard whose leadership, if moved to the least
+// bestLeaderMove searches each namespace independently for a leader move.
+func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string],
+	status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
+	quarantinedShards *linkedhashset.Set[int64]) (move state.NamespaceAndShard, found bool) {
+	for namespace := range status {
+		if move, found := r.bestNamespaceLeaderMove(candidates, state.ForNamespace(status, namespace), quarantinedShards); found {
+			return move, true
+		}
+	}
+	return move, false
+}
+
+// bestNamespaceLeaderMove looks for the shard whose leadership, if moved to the least
 // loaded node of its ensemble, yields the biggest improvement of the leader
 // balance. A move is only an improvement when the gap between the current
 // leader's count and the target's count is at least 2 (each move then strictly
 // reduces the overall imbalance, so repeated moves always terminate). Only
 // available nodes are considered, both as donors and as targets. Shards in
 // quarantinedShards (may be nil) are not eligible.
-func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string],
+func (r *nodeBasedBalancer) bestNamespaceLeaderMove(candidates *linkedhashset.Set[string],
 	status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
 	quarantinedShards *linkedhashset.Set[int64]) (move state.NamespaceAndShard, found bool) {
 	_, _, nodeLeaders := state.NodeShardLeaders(candidates, status)
@@ -488,9 +524,10 @@ func (r *nodeBasedBalancer) startBackgroundNotifier() {
 					if !more {
 						return
 					}
-					if r.rebalanceEnsemble() { // if shard is balanced
-						r.rebalanceLeader()
-					}
+					r.rebalanceEnsemble()
+					// An immovable namespace (e.g. RF=1) must not block leader
+					// balancing in other namespaces. Ensemble actions have completed.
+					r.rebalanceLeader()
 				case <-r.ctx.Done():
 					return
 				}
