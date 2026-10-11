@@ -90,6 +90,7 @@ func NewAsyncClient(serviceAddress string, opts ...ClientOption) (AsyncClient, e
 		options.maxRequestsPerBatch,
 		metrics.NewMetrics(options.meterProvider),
 		options.requestTimeout)
+	batcherFactory.MaxWriteBatchesInFlight = options.maxWriteBatchesInFlight
 	batcherFactory.WriteRerouter = c.rerouteWrites
 	batcherFactory.ReadRerouter = c.rerouteReads
 	// The shard manager tells the write batchers when shards are replaced

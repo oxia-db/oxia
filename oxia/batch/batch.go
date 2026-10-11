@@ -21,3 +21,13 @@ type Batch interface {
 	Complete()
 	Fail(error)
 }
+
+// AsyncBatch is a Batch whose request can be sent without waiting for its
+// response, so that a batcher keeps several batches in flight.
+type AsyncBatch interface {
+	Batch
+	// Send sends the request of the batch, and returns a function that waits
+	// for its response and completes or fails the calls. A batcher sends its
+	// batches in order, and invokes the returned functions in the same order.
+	Send() (complete func())
+}

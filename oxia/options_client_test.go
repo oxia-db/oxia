@@ -28,6 +28,28 @@ type mockResolver struct {
 func (r *mockResolver) Scheme() string                     { return r.scheme }
 func (r *mockResolver) Resolve(_ string, _ AddressUpdater) {}
 
+func TestWithMaxWriteBatchesInFlight(t *testing.T) {
+	options, err := newClientOptions("localhost:6648")
+	require.NoError(t, err)
+	assert.Equal(t, DefaultMaxWriteBatchesInFlight, options.maxWriteBatchesInFlight)
+
+	options, err = newClientOptions("localhost:6648", WithMaxWriteBatchesInFlight(0))
+	require.NoError(t, err)
+	assert.Equal(t, 0, options.maxWriteBatchesInFlight, "zero sends each write batch once the previous one completed")
+
+	_, err = newClientOptions("localhost:6648", WithMaxWriteBatchesInFlight(-1))
+	assert.ErrorIs(t, err, ErrInvalidOptionMaxWriteBatchesInFlight)
+}
+
+func TestWithMaxBatchSize(t *testing.T) {
+	options, err := newClientOptions("localhost:6648", WithMaxBatchSize(1024))
+	require.NoError(t, err)
+	assert.Equal(t, 1024, options.maxBatchSize)
+
+	_, err = newClientOptions("localhost:6648", WithMaxBatchSize(0))
+	assert.ErrorIs(t, err, ErrInvalidOptionMaxBatchSize)
+}
+
 func TestWithDialResolver(t *testing.T) {
 	r := &mockResolver{scheme: "test"}
 
