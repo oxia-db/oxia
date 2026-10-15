@@ -1,0 +1,140 @@
+# The affected interval occupies three shards, with survivors on both sides.
+# Deleted versions refer to the same key throughout, never to another record.
+
+put key=a value=before save=before
+----
+ok key="a" modifications=0
+
+put key=b value=deleted-first save=old
+----
+ok key="b" modifications=0
+
+put key=c value=deleted-second
+----
+ok key="c" modifications=0
+
+put key=d value=deleted-third
+----
+ok key="d" modifications=0
+
+put key=e value=deleted-fourth
+----
+ok key="e" modifications=0
+
+put key=f value=after save=after
+----
+ok key="f" modifications=0
+
+placement keys=(a,b,c,d,e,f) min-shards=4
+----
+ok
+
+placement keys=(b,c,d,e) min-shards=3
+----
+ok
+
+get key=a save-record=before
+----
+key="a" value="before" modifications=0
+
+get key=f save-record=after
+----
+key="f" value="after" modifications=0
+
+delete-range start=b end=f
+----
+ok
+
+get key=b
+----
+error: key not found
+
+get key=c
+----
+error: key not found
+
+get key=d
+----
+error: key not found
+
+get key=e
+----
+error: key not found
+
+assert-record key=b missing
+----
+ok
+
+assert-record key=c missing
+----
+ok
+
+assert-record key=d missing
+----
+ok
+
+assert-record key=e missing
+----
+ok
+
+assert-record key=a unchanged=@before
+----
+ok
+
+assert-record key=f unchanged=@after
+----
+ok
+
+range start=a end=z unordered
+----
+key="a" value="before" modifications=0
+key="f" value="after" modifications=0
+
+list start=a end=z unordered
+----
+key="a"
+key="f"
+
+put key=b value=must-not-recreate expected-version=@old
+----
+error: unexpected version id
+
+assert-record key=b missing
+----
+ok
+
+put key=b value=reborn create-only save=reborn
+----
+ok key="b" modifications=0
+
+get key=b save-record=reborn
+----
+key="b" value="reborn" modifications=0
+
+put key=b value=must-not-overwrite expected-version=@old save=reborn
+----
+error: unexpected version id
+
+delete key=b expected-version=@old
+----
+error: unexpected version id
+
+assert-record key=b unchanged=@reborn
+----
+ok
+
+delete key=b expected-version=@reborn
+----
+ok
+
+assert-record key=b missing
+----
+ok
+
+put key=a value=before-updated expected-version=@before
+----
+ok key="a" modifications=1
+
+put key=f value=after-updated expected-version=@after
+----
+ok key="f" modifications=1

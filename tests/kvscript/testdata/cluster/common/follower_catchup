@@ -1,0 +1,137 @@
+# One follower misses an update, a deletion, and a delete/recreate sequence.
+# All keys use one partition so the selected follower must catch up this shard.
+
+put key=qa value=before partition=tenant create-only save=initial
+----
+ok key="qa" modifications=0
+
+put key=qb value=deleted partition=tenant create-only
+----
+ok key="qb" modifications=0
+
+put key=qc value=old partition=tenant create-only save=old
+----
+ok key="qc" modifications=0
+
+wait-replicated
+----
+ok
+
+stop-server role=follower key=qa partition=tenant save=lagging-follower
+----
+ok
+
+put key=qa value=updated partition=tenant expected-version=@initial save=updated
+----
+ok key="qa" modifications=1
+
+get key=qa partition=tenant save-record=updated
+----
+key="qa" value="updated" modifications=1
+
+delete key=qb partition=tenant
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+delete key=qc partition=tenant expected-version=@old
+----
+ok
+
+put key=qc value=reborn partition=tenant create-only save=reborn
+----
+ok key="qc" modifications=0
+
+get key=qc partition=tenant save-record=reborn
+----
+key="qc" value="reborn" modifications=0
+
+put key=qa value=must-not-update partition=tenant expected-version=@initial save=updated
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@updated
+----
+ok
+
+delete key=qc partition=tenant expected-version=@old
+----
+error: unexpected version id
+
+assert-record key=qc partition=tenant unchanged=@reborn
+----
+ok
+
+restart-server saved=@lagging-follower
+----
+ok
+
+wait-replicated
+----
+ok
+
+assert-record key=qa partition=tenant unchanged=@updated
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+assert-record key=qc partition=tenant unchanged=@reborn
+----
+ok
+
+# After all replicas have caught up, elect another leader and retain that state.
+# This does not require the restarted follower to win the election.
+stop-server role=leader key=qa partition=tenant save=previous-leader
+----
+ok
+
+assert-record key=qa partition=tenant unchanged=@updated
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+assert-record key=qc partition=tenant unchanged=@reborn
+----
+ok
+
+range start=qa end=qd partition=tenant
+----
+key="qa" value="updated" modifications=1
+key="qc" value="reborn" modifications=0
+
+put key=qa value=after-election partition=tenant expected-version=@updated
+----
+ok key="qa" modifications=2
+
+get key=qa partition=tenant save-record=after-election
+----
+key="qa" value="after-election" modifications=2
+
+restart-server saved=@previous-leader
+----
+ok
+
+wait-replicated
+----
+ok
+
+assert-record key=qa partition=tenant unchanged=@after-election
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+assert-record key=qc partition=tenant unchanged=@reborn
+----
+ok

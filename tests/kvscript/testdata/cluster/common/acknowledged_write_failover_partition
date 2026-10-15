@@ -1,0 +1,83 @@
+# Explicitly routed writes have the same acknowledgement and CAS guarantees.
+# No wait-replicated or Get runs between the first Put and leader stop, or
+# between Delete acknowledgement and the second stop. Stops are graceful.
+
+put key=qa value=acknowledged partition=tenant create-only save=created save-record=created
+----
+ok key="qa" modifications=0
+
+stop-server role=leader key=qa partition=tenant save=first-leader
+----
+ok
+
+assert-record key=qa partition=tenant unchanged=@created
+----
+ok
+
+put key=qa value=updated partition=tenant expected-version=@created save=updated save-record=updated
+----
+ok key="qa" modifications=1
+
+put key=qa value=stale partition=tenant expected-version=@created
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@updated
+----
+ok
+
+restart-server saved=@first-leader
+----
+ok
+
+delete key=qa partition=tenant expected-version=@updated
+----
+ok
+
+stop-server role=leader key=qa partition=tenant save=second-leader
+----
+ok
+
+assert-record key=qa partition=tenant missing
+----
+ok
+
+put key=qa value=stale-recreate partition=tenant expected-version=@updated
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant missing
+----
+ok
+
+put key=qa value=reborn partition=tenant create-only save=reborn save-record=reborn
+----
+ok key="qa" modifications=0
+
+put key=qa value=stale-overwrite partition=tenant expected-version=@created
+----
+error: unexpected version id
+
+delete key=qa partition=tenant expected-version=@updated
+----
+error: unexpected version id
+
+assert-record key=qa partition=tenant unchanged=@reborn
+----
+ok
+
+restart-server saved=@second-leader
+----
+ok
+
+assert-record key=qa partition=tenant unchanged=@reborn
+----
+ok
+
+put key=qa value=reborn-updated partition=tenant expected-version=@reborn
+----
+ok key="qa" modifications=1
+
+get key=qa partition=tenant
+----
+key="qa" value="reborn-updated" modifications=1

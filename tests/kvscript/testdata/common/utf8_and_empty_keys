@@ -1,0 +1,114 @@
+# Valid UTF-8 includes empty keys, NUL, and supplementary characters.
+# Composed and decomposed Unicode spellings are distinct keys, not normalized.
+
+put key="" value=empty-key create-only save-record=empty
+----
+ok key="" modifications=0
+
+put key="\x00" value=nul-key create-only save-record=nul
+----
+ok key="\x00" modifications=0
+
+put key="e\u0301" value=decomposed create-only save-record=decomposed
+----
+ok key="é" modifications=0
+
+put key="\u00e9" value=composed create-only save-record=composed
+----
+ok key="é" modifications=0
+
+put key="\U0001f600" value=supplementary create-only save-record=supplementary
+----
+ok key="😀" modifications=0
+
+assert-record key="" unchanged=@empty persistent
+----
+ok
+
+assert-record key="\x00" unchanged=@nul persistent
+----
+ok
+
+assert-record key="e\u0301" unchanged=@decomposed persistent
+----
+ok
+
+assert-record key="\u00e9" unchanged=@composed persistent
+----
+ok
+
+assert-record key="\U0001f600" unchanged=@supplementary persistent
+----
+ok
+
+range start="" end="" unordered
+----
+key="" value="empty-key" modifications=0
+key="\x00" value="nul-key" modifications=0
+key="é" value="decomposed" modifications=0
+key="é" value="composed" modifications=0
+key="😀" value="supplementary" modifications=0
+
+list start="" end="" unordered
+----
+key=""
+key="\x00"
+key="é"
+key="é"
+key="😀"
+
+# An empty lower bound includes the empty key; the NUL upper bound is excluded.
+range start="" end="\x00" unordered
+----
+key="" value="empty-key" modifications=0
+
+get key="\u00e9" comparison=lower
+----
+key="é" value="decomposed" modifications=0
+
+get key="\u00e9" comparison=higher
+----
+key="😀" value="supplementary" modifications=0
+
+delete-range start="e\u0301" end="\u00e9"
+----
+ok
+
+assert-record key="e\u0301" missing
+----
+ok
+
+assert-record key="\u00e9" unchanged=@composed
+----
+ok
+
+assert-record key="" unchanged=@empty
+----
+ok
+
+assert-record key="\x00" unchanged=@nul
+----
+ok
+
+assert-record key="\U0001f600" unchanged=@supplementary
+----
+ok
+
+# Exact deletion of the empty key does not mean deletion of the whole range.
+delete key=""
+----
+ok
+
+assert-record key="" missing
+----
+ok
+
+assert-record key="\x00" unchanged=@nul
+----
+ok
+
+list start="" end="" unordered
+----
+key="\x00"
+key="é"
+key="😀"

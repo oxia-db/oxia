@@ -1,0 +1,100 @@
+# Compare metadata by relation rather than numeric IDs or wall-clock ordering.
+# Put snapshots contain its returned Version, without an extra Get.
+
+put key=record value="" save=created-version save-record=created
+----
+ok key="record" modifications=0
+
+assert-record key=record unchanged=@created persistent
+----
+ok
+
+get key=record include-value=false persistent save-record=created-metadata
+----
+key="record" value="" modifications=0
+
+assert-record key=record metadata=@created-metadata persistent
+----
+ok
+
+# A same-value write is still an update, including when the value is empty.
+put key=record value="" expected-version=@created-version save=updated-version save-record=updated
+----
+ok key="record" modifications=1
+
+assert-record key=record updated=@created persistent
+----
+ok
+
+assert-record key=record unchanged=@updated persistent
+----
+ok
+
+put key=record value="\x00\xffpayload" expected-version=@updated-version save=latest-version save-record=latest
+----
+ok key="record" modifications=2
+
+assert-record key=record updated=@updated persistent
+----
+ok
+
+assert-record key=record unchanged=@latest persistent
+----
+ok
+
+get key=record include-value=false persistent save-record=latest-metadata
+----
+key="record" value="" modifications=2
+
+assert-record key=record metadata=@latest-metadata persistent
+----
+ok
+
+# Failed writes must not overwrite saved records or versions either.
+put key=record value="rejected" expected-version=@updated-version save=latest-version save-record=latest
+----
+error: unexpected version id
+
+assert-record key=record unchanged=@latest persistent
+----
+ok
+
+delete key=record expected-version=@created-version
+----
+error: unexpected version id
+
+assert-record key=record unchanged=@latest persistent
+----
+ok
+
+delete key=record expected-version=@latest-version
+----
+ok
+
+get key=record include-value=false persistent
+----
+error: key not found
+
+put key=record value="reborn" create-only save=reborn-version save-record=reborn
+----
+ok key="record" modifications=0
+
+assert-record key=record unchanged=@reborn persistent
+----
+ok
+
+put key=record value="stale" expected-version=@latest-version
+----
+error: unexpected version id
+
+delete key=record expected-version=@latest-version
+----
+error: unexpected version id
+
+assert-record key=record unchanged=@reborn persistent
+----
+ok
+
+get key=record include-value=true persistent
+----
+key="record" value="reborn" modifications=0
