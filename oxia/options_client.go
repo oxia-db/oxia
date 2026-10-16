@@ -185,9 +185,11 @@ func WithMaxBatchSize(maxBatchSize int) ClientOption {
 // stream before reading it, or the server marked it unprocessed. In every
 // other case, e.g. the connection breaks or the leader steps down while
 // batches are in flight, the batches in flight fail together, in order, and
-// are never sent again, since the server may have applied them. Zero sends
-// each write batch once the previous one completed, and retries a batch whose
-// stream fails.
+// are never sent again, since the server may have applied them. A write
+// queued behind a batch that the leader does not answer is sent right away,
+// behind it: once its caller gave up, its failure cannot tell that it was
+// not sent. Zero sends each write batch once the previous one completed, and
+// retries a batch whose stream fails.
 func WithMaxWriteBatchesInFlight(maxWriteBatchesInFlight int) ClientOption {
 	return clientOptionFunc(func(options clientOptions) (clientOptions, error) {
 		if maxWriteBatchesInFlight < 0 {

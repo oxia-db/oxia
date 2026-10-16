@@ -60,7 +60,10 @@ type rpcProvider struct {
 	shardManagerSupplier func() ShardManager
 	writeStreamsMutex    sync.RWMutex
 	writeStreams         map[int64]*streamWrapper
-	asyncWriteStreams    map[int64]*asyncWriteStream
+	// asyncWriteStreams holds the stream of each shard for the writes sent
+	// without waiting for their responses. writeStreamsMutex guards it, like
+	// writeStreams.
+	asyncWriteStreams map[int64]*asyncWriteStream
 
 	ctx        context.Context
 	namespace  string
@@ -157,8 +160,9 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, shardId int64,
 	}, isRetryableShardRequest)
 }
 
-func (p *rpcProvider) ExecuteWriteAsync(ctx context.Context, request *proto.WriteRequest) func() (*proto.WriteResponse, error) {
-	stream := p.getAsyncWriteStream(*request.Shard)
+func (p *rpcProvider) ExecuteWriteAsync(ctx context.Context, shardId int64,
+	prepare func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error) {
+	stream := p.getAsyncWriteStream(shardId)
 	var write *asyncWrite
 	// Only a request that was not sent is retried: it cannot have been
 	// applied. The wait for the next attempt ends on a change of the shard
@@ -166,11 +170,8 @@ func (p *rpcProvider) ExecuteWriteAsync(ctx context.Context, request *proto.Writ
 	timer := &ShardMapTimer{}
 	_, err := executeWithRetryTimer(ctx, timer, func(hint constant.ErrorMetadata) (struct{}, error) {
 		timer.Changed = p.shardMapChanged()
-		if _, err := p.getTargetByShard(request.Shard, hint); err != nil {
-			return struct{}{}, err
-		}
 		var err error
-		write, err = stream.send(ctx, hint, request)
+		write, err = stream.send(ctx, hint, prepare)
 		return struct{}{}, err
 	}, isRetryableShardRequest)
 	if err != nil {
@@ -194,19 +195,13 @@ func (p *rpcProvider) getAsyncWriteStream(shardId int64) *asyncWriteStream {
 	defer p.writeStreamsMutex.Unlock()
 	stream, ok := p.asyncWriteStreams[shardId]
 	if !ok {
-		stream = newAsyncWriteStream(p.ctx, shardId, func(ctx context.Context, hint constant.ErrorMetadata) (proto.OxiaClient_WriteStreamClient, error) {
-			target, err := p.getTargetByShard(&shardId, hint)
-			if err != nil {
-				return nil, err
-			}
-			ctx = metadata.AppendToOutgoingContext(ctx, constant.MetadataNamespace, p.namespace)
-			ctx = metadata.AppendToOutgoingContext(ctx, constant.MetadataShardId, fmt.Sprintf("%d", shardId))
-			client, err := p.getClientByTarget(target)
-			if err != nil {
-				return nil, err
-			}
-			return client.WriteStream(ctx)
-		})
+		stream = newAsyncWriteStream(p.ctx, shardId,
+			func(hint constant.ErrorMetadata) (string, error) {
+				return p.getTargetByShard(&shardId, hint)
+			},
+			func(streamCtx context.Context, target string) (proto.OxiaClient_WriteStreamClient, error) {
+				return p.newWriteStream(streamCtx, shardId, target)
+			})
 		p.asyncWriteStreams[shardId] = stream
 	}
 	return stream
@@ -340,18 +335,11 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, shardId int64, target 
 		return sw, nil
 	}
 
-	client, err := p.getClientByTarget(target)
-	if err != nil {
-		return nil, err
-	}
-
 	// The stream outlives the request, but its setup must not: connecting to an
 	// unreachable target can take up to the gRPC connect timeout
 	streamCtx, cancel := context.WithCancel(p.ctx)
-	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataNamespace, p.namespace)
-	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", shardId))
 	stop := context.AfterFunc(ctx, cancel)
-	stream, err := client.WriteStream(streamCtx)
+	stream, err := p.newWriteStream(streamCtx, shardId, target)
 	if !stop() {
 		// The request ended during the setup, and cancelled the stream
 		cancel()
@@ -381,6 +369,18 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, shardId int64, target 
 	}
 	p.writeStreams[shardId] = sw
 	return sw, nil
+}
+
+// newWriteStream opens a write stream of the shard to its leader at target,
+// with streamCtx as the context of the stream.
+func (p *rpcProvider) newWriteStream(streamCtx context.Context, shardId int64, target string) (proto.OxiaClient_WriteStreamClient, error) {
+	client, err := p.getClientByTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataNamespace, p.namespace)
+	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", shardId))
+	return client.WriteStream(streamCtx)
 }
 
 func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, request *proto.GetSequenceUpdatesRequest) (proto.OxiaClient_GetSequenceUpdatesClient, error) {

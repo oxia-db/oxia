@@ -27,16 +27,18 @@ type Executor interface {
 	// is left. Every attempt that gets that far invokes it, and once it
 	// returned a request, it must keep returning that one.
 	ExecuteWrite(ctx context.Context, shardId int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
-	// ExecuteWriteAsync sends the request, and returns a function that waits
-	// for its response. The requests sent by consecutive calls for a shard
-	// reach its leader in the order of the calls. A request that was not sent
-	// yet is retried. Once sent, it is sent again only when the end of its
-	// stream proves that the server did not process it: the stream was rejected
-	// at its setup by a node that is not the leader, or the server marked the
-	// requests it left unanswered as unprocessed. Otherwise, e.g. when the
-	// connection breaks or the leader steps down mid-stream, the request
-	// fails, since the server may have applied it.
-	ExecuteWriteAsync(ctx context.Context, request *proto.WriteRequest) (wait func() (*proto.WriteResponse, error))
+	// ExecuteWriteAsync sends a write request to the leader of the shard, and
+	// returns a function that waits for its response. prepare returns the
+	// request right before it is handed to gRPC, as for ExecuteWrite. The
+	// requests sent by consecutive calls for a shard reach its leader in the
+	// order of the calls. A request that was not sent yet is retried. Once
+	// sent, it is sent again only when the end of its stream proves that the
+	// server did not process it: the stream was rejected at its setup by a
+	// node that is not the leader, or the server marked the requests it left
+	// unanswered as unprocessed. Otherwise, e.g. when the connection breaks or
+	// the leader steps down mid-stream, the request fails, since the server
+	// may have applied it.
+	ExecuteWriteAsync(ctx context.Context, shardId int64, prepare func() (*proto.WriteRequest, error)) (wait func() (*proto.WriteResponse, error))
 	ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error)
 	ExecuteList(ctx context.Context, request *proto.ListRequest,
 		listResponseConsumer func(*proto.ListResponse) error) error

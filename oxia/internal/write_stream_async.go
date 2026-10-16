@@ -35,9 +35,14 @@ import (
 
 var errClientClosed = fmt.Errorf("oxia: client closed: %w", constant.ErrResourceUnavailable)
 
-// openWriteStream opens a write stream to the leader of a shard, or to the
-// leader named by the hint. Cancelling the context ends the stream.
-type openWriteStream func(ctx context.Context, hint constant.ErrorMetadata) (proto.OxiaClient_WriteStreamClient, error)
+// resolveWriteTarget returns the leader of the shard that the next write goes
+// to: the one named by the hint, if any, else the one the shard assignments
+// name.
+type resolveWriteTarget func(hint constant.ErrorMetadata) (string, error)
+
+// openWriteStream opens a write stream to the leader of the shard at target.
+// Cancelling the context ends the stream.
+type openWriteStream func(ctx context.Context, target string) (proto.OxiaClient_WriteStreamClient, error)
 
 // asyncWrite is a write request sent on the stream and not answered yet.
 type asyncWrite struct {
@@ -48,6 +53,11 @@ type asyncWrite struct {
 // asyncWriteStream sends the writes of a shard on a stream to its leader
 // without waiting for their responses, and matches the responses to the
 // writes in the order they were sent.
+//
+// The writes follow the shard assignments: a write goes on the stream only if
+// the stream goes to the leader of its attempt. Otherwise the stream is
+// retired: its writes in flight wait for their responses, because that leader
+// may still apply them, and the write goes on a new stream after them.
 //
 // When the stream ends, the writes in flight are settled together, in order:
 //   - the end proves that the server processed none of them (see
@@ -60,21 +70,33 @@ type asyncWrite struct {
 // A write that is not answered before its deadline aborts the stream: the
 // writes in flight fail at once instead of each waiting for its own deadline.
 type asyncWriteStream struct {
-	ctx   context.Context
-	shard int64
-	open  openWriteStream
+	ctx     context.Context
+	shard   int64
+	resolve resolveWriteTarget
+	open    openWriteStream
 
+	// mu guards the fields below. Owner: the asyncWriteStream. Its senders,
+	// the reader of its current stream, the resend that follows the end of a
+	// stream, and the aborts read and change them only under mu, and the
+	// goroutines started for an older stream stop once they see generation
+	// changed.
 	mu sync.Mutex
 	// stream is nil when there is none: the next send opens one
 	stream proto.OxiaClient_WriteStreamClient
+	// target is the leader the stream goes to
+	target string
 	cancel context.CancelFunc
 	// generation changes whenever the stream is replaced or aborted, so that
 	// the goroutines working for an older stream stop
 	generation uint64
 	inflight   []*asyncWrite
-	// settled is set while the writes in flight on an ended stream are being
-	// settled, and closed once they are: no write is sent meanwhile
+	// settled is set while the writes in flight on an ended or retired stream
+	// are being settled, and closed once they are: no write is sent meanwhile
 	settled chan struct{}
+	// retired is set while the stream is kept for the responses of its writes
+	// in flight only: its leader was replaced, and it ends once they are
+	// answered or failed
+	retired bool
 	// resendBackoff spaces the attempts to send the writes in flight again,
 	// also when the new leader rejects them too; a response resets it
 	resendBackoff backoff.BackOff
@@ -84,28 +106,36 @@ type asyncWriteStream struct {
 	hint constant.ErrorMetadata
 }
 
-func newAsyncWriteStream(ctx context.Context, shard int64, open openWriteStream) *asyncWriteStream {
-	return &asyncWriteStream{ctx: ctx, shard: shard, open: open}
+func newAsyncWriteStream(ctx context.Context, shard int64, resolve resolveWriteTarget, open openWriteStream) *asyncWriteStream {
+	return &asyncWriteStream{ctx: ctx, shard: shard, resolve: resolve, open: open}
 }
 
-// send sends the request, opening a stream if there is none, and returns the
-// write in flight, whose response completes it. An error means that the
+// send hands the request returned by prepare to the stream, opening one to
+// the leader of the attempt if there is none, and returns the write in flight,
+// whose response completes it. prepare is invoked right before, unless ctx is
+// done: a request is never sent after its deadline. An error means that the
 // request was not sent.
-func (s *asyncWriteStream) send(ctx context.Context, hint constant.ErrorMetadata, request *proto.WriteRequest) (*asyncWrite, error) {
-	if err := s.lockSettled(ctx); err != nil {
+func (s *asyncWriteStream) send(ctx context.Context, hint constant.ErrorMetadata,
+	prepare func() (*proto.WriteRequest, error)) (*asyncWrite, error) {
+	target, err := s.lockTarget(ctx, hint)
+	if err != nil {
 		return nil, err
 	}
 	defer s.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.stream == nil {
-		if _, _, ok := hint.GetLeaderHint(); !ok {
-			hint = s.hint
-		}
-		stream, cancel, err := s.openStream(hint) //nolint:contextcheck // The stream outlives the request.
+		stream, cancel, err := s.openStream(ctx, target)
 		if err != nil {
 			return nil, err
 		}
-		s.install(stream, cancel) //nolint:contextcheck // The stream outlives the request.
+		s.install(stream, target, cancel)
+	}
+	request, err := prepare()
+	if err != nil {
+		return nil, err
 	}
 	if err := s.stream.Send(request); err != nil {
 		// The stream ended: its reader settles the writes in flight on it
@@ -116,6 +146,31 @@ func (s *asyncWriteStream) send(ctx context.Context, hint constant.ErrorMetadata
 	write := &asyncWrite{request: request, response: concurrent.NewFuture[*proto.WriteResponse]()}
 	s.inflight = append(s.inflight, write)
 	return write, nil
+}
+
+// lockTarget locks the stream once no writes in flight are being settled, and
+// returns the leader the next write goes to. A stream to another leader, which
+// was replaced, is retired first: the next write waits for its writes in
+// flight to be settled, and goes to the new leader after them.
+func (s *asyncWriteStream) lockTarget(ctx context.Context, hint constant.ErrorMetadata) (string, error) {
+	for {
+		if err := s.lockSettled(ctx); err != nil {
+			return "", err
+		}
+		if _, _, ok := hint.GetLeaderHint(); !ok {
+			hint = s.hint
+		}
+		target, err := s.resolve(hint)
+		if err != nil {
+			s.mu.Unlock()
+			return "", err
+		}
+		if s.stream == nil || s.target == target {
+			return target, nil
+		}
+		s.retireLocked()
+		s.mu.Unlock()
+	}
 }
 
 // lockSettled locks the stream once no writes in flight are being settled.
@@ -133,6 +188,18 @@ func (s *asyncWriteStream) lockSettled(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+// retireLocked keeps the stream for the responses of its writes in flight
+// only: nothing more is sent on it, and it ends once they are answered or
+// failed. A stream with nothing in flight ends at once.
+func (s *asyncWriteStream) retireLocked() {
+	if len(s.inflight) == 0 {
+		s.endLocked()
+		return
+	}
+	s.retired = true
+	s.settled = make(chan struct{})
 }
 
 // abortWith fails the writes in flight with err, and ends the stream, if the
@@ -166,9 +233,18 @@ func (s *asyncWriteStream) detachLocked() []*asyncWrite {
 	return inflight
 }
 
-func (s *asyncWriteStream) openStream(hint constant.ErrorMetadata) (proto.OxiaClient_WriteStreamClient, context.CancelFunc, error) {
-	ctx, cancel := context.WithCancel(s.ctx)
-	stream, err := s.open(ctx, hint)
+// openStream opens a stream to target. The stream outlives the request, but
+// its setup must not: connecting to an unreachable leader can take up to the
+// gRPC connect timeout, so the setup is cancelled when ctx ends.
+func (s *asyncWriteStream) openStream(ctx context.Context, target string) (proto.OxiaClient_WriteStreamClient, context.CancelFunc, error) {
+	streamCtx, cancel := context.WithCancel(s.ctx)
+	stop := context.AfterFunc(ctx, cancel)
+	stream, err := s.open(streamCtx, target)
+	if !stop() {
+		// The request ended during the setup, and cancelled the stream
+		cancel()
+		return nil, nil, ctx.Err()
+	}
 	if err != nil {
 		cancel()
 		return nil, nil, err
@@ -176,10 +252,11 @@ func (s *asyncWriteStream) openStream(hint constant.ErrorMetadata) (proto.OxiaCl
 	return stream, cancel, nil
 }
 
-// install makes the stream the current one, and starts reading its responses.
-func (s *asyncWriteStream) install(stream proto.OxiaClient_WriteStreamClient, cancel context.CancelFunc) {
+// install makes the stream to target the current one, and starts reading its
+// responses.
+func (s *asyncWriteStream) install(stream proto.OxiaClient_WriteStreamClient, target string, cancel context.CancelFunc) {
 	s.generation++
-	s.stream, s.cancel = stream, cancel
+	s.stream, s.target, s.cancel = stream, target, cancel
 	generation := s.generation
 	go process.DoWithLabels(s.ctx, map[string]string{
 		"oxia":  "write-stream-async",
@@ -194,7 +271,8 @@ func (s *asyncWriteStream) endLocked() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	s.stream, s.cancel = nil, nil
+	s.stream, s.target, s.cancel = nil, "", nil
+	s.retired = false
 	if s.settled != nil {
 		close(s.settled)
 		s.settled = nil
@@ -225,6 +303,10 @@ func (s *asyncWriteStream) read(generation uint64, stream proto.OxiaClient_Write
 		write := s.inflight[0]
 		s.inflight = s.inflight[1:]
 		s.resendBackoff, s.hint = nil, nil
+		if s.retired && len(s.inflight) == 0 {
+			// The retired stream answered every write it had in flight
+			s.endLocked()
+		}
 		s.mu.Unlock()
 
 		write.response.Complete(response)
@@ -241,7 +323,8 @@ func (s *asyncWriteStream) settleLocked(err error) {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	s.stream, s.cancel = nil, nil
+	s.stream, s.target, s.cancel = nil, "", nil
+	s.retired = false
 
 	translated, md := constant.FromGrpcError(err)
 	unprocessed := s.unprocessed(md, translated)
@@ -310,35 +393,9 @@ func (s *asyncWriteStream) resend(generation uint64, hint constant.ErrorMetadata
 			return
 		}
 
-		stream, cancel, err := s.openStream(hint)
+		err := s.resendOnce(generation, hint)
 		if err == nil {
-			s.mu.Lock()
-			if s.generation != generation {
-				// Aborted meanwhile: the writes in flight failed
-				s.mu.Unlock()
-				cancel()
-				return
-			}
-			var sent int
-			if sent, err = sendAll(stream, s.inflight); err == nil {
-				s.install(stream, cancel)
-				close(s.settled)
-				s.settled = nil
-				s.mu.Unlock()
-				return
-			}
-			s.mu.Unlock()
-			// The stream ended while taking the writes: its status says
-			// whether the server processed any of those it took
-			err = streamStatus(stream, err)
-			cancel()
-			translated, md := constant.FromGrpcError(err)
-			if sent > 0 && !s.unprocessed(md, translated) {
-				// Some writes went out and may be applied: none can be
-				// sent again
-				s.abortGeneration(generation, err)
-				return
-			}
+			return
 		}
 
 		// The attempt applied nothing: no stream was opened, or the server
@@ -353,6 +410,49 @@ func (s *asyncWriteStream) resend(generation uint64, hint constant.ErrorMetadata
 			return
 		}
 	}
+}
+
+// resendOnce makes one attempt to send the writes in flight again on a new
+// stream to the leader named by the hint, or by the shard assignments. It
+// returns nil once they are all in flight on it, and the error of an attempt
+// that applied nothing. Some writes may be applied after an attempt that took
+// some of them and broke without proving them unprocessed: the stream is
+// aborted, and nothing is returned.
+func (s *asyncWriteStream) resendOnce(generation uint64, hint constant.ErrorMetadata) error {
+	target, err := s.resolve(hint)
+	if err != nil {
+		return err
+	}
+	stream, cancel, err := s.openStream(s.ctx, target)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	if s.generation != generation {
+		// Aborted meanwhile: the writes in flight failed
+		s.mu.Unlock()
+		cancel()
+		return nil
+	}
+	sent, err := sendAll(stream, s.inflight)
+	if err == nil {
+		s.install(stream, target, cancel)
+		close(s.settled)
+		s.settled = nil
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Unlock()
+	// The stream ended while taking the writes: its status says whether the
+	// server processed any of those it took
+	err = streamStatus(stream, err)
+	cancel()
+	if translated, md := constant.FromGrpcError(err); sent > 0 && !s.unprocessed(md, translated) {
+		s.abortGeneration(generation, err)
+		return nil
+	}
+	return err
 }
 
 // waitToResend waits for the next attempt to send the writes in flight again.

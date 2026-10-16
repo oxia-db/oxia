@@ -37,7 +37,7 @@ var errCallsDropped = errors.New("all the calls were dropped")
 type writeBatchFactory struct {
 	namespace      string
 	execute        func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
-	executeAsync   func(context.Context, *proto.WriteRequest) func() (*proto.WriteResponse, error)
+	executeAsync   func(context.Context, int64, func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error)
 	reroute        WriteRerouter
 	metrics        *metrics.Metrics
 	requestTimeout time.Duration
@@ -66,7 +66,7 @@ type writeBatch struct {
 	namespace      string
 	shardId        *int64
 	execute        func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
-	executeAsync   func(context.Context, *proto.WriteRequest) func() (*proto.WriteResponse, error)
+	executeAsync   func(context.Context, int64, func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error)
 	reroute        WriteRerouter
 	puts           []model.PutCall
 	deletes        []model.DeleteCall
@@ -110,58 +110,70 @@ func (b *writeBatch) Complete() {
 		return
 	}
 	executionStart := time.Now()
-	request := b.toProto()
+	preparation := b.newPreparation()
 
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
 	defer cancel()
 
-	// The calls are dropped or sent when the request is first handed to gRPC
-	prepared := false
-	response, err := b.execute(ctx, *b.shardId, func() (*proto.WriteRequest, error) {
-		if !prepared {
-			prepared = true
-			if b.dropCancelledCalls() {
-				if b.Size() == 0 {
-					return nil, errCallsDropped
-				}
-				request = b.toProto()
-			}
-		}
-		return request, nil
-	})
-	b.finish(executionStart, request, response, err, prepared)
+	response, err := b.execute(ctx, *b.shardId, preparation.prepare)
+	b.finish(executionStart, preparation, response, err)
 }
 
 // Send sends the request of the batch without waiting for its response, and
-// returns the function that waits for it and completes the calls. The calls
-// whose caller gave up are dropped before the request is sent.
+// returns the function that waits for it and completes the calls.
 func (b *writeBatch) Send() func() {
 	if b.Size() == 0 {
 		return func() {}
 	}
-	if b.dropCancelledCalls() && b.Size() == 0 {
-		return func() {}
-	}
 	executionStart := time.Now()
-	request := b.toProto()
+	preparation := b.newPreparation()
 
 	ctx, cancel := context.WithTimeout(context.Background(), b.requestTimeout)
-	wait := b.executeAsync(ctx, request)
+	wait := b.executeAsync(ctx, *b.shardId, preparation.prepare)
 	return func() {
 		defer cancel()
 		response, err := wait()
-		b.finish(executionStart, request, response, err, true)
+		b.finish(executionStart, preparation, response, err)
 	}
 }
 
+// requestPreparation is the request of a batch, prepared right before it is
+// first handed to gRPC: the calls whose caller gave up are dropped then, and
+// the request is built again without them.
+type requestPreparation struct {
+	batch   *writeBatch
+	request *proto.WriteRequest
+	// prepared tells whether the request was handed to gRPC
+	prepared bool
+}
+
+func (b *writeBatch) newPreparation() *requestPreparation {
+	return &requestPreparation{batch: b, request: b.toProto()}
+}
+
+// prepare returns the request to send. Every attempt that gets as far as
+// sending invokes it, and only the first one drops the calls.
+func (p *requestPreparation) prepare() (*proto.WriteRequest, error) {
+	if !p.prepared {
+		p.prepared = true
+		if p.batch.dropCancelledCalls() {
+			if p.batch.Size() == 0 {
+				return nil, errCallsDropped
+			}
+			p.request = p.batch.toProto()
+		}
+	}
+	return p.request, nil
+}
+
 // finish completes the calls with the response of the request, or reroutes
-// them when their shard was split or merged. prepared tells whether the
-// request was handed to gRPC.
-func (b *writeBatch) finish(executionStart time.Time, request *proto.WriteRequest, response *proto.WriteResponse, err error, prepared bool) {
+// them when their shard was split or merged.
+func (b *writeBatch) finish(executionStart time.Time, preparation *requestPreparation, response *proto.WriteResponse, err error) {
 	if b.Size() == 0 {
 		// Every call was dropped, and failed already
 		return
 	}
+	request, prepared := preparation.request, preparation.prepared
 	if errors.Is(err, constant.ErrShardNotFound) && b.reroute != nil {
 		slog.Info("Shard was split/merged, re-routing write batch operations",
 			slog.Int64("shard", *b.shardId),
