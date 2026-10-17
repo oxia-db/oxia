@@ -78,14 +78,19 @@ type followerCursor struct {
 	namespace   string
 	shardId     int64
 
-	backoff        backoff.BackOff
-	closed         atomic.Bool
-	ctx            context.Context
-	cancel         context.CancelFunc
-	latch          sync.WaitGroup
-	log            *slog.Logger
-	observer       bool                  // true for split observer cursors
-	splitHashRange *proto.Int32HashRange // non-nil for split observer cursors
+	backoff  backoff.BackOff
+	closed   atomic.Bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	latch    sync.WaitGroup
+	log      *slog.Logger
+	observer bool // true for split observer cursors
+	// advertiseCommit makes the cursor advertise the commit offset advances
+	// to a regular follower too, like to an observer: the term pins
+	// FEATURE_COMMIT_ADVERTISEMENT, so the follower handles an entry-less
+	// Append
+	advertiseCommit bool
+	splitHashRange  *proto.Int32HashRange // non-nil for split observer cursors
 	// The range of the parent of a split, for split observer cursors, if the
 	// coordinator sent it
 	splitParentHashRange *proto.Int32HashRange
@@ -106,7 +111,8 @@ func NewFollowerCursor( //nolint:revive
 	ackTracker QuorumAckTracker,
 	walObject wal.Wal,
 	db database.DB,
-	ackOffset int64) (FollowerCursor, error) {
+	ackOffset int64,
+	advertiseCommit bool) (FollowerCursor, error) {
 	labels := map[string]any{
 		"namespace": namespace,
 		"shard":     shardId,
@@ -122,6 +128,7 @@ func NewFollowerCursor( //nolint:revive
 		db:                      db,
 		namespace:               namespace,
 		shardId:                 shardId,
+		advertiseCommit:         advertiseCommit,
 
 		log: slog.With(
 			slog.String("component", "follower-cursor"),
@@ -528,20 +535,22 @@ func (fc *followerCursor) streamEntriesLoop(ctx context.Context, reader wal.Read
 }
 
 // waitAtHead parks the cursor once it has reached the head of the wal, until
-// an entry past currentOffset is written. An observer cursor additionally
-// wakes up when the commit offset advances beyond lastSentCommitOffset and
+// an entry past currentOffset is written. An observer cursor, or one that
+// advertises the commit offset (see advertiseCommit), additionally wakes up
+// when the commit offset advances beyond lastSentCommitOffset and
 // advertises it to the follower with an entry-less Append: the observer
 // (split child) commit offset is capped at what was advertised, and the split
 // catch-up depends on it reaching the leader's commit offset even when no
-// more writes arrive to piggyback it on. Regular followers don't get the
-// advertisement: they only use the commit offset to reduce apply lag, and
-// older-version followers don't handle an Append without an entry. An
-// observer is never on an older version: it only exists for shard splits,
-// where both ends run split-capable servers.
+// more writes arrive to piggyback it on; a regular follower applies the last
+// committed entry of an idle shard with it, which its backups need. Other
+// regular followers don't get the advertisement: they only use the commit
+// offset to reduce apply lag, and older-version followers don't handle an
+// Append without an entry. An observer is never on an older version: it only
+// exists for shard splits, where both ends run split-capable servers.
 // It returns the commit offset last advertised to the follower.
 func (fc *followerCursor) waitAtHead(ctx context.Context, reader wal.Reader, currentOffset int64,
 	lastSentCommitOffset int64) (int64, error) {
-	if !fc.observer {
+	if !fc.observer && !fc.advertiseCommit {
 		return lastSentCommitOffset, fc.ackTracker.WaitForHeadOffset(ctx, currentOffset+1)
 	}
 

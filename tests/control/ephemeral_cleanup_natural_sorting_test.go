@@ -97,11 +97,9 @@ func TestEphemeralCleanupNaturalSorting(t *testing.T) {
 	_, _, _, err = client.Get(context.Background(), "persistent")
 	assert.NoError(t, err)
 
-	// The followers must apply the session end like the leader. Commit
-	// notifications are piggybacked on replication messages, so one more
-	// write is needed for the followers to commit it.
-	leaderChecksum := lead.Checksum().Value()
-	assert.NotZero(t, leaderChecksum)
+	// The followers must apply the session end like the leader: the leader
+	// advertises the commit offset to them, so they reach its checksum
+	assert.NotZero(t, lead.Checksum().Value())
 	_, _, err = client.Put(context.Background(), "flush", []byte("v"))
 	assert.NoError(t, err)
 
@@ -114,7 +112,7 @@ func TestEphemeralCleanupNaturalSorting(t *testing.T) {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 			return err == nil &&
 				follow.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_CLEANUP_NATURAL_SORTING) &&
-				follow.Checksum().Value() == leaderChecksum
+				follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 }

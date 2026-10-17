@@ -745,7 +745,7 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 	}
 
 	cursor, err := NewFollowerCursor(follower, term, lc.namespace, lc.shardId, lc.rpcClient, lc.quorumAckTracker, lc.wal, lc.db,
-		followerHeadEntryId.Offset)
+		followerHeadEntryId.Offset, slices.Contains(lc.termOptions.Features, proto.Feature_FEATURE_COMMIT_ADVERTISEMENT))
 	if err != nil {
 		lc.log.Error(
 			"Failed to create follower cursor",

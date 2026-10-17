@@ -93,6 +93,12 @@ enum Feature {
   // records outside its hash range once the split completes. A child does so
   // when the term of its parent pins the feature
   FEATURE_SPLIT_DEFERRED_FILTER = 10;
+  // The leader advertises a commit offset advance to a follower with an
+  // entry-less Append when it has no entry to carry it, as it does to a
+  // split observer: a follower then applies every committed entry while the
+  // shard is idle, instead of leaving the last one until the next write.
+  // The backups taken from a follower depend on it
+  FEATURE_COMMIT_ADVERTISEMENT = 11;
 }
 
 message GetInfoRequest {
