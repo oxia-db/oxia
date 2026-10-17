@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 	pb "google.golang.org/protobuf/proto"
 
@@ -93,7 +94,7 @@ func TestFollowerCursor(t *testing.T) {
 	assert.NoError(t, err)
 	slog.Info("Appended entry 0 to the log")
 
-	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset)
+	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset, false)
 	assert.NoError(t, err)
 
 	time.Sleep(10 * time.Millisecond)
@@ -220,7 +221,7 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 
 	ackTracker := NewQuorumAckTracker(3, n, n-1)
 
-	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset)
+	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset, false)
 	assert.NoError(t, err)
 
 	s := stream.SendSnapshotStream
@@ -296,7 +297,7 @@ func TestFollowerCursor_StreamToFollowerRightBeforeWalStart(t *testing.T) {
 	assert.NoError(t, w.Sync(context.Background()))
 
 	ackTracker := NewQuorumAckTracker(3, n, n-1)
-	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, n-1)
+	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, n-1, false)
 	assert.NoError(t, err)
 
 	select {
@@ -353,7 +354,7 @@ func TestFollowerCursor_StreamToEmptyFollowerWhenWalComplete(t *testing.T) {
 
 	ackTracker := NewQuorumAckTracker(3, n-1, n-1)
 
-	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset)
+	fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, wal.InvalidOffset, false)
 	assert.NoError(t, err)
 
 	// The WAL still contains the full history: the empty follower must be
@@ -417,7 +418,7 @@ func TestFollowerCursor_CloseWaitsForInFlightSnapshot(t *testing.T) {
 		assert.NoError(t, kvf.Close())
 	})
 
-	fc, err = NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, provider, ackTracker, w, db, wal.InvalidOffset)
+	fc, err = NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, provider, ackTracker, w, db, wal.InvalidOffset, false)
 	assert.NoError(t, err)
 
 	// The blocked Send call is after db.Snapshot() succeeds, so the cursor still
@@ -709,4 +710,62 @@ func TestObserverFollowerCursor_SeedsChildWithAnEntry(t *testing.T) {
 	assert.NoError(t, wf.Close())
 	assert.NoError(t, db.Close())
 	assert.NoError(t, kvf.Close())
+}
+
+// A follower cursor that advertises the commit offset (the term pins the
+// feature) sends an entry-less Append when the commit offset advances while
+// it is parked at the head of the wal, like an observer does; one that
+// doesn't waits for the next entry.
+func TestFollowerCursorAdvertisesCommitOffsetAtHeadWhenTheTermPinsIt(t *testing.T) {
+	for _, advertise := range []bool{true, false} {
+		t.Run(fmt.Sprintf("advertise=%v", advertise), func(t *testing.T) {
+			var term int64 = 1
+			var shard int64 = 2
+			stream := rpc.NewMockRpcClient()
+			ackTracker := NewQuorumAckTracker(3, 0, 0)
+			kvf, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := database.NewDB(constant.DefaultNamespace, shard, kvf, proto.KeySortingType_HIERARCHICAL, 1*time.Hour,
+				time2.SystemClock)
+			require.NoError(t, err)
+			wf := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+			w, err := wf.NewWal(constant.DefaultNamespace, shard, nil)
+			require.NoError(t, err)
+			for offset := int64(0); offset <= 1; offset++ {
+				require.NoError(t, w.Append(&proto.LogEntry{Term: 1, Offset: offset, Value: []byte("v1")}))
+			}
+			regular, err := ackTracker.NewCursorAcker(0)
+			require.NoError(t, err)
+
+			fc, err := NewFollowerCursor("f1", term, constant.DefaultNamespace, shard, stream, ackTracker, w, db, 0,
+				advertise)
+			require.NoError(t, err)
+			req := <-stream.AppendReqs
+			assert.EqualValues(t, 1, req.Entry.Offset)
+			assert.EqualValues(t, 0, req.CommitOffset)
+
+			ackTracker.AdvanceHeadOffset(1)
+			regular.Ack(1)
+			require.EqualValues(t, 1, ackTracker.CommitOffset())
+
+			if advertise {
+				req = <-stream.AppendReqs
+				assert.Nil(t, req.Entry)
+				assert.EqualValues(t, 1, req.CommitOffset)
+			} else {
+				time.Sleep(100 * time.Millisecond)
+				select {
+				case req = <-stream.AppendReqs:
+					t.Fatalf("unexpected append: %+v", req)
+				default:
+				}
+			}
+			assert.NoError(t, fc.Close())
+			assert.NoError(t, ackTracker.Close())
+			assert.NoError(t, w.Close())
+			assert.NoError(t, wf.Close())
+			assert.NoError(t, db.Close())
+			assert.NoError(t, kvf.Close())
+		})
+	}
 }

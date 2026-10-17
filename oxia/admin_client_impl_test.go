@@ -133,6 +133,10 @@ func (m *mockAdminClientPool) GetReplicationRpc(string) (proto.OxiaLogReplicatio
 	return nil, errors.New("unexpected GetReplicationRpc call")
 }
 
+func (*mockAdminClientPool) GetBackupRpc(string) (proto.OxiaBackupClient, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (m *mockAdminClientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
 	m.targets = append(m.targets, target)
 	if m.clients != nil {

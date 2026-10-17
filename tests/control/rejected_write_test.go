@@ -91,18 +91,19 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 	// write the followers know that the entries up to "b" are committed
 	_, _, err = client.Put(t.Context(), "b", []byte("0"))
 	require.NoError(t, err)
-	checksum := lead.Checksum().Value()
-	assert.NotZero(t, checksum)
+	assert.NotZero(t, lead.Checksum().Value())
 	_, _, err = client.Put(t.Context(), "flush", []byte("0"))
 	require.NoError(t, err)
 
+	// The leader advertises the commit offset to the followers: they reach
+	// its checksum
 	for name, s := range servers {
 		if name == leader {
 			continue
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := s.GetShardDirector().GetFollower(0)
-			return err == nil && follow.Checksum().Value() == checksum
+			return err == nil && follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond, "follower %s did not apply the same entries", name)
 	}
 

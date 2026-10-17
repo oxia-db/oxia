@@ -92,10 +92,9 @@ func TestSecondaryIndexSkipUnchanged(t *testing.T) {
 	assert.Equal(t, []string{"/record"}, listIndex("by-name", "b", "c"))
 	assert.Empty(t, listIndex("by-group", "a", "z"))
 
-	// Commit offsets are piggybacked on the replication messages: after one
-	// more write the followers know that the overwrites are committed
-	leaderChecksum := lead.Checksum().Value()
-	assert.NotZero(t, leaderChecksum)
+	// The leader advertises the commit offset to the followers: they reach
+	// its checksum, with the overwrites applied
+	assert.NotZero(t, lead.Checksum().Value())
 	_, _, err = client.Put(t.Context(), "/flush", []byte("v"))
 	require.NoError(t, err)
 
@@ -107,7 +106,7 @@ func TestSecondaryIndexSkipUnchanged(t *testing.T) {
 			follow, err := s.GetShardDirector().GetFollower(0)
 			return err == nil &&
 				follow.IsFeatureEnabled(proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED) &&
-				follow.Checksum().Value() == leaderChecksum
+				follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond, "follower %s did not reach the leader's checksum", name)
 	}
 }
