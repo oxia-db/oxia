@@ -805,3 +805,15 @@ func (r *failingNamespaceRuntime) CreateNamespace(name string, namespace *proto.
 	}
 	return r.Runtime.CreateNamespace(name, namespace)
 }
+
+func (*mockNamespaceRuntime) RequestBackup(string, *int64) (int, error) {
+	return 0, coordruntime.ErrBackupsUnsupported
+}
+
+func (*mockNamespaceRuntime) ListBackups(context.Context, string, *int64, string) ([]*proto.BackupInfo, error) {
+	return nil, coordruntime.ErrBackupsUnsupported
+}
+
+func (*mockNamespaceRuntime) RestoreNamespace(context.Context, *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	return nil, coordruntime.ErrBackupsUnsupported
+}

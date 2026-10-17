@@ -89,11 +89,9 @@ func TestEphemeralSecondaryIndexCleanup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"/persistent"}, keys)
 
-	// The followers must apply the session end like the leader. Commit
-	// notifications are piggybacked on replication messages, so one more
-	// write is needed for the followers to commit it.
-	leaderChecksum := lead.Checksum().Value()
-	assert.NotZero(t, leaderChecksum)
+	// The followers must apply the session end like the leader: the leader
+	// advertises the commit offset to them, so they reach its checksum
+	assert.NotZero(t, lead.Checksum().Value())
 	_, _, err = client.Put(context.Background(), "/flush", []byte("v"))
 	assert.NoError(t, err)
 
@@ -106,7 +104,7 @@ func TestEphemeralSecondaryIndexCleanup(t *testing.T) {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 			return err == nil &&
 				follow.IsFeatureEnabled(proto.Feature_FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP) &&
-				follow.Checksum().Value() == leaderChecksum
+				follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 }

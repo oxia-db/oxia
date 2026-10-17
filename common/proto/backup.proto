@@ -1,0 +1,168 @@
+// Copyright 2023-2026 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * The shard backups to object storage, see docs/backups.md.
+ */
+syntax = "proto3";
+
+package io.oxia.proto.v1;
+
+option go_package = "github.com/oxia-db/oxia/common/proto";
+
+import "metadata.proto";
+
+// coordinator -> data server. The data servers do the work: they take the
+// backups, delete the expired ones, and install the backups of a restore.
+// The coordinator only asks, and never touches the object store.
+//
+// The requests are declarative and idempotent: each one asks the data server
+// to bring a shard or a namespace to the state the policy wants, starts the
+// job that does so if there is one to do and the server has a free slot,
+// and returns the state of that job. The coordinator sends the same request
+// again on its next check until the job is done. A job's result (DONE or
+// FAILED) is reported once; the next request starts the next job.
+service OxiaBackup {
+  // Takes a backup of a shard, if the policy wants one: the server's last
+  // backup of the shard is older than the interval and the shard changed
+  // since, or it is older than the retention minus the interval, or the
+  // request forces it.
+  rpc BackupShard(BackupShardRequest) returns (BackupShardResponse);
+  // Deletes the expired backups of a namespace, and the SST files no
+  // remaining backup references.
+  rpc ExpireBackups(ExpireBackupsRequest) returns (ExpireBackupsResponse);
+  // Lists the backups of a namespace, or of one of its shards.
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  // Installs a backup as the database of a shard that has no leader or
+  // follower on the server yet.
+  rpc RestoreShard(RestoreShardRequest) returns (RestoreShardResponse);
+}
+
+// BackupPolicy is what a data server needs of the backup configuration of
+// the cluster.
+message BackupPolicy {
+  string destination = 1;
+  int64 interval_millis = 2;
+  int64 retention_millis = 3;
+  uint32 max_concurrent_per_server = 4;
+  bool compression = 5;
+}
+
+enum BackupJobState {
+  BACKUP_JOB_STATE_UNKNOWN = 0;
+  // The policy is satisfied: there is nothing to do
+  BACKUP_JOB_STATE_NOT_NEEDED = 1;
+  // The request started the job
+  BACKUP_JOB_STATE_STARTED = 2;
+  // The job started by a previous request is still running
+  BACKUP_JOB_STATE_RUNNING = 3;
+  // The server has no free slot for the job: the request is retried later
+  BACKUP_JOB_STATE_BUSY = 4;
+  // The job started by a previous request completed, reported once
+  BACKUP_JOB_STATE_DONE = 5;
+  // The job started by a previous request failed, reported once
+  BACKUP_JOB_STATE_FAILED = 6;
+}
+
+// BackupRecord is a data server's record of its last backup of a shard.
+message BackupRecord {
+  string backup_id = 1;
+  string lineage = 2;
+  int64 timestamp_millis = 3;
+  int64 commit_offset = 4;
+  int64 term = 5;
+  // The size of the backup, before compression
+  uint64 size_bytes = 6;
+  // The bytes the backup uploaded: the SST files it didn't share with the
+  // previous backup, and the per-backup files
+  uint64 uploaded_bytes = 7;
+  int64 duration_millis = 8;
+}
+
+message BackupShardRequest {
+  string namespace = 1;
+  int64 shard = 2;
+  BackupPolicy policy = 3;
+  // Take a backup even if the policy doesn't want one
+  bool force = 4;
+  // Recorded in the manifest, for a restore to recreate the namespace
+  Namespace namespace_config = 5;
+  HashRange hash_range = 6;
+}
+
+message BackupShardResponse {
+  BackupJobState state = 1;
+  // The last backup of the shard on this server, if any
+  BackupRecord last_backup = 2;
+  // The error of a FAILED job
+  string error = 3;
+}
+
+message ExpireBackupsRequest {
+  string namespace = 1;
+  BackupPolicy policy = 2;
+}
+
+message ExpireBackupsResponse {
+  BackupJobState state = 1;
+  // The counts of a DONE job
+  uint32 backups_expired = 2;
+  uint32 files_deleted = 3;
+  uint64 bytes_deleted = 4;
+  string error = 5;
+}
+
+message ListBackupsRequest {
+  string destination = 1;
+  string namespace = 2;
+  optional int64 shard = 3;
+}
+
+message BackupInfo {
+  int64 shard = 1;
+  string backup_id = 2;
+  int64 timestamp_millis = 3;
+  int64 commit_offset = 4;
+  int64 term = 5;
+  HashRange hash_range = 6;
+  // The size of the backup, before compression
+  uint64 size_bytes = 7;
+  uint32 sst_count = 8;
+  // The configuration of the namespace when the backup was taken
+  Namespace namespace_config = 9;
+}
+
+message ListBackupsResponse {
+  // Oldest first, by shard
+  repeated BackupInfo backups = 1;
+}
+
+message RestoreShardRequest {
+  string namespace = 1;
+  int64 shard = 2;
+  // The range of the shard: the backup is filtered to it when it covers more
+  HashRange hash_range = 3;
+  string destination = 4;
+  string source_namespace = 5;
+  int64 source_shard = 6;
+  string backup_id = 7;
+}
+
+message RestoreShardResponse {
+  BackupJobState state = 1;
+  // The commit offset and term of the installed database, with DONE
+  int64 commit_offset = 2;
+  int64 term = 3;
+  string error = 4;
+}

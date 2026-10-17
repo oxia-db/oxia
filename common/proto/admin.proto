@@ -22,6 +22,7 @@ package io.oxia.proto.v1;
 option go_package = "github.com/oxia-db/oxia/common/proto";
 option java_multiple_files = true;
 
+import "backup.proto";
 import "metadata.proto";
 
 service OxiaAdmin {
@@ -44,6 +45,24 @@ service OxiaAdmin {
    */
   rpc SplitShard(SplitShardRequest) returns (SplitShardResponse);
 
+  /**
+   * Makes the backups of the selected shards due now, e.g. before an
+   * upgrade. The backups run in the background, see ListBackups.
+   */
+  rpc RequestBackup(RequestBackupRequest) returns (RequestBackupResponse);
+
+  /**
+   * Lists the backups of a namespace, through a data server.
+   */
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+
+  /**
+   * Restores a namespace as of a point in time into a new namespace, from
+   * the newest backup of each part of the hash range at that time. The
+   * restore runs in the background: the new namespace serves once its
+   * shards have installed their backups and elected their leaders.
+   */
+  rpc RestoreNamespace(RestoreNamespaceRequest) returns (RestoreNamespaceResponse);
 }
 
 message ListDataServersRequest {
@@ -144,4 +163,37 @@ message SplitShardRequest {
 message SplitShardResponse {
   int64 left_child_shard = 1;
   int64 right_child_shard = 2;
+}
+
+message RequestBackupRequest {
+  // All the namespaces when empty
+  string namespace = 1;
+  // All the shards of the namespace when absent
+  optional int64 shard = 2;
+}
+
+message RequestBackupResponse {
+  // The shards made due
+  uint32 shards = 1;
+}
+
+message RestoreNamespaceRequest {
+  string source_namespace = 1;
+  string target_namespace = 2;
+  // The time to restore as of, in milliseconds since the epoch
+  int64 as_of_millis = 3;
+  // The destination to restore from: the one of the backup policy when
+  // empty
+  string destination = 4;
+}
+
+message RestoreNamespaceResponse {
+  repeated RestoredShard shards = 1;
+}
+
+message RestoredShard {
+  int64 shard = 1;
+  HashRange hash_range = 2;
+  int64 source_shard = 3;
+  string backup_id = 4;
 }

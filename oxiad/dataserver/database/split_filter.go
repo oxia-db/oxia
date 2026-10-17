@@ -364,6 +364,24 @@ type SplitFilter struct {
 // the parent's entries only as the follower of the parent, which filters them:
 // e.g. it replays them from its log after a restart, as a leader too, and the
 // replay filters the entries of terms up to ParentTerm with the recorded one.
+// ClearSplitFilters deletes the split filters recorded in a database, for a
+// database restored from the backup of a split child: the entries it holds
+// outside its hash range are filtered at the restore, and no parent sends it
+// entries to filter.
+func ClearSplitFilters(kv kvstore.KV) error {
+	batch := kv.NewWriteBatch()
+	defer func() { _ = batch.Close() }()
+	for _, key := range []string{splitFilterKey, deferredSplitFilterKey} {
+		if err := batch.Delete(key); err != nil {
+			return errors.Wrapf(err, "failed to delete %s", key)
+		}
+	}
+	if err := batch.Commit(); err != nil {
+		return errors.Wrap(err, "failed to clear the split filters")
+	}
+	return kv.Flush()
+}
+
 func (d *db) SetSplitFilter(filter *SplitFilter) error {
 	value, err := json.Marshal(filter)
 	if err != nil {

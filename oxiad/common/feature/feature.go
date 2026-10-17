@@ -37,6 +37,7 @@ func SupportedFeatures() []proto.Feature {
 		proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION,
 		proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED,
 		proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER,
+		proto.Feature_FEATURE_COMMIT_ADVERTISEMENT,
 	}
 }
 

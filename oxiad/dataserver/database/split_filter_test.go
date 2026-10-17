@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/hash"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -896,4 +897,22 @@ func TestFilterDBForSplit_ReadFailure(t *testing.T) {
 	leftRange, _ := splitRanges()
 	assert.ErrorIs(t, FilterDBForSplit(kv, leftRange), os.ErrPermission)
 	assert.NoError(t, kv.Close())
+}
+
+func TestClearSplitFiltersDeletesBothFilters(t *testing.T) {
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB("ns", 1, kvFactory, proto.KeySortingType_NATURAL, 0, commontime.SystemClock)
+	require.NoError(t, err)
+	require.NoError(t, db.SetSplitFilter(&SplitFilter{MinHash: 0, MaxHash: 10, ParentTerm: 1}))
+	require.NoError(t, db.SetDeferredSplitFilter(&DeferredSplitFilter{MinHash: 0, MaxHash: 10, ParentTerm: 1}, nil))
+	require.NoError(t, ClearSplitFilters(db.RawKV()))
+	require.NoError(t, db.Close())
+
+	// The filters are recovered from the database at open: none is left
+	reopened, err := NewDB("ns", 1, kvFactory, proto.KeySortingType_NATURAL, 0, commontime.SystemClock)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, reopened.Close()) }()
+	assert.Nil(t, reopened.SplitFilter())
+	assert.Nil(t, reopened.DeferredSplitFilter())
 }

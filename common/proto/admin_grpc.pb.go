@@ -47,6 +47,9 @@ const (
 	OxiaAdmin_GetNamespace_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
 	OxiaAdmin_ListNamespaces_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
 	OxiaAdmin_SplitShard_FullMethodName       = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
+	OxiaAdmin_RequestBackup_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/RequestBackup"
+	OxiaAdmin_ListBackups_FullMethodName      = "/io.oxia.proto.v1.OxiaAdmin/ListBackups"
+	OxiaAdmin_RestoreNamespace_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/RestoreNamespace"
 )
 
 // OxiaAdminClient is the client API for OxiaAdmin service.
@@ -67,6 +70,19 @@ type OxiaAdminClient interface {
 	// Triggers a shard split. The specified shard is split into two child
 	// shards at the given split point (or midpoint if not specified).
 	SplitShard(ctx context.Context, in *SplitShardRequest, opts ...grpc.CallOption) (*SplitShardResponse, error)
+	// *
+	// Makes the backups of the selected shards due now, e.g. before an
+	// upgrade. The backups run in the background, see ListBackups.
+	RequestBackup(ctx context.Context, in *RequestBackupRequest, opts ...grpc.CallOption) (*RequestBackupResponse, error)
+	// *
+	// Lists the backups of a namespace, through a data server.
+	ListBackups(ctx context.Context, in *ListBackupsRequest, opts ...grpc.CallOption) (*ListBackupsResponse, error)
+	// *
+	// Restores a namespace as of a point in time into a new namespace, from
+	// the newest backup of each part of the hash range at that time. The
+	// restore runs in the background: the new namespace serves once its
+	// shards have installed their backups and elected their leaders.
+	RestoreNamespace(ctx context.Context, in *RestoreNamespaceRequest, opts ...grpc.CallOption) (*RestoreNamespaceResponse, error)
 }
 
 type oxiaAdminClient struct {
@@ -187,6 +203,36 @@ func (c *oxiaAdminClient) SplitShard(ctx context.Context, in *SplitShardRequest,
 	return out, nil
 }
 
+func (c *oxiaAdminClient) RequestBackup(ctx context.Context, in *RequestBackupRequest, opts ...grpc.CallOption) (*RequestBackupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestBackupResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_RequestBackup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *oxiaAdminClient) ListBackups(ctx context.Context, in *ListBackupsRequest, opts ...grpc.CallOption) (*ListBackupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBackupsResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_ListBackups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *oxiaAdminClient) RestoreNamespace(ctx context.Context, in *RestoreNamespaceRequest, opts ...grpc.CallOption) (*RestoreNamespaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreNamespaceResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_RestoreNamespace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OxiaAdminServer is the server API for OxiaAdmin service.
 // All implementations must embed UnimplementedOxiaAdminServer
 // for forward compatibility.
@@ -205,6 +251,19 @@ type OxiaAdminServer interface {
 	// Triggers a shard split. The specified shard is split into two child
 	// shards at the given split point (or midpoint if not specified).
 	SplitShard(context.Context, *SplitShardRequest) (*SplitShardResponse, error)
+	// *
+	// Makes the backups of the selected shards due now, e.g. before an
+	// upgrade. The backups run in the background, see ListBackups.
+	RequestBackup(context.Context, *RequestBackupRequest) (*RequestBackupResponse, error)
+	// *
+	// Lists the backups of a namespace, through a data server.
+	ListBackups(context.Context, *ListBackupsRequest) (*ListBackupsResponse, error)
+	// *
+	// Restores a namespace as of a point in time into a new namespace, from
+	// the newest backup of each part of the hash range at that time. The
+	// restore runs in the background: the new namespace serves once its
+	// shards have installed their backups and elected their leaders.
+	RestoreNamespace(context.Context, *RestoreNamespaceRequest) (*RestoreNamespaceResponse, error)
 	mustEmbedUnimplementedOxiaAdminServer()
 }
 
@@ -247,6 +306,15 @@ func (UnimplementedOxiaAdminServer) ListNamespaces(context.Context, *ListNamespa
 }
 func (UnimplementedOxiaAdminServer) SplitShard(context.Context, *SplitShardRequest) (*SplitShardResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SplitShard not implemented")
+}
+func (UnimplementedOxiaAdminServer) RequestBackup(context.Context, *RequestBackupRequest) (*RequestBackupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestBackup not implemented")
+}
+func (UnimplementedOxiaAdminServer) ListBackups(context.Context, *ListBackupsRequest) (*ListBackupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBackups not implemented")
+}
+func (UnimplementedOxiaAdminServer) RestoreNamespace(context.Context, *RestoreNamespaceRequest) (*RestoreNamespaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreNamespace not implemented")
 }
 func (UnimplementedOxiaAdminServer) mustEmbedUnimplementedOxiaAdminServer() {}
 func (UnimplementedOxiaAdminServer) testEmbeddedByValue()                   {}
@@ -467,6 +535,60 @@ func _OxiaAdmin_SplitShard_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OxiaAdmin_RequestBackup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestBackupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).RequestBackup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_RequestBackup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).RequestBackup(ctx, req.(*RequestBackupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OxiaAdmin_ListBackups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBackupsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).ListBackups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_ListBackups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).ListBackups(ctx, req.(*ListBackupsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OxiaAdmin_RestoreNamespace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreNamespaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).RestoreNamespace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_RestoreNamespace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).RestoreNamespace(ctx, req.(*RestoreNamespaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OxiaAdmin_ServiceDesc is the grpc.ServiceDesc for OxiaAdmin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -517,6 +639,18 @@ var OxiaAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SplitShard",
 			Handler:    _OxiaAdmin_SplitShard_Handler,
+		},
+		{
+			MethodName: "RequestBackup",
+			Handler:    _OxiaAdmin_RequestBackup_Handler,
+		},
+		{
+			MethodName: "ListBackups",
+			Handler:    _OxiaAdmin_ListBackups_Handler,
+		},
+		{
+			MethodName: "RestoreNamespace",
+			Handler:    _OxiaAdmin_RestoreNamespace_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

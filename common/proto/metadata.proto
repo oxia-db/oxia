@@ -80,6 +80,10 @@ message Namespace {
   string key_sorting = 5;
   // @gotags: yaml:"antiAffinities,omitempty"
   repeated AntiAffinity anti_affinities = 6;
+  // Whether the backup policy covers the namespace; unset is yes. See
+  // BackupConfig.
+  // @gotags: yaml:"backup,omitempty"
+  optional bool backup = 7;
 }
 
 message LoadBalancer {
@@ -106,6 +110,35 @@ message AutoSplitConfig {
   string collection_interval = 7;
 }
 
+// BackupConfig is the backup policy of the cluster: the data servers back
+// every shard up to the destination on a schedule, see docs/backups.md.
+message BackupConfig {
+  // @gotags: yaml:"enabled,omitempty"
+  bool enabled = 1;
+  // The object store the backups go to, e.g. s3://bucket/prefix
+  // @gotags: yaml:"destination,omitempty"
+  string destination = 2;
+  // The target maximum age of the newest backup of a shard (default 1h)
+  // @gotags: yaml:"interval,omitempty"
+  string interval = 3;
+  // How far back a restore can go (default 7d)
+  // @gotags: yaml:"retention,omitempty"
+  string retention = 4;
+  // The backup and cleanup jobs that run at once on one data server
+  // (default 2)
+  // @gotags: yaml:"maxConcurrentPerServer,omitempty"
+  uint32 max_concurrent_per_server = 5;
+  // Compress the SST files on upload
+  // @gotags: yaml:"compression,omitempty"
+  bool compression = 6;
+  // How often the coordinator checks which shards are due (default 30s)
+  // @gotags: yaml:"scheduleInterval,omitempty"
+  string schedule_interval = 7;
+  // How often the expired backups of a namespace are deleted (default 24h)
+  // @gotags: yaml:"cleanupInterval,omitempty"
+  string cleanup_interval = 8;
+}
+
 message ClusterConfiguration {
   // @gotags: yaml:"namespaces,omitempty"
   repeated Namespace namespaces = 1;
@@ -121,6 +154,8 @@ message ClusterConfiguration {
   repeated Coordinator coordinators = 6;
   // @gotags: yaml:"autoSplit,omitempty"
   AutoSplitConfig auto_split = 7;
+  // @gotags: yaml:"backup,omitempty"
+  BackupConfig backup = 8;
 }
 
 message HashRange {
@@ -155,6 +190,20 @@ message SplitMetadata {
   map<int64, string> child_leaders_at_bootstrap = 7;
 }
 
+// RestoreMetadata marks a shard of a namespace being restored from a backup:
+// its ensemble installs the backup before the shard's first election, which
+// clears the mark.
+message RestoreMetadata {
+  // @gotags: yaml:"destination"
+  string destination = 1;
+  // @gotags: yaml:"sourceNamespace"
+  string source_namespace = 2;
+  // @gotags: yaml:"sourceShardId"
+  int64 source_shard_id = 3;
+  // @gotags: yaml:"backupId"
+  string backup_id = 4;
+}
+
 enum ShardStatus {
   ShardStatusUnknown = 0;
   SteadyState = 1;
@@ -179,6 +228,13 @@ message ShardMetadata {
   HashRange int32_hash_range = 7;
   // @gotags: yaml:"split,omitempty"
   SplitMetadata split = 8;
+  // The ensemble member that takes the backups of the shard, see
+  // BackupConfig. The coordinator keeps it as long as it can: a new backup
+  // replica uploads the whole shard again.
+  // @gotags: yaml:"backupReplica,omitempty"
+  DataServerIdentity backup_replica = 9;
+  // @gotags: yaml:"restore,omitempty"
+  RestoreMetadata restore = 10;
 }
 
 message NamespaceStatus {

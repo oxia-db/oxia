@@ -26,6 +26,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
@@ -51,6 +52,24 @@ type ShardsDirector interface {
 	DeleteShard(req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
 
 	GetAllLeaders() []lead.LeaderController
+
+	// Checkpoint takes a checkpoint of the database of a shard hosted here, as
+	// its leader or follower, or returns constant.ErrNodeIsNotMember.
+	Checkpoint(shardId int64) (*database.Checkpoint, error)
+	// CommitOffset returns the last entry applied to the database of a shard
+	// hosted here, or constant.ErrNodeIsNotMember.
+	CommitOffset(shardId int64) (int64, error)
+	// WithDatabase runs fn with the directory of the database of a shard
+	// hosted here while it is still the database a checkpoint of the given
+	// generation was taken from, see lead.LeaderController.WithDatabase, or
+	// returns constant.ErrNodeIsNotMember.
+	WithDatabase(shardId int64, generation uint64, fn func(dir string) error) error
+	// NewInstaller starts the installation of a database of a shard from its
+	// files, for a restore. The shard must not be led from here. A follower
+	// of it is closed, and created again by the next term.
+	NewInstaller(namespace string, shardId int64) (Installer, error)
+	// DatabaseDir returns the directory of the database of a shard.
+	DatabaseDir(namespace string, shardId int64) string
 }
 
 type shardsDirector struct {
@@ -238,6 +257,80 @@ func (s *shardsDirector) DeleteShard(req *proto.DeleteShardRequest) (*proto.Dele
 		return nil, err
 	}
 	return fc.Delete(req)
+}
+
+func (s *shardsDirector) Checkpoint(shardId int64) (*database.Checkpoint, error) {
+	s.RLock()
+	leader, isLeader := s.leaders[shardId]
+	follower, isFollower := s.followers[shardId]
+	closed := s.closed
+	s.RUnlock()
+	switch {
+	case closed:
+		return nil, constant.ErrResourceUnavailable
+	case isLeader:
+		return leader.Checkpoint()
+	case isFollower:
+		return follower.Checkpoint()
+	default:
+		return nil, constant.ErrNodeIsNotMember
+	}
+}
+
+func (s *shardsDirector) CommitOffset(shardId int64) (int64, error) {
+	s.RLock()
+	defer s.RUnlock()
+	switch {
+	case s.closed:
+		return 0, constant.ErrResourceUnavailable
+	case s.leaders[shardId] != nil:
+		return s.leaders[shardId].DatabaseCommitOffset(), nil
+	case s.followers[shardId] != nil:
+		return s.followers[shardId].CommitOffset(), nil
+	default:
+		return 0, constant.ErrNodeIsNotMember
+	}
+}
+
+func (s *shardsDirector) WithDatabase(shardId int64, generation uint64, fn func(dir string) error) error {
+	s.RLock()
+	leader, isLeader := s.leaders[shardId]
+	follower, isFollower := s.followers[shardId]
+	closed := s.closed
+	s.RUnlock()
+	switch {
+	case closed:
+		return constant.ErrResourceUnavailable
+	case isLeader:
+		return leader.WithDatabase(generation, fn)
+	case isFollower:
+		return follower.WithDatabase(generation, fn)
+	default:
+		return constant.ErrNodeIsNotMember
+	}
+}
+
+func (s *shardsDirector) NewInstaller(namespace string, shardId int64) (Installer, error) {
+	s.Lock()
+	defer s.Unlock()
+	if s.closed {
+		return nil, constant.ErrResourceUnavailable
+	}
+	if _, ok := s.leaders[shardId]; ok {
+		return nil, errors.Join(constant.ErrResourceConflict, errors.New("the shard is led from this data server"))
+	}
+	if follower, ok := s.followers[shardId]; ok {
+		if err := follower.Close(); err != nil {
+			return nil, err
+		}
+		delete(s.followers, shardId)
+		s.followersCounter.Dec()
+	}
+	return newInstaller(s.storageOptions, namespace, shardId, s.walFactory, s.kvFactory)
+}
+
+func (s *shardsDirector) DatabaseDir(namespace string, shardId int64) string {
+	return s.kvFactory.DatabaseDir(namespace, shardId)
 }
 
 func (s *shardsDirector) GetAllLeaders() []lead.LeaderController {

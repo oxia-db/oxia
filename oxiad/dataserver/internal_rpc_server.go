@@ -33,6 +33,7 @@ import (
 	dcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/assignment"
+	"github.com/oxia-db/oxia/oxiad/dataserver/backup"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	manifestpkg "github.com/oxia-db/oxia/oxiad/dataserver/manifest"
@@ -47,8 +48,10 @@ import (
 type internalRpcServer struct {
 	proto.UnimplementedOxiaCoordinationServer
 	proto.UnimplementedOxiaLogReplicationServer
+	proto.UnimplementedOxiaBackupServer
 
 	shardsDirector       controller.ShardsDirector
+	backups              *backup.Executor
 	assignmentDispatcher assignment.ShardAssignmentsDispatcher
 	manifest             *manifestpkg.Manifest
 	grpcServer           dcommonrpc.GrpcServer
@@ -65,6 +68,7 @@ func newInternalRpcServer(grpcProvider dcommonrpc.GrpcProvider, bindAddress stri
 
 	server := &internalRpcServer{
 		shardsDirector:       shardsDirector,
+		backups:              backup.New(backup.Options{Host: shardsDirector}),
 		assignmentDispatcher: assignmentDispatcher,
 		manifest:             manifest,
 		healthServer:         healthServer,
@@ -77,6 +81,7 @@ func newInternalRpcServer(grpcProvider dcommonrpc.GrpcProvider, bindAddress stri
 	server.grpcServer, err = grpcProvider.StartGrpcServer("internal", bindAddress, func(registrar grpc.ServiceRegistrar) {
 		proto.RegisterOxiaCoordinationServer(registrar, server)
 		proto.RegisterOxiaLogReplicationServer(registrar, server)
+		proto.RegisterOxiaBackupServer(registrar, server)
 		grpc_health_v1.RegisterHealthServer(registrar, server.healthServer)
 	}, tlsConf, authOptions, dcommonrpc.NewGrpcInsIDVerifyInterceptors(
 		server.manifest,
@@ -90,6 +95,12 @@ func newInternalRpcServer(grpcProvider dcommonrpc.GrpcProvider, bindAddress stri
 
 func (s *internalRpcServer) Close() error {
 	return s.grpcServer.Close()
+}
+
+// stopBackups ends the backup jobs, which checkpoint the shards: it runs
+// before the shards close.
+func (s *internalRpcServer) stopBackups() error {
+	return s.backups.Close()
 }
 
 func (s *internalRpcServer) PushShardAssignments(srv proto.OxiaCoordination_PushShardAssignmentsServer) error {
@@ -508,6 +519,26 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 	}
 
 	res, err := leader.GetStatus(req)
+	return res, constant.IntoGrpcStatusError(err)
+}
+
+func (s *internalRpcServer) BackupShard(ctx context.Context, req *proto.BackupShardRequest) (*proto.BackupShardResponse, error) {
+	res, err := s.backups.BackupShard(ctx, req)
+	return res, constant.IntoGrpcStatusError(err)
+}
+
+func (s *internalRpcServer) ExpireBackups(ctx context.Context, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	res, err := s.backups.ExpireBackups(ctx, req)
+	return res, constant.IntoGrpcStatusError(err)
+}
+
+func (s *internalRpcServer) ListBackups(ctx context.Context, req *proto.ListBackupsRequest) (*proto.ListBackupsResponse, error) {
+	res, err := s.backups.ListBackups(ctx, req)
+	return res, constant.IntoGrpcStatusError(err)
+}
+
+func (s *internalRpcServer) RestoreShard(ctx context.Context, req *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error) {
+	res, err := s.backups.RestoreShard(ctx, req)
 	return res, constant.IntoGrpcStatusError(err)
 }
 

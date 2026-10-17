@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
+	"github.com/oxia-db/oxia/oxiad/backup"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -462,6 +463,68 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 		LeftChildShard:  left,
 		RightChildShard: right,
 	}, nil
+}
+
+func (management *managementServer) RequestBackup(_ context.Context, req *proto.RequestBackupRequest) (*proto.RequestBackupResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("Received RequestBackup request", slog.String("namespace", req.GetNamespace()),
+		slog.Any("shard", req.Shard))
+	count, err := runtime.RequestBackup(req.GetNamespace(), req.Shard)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return &proto.RequestBackupResponse{Shards: uint32(count)}, nil
+}
+
+func (management *managementServer) ListBackups(ctx context.Context, req *proto.ListBackupsRequest) (*proto.ListBackupsResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	backups, err := runtime.ListBackups(ctx, req.GetNamespace(), req.Shard, req.GetDestination())
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return &proto.ListBackupsResponse{Backups: backups}, nil
+}
+
+func (management *managementServer) RestoreNamespace(ctx context.Context, req *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	if err := validation.ValidateNamespace(req.GetTargetNamespace()); err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+	}
+	if req.GetSourceNamespace() == "" || req.GetAsOfMillis() <= 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "a source namespace and an as-of time are required")
+	}
+	slog.Info("Received RestoreNamespace request", slog.String("source", req.GetSourceNamespace()),
+		slog.String("target", req.GetTargetNamespace()), slog.Int64("as-of-millis", req.GetAsOfMillis()))
+	res, err := runtime.RestoreNamespace(ctx, req)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return res, nil
+}
+
+// backupError maps the errors of the backup operations to gRPC statuses.
+func backupError(err error) error {
+	switch {
+	case errors.Is(err, coordruntime.ErrBackupsUnsupported):
+		return grpcstatus.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, metadatacommon.ErrAlreadyExists):
+		return grpcstatus.Error(codes.AlreadyExists, err.Error())
+	case errors.Is(err, backup.ErrNoBackup), errors.Is(err, backup.ErrInvalidID):
+		return grpcstatus.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, coordruntime.ErrNoBackupDestination):
+		return grpcstatus.Error(codes.FailedPrecondition, err.Error())
+	default:
+		return constant.IntoGrpcStatusError(err)
+	}
 }
 
 func newManagementServer(metadata coordmetadata.Metadata) *managementServer {

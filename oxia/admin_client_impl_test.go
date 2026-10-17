@@ -133,6 +133,10 @@ func (m *mockAdminClientPool) GetReplicationRpc(string) (proto.OxiaLogReplicatio
 	return nil, errors.New("unexpected GetReplicationRpc call")
 }
 
+func (*mockAdminClientPool) GetBackupRpc(string) (proto.OxiaBackupClient, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (m *mockAdminClientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
 	m.targets = append(m.targets, target)
 	if m.clients != nil {
@@ -593,4 +597,16 @@ func TestWrapAdminErrorPreservesCause(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnknown)
 	assert.True(t, errors.Is(err, cause))
+}
+
+func (*mockAdminRpcClient) RequestBackup(context.Context, *proto.RequestBackupRequest, ...grpc.CallOption) (*proto.RequestBackupResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (*mockAdminRpcClient) ListBackups(context.Context, *proto.ListBackupsRequest, ...grpc.CallOption) (*proto.ListBackupsResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (*mockAdminRpcClient) RestoreNamespace(context.Context, *proto.RestoreNamespaceRequest, ...grpc.CallOption) (*proto.RestoreNamespaceResponse, error) {
+	return nil, errors.New("not implemented")
 }
