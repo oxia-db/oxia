@@ -104,4 +104,7 @@ type BackupProvider interface {
 	// bounded by ListBackupsTimeout rather than the usual timeout.
 	ListBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ListBackupsRequest,
 		visit func(*proto.ListBackupsResponse) error) error
+	// RestoreShard has the data server install a backup as the database of a
+	// shard it doesn't serve yet.
+	RestoreShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error)
 }

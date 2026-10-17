@@ -24,8 +24,8 @@ option go_package = "github.com/oxia-db/oxia/common/proto";
 import "metadata.proto";
 
 // coordinator -> data server. The data servers do the work: they take the
-// backups, delete the expired ones, and list them. The coordinator only
-// asks, and never touches the object store.
+// backups, delete the expired ones, and install the backups of a restore.
+// The coordinator only asks, and never touches the object store.
 //
 // The requests are declarative and idempotent: each one asks the data server
 // to bring a shard or a namespace to the state the policy wants, starts the
@@ -46,6 +46,9 @@ service OxiaBackup {
   // per shard, in shard order, with the backups of the shard oldest first.
   // The server reads the manifests of one shard at a time.
   rpc ListBackups(ListBackupsRequest) returns (stream ListBackupsResponse);
+  // Installs a backup as the database of a shard that has no leader or
+  // follower on the server yet.
+  rpc RestoreShard(RestoreShardRequest) returns (RestoreShardResponse);
 }
 
 // BackupPolicy is what a data server needs of the backup configuration of
@@ -147,4 +150,23 @@ message BackupInfo {
 message ListBackupsResponse {
   // The backups of one shard, oldest first
   repeated BackupInfo backups = 1;
+}
+
+message RestoreShardRequest {
+  string namespace = 1;
+  int64 shard = 2;
+  // The range of the shard: the backup is filtered to it when it covers more
+  HashRange hash_range = 3;
+  string destination = 4;
+  string source_namespace = 5;
+  int64 source_shard = 6;
+  string backup_id = 7;
+}
+
+message RestoreShardResponse {
+  BackupJobState state = 1;
+  // The commit offset and term of the installed database, with DONE
+  int64 commit_offset = 2;
+  int64 term = 3;
+  string error = 4;
 }

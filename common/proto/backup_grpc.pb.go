@@ -39,6 +39,7 @@ const (
 	OxiaBackup_BackupShard_FullMethodName   = "/io.oxia.proto.v1.OxiaBackup/BackupShard"
 	OxiaBackup_ExpireBackups_FullMethodName = "/io.oxia.proto.v1.OxiaBackup/ExpireBackups"
 	OxiaBackup_ListBackups_FullMethodName   = "/io.oxia.proto.v1.OxiaBackup/ListBackups"
+	OxiaBackup_RestoreShard_FullMethodName  = "/io.oxia.proto.v1.OxiaBackup/RestoreShard"
 )
 
 // OxiaBackupClient is the client API for OxiaBackup service.
@@ -46,8 +47,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // coordinator -> data server. The data servers do the work: they take the
-// backups, delete the expired ones, and list them. The coordinator only
-// asks, and never touches the object store.
+// backups, delete the expired ones, and install the backups of a restore.
+// The coordinator only asks, and never touches the object store.
 //
 // The requests are declarative and idempotent: each one asks the data server
 // to bring a shard or a namespace to the state the policy wants, starts the
@@ -68,6 +69,9 @@ type OxiaBackupClient interface {
 	// per shard, in shard order, with the backups of the shard oldest first.
 	// The server reads the manifests of one shard at a time.
 	ListBackups(ctx context.Context, in *ListBackupsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListBackupsResponse], error)
+	// Installs a backup as the database of a shard that has no leader or
+	// follower on the server yet.
+	RestoreShard(ctx context.Context, in *RestoreShardRequest, opts ...grpc.CallOption) (*RestoreShardResponse, error)
 }
 
 type oxiaBackupClient struct {
@@ -117,13 +121,23 @@ func (c *oxiaBackupClient) ListBackups(ctx context.Context, in *ListBackupsReque
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OxiaBackup_ListBackupsClient = grpc.ServerStreamingClient[ListBackupsResponse]
 
+func (c *oxiaBackupClient) RestoreShard(ctx context.Context, in *RestoreShardRequest, opts ...grpc.CallOption) (*RestoreShardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreShardResponse)
+	err := c.cc.Invoke(ctx, OxiaBackup_RestoreShard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OxiaBackupServer is the server API for OxiaBackup service.
 // All implementations must embed UnimplementedOxiaBackupServer
 // for forward compatibility.
 //
 // coordinator -> data server. The data servers do the work: they take the
-// backups, delete the expired ones, and list them. The coordinator only
-// asks, and never touches the object store.
+// backups, delete the expired ones, and install the backups of a restore.
+// The coordinator only asks, and never touches the object store.
 //
 // The requests are declarative and idempotent: each one asks the data server
 // to bring a shard or a namespace to the state the policy wants, starts the
@@ -144,6 +158,9 @@ type OxiaBackupServer interface {
 	// per shard, in shard order, with the backups of the shard oldest first.
 	// The server reads the manifests of one shard at a time.
 	ListBackups(*ListBackupsRequest, grpc.ServerStreamingServer[ListBackupsResponse]) error
+	// Installs a backup as the database of a shard that has no leader or
+	// follower on the server yet.
+	RestoreShard(context.Context, *RestoreShardRequest) (*RestoreShardResponse, error)
 	mustEmbedUnimplementedOxiaBackupServer()
 }
 
@@ -162,6 +179,9 @@ func (UnimplementedOxiaBackupServer) ExpireBackups(context.Context, *ExpireBacku
 }
 func (UnimplementedOxiaBackupServer) ListBackups(*ListBackupsRequest, grpc.ServerStreamingServer[ListBackupsResponse]) error {
 	return status.Error(codes.Unimplemented, "method ListBackups not implemented")
+}
+func (UnimplementedOxiaBackupServer) RestoreShard(context.Context, *RestoreShardRequest) (*RestoreShardResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreShard not implemented")
 }
 func (UnimplementedOxiaBackupServer) mustEmbedUnimplementedOxiaBackupServer() {}
 func (UnimplementedOxiaBackupServer) testEmbeddedByValue()                    {}
@@ -231,6 +251,24 @@ func _OxiaBackup_ListBackups_Handler(srv interface{}, stream grpc.ServerStream) 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OxiaBackup_ListBackupsServer = grpc.ServerStreamingServer[ListBackupsResponse]
 
+func _OxiaBackup_RestoreShard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreShardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaBackupServer).RestoreShard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaBackup_RestoreShard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaBackupServer).RestoreShard(ctx, req.(*RestoreShardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OxiaBackup_ServiceDesc is the grpc.ServiceDesc for OxiaBackup service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -245,6 +283,10 @@ var OxiaBackup_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExpireBackups",
 			Handler:    _OxiaBackup_ExpireBackups_Handler,
+		},
+		{
+			MethodName: "RestoreShard",
+			Handler:    _OxiaBackup_RestoreShard_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

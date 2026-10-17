@@ -270,3 +270,9 @@ func backupCall[T any](ctx context.Context, r *defaultControllerRPCProvider, nod
 	oxiaErr, _ := constant.FromGrpcError(err)
 	return response, oxiaErr
 }
+
+func (r *defaultControllerRPCProvider) RestoreShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error) {
+	return backupCall(ctx, r, node, r.timeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.RestoreShardResponse, error) {
+		return client.RestoreShard(ctx, req)
+	})
+}

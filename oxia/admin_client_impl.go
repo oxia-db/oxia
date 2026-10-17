@@ -218,6 +218,22 @@ func (admin *adminClientImpl) ListBackups(ctx context.Context, namespace string,
 	})
 }
 
+func (admin *adminClientImpl) RestoreNamespace(ctx context.Context, sourceNamespace string, asOf time.Time,
+	targetNamespace string, destination string) ([]*proto.RestoredShard, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.RestoreNamespaceResponse, error) {
+		return client.RestoreNamespace(ctx, &proto.RestoreNamespaceRequest{
+			SourceNamespace: sourceNamespace,
+			TargetNamespace: targetNamespace,
+			AsOfMillis:      asOf.UnixMilli(),
+			Destination:     destination,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response.GetShards(), nil
+}
+
 func NewAdminClient(adminAddr string, tlsConf *tls.Config, authentication auth.Authentication) (AdminClient, error) {
 	c := rpc.NewClientPool(tlsConf, authentication)
 	return &adminClientImpl{

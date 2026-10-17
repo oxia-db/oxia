@@ -90,6 +90,9 @@ func TestControllerRPCProviderCallsReachDataServer(t *testing.T) {
 	err = backupProvider.ListBackups(ctx, node, &proto.ListBackupsRequest{Namespace: "failing"},
 		func(*proto.ListBackupsResponse) error { return nil })
 	assert.ErrorContains(t, err, "bucket unavailable")
+	restoreRes, err := backupProvider.RestoreShard(ctx, node, &proto.RestoreShardRequest{Shard: 1})
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), restoreRes.CommitOffset)
 
 	handshake, err := provider.Handshake(ctx, node, &proto.HandshakeRequest{InstanceId: "instance-0"})
 	require.NoError(t, err)
@@ -264,4 +267,8 @@ func (*fakeBackupServer) ListBackups(req *proto.ListBackupsRequest, stream proto
 		return grpcstatus.Error(codes.Unavailable, "bucket unavailable")
 	}
 	return nil
+}
+
+func (*fakeBackupServer) RestoreShard(context.Context, *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error) {
+	return &proto.RestoreShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_DONE, CommitOffset: 9, Term: 2}, nil
 }

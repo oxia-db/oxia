@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,6 +68,9 @@ type mockAdminRpcClient struct {
 	listBackupsResp         *proto.ListBackupsResponse
 	listBackupsErr          error
 	listBackupsRecvErr      error
+	restoreNamespaceReq     *proto.RestoreNamespaceRequest
+	restoreNamespaceResp    *proto.RestoreNamespaceResponse
+	restoreNamespaceErr     error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(ctx context.Context, _ *proto.ListDataServersRequest, _ ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
@@ -775,6 +779,11 @@ func (s *listBackupsClientStream) Recv() (*proto.ListBackupsResponse, error) {
 	return res, nil
 }
 
+func (m *mockAdminRpcClient) RestoreNamespace(_ context.Context, req *proto.RestoreNamespaceRequest, _ ...grpc.CallOption) (*proto.RestoreNamespaceResponse, error) {
+	m.restoreNamespaceReq = req
+	return m.restoreNamespaceResp, m.restoreNamespaceErr
+}
+
 func TestAdminClientRequestBackupAndListBackups(t *testing.T) {
 	shard := int64(7)
 	adminClient := &mockAdminRpcClient{
@@ -811,4 +820,27 @@ func TestAdminClientRequestBackupAndListBackups(t *testing.T) {
 	}}}
 	_, err = midway.ListBackups(context.Background(), "ns", nil, "")
 	assert.ErrorContains(t, err, "bucket unavailable")
+}
+
+func TestAdminClientRestoreNamespace(t *testing.T) {
+	asOf := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	adminClient := &mockAdminRpcClient{
+		restoreNamespaceResp: &proto.RestoreNamespaceResponse{Shards: []*proto.RestoredShard{{Shard: 9, SourceShard: 1}}},
+	}
+	admin := &adminClientImpl{adminAddr: "admin-addr", clientPool: &mockAdminClientPool{adminClient: adminClient}}
+
+	shards, err := admin.RestoreNamespace(context.Background(), "orders", asOf, "orders-restored", "s3://bucket/prefix")
+	require.NoError(t, err)
+	require.Len(t, shards, 1)
+	assert.EqualValues(t, 9, shards[0].GetShard())
+	assert.Equal(t, "orders", adminClient.restoreNamespaceReq.GetSourceNamespace())
+	assert.Equal(t, "orders-restored", adminClient.restoreNamespaceReq.GetTargetNamespace())
+	assert.Equal(t, asOf.UnixMilli(), adminClient.restoreNamespaceReq.GetAsOfMillis())
+	assert.Equal(t, "s3://bucket/prefix", adminClient.restoreNamespaceReq.GetDestination())
+
+	failing := &adminClientImpl{adminAddr: "admin-addr", clientPool: &mockAdminClientPool{adminClient: &mockAdminRpcClient{
+		restoreNamespaceErr: grpcstatus.Error(codes.AlreadyExists, "namespace exists"),
+	}}}
+	_, err = failing.RestoreNamespace(context.Background(), "orders", asOf, "orders-restored", "")
+	assert.Error(t, err)
 }

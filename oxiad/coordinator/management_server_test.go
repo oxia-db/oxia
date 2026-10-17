@@ -35,6 +35,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/backup"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -1874,8 +1875,9 @@ func (*testRuntime) ListBackups(context.Context, *proto.ListBackupsRequest, func
 // backupTestRuntime serves the backup operations with the given results.
 type backupTestRuntime struct {
 	*testRuntime
-	requestBackup func(namespace string, shard *int64) (int, error)
-	listBackups   func(req *proto.ListBackupsRequest, visit func(*proto.ListBackupsResponse) error) error
+	requestBackup    func(namespace string, shard *int64) (int, error)
+	listBackups      func(req *proto.ListBackupsRequest, visit func(*proto.ListBackupsResponse) error) error
+	restoreNamespace func(req *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error)
 }
 
 func (r *backupTestRuntime) RequestBackup(namespace string, shard *int64) (int, error) {
@@ -1900,6 +1902,10 @@ func (*listBackupsStream) Context() context.Context {
 func (s *listBackupsStream) Send(res *proto.ListBackupsResponse) error {
 	s.backups = append(s.backups, res.GetBackups()...)
 	return nil
+}
+
+func (r *backupTestRuntime) RestoreNamespace(_ context.Context, req *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	return r.restoreNamespace(req)
 }
 
 func TestManagementServerBackupOperations(t *testing.T) {
@@ -1950,4 +1956,59 @@ func TestManagementServerBackupOperations(t *testing.T) {
 	_, err = notReady.RequestBackup(context.Background(), &proto.RequestBackupRequest{Namespace: "ns"})
 	assert.Error(t, err)
 	assert.Error(t, notReady.ListBackups(&proto.ListBackupsRequest{Namespace: "ns"}, &listBackupsStream{}))
+}
+
+func (*testRuntime) RestoreNamespace(context.Context, *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	return nil, coordruntime.ErrBackupsUnsupported
+}
+
+func TestManagementServerRestoreNamespace(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	runtime := &backupTestRuntime{
+		testRuntime: &testRuntime{metadata: metadata},
+		restoreNamespace: func(req *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+			return &proto.RestoreNamespaceResponse{Shards: []*proto.RestoredShard{{Shard: 1, BackupId: req.GetTargetNamespace()}}}, nil
+		},
+	}
+	management := newReadyManagementServer(metadata, runtime)
+	valid := &proto.RestoreNamespaceRequest{SourceNamespace: "orders", TargetNamespace: "orders-restored", AsOfMillis: 1}
+
+	res, err := management.RestoreNamespace(context.Background(), valid)
+	require.NoError(t, err)
+	require.Len(t, res.GetShards(), 1)
+	assert.Equal(t, "orders-restored", res.GetShards()[0].GetBackupId())
+
+	// The request is validated before reaching the runtime
+	for name, req := range map[string]*proto.RestoreNamespaceRequest{
+		"invalid target": {SourceNamespace: "orders", TargetNamespace: "not a name!", AsOfMillis: 1},
+		"missing source": {TargetNamespace: "orders-restored", AsOfMillis: 1},
+		"missing time":   {SourceNamespace: "orders", TargetNamespace: "orders-restored"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := management.RestoreNamespace(context.Background(), req)
+			assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+		})
+	}
+
+	// The errors of the runtime map to gRPC codes
+	for name, test := range map[string]struct {
+		err  error
+		code codes.Code
+	}{
+		"exists":     {errs.ErrAlreadyExists, codes.AlreadyExists},
+		"no backup":  {backup.ErrNoBackup, codes.InvalidArgument},
+		"invalid id": {errs.ErrInvalidArgument, codes.InvalidArgument},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runtime.restoreNamespace = func(*proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+				return nil, test.err
+			}
+			_, err := management.RestoreNamespace(context.Background(), valid)
+			assert.Equal(t, test.code, grpcstatus.Code(err))
+		})
+	}
+
+	// Without a runtime, the server is not ready
+	_, err = NewManagementServer(metadata).RestoreNamespace(context.Background(), valid)
+	assert.Error(t, err)
 }

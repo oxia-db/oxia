@@ -579,11 +579,35 @@ func (management *ManagementServer) ListBackups(req *proto.ListBackupsRequest, s
 	return nil
 }
 
+func (management *ManagementServer) RestoreNamespace(ctx context.Context, req *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	if err := validation.ValidateNamespace(req.GetTargetNamespace()); err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, err.Error())
+	}
+	if req.GetSourceNamespace() == "" || req.GetAsOfMillis() <= 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "a source namespace and an as-of time are required")
+	}
+	slog.Info("Received RestoreNamespace request", slog.String("source", req.GetSourceNamespace()),
+		slog.String("target", req.GetTargetNamespace()), slog.Int64("as-of-millis", req.GetAsOfMillis()))
+	res, err := runtime.RestoreNamespace(ctx, req)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return res, nil
+}
+
 // backupError maps the errors of the backup operations to gRPC statuses.
 func backupError(err error) error {
 	switch {
 	case errors.Is(err, errs.ErrNotImplemented):
 		return grpcstatus.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, errs.ErrAlreadyExists):
+		return grpcstatus.Error(codes.AlreadyExists, err.Error())
+	case errors.Is(err, errs.ErrInvalidArgument):
+		return grpcstatus.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, errs.ErrFailedPrecondition):
 		return grpcstatus.Error(codes.FailedPrecondition, err.Error())
 	default:

@@ -34,6 +34,7 @@ import (
 	// The S3 destinations, registered with package blob.
 	_ "github.com/oxia-db/oxia/oxiad/backup/blob/s3"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
@@ -67,6 +68,9 @@ type Host interface {
 	// DatabaseDir returns the directory of the database of a shard, where the
 	// executor keeps its record.
 	DatabaseDir(namespace string, shardId int64) string
+	// NewInstaller starts the installation of the database of a shard from
+	// its files.
+	NewInstaller(namespace string, shardId int64) (controller.Installer, error)
 }
 
 // Options configures an Executor. Only Host is required.
@@ -78,8 +82,8 @@ type Options struct {
 }
 
 // Executor serves the OxiaBackup requests on a data server. It runs the
-// backup and cleanup jobs on their own goroutines, at most the policy's
-// maxConcurrentPerServer at once, and reports their state.
+// backup, cleanup and restore jobs on their own goroutines, at most the
+// policy's maxConcurrentPerServer at once, and reports their state.
 //
 // The jobs are shared state of the executor: the request handlers and the
 // job goroutines access them under mu. A job stays in the map until the
@@ -105,6 +109,8 @@ type Executor struct {
 	backupsExpired   metric.Counter
 	deletedBytes     metric.Counter
 	cleanupsFailed   metric.Counter
+	restoresDone     metric.Counter
+	restoresFailed   metric.Counter
 }
 
 type jobKind int
@@ -112,6 +118,7 @@ type jobKind int
 const (
 	backupJobKind jobKind = iota
 	cleanupJobKind
+	restoreJobKind
 )
 
 type jobKey struct {
@@ -162,6 +169,10 @@ func New(options Options) *Executor {
 		"The bytes the cleanups deleted", metric.Bytes, labels)
 	e.cleanupsFailed = metric.NewCounter("oxia_server_backup_cleanups_failed",
 		"The number of backup cleanups failed", "count", labels)
+	e.restoresDone = metric.NewCounter("oxia_server_restores_completed",
+		"The number of shard restores completed", "count", labels)
+	e.restoresFailed = metric.NewCounter("oxia_server_restores_failed",
+		"The number of shard restores failed", "count", labels)
 	return e
 }
 
@@ -516,6 +527,72 @@ func backupInfo(s backup.Summary) (*proto.BackupInfo, error) {
 		SizeBytes:       uint64(s.SizeBytes),
 		SstCount:        uint32(s.SSTCount),
 	}, nil
+}
+
+// RestoreShard serves the OxiaBackup request of the same name. A restore
+// doesn't count against the policy's job limit: the shard is not serving.
+func (e *Executor) RestoreShard(_ context.Context, req *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error) {
+	if err := validateShard(req.GetNamespace(), req.GetShard()); err != nil {
+		return nil, err
+	}
+	key := jobKey{kind: restoreJobKind, namespace: req.GetNamespace(), shard: req.GetShard()}
+	if state, finished := e.consume(key); state != proto.BackupJobState_BACKUP_JOB_STATE_UNKNOWN {
+		res := &proto.RestoreShardResponse{State: state}
+		if finished != nil {
+			if result, ok := finished.result.(restoreResult); ok {
+				res.CommitOffset = result.commitOffset
+				res.Term = result.term
+			}
+			if finished.err != nil {
+				res.Error = finished.err.Error()
+			}
+		}
+		return res, nil
+	}
+	id, err := backup.ParseID(req.GetBackupId())
+	if err != nil {
+		return nil, err
+	}
+	if req.GetDestination() == "" || req.GetHashRange() == nil {
+		return nil, errors.New("the request needs a destination and a hash range")
+	}
+	state := e.start(key, 0, func(ctx context.Context) (any, error) {
+		return e.runRestore(ctx, req, id)
+	})
+	return &proto.RestoreShardResponse{State: state}, nil
+}
+
+func (e *Executor) runRestore(ctx context.Context, req *proto.RestoreShardRequest, id backup.ID) (any, error) {
+	log := e.log.With(slog.String("namespace", req.GetNamespace()), slog.Int64("shard", req.GetShard()),
+		slog.String("backup-id", req.GetBackupId()))
+	log.Info("Starting restore")
+	store, err := e.store(req.GetDestination())
+	if err != nil {
+		e.restoresFailed.Inc()
+		return nil, err
+	}
+	installer, err := e.host.NewInstaller(req.GetNamespace(), req.GetShard())
+	if err != nil {
+		e.restoresFailed.Inc()
+		return nil, fmt.Errorf("prepare the installation: %w", err)
+	}
+	defer func() { _ = installer.Close() }()
+	j := &restoreJob{
+		store:     store,
+		source:    backup.ShardPath{Namespace: req.GetSourceNamespace(), Shard: req.GetSourceShard()},
+		backupID:  id,
+		hashRange: req.GetHashRange(),
+		installer: installer,
+	}
+	result, err := j.run(ctx)
+	if err != nil {
+		e.restoresFailed.Inc()
+		log.Warn("Restore failed", slog.Any("error", err))
+		return nil, err
+	}
+	e.restoresDone.Inc()
+	log.Info("Restore completed", slog.Int64("commit-offset", result.commitOffset), slog.Int64("term", result.term))
+	return result, nil
 }
 
 // consume returns the state of the job at key: RUNNING, or DONE or FAILED
