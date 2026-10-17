@@ -74,7 +74,7 @@ type Options struct {
 }
 
 // Executor serves the OxiaBackup requests on a data server. It runs the
-// backup jobs on their own goroutines, at most the policy's
+// backup and cleanup jobs on their own goroutines, at most the policy's
 // maxConcurrentPerServer at once, and reports their state.
 //
 // The jobs are shared state of the executor: the request handlers and the
@@ -100,12 +100,16 @@ type Executor struct {
 	backupsFailed    metric.Counter
 	uploadedBytes    metric.Counter
 	backupLatency    metric.LatencyHistogram
+	backupsExpired   metric.Counter
+	deletedBytes     metric.Counter
+	cleanupsFailed   metric.Counter
 }
 
 type jobKind int
 
 const (
 	backupJobKind jobKind = iota
+	cleanupJobKind
 )
 
 type jobKey struct {
@@ -157,6 +161,12 @@ func New(options Options) *Executor {
 		"The bytes the shard backups uploaded", metric.Bytes, labels)
 	e.backupLatency = metric.NewLatencyHistogram("oxia_server_backup_latency",
 		"The time a shard backup takes", labels)
+	e.backupsExpired = metric.NewCounter("oxia_server_backups_expired",
+		"The number of backups the cleanups expired", "count", labels)
+	e.deletedBytes = metric.NewCounter("oxia_server_backup_deleted",
+		"The bytes the cleanups deleted", metric.Bytes, labels)
+	e.cleanupsFailed = metric.NewCounter("oxia_server_backup_cleanups_failed",
+		"The number of backup cleanups failed", "count", labels)
 	return e
 }
 
@@ -367,6 +377,58 @@ func (e *Executor) runBackup(ctx context.Context, req *proto.BackupShardRequest,
 		slog.Int64("size-bytes", last.SizeBytes), slog.Int64("uploaded-bytes", last.UploadedBytes),
 		slog.Int64("duration-ms", last.DurationMillis))
 	return last, nil
+}
+
+// ExpireBackups serves the OxiaBackup request of the same name.
+func (e *Executor) ExpireBackups(_ context.Context, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	if req.GetNamespace() == "" {
+		return nil, errors.New("the request has no namespace")
+	}
+	p, err := parsePolicy(req.GetPolicy())
+	if err != nil {
+		return nil, err
+	}
+	key := jobKey{kind: cleanupJobKind, namespace: req.GetNamespace(), shard: -1}
+	if state, finished := e.consume(key); state != proto.BackupJobState_BACKUP_JOB_STATE_UNKNOWN {
+		res := &proto.ExpireBackupsResponse{State: state}
+		if finished != nil {
+			if result, ok := finished.result.(cleanupResult); ok {
+				res.BackupsExpired = uint32(result.backupsExpired)
+				res.FilesDeleted = uint32(result.filesDeleted)
+				res.BytesDeleted = uint64(result.bytesDeleted)
+			}
+			if finished.err != nil {
+				res.Error = finished.err.Error()
+			}
+		}
+		return res, nil
+	}
+	state := e.start(key, p.maxConcurrent, func(ctx context.Context) (any, error) {
+		return e.runCleanup(ctx, req.GetNamespace(), p)
+	})
+	return &proto.ExpireBackupsResponse{State: state}, nil
+}
+
+func (e *Executor) runCleanup(ctx context.Context, namespace string, p policy) (any, error) {
+	log := e.log.With(slog.String("namespace", namespace))
+	log.Info("Starting backup cleanup")
+	store, err := e.store(p.destination)
+	if err != nil {
+		e.cleanupsFailed.Inc()
+		return nil, err
+	}
+	j := &cleanupJob{store: store, namespace: namespace, retention: p.retention, grace: e.grace, now: e.clock(), log: log}
+	result, err := j.run(ctx)
+	if err != nil {
+		e.cleanupsFailed.Inc()
+		log.Warn("Backup cleanup failed", slog.Any("error", err))
+		return nil, err
+	}
+	e.backupsExpired.Add(result.backupsExpired)
+	e.deletedBytes.Add(int(result.bytesDeleted))
+	log.Info("Backup cleanup completed", slog.Int("backups-expired", result.backupsExpired),
+		slog.Int("files-deleted", result.filesDeleted), slog.Int64("bytes-deleted", result.bytesDeleted))
+	return result, nil
 }
 
 // ListBackups serves the OxiaBackup request of the same name.
