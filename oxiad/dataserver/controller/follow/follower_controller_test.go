@@ -3251,3 +3251,39 @@ func TestFollower_NewTermWaitsForPendingSyncs(t *testing.T) {
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
 }
+
+func TestFollowerControllerCheckpointReadsTheDatabase(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := wal.NewWalFactory(&wal.FactoryOptions{BaseWalDir: t.TempDir()})
+	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	require.NoError(t, err)
+
+	checkpoint, err := fc.Checkpoint()
+	require.NoError(t, err)
+	assert.EqualValues(t, wal.InvalidOffset, checkpoint.CommitOffset)
+	assert.EqualValues(t, wal.InvalidTerm, checkpoint.Term)
+	require.NoError(t, checkpoint.Close())
+
+	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 4})
+	require.NoError(t, err)
+	checkpoint, err = fc.Checkpoint()
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, checkpoint.Term, "the term is recorded in the database")
+	require.NoError(t, checkpoint.Close())
+
+	// The database is still the one of the checkpoint
+	require.NoError(t, fc.WithDatabase(checkpoint.Generation, func(dir string) error {
+		assert.Equal(t, kvFactory.DatabaseDir(constant.DefaultNamespace, shardId), dir)
+		return nil
+	}))
+	assert.ErrorIs(t, fc.WithDatabase(checkpoint.Generation+1, func(string) error { return nil }),
+		database.ErrDatabaseReplaced, "a checkpoint of a database since replaced")
+
+	require.NoError(t, fc.Close())
+	_, err = fc.Checkpoint()
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.ErrorIs(t, fc.WithDatabase(checkpoint.Generation, func(string) error { return nil }),
+		constant.ErrResourceUnavailable)
+}

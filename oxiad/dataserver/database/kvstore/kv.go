@@ -240,6 +240,17 @@ type Factory interface {
 	NewKV(namespace string, shardId int64, keySorting proto.KeySortingType) (KV, error)
 
 	NewSnapshotLoader(namespace string, shardId int64) (SnapshotLoader, error)
+
+	// DatabaseDir returns the directory that holds the database of a shard,
+	// which NewSnapshotLoader replaces as a whole. The files kept next to the
+	// database, e.g. the backup record of the shard, go with it.
+	DatabaseDir(namespace string, shardId int64) string
+
+	// DatabaseGeneration counts the replacements of the database of a shard
+	// since the factory opened: a snapshot loader created for it, or its
+	// deletion. A caller that took a checkpoint compares it to tell whether
+	// the database on disk is still the one it checkpointed.
+	DatabaseGeneration(namespace string, shardId int64) uint64
 }
 
 type IteratorOpts struct {

@@ -189,6 +189,11 @@ type DB interface {
 
 	Snapshot() (kvstore.Snapshot, error)
 
+	// Checkpoint takes a snapshot of the database, with the commit offset and
+	// term read right before it: the snapshot holds every entry up to that
+	// commit offset, and may hold a few more. The caller closes it.
+	Checkpoint() (*Checkpoint, error)
+
 	// RawKV returns the underlying key-value store. Used for operations that
 	// need direct access to the storage layer, such as split filtering.
 	RawKV() kvstore.KV
