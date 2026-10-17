@@ -1312,6 +1312,28 @@ func TestDB_FloorCeiling(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDBGetUnsupportedComparisonType(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_HIERARCHICAL, 0, time.SystemClock)
+	assert.NoError(t, err)
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
+	}, 0, 0, NoOpCallback)
+	assert.NoError(t, err)
+
+	// The wire format does not bound the enum to its defined values: a get
+	// carrying an out-of-range comparison type must fail, not reach the panic
+	// in Pebble.Get.
+	getRes, err := db.Get(&proto.GetRequest{Key: "a", ComparisonType: proto.KeyComparisonType(99)})
+	assert.Error(t, err)
+	assert.Nil(t, getRes)
+
+	assert.NoError(t, db.Close())
+	assert.NoError(t, factory.Close())
+}
+
 func TestDB_SequentialKeys(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)

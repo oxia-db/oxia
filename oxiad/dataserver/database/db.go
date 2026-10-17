@@ -1419,6 +1419,16 @@ func deleteKeys(batch kvstore.WriteBatch, keys []string) error {
 }
 
 func applyGet(kv kvstore.KV, getReq *proto.GetRequest) (*proto.GetResponse, error) {
+	switch getReq.GetComparisonType() {
+	case proto.KeyComparisonType_EQUAL, proto.KeyComparisonType_FLOOR, proto.KeyComparisonType_CEILING,
+		proto.KeyComparisonType_LOWER, proto.KeyComparisonType_HIGHER:
+	default:
+		// The wire format does not bound the enum to its defined values, and
+		// Pebble.Get panics on an unknown one: refuse it here, where the client's
+		// value is cast to the kvstore type, like doSecondaryGet does.
+		return nil, errors.Errorf("unsupported comparison type: %v", getReq.GetComparisonType())
+	}
+
 	key, value, closer, err := kv.Get(getReq.Key, kvstore.ComparisonType(getReq.GetComparisonType()), kvstore.NoInternalKeys)
 
 	if errors.Is(err, kvstore.ErrKeyNotFound) {
