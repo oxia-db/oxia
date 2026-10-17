@@ -36,8 +36,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OxiaBackup_BackupShard_FullMethodName = "/io.oxia.proto.v1.OxiaBackup/BackupShard"
-	OxiaBackup_ListBackups_FullMethodName = "/io.oxia.proto.v1.OxiaBackup/ListBackups"
+	OxiaBackup_BackupShard_FullMethodName   = "/io.oxia.proto.v1.OxiaBackup/BackupShard"
+	OxiaBackup_ExpireBackups_FullMethodName = "/io.oxia.proto.v1.OxiaBackup/ExpireBackups"
+	OxiaBackup_ListBackups_FullMethodName   = "/io.oxia.proto.v1.OxiaBackup/ListBackups"
 )
 
 // OxiaBackupClient is the client API for OxiaBackup service.
@@ -45,8 +46,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // coordinator -> data server. The data servers do the work: they take the
-// backups and list them. The coordinator only asks, and never touches the
-// object store.
+// backups, delete the expired ones, and list them. The coordinator only
+// asks, and never touches the object store.
 //
 // The requests are declarative and idempotent: each one asks the data server
 // to bring a shard or a namespace to the state the policy wants, starts the
@@ -60,6 +61,9 @@ type OxiaBackupClient interface {
 	// since, or it is older than the retention minus the interval, or the
 	// request forces it.
 	BackupShard(ctx context.Context, in *BackupShardRequest, opts ...grpc.CallOption) (*BackupShardResponse, error)
+	// Deletes the expired backups of a namespace, and the SST files no
+	// remaining backup references.
+	ExpireBackups(ctx context.Context, in *ExpireBackupsRequest, opts ...grpc.CallOption) (*ExpireBackupsResponse, error)
 	// Lists the backups of a namespace, or of one of its shards: one message
 	// per shard, in shard order, with the backups of the shard oldest first.
 	// The server reads the manifests of one shard at a time.
@@ -78,6 +82,16 @@ func (c *oxiaBackupClient) BackupShard(ctx context.Context, in *BackupShardReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BackupShardResponse)
 	err := c.cc.Invoke(ctx, OxiaBackup_BackupShard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *oxiaBackupClient) ExpireBackups(ctx context.Context, in *ExpireBackupsRequest, opts ...grpc.CallOption) (*ExpireBackupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExpireBackupsResponse)
+	err := c.cc.Invoke(ctx, OxiaBackup_ExpireBackups_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +122,8 @@ type OxiaBackup_ListBackupsClient = grpc.ServerStreamingClient[ListBackupsRespon
 // for forward compatibility.
 //
 // coordinator -> data server. The data servers do the work: they take the
-// backups and list them. The coordinator only asks, and never touches the
-// object store.
+// backups, delete the expired ones, and list them. The coordinator only
+// asks, and never touches the object store.
 //
 // The requests are declarative and idempotent: each one asks the data server
 // to bring a shard or a namespace to the state the policy wants, starts the
@@ -123,6 +137,9 @@ type OxiaBackupServer interface {
 	// since, or it is older than the retention minus the interval, or the
 	// request forces it.
 	BackupShard(context.Context, *BackupShardRequest) (*BackupShardResponse, error)
+	// Deletes the expired backups of a namespace, and the SST files no
+	// remaining backup references.
+	ExpireBackups(context.Context, *ExpireBackupsRequest) (*ExpireBackupsResponse, error)
 	// Lists the backups of a namespace, or of one of its shards: one message
 	// per shard, in shard order, with the backups of the shard oldest first.
 	// The server reads the manifests of one shard at a time.
@@ -139,6 +156,9 @@ type UnimplementedOxiaBackupServer struct{}
 
 func (UnimplementedOxiaBackupServer) BackupShard(context.Context, *BackupShardRequest) (*BackupShardResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BackupShard not implemented")
+}
+func (UnimplementedOxiaBackupServer) ExpireBackups(context.Context, *ExpireBackupsRequest) (*ExpireBackupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExpireBackups not implemented")
 }
 func (UnimplementedOxiaBackupServer) ListBackups(*ListBackupsRequest, grpc.ServerStreamingServer[ListBackupsResponse]) error {
 	return status.Error(codes.Unimplemented, "method ListBackups not implemented")
@@ -182,6 +202,24 @@ func _OxiaBackup_BackupShard_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OxiaBackup_ExpireBackups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExpireBackupsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaBackupServer).ExpireBackups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaBackup_ExpireBackups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaBackupServer).ExpireBackups(ctx, req.(*ExpireBackupsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OxiaBackup_ListBackups_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ListBackupsRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -203,6 +241,10 @@ var OxiaBackup_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BackupShard",
 			Handler:    _OxiaBackup_BackupShard_Handler,
+		},
+		{
+			MethodName: "ExpireBackups",
+			Handler:    _OxiaBackup_ExpireBackups_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

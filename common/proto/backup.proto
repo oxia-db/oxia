@@ -24,8 +24,8 @@ option go_package = "github.com/oxia-db/oxia/common/proto";
 import "metadata.proto";
 
 // coordinator -> data server. The data servers do the work: they take the
-// backups and list them. The coordinator only asks, and never touches the
-// object store.
+// backups, delete the expired ones, and list them. The coordinator only
+// asks, and never touches the object store.
 //
 // The requests are declarative and idempotent: each one asks the data server
 // to bring a shard or a namespace to the state the policy wants, starts the
@@ -39,6 +39,9 @@ service OxiaBackup {
   // since, or it is older than the retention minus the interval, or the
   // request forces it.
   rpc BackupShard(BackupShardRequest) returns (BackupShardResponse);
+  // Deletes the expired backups of a namespace, and the SST files no
+  // remaining backup references.
+  rpc ExpireBackups(ExpireBackupsRequest) returns (ExpireBackupsResponse);
   // Lists the backups of a namespace, or of one of its shards: one message
   // per shard, in shard order, with the backups of the shard oldest first.
   // The server reads the manifests of one shard at a time.
@@ -102,6 +105,20 @@ message BackupShardResponse {
   BackupRecord last_backup = 2;
   // The error of a FAILED job
   string error = 3;
+}
+
+message ExpireBackupsRequest {
+  string namespace = 1;
+  BackupPolicy policy = 2;
+}
+
+message ExpireBackupsResponse {
+  BackupJobState state = 1;
+  // The counts of a DONE job
+  uint32 backups_expired = 2;
+  uint32 files_deleted = 3;
+  uint64 bytes_deleted = 4;
+  string error = 5;
 }
 
 message ListBackupsRequest {

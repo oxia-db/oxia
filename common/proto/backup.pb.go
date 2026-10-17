@@ -427,6 +427,135 @@ func (x *BackupShardResponse) GetError() string {
 	return ""
 }
 
+type ExpireBackupsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Policy        *BackupPolicy          `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExpireBackupsRequest) Reset() {
+	*x = ExpireBackupsRequest{}
+	mi := &file_backup_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExpireBackupsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExpireBackupsRequest) ProtoMessage() {}
+
+func (x *ExpireBackupsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_backup_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExpireBackupsRequest.ProtoReflect.Descriptor instead.
+func (*ExpireBackupsRequest) Descriptor() ([]byte, []int) {
+	return file_backup_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ExpireBackupsRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ExpireBackupsRequest) GetPolicy() *BackupPolicy {
+	if x != nil {
+		return x.Policy
+	}
+	return nil
+}
+
+type ExpireBackupsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	State BackupJobState         `protobuf:"varint,1,opt,name=state,proto3,enum=io.oxia.proto.v1.BackupJobState" json:"state,omitempty"`
+	// The counts of a DONE job
+	BackupsExpired uint32 `protobuf:"varint,2,opt,name=backups_expired,json=backupsExpired,proto3" json:"backups_expired,omitempty"`
+	FilesDeleted   uint32 `protobuf:"varint,3,opt,name=files_deleted,json=filesDeleted,proto3" json:"files_deleted,omitempty"`
+	BytesDeleted   uint64 `protobuf:"varint,4,opt,name=bytes_deleted,json=bytesDeleted,proto3" json:"bytes_deleted,omitempty"`
+	Error          string `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ExpireBackupsResponse) Reset() {
+	*x = ExpireBackupsResponse{}
+	mi := &file_backup_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExpireBackupsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExpireBackupsResponse) ProtoMessage() {}
+
+func (x *ExpireBackupsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_backup_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExpireBackupsResponse.ProtoReflect.Descriptor instead.
+func (*ExpireBackupsResponse) Descriptor() ([]byte, []int) {
+	return file_backup_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ExpireBackupsResponse) GetState() BackupJobState {
+	if x != nil {
+		return x.State
+	}
+	return BackupJobState_BACKUP_JOB_STATE_UNKNOWN
+}
+
+func (x *ExpireBackupsResponse) GetBackupsExpired() uint32 {
+	if x != nil {
+		return x.BackupsExpired
+	}
+	return 0
+}
+
+func (x *ExpireBackupsResponse) GetFilesDeleted() uint32 {
+	if x != nil {
+		return x.FilesDeleted
+	}
+	return 0
+}
+
+func (x *ExpireBackupsResponse) GetBytesDeleted() uint64 {
+	if x != nil {
+		return x.BytesDeleted
+	}
+	return 0
+}
+
+func (x *ExpireBackupsResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type ListBackupsRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Destination string                 `protobuf:"bytes,1,opt,name=destination,proto3" json:"destination,omitempty"`
@@ -441,7 +570,7 @@ type ListBackupsRequest struct {
 
 func (x *ListBackupsRequest) Reset() {
 	*x = ListBackupsRequest{}
-	mi := &file_backup_proto_msgTypes[4]
+	mi := &file_backup_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -453,7 +582,7 @@ func (x *ListBackupsRequest) String() string {
 func (*ListBackupsRequest) ProtoMessage() {}
 
 func (x *ListBackupsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_backup_proto_msgTypes[4]
+	mi := &file_backup_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -466,7 +595,7 @@ func (x *ListBackupsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBackupsRequest.ProtoReflect.Descriptor instead.
 func (*ListBackupsRequest) Descriptor() ([]byte, []int) {
-	return file_backup_proto_rawDescGZIP(), []int{4}
+	return file_backup_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListBackupsRequest) GetDestination() string {
@@ -516,7 +645,7 @@ type BackupInfo struct {
 
 func (x *BackupInfo) Reset() {
 	*x = BackupInfo{}
-	mi := &file_backup_proto_msgTypes[5]
+	mi := &file_backup_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -528,7 +657,7 @@ func (x *BackupInfo) String() string {
 func (*BackupInfo) ProtoMessage() {}
 
 func (x *BackupInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_backup_proto_msgTypes[5]
+	mi := &file_backup_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -541,7 +670,7 @@ func (x *BackupInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupInfo.ProtoReflect.Descriptor instead.
 func (*BackupInfo) Descriptor() ([]byte, []int) {
-	return file_backup_proto_rawDescGZIP(), []int{5}
+	return file_backup_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *BackupInfo) GetShard() int64 {
@@ -617,7 +746,7 @@ type ListBackupsResponse struct {
 
 func (x *ListBackupsResponse) Reset() {
 	*x = ListBackupsResponse{}
-	mi := &file_backup_proto_msgTypes[6]
+	mi := &file_backup_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -629,7 +758,7 @@ func (x *ListBackupsResponse) String() string {
 func (*ListBackupsResponse) ProtoMessage() {}
 
 func (x *ListBackupsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_backup_proto_msgTypes[6]
+	mi := &file_backup_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -642,7 +771,7 @@ func (x *ListBackupsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBackupsResponse.ProtoReflect.Descriptor instead.
 func (*ListBackupsResponse) Descriptor() ([]byte, []int) {
-	return file_backup_proto_rawDescGZIP(), []int{6}
+	return file_backup_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListBackupsResponse) GetBackups() []*BackupInfo {
@@ -684,7 +813,16 @@ const file_backup_proto_rawDesc = "" +
 	"\x05state\x18\x01 \x01(\x0e2 .io.oxia.proto.v1.BackupJobStateR\x05state\x12?\n" +
 	"\vlast_backup\x18\x02 \x01(\v2\x1e.io.oxia.proto.v1.BackupRecordR\n" +
 	"lastBackup\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\xd9\x01\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"l\n" +
+	"\x14ExpireBackupsRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x126\n" +
+	"\x06policy\x18\x02 \x01(\v2\x1e.io.oxia.proto.v1.BackupPolicyR\x06policy\"\xd8\x01\n" +
+	"\x15ExpireBackupsResponse\x126\n" +
+	"\x05state\x18\x01 \x01(\x0e2 .io.oxia.proto.v1.BackupJobStateR\x05state\x12'\n" +
+	"\x0fbackups_expired\x18\x02 \x01(\rR\x0ebackupsExpired\x12#\n" +
+	"\rfiles_deleted\x18\x03 \x01(\rR\ffilesDeleted\x12#\n" +
+	"\rbytes_deleted\x18\x04 \x01(\x04R\fbytesDeleted\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xd9\x01\n" +
 	"\x12ListBackupsRequest\x12 \n" +
 	"\vdestination\x18\x01 \x01(\tR\vdestination\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x19\n" +
@@ -714,10 +852,11 @@ const file_backup_proto_rawDesc = "" +
 	"\x18BACKUP_JOB_STATE_RUNNING\x10\x03\x12\x19\n" +
 	"\x15BACKUP_JOB_STATE_BUSY\x10\x04\x12\x19\n" +
 	"\x15BACKUP_JOB_STATE_DONE\x10\x05\x12\x1b\n" +
-	"\x17BACKUP_JOB_STATE_FAILED\x10\x062\xc6\x01\n" +
+	"\x17BACKUP_JOB_STATE_FAILED\x10\x062\xa8\x02\n" +
 	"\n" +
 	"OxiaBackup\x12Z\n" +
-	"\vBackupShard\x12$.io.oxia.proto.v1.BackupShardRequest\x1a%.io.oxia.proto.v1.BackupShardResponse\x12\\\n" +
+	"\vBackupShard\x12$.io.oxia.proto.v1.BackupShardRequest\x1a%.io.oxia.proto.v1.BackupShardResponse\x12`\n" +
+	"\rExpireBackups\x12&.io.oxia.proto.v1.ExpireBackupsRequest\x1a'.io.oxia.proto.v1.ExpireBackupsResponse\x12\\\n" +
 	"\vListBackups\x12$.io.oxia.proto.v1.ListBackupsRequest\x1a%.io.oxia.proto.v1.ListBackupsResponse0\x01B&Z$github.com/oxia-db/oxia/common/protob\x06proto3"
 
 var (
@@ -733,37 +872,43 @@ func file_backup_proto_rawDescGZIP() []byte {
 }
 
 var file_backup_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_backup_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_backup_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_backup_proto_goTypes = []any{
-	(BackupJobState)(0),         // 0: io.oxia.proto.v1.BackupJobState
-	(*BackupPolicy)(nil),        // 1: io.oxia.proto.v1.BackupPolicy
-	(*BackupRecord)(nil),        // 2: io.oxia.proto.v1.BackupRecord
-	(*BackupShardRequest)(nil),  // 3: io.oxia.proto.v1.BackupShardRequest
-	(*BackupShardResponse)(nil), // 4: io.oxia.proto.v1.BackupShardResponse
-	(*ListBackupsRequest)(nil),  // 5: io.oxia.proto.v1.ListBackupsRequest
-	(*BackupInfo)(nil),          // 6: io.oxia.proto.v1.BackupInfo
-	(*ListBackupsResponse)(nil), // 7: io.oxia.proto.v1.ListBackupsResponse
-	(*Namespace)(nil),           // 8: io.oxia.proto.v1.Namespace
-	(*HashRange)(nil),           // 9: io.oxia.proto.v1.HashRange
+	(BackupJobState)(0),           // 0: io.oxia.proto.v1.BackupJobState
+	(*BackupPolicy)(nil),          // 1: io.oxia.proto.v1.BackupPolicy
+	(*BackupRecord)(nil),          // 2: io.oxia.proto.v1.BackupRecord
+	(*BackupShardRequest)(nil),    // 3: io.oxia.proto.v1.BackupShardRequest
+	(*BackupShardResponse)(nil),   // 4: io.oxia.proto.v1.BackupShardResponse
+	(*ExpireBackupsRequest)(nil),  // 5: io.oxia.proto.v1.ExpireBackupsRequest
+	(*ExpireBackupsResponse)(nil), // 6: io.oxia.proto.v1.ExpireBackupsResponse
+	(*ListBackupsRequest)(nil),    // 7: io.oxia.proto.v1.ListBackupsRequest
+	(*BackupInfo)(nil),            // 8: io.oxia.proto.v1.BackupInfo
+	(*ListBackupsResponse)(nil),   // 9: io.oxia.proto.v1.ListBackupsResponse
+	(*Namespace)(nil),             // 10: io.oxia.proto.v1.Namespace
+	(*HashRange)(nil),             // 11: io.oxia.proto.v1.HashRange
 }
 var file_backup_proto_depIdxs = []int32{
 	1,  // 0: io.oxia.proto.v1.BackupShardRequest.policy:type_name -> io.oxia.proto.v1.BackupPolicy
-	8,  // 1: io.oxia.proto.v1.BackupShardRequest.namespace_config:type_name -> io.oxia.proto.v1.Namespace
-	9,  // 2: io.oxia.proto.v1.BackupShardRequest.hash_range:type_name -> io.oxia.proto.v1.HashRange
+	10, // 1: io.oxia.proto.v1.BackupShardRequest.namespace_config:type_name -> io.oxia.proto.v1.Namespace
+	11, // 2: io.oxia.proto.v1.BackupShardRequest.hash_range:type_name -> io.oxia.proto.v1.HashRange
 	0,  // 3: io.oxia.proto.v1.BackupShardResponse.state:type_name -> io.oxia.proto.v1.BackupJobState
 	2,  // 4: io.oxia.proto.v1.BackupShardResponse.last_backup:type_name -> io.oxia.proto.v1.BackupRecord
-	9,  // 5: io.oxia.proto.v1.BackupInfo.hash_range:type_name -> io.oxia.proto.v1.HashRange
-	8,  // 6: io.oxia.proto.v1.BackupInfo.namespace_config:type_name -> io.oxia.proto.v1.Namespace
-	6,  // 7: io.oxia.proto.v1.ListBackupsResponse.backups:type_name -> io.oxia.proto.v1.BackupInfo
-	3,  // 8: io.oxia.proto.v1.OxiaBackup.BackupShard:input_type -> io.oxia.proto.v1.BackupShardRequest
-	5,  // 9: io.oxia.proto.v1.OxiaBackup.ListBackups:input_type -> io.oxia.proto.v1.ListBackupsRequest
-	4,  // 10: io.oxia.proto.v1.OxiaBackup.BackupShard:output_type -> io.oxia.proto.v1.BackupShardResponse
-	7,  // 11: io.oxia.proto.v1.OxiaBackup.ListBackups:output_type -> io.oxia.proto.v1.ListBackupsResponse
-	10, // [10:12] is the sub-list for method output_type
-	8,  // [8:10] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	1,  // 5: io.oxia.proto.v1.ExpireBackupsRequest.policy:type_name -> io.oxia.proto.v1.BackupPolicy
+	0,  // 6: io.oxia.proto.v1.ExpireBackupsResponse.state:type_name -> io.oxia.proto.v1.BackupJobState
+	11, // 7: io.oxia.proto.v1.BackupInfo.hash_range:type_name -> io.oxia.proto.v1.HashRange
+	10, // 8: io.oxia.proto.v1.BackupInfo.namespace_config:type_name -> io.oxia.proto.v1.Namespace
+	8,  // 9: io.oxia.proto.v1.ListBackupsResponse.backups:type_name -> io.oxia.proto.v1.BackupInfo
+	3,  // 10: io.oxia.proto.v1.OxiaBackup.BackupShard:input_type -> io.oxia.proto.v1.BackupShardRequest
+	5,  // 11: io.oxia.proto.v1.OxiaBackup.ExpireBackups:input_type -> io.oxia.proto.v1.ExpireBackupsRequest
+	7,  // 12: io.oxia.proto.v1.OxiaBackup.ListBackups:input_type -> io.oxia.proto.v1.ListBackupsRequest
+	4,  // 13: io.oxia.proto.v1.OxiaBackup.BackupShard:output_type -> io.oxia.proto.v1.BackupShardResponse
+	6,  // 14: io.oxia.proto.v1.OxiaBackup.ExpireBackups:output_type -> io.oxia.proto.v1.ExpireBackupsResponse
+	9,  // 15: io.oxia.proto.v1.OxiaBackup.ListBackups:output_type -> io.oxia.proto.v1.ListBackupsResponse
+	13, // [13:16] is the sub-list for method output_type
+	10, // [10:13] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_backup_proto_init() }
@@ -772,14 +917,14 @@ func file_backup_proto_init() {
 		return
 	}
 	file_metadata_proto_init()
-	file_backup_proto_msgTypes[4].OneofWrappers = []any{}
+	file_backup_proto_msgTypes[6].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_backup_proto_rawDesc), len(file_backup_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

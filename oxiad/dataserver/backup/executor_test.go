@@ -325,6 +325,35 @@ func TestExecutorBackupShardKeepsNoRecordWhenTheDatabaseIsReplacedDuringTheBacku
 	assert.False(t, found)
 }
 
+func TestExecutorExpireBackupsRunsACleanupAndReportsItsCounts(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	clock := newTestClock()
+	e, destination, store := newTestExecutor(t, host, clock)
+	req := backupRequest(destination, 1)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, req).State)
+	// An orphan older than the grace period
+	require.NoError(t, store.Put(t.Context(), "ns/shard-1/sst/orphan-000001.sst", strings.NewReader("")))
+	store.Touch("ns/shard-1/sst/orphan-000001.sst", clock.Now().Add(-2*gracePeriod))
+
+	expire := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy(destination)}
+	res, err := e.ExpireBackups(t.Context(), expire)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.ExpireBackups(t.Context(), expire)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+	assert.EqualValues(t, 0, res.BackupsExpired)
+	assert.EqualValues(t, 1, res.FilesDeleted)
+	assert.NotContains(t, store.Keys(), "ns/shard-1/sst/orphan-000001.sst")
+
+	_, err = e.ExpireBackups(t.Context(), &proto.ExpireBackupsRequest{Policy: protoPolicy(destination)})
+	assert.ErrorContains(t, err, "no namespace")
+}
+
 func TestExecutorListBackupsReturnsTheBackupsOfANamespace(t *testing.T) {
 	host := newFakeHost(t)
 	host.addShard(1, 1)
@@ -591,6 +620,44 @@ func TestExecutorListBackupsSendsOneMessagePerShard(t *testing.T) {
 	errStop := errors.New("stop")
 	req.NewestAtOrBeforeMillis = nil
 	assert.ErrorIs(t, e.ListBackups(t.Context(), req, func(*proto.ListBackupsResponse) error { return errStop }), errStop)
+}
+
+func TestExecutorExpireBackupsReportsAFailedCleanup(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, store := newTestExecutor(t, host, newTestClock())
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
+
+	invalid := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy("")}
+	_, err := e.ExpireBackups(t.Context(), invalid)
+	assert.ErrorContains(t, err, "no destination")
+
+	// A manifest that does not parse fails the cleanup, which is reported once
+	require.NoError(t, store.Put(t.Context(), "ns/shard-1/backups/2026-10-03T14-00-00Z-ffff.json", strings.NewReader("{")))
+	expire := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy(destination)}
+	res, err := e.ExpireBackups(t.Context(), expire)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.ExpireBackups(t.Context(), expire)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "invalid backup manifest")
+
+	// A destination that cannot be opened fails the cleanup too
+	unopenable := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy("ftp://host/path")}
+	res, err = e.ExpireBackups(t.Context(), unopenable)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.ExpireBackups(t.Context(), unopenable)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "unsupported destination scheme")
 }
 
 func TestListShardsReturnsTheShardsWithBackupsOrTheOneGiven(t *testing.T) {

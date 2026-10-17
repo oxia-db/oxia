@@ -522,6 +522,11 @@ func (s *internalRpcServer) BackupShard(ctx context.Context, req *proto.BackupSh
 	return res, constant.IntoGrpcStatusError(err)
 }
 
+func (s *internalRpcServer) ExpireBackups(ctx context.Context, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	res, err := s.backups.ExpireBackups(ctx, req)
+	return res, constant.IntoGrpcStatusError(err)
+}
+
 func (s *internalRpcServer) ListBackups(req *proto.ListBackupsRequest, stream proto.OxiaBackup_ListBackupsServer) error {
 	return constant.IntoGrpcStatusError(s.backups.ListBackups(stream.Context(), req, stream.Send))
 }
