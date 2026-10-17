@@ -95,11 +95,9 @@ func TestDeleteRangeNotificationRecords(t *testing.T) {
 	_, _, err = client.Put(ctx, "d", []byte("v"))
 	require.NoError(t, err)
 
-	// The followers apply the delete range and the put after it. Commit
-	// notifications are piggybacked on replication messages, so one more write
-	// is needed for the followers to commit the put.
-	leaderChecksum := lead.Checksum().Value()
-	assert.NotZero(t, leaderChecksum)
+	// The followers apply the delete range and the put after it: the leader
+	// advertises the commit offset to them, so they reach its checksum.
+	assert.NotZero(t, lead.Checksum().Value())
 	_, _, err = client.Put(ctx, "flush", []byte("v"))
 	require.NoError(t, err)
 
@@ -112,7 +110,7 @@ func TestDeleteRangeNotificationRecords(t *testing.T) {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 			return err == nil &&
 				follow.IsFeatureEnabled(proto.Feature_FEATURE_DELETE_RANGE_NOTIFICATION_RECORDS) &&
-				follow.Checksum().Value() == leaderChecksum
+				follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 }

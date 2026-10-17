@@ -173,6 +173,27 @@ func (admin *adminClientImpl) SplitShard(ctx context.Context, namespace string, 
 	}
 }
 
+func (admin *adminClientImpl) RequestBackup(ctx context.Context, namespace string, shardId *int64) (uint32, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.RequestBackupResponse, error) {
+		return client.RequestBackup(ctx, &proto.RequestBackupRequest{Namespace: namespace, Shard: shardId})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return response.GetShards(), nil
+}
+
+func (admin *adminClientImpl) ListBackups(ctx context.Context, namespace string, shardId *int64,
+	destination string) ([]*proto.BackupInfo, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.ListBackupsResponse, error) {
+		return client.ListBackups(ctx, &proto.ListBackupsRequest{Destination: destination, Namespace: namespace, Shard: shardId})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response.GetBackups(), nil
+}
+
 func NewAdminClient(adminAddr string, tlsConf *tls.Config, authentication auth.Authentication) (AdminClient, error) {
 	c := rpc.NewClientPool(tlsConf, authentication)
 	return &adminClientImpl{

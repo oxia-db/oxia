@@ -39,6 +39,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/autosplit"
+	backupscheduler "github.com/oxia-db/oxia/oxiad/coordinator/runtime/backup"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
@@ -82,6 +83,8 @@ type runtime struct {
 
 	loadBalancer     balancer.LoadBalancer
 	autoSplitMonitor *autosplit.Monitor
+	// backupScheduler is nil when the RPC provider has no OxiaBackup service
+	backupScheduler  *backupscheduler.Scheduler
 	ensembleSelector selector.Selector[*ensemble.Context, []string]
 
 	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
@@ -430,6 +433,9 @@ func (c *runtime) Close() error {
 
 	if c.autoSplitMonitor != nil {
 		c.autoSplitMonitor.Close()
+	}
+	if c.backupScheduler != nil {
+		c.backupScheduler.Close()
 	}
 
 	// Snapshot the controller maps under the lock: shard-controller callbacks
@@ -783,6 +789,7 @@ func New(
 	autoSplitInterval := config.UnsafeBorrow().GetAutoSplitWithDefaults().GetCollectionIntervalDurationOrDefault()
 	c.autoSplitMonitor = autosplit.NewMonitor(c.metadata, c.rpc, c, autoSplitInterval)
 	c.autoSplitMonitor.Start()
+	c.startBackupScheduler()
 
 	return c, nil
 }

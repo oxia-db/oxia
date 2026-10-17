@@ -464,6 +464,44 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 	}, nil
 }
 
+func (management *managementServer) RequestBackup(_ context.Context, req *proto.RequestBackupRequest) (*proto.RequestBackupResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("Received RequestBackup request", slog.String("namespace", req.GetNamespace()),
+		slog.Any("shard", req.Shard))
+	count, err := runtime.RequestBackup(req.GetNamespace(), req.Shard)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return &proto.RequestBackupResponse{Shards: uint32(count)}, nil
+}
+
+func (management *managementServer) ListBackups(ctx context.Context, req *proto.ListBackupsRequest) (*proto.ListBackupsResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	backups, err := runtime.ListBackups(ctx, req.GetNamespace(), req.Shard, req.GetDestination())
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return &proto.ListBackupsResponse{Backups: backups}, nil
+}
+
+// backupError maps the errors of the backup operations to gRPC statuses.
+func backupError(err error) error {
+	switch {
+	case errors.Is(err, coordruntime.ErrBackupsUnsupported):
+		return grpcstatus.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, coordruntime.ErrNoBackupDestination):
+		return grpcstatus.Error(codes.FailedPrecondition, err.Error())
+	default:
+		return constant.IntoGrpcStatusError(err)
+	}
+}
+
 func newManagementServer(metadata coordmetadata.Metadata) *managementServer {
 	return &managementServer{
 		metadata: metadata,
