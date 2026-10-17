@@ -30,6 +30,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
@@ -1860,4 +1861,89 @@ func storeDataServerStates(t *testing.T, metadata coordmetadata.Metadata, states
 			return true, nil
 		}))
 	}
+}
+
+func (*testRuntime) RequestBackup(string, *int64) (int, error) {
+	return 0, coordruntime.ErrBackupsUnsupported
+}
+
+func (*testRuntime) ListBackups(context.Context, string, *int64, string, func(*proto.ListBackupsResponse) error) error {
+	return coordruntime.ErrBackupsUnsupported
+}
+
+// backupTestRuntime serves the backup operations with the given results.
+type backupTestRuntime struct {
+	*testRuntime
+	requestBackup func(namespace string, shard *int64) (int, error)
+	listBackups   func(namespace string, shard *int64, destination string, visit func(*proto.ListBackupsResponse) error) error
+}
+
+func (r *backupTestRuntime) RequestBackup(namespace string, shard *int64) (int, error) {
+	return r.requestBackup(namespace, shard)
+}
+
+func (r *backupTestRuntime) ListBackups(_ context.Context, namespace string, shard *int64, destination string,
+	visit func(*proto.ListBackupsResponse) error) error {
+	return r.listBackups(namespace, shard, destination, visit)
+}
+
+// listBackupsStream collects what the admin service sends.
+type listBackupsStream struct {
+	grpc.ServerStream
+	backups []*proto.BackupInfo
+}
+
+func (*listBackupsStream) Context() context.Context {
+	return context.Background()
+}
+
+func (s *listBackupsStream) Send(res *proto.ListBackupsResponse) error {
+	s.backups = append(s.backups, res.GetBackups()...)
+	return nil
+}
+
+func TestManagementServerBackupOperations(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	shard := int64(7)
+	runtime := &backupTestRuntime{
+		testRuntime:   &testRuntime{metadata: metadata},
+		requestBackup: func(string, *int64) (int, error) { return 3, nil },
+		listBackups: func(namespace string, _ *int64, destination string, visit func(*proto.ListBackupsResponse) error) error {
+			return visit(&proto.ListBackupsResponse{Backups: []*proto.BackupInfo{{Shard: 7, BackupId: namespace + "@" + destination}}})
+		},
+	}
+	management := newReadyManagementServer(metadata, runtime)
+
+	requested, err := management.RequestBackup(context.Background(), &proto.RequestBackupRequest{Namespace: "ns", Shard: &shard})
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, requested.GetShards())
+	listed := &listBackupsStream{}
+	require.NoError(t, management.ListBackups(&proto.ListBackupsRequest{Namespace: "ns", Destination: "s3://b"}, listed))
+	require.Len(t, listed.backups, 1)
+	assert.Equal(t, "ns@s3://b", listed.backups[0].GetBackupId())
+
+	// The errors of the runtime map to gRPC codes
+	for name, test := range map[string]struct {
+		err  error
+		code codes.Code
+	}{
+		"unsupported":    {coordruntime.ErrBackupsUnsupported, codes.Unimplemented},
+		"no destination": {coordruntime.ErrNoBackupDestination, codes.FailedPrecondition},
+		"other":          {errors.New("data server unavailable"), codes.Unknown},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runtime.requestBackup = func(string, *int64) (int, error) { return 0, test.err }
+			runtime.listBackups = func(string, *int64, string, func(*proto.ListBackupsResponse) error) error { return test.err }
+			_, err := management.RequestBackup(context.Background(), &proto.RequestBackupRequest{Namespace: "ns"})
+			assert.Equal(t, test.code, grpcstatus.Code(err))
+			err = management.ListBackups(&proto.ListBackupsRequest{Namespace: "ns"}, &listBackupsStream{})
+			assert.Equal(t, test.code, grpcstatus.Code(err))
+		})
+	}
+
+	// Without a runtime, the server is not ready
+	notReady := NewManagementServer(metadata)
+	_, err = notReady.RequestBackup(context.Background(), &proto.RequestBackupRequest{Namespace: "ns"})
+	assert.Error(t, err)
+	assert.Error(t, notReady.ListBackups(&proto.ListBackupsRequest{Namespace: "ns"}, &listBackupsStream{}))
 }

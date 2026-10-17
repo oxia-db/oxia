@@ -17,6 +17,7 @@ package admin
 import (
 	"fmt"
 
+	"github.com/oxia-db/oxia/cmd/admin/backup"
 	"github.com/oxia-db/oxia/cmd/admin/commons"
 	"github.com/oxia-db/oxia/cmd/admin/dataserver"
 	"github.com/oxia-db/oxia/cmd/admin/namespace"
@@ -44,4 +45,5 @@ func init() {
 	Cmd.AddCommand(dataserver.Cmd)
 	Cmd.AddCommand(namespace.Cmd)
 	Cmd.AddCommand(shard.Cmd)
+	Cmd.AddCommand(backup.Cmd)
 }

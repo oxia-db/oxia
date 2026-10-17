@@ -15,6 +15,7 @@
 package runtime
 
 import (
+	"context"
 	"io"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
@@ -59,4 +60,15 @@ type Runtime interface {
 
 	RecomputeAssignments()
 	RefreshShardControllers()
+
+	// RequestBackup makes the backups of the shards of a namespace, or of one
+	// of its shards, or of every namespace when it is empty, due now, and
+	// returns how many. It returns ErrBackupsUnsupported when the RPC
+	// provider has no OxiaBackup service.
+	RequestBackup(namespace string, shard *int64) (int, error)
+	// ListBackups lists the backups of a namespace, or of one of its shards,
+	// at the destination of the policy or the given one, through a running
+	// data server: a message per shard, given to visit as they arrive.
+	ListBackups(ctx context.Context, namespace string, shard *int64, destination string,
+		visit func(*proto.ListBackupsResponse) error) error
 }

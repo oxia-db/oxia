@@ -99,4 +99,9 @@ type ControllerRPCProvider interface {
 type BackupProvider interface {
 	BackupShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.BackupShardRequest) (*proto.BackupShardResponse, error)
 	ExpireBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error)
+	// ListBackups reads the manifests of the namespace on the data server, a
+	// shard at a time, and gives each message to visit. The whole listing is
+	// bounded by ListBackupsTimeout rather than the usual timeout.
+	ListBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ListBackupsRequest,
+		visit func(*proto.ListBackupsResponse) error) error
 }
