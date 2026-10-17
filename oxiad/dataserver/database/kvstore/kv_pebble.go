@@ -707,8 +707,16 @@ func (p *Pebble) RangeScan(lowerBound, upperBound string, itOpts IteratorOpts) (
 	if lowerBound != "" {
 		lb = p.keyEncoder.Encode(lowerBound)
 	}
-	if upperBound != "" {
+	switch {
+	case itOpts.IncludeUpperBound:
+		// The smallest key above the upper bound. Appending to the key, rather
+		// than to the encoded key, wouldn't do: with the hierarchical sorting,
+		// a key ending in "//" would move to the next level.
+		ub = append(bytes.Clone(p.keyEncoder.Encode(upperBound)), 0)
+	case upperBound != "":
 		ub = p.keyEncoder.Encode(upperBound)
+	default:
+		// No upper bound
 	}
 
 	pbit, err := p.db.NewIter(newIterOptions(p.keyEncoder, itOpts, lb, ub))

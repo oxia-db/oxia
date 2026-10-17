@@ -429,12 +429,19 @@ message ListRequest {
   optional int64 shard = 1;
   // The start of the range, inclusive
   string start_inclusive = 2;
-  // The end of the range, exclusive
+  // The end of the range, exclusive unless end_inclusive is set
   string end_exclusive = 3;
 
   optional string secondary_index_name = 4;
 
   bool include_internal_keys = 5;
+
+  // The range includes its end: the key end_exclusive, or with
+  // secondary_index_name, the records whose secondary key is end_exclusive.
+  // An empty end_exclusive is then the empty key, not an open end. The leader
+  // includes it on the shards with FEATURE_RANGE_END_INCLUSIVE, and says so in
+  // its responses: the other servers exclude the end.
+  bool end_inclusive = 6;
 }
 
 /**
@@ -443,6 +450,12 @@ message ListRequest {
 message ListResponse {
   // A portion of the keys found within the specified range
   repeated string keys = 1;
+
+  // The leader included the end of the range of a request with end_inclusive.
+  // It sets it in all its responses to such a request, and sends at least
+  // one, with no keys if the range has none. A server that excluded the end
+  // leaves it unset.
+  bool end_inclusive = 2;
 }
 
 /**
@@ -454,12 +467,15 @@ message RangeScanRequest {
   optional int64 shard = 1;
   // The start of the range, inclusive
   string start_inclusive = 2;
-  // The end of the range, exclusive
+  // The end of the range, exclusive unless end_inclusive is set
   string end_exclusive = 3;
 
   optional string secondary_index_name = 4;
 
   bool include_internal_keys = 5;
+
+  // The range includes its end, as in ListRequest
+  bool end_inclusive = 6;
 }
 
 /**
@@ -468,6 +484,9 @@ message RangeScanRequest {
 message RangeScanResponse {
   // A portion of the records found within the specified range
   repeated GetResponse records = 1;
+
+  // The leader included the end of the range, as in ListResponse
+  bool end_inclusive = 2;
 }
 
 message GetSequenceUpdatesRequest {

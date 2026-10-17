@@ -488,3 +488,137 @@ func TestWarnOnStreamErrorSkipsClientDisconnectErrors(t *testing.T) {
 	server.warnOnStreamError(context.Background(), "read", context.Canceled)
 	assert.Empty(t, buf.String())
 }
+
+// The leader includes the end of the range of a List or a RangeScan with
+// end_inclusive only on a shard with FEATURE_RANGE_END_INCLUSIVE, and its
+// responses say so: if the range is empty, it sends one with no keys. Without
+// the feature, or without end_inclusive, it responds as the servers that don't
+// support it, which leave the end out.
+func TestPublicRpcServerListAndRangeScanEndInclusive(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		featureEnabled bool
+		endInclusive   bool
+		keys           []string
+		applied        bool
+		responses      [][]string
+	}{
+		{"included", true, true, []string{"a", "b"}, true, [][]string{{"a", "b"}}},
+		{"included, empty", true, true, nil, true, [][]string{nil}},
+		{"without the feature", false, true, []string{"a"}, false, [][]string{{"a"}}},
+		{"without the feature, empty", false, true, nil, false, nil},
+		{"not requested", true, false, []string{"a"}, false, [][]string{{"a"}}},
+		{"not requested, empty", true, false, nil, false, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// The requests that the leader controller gets
+			var listRequest *proto.ListRequest
+			var scanRequest *proto.RangeScanRequest
+			lc := &testLeaderController{
+				isFeatureEnabled: func(f proto.Feature) bool {
+					return test.featureEnabled && f == proto.Feature_FEATURE_RANGE_END_INCLUSIVE
+				},
+				list: func(request *proto.ListRequest, onNext func(string) error) error {
+					listRequest = request.CloneVT()
+					for _, key := range test.keys {
+						if err := onNext(key); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
+				rangeScan: func(request *proto.RangeScanRequest, onNext func(*proto.GetResponse) error) error {
+					scanRequest = request.CloneVT()
+					for _, key := range test.keys {
+						if err := onNext(&proto.GetResponse{Key: &key}); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
+			}
+			shard := int64(1)
+			server := &publicRpcServer{
+				log:                  slog.Default(),
+				assignmentDispatcher: &testAssignmentDispatcher{initialized: true},
+				shardsDirector: &testShardsDirector{getLeader: func(int64) (lead.LeaderController, error) {
+					return lc, nil
+				}},
+			}
+
+			list := &listStream{}
+			require.NoError(t, server.List(&proto.ListRequest{
+				Shard: &shard, StartInclusive: "a", EndExclusive: "b", EndInclusive: test.endInclusive,
+			}, list))
+			assert.Equal(t, test.applied, listRequest.EndInclusive)
+			var listed [][]string
+			for _, response := range list.sent {
+				assert.Equal(t, test.applied, response.EndInclusive)
+				listed = append(listed, response.Keys)
+			}
+			assert.Equal(t, test.responses, listed)
+
+			scan := &rangeScanStream{}
+			require.NoError(t, server.RangeScan(&proto.RangeScanRequest{
+				Shard: &shard, StartInclusive: "a", EndExclusive: "b", EndInclusive: test.endInclusive,
+			}, scan))
+			assert.Equal(t, test.applied, scanRequest.EndInclusive)
+			var scanned [][]string
+			for _, response := range scan.sent {
+				assert.Equal(t, test.applied, response.EndInclusive)
+				var keys []string
+				for _, record := range response.Records {
+					keys = append(keys, record.GetKey())
+				}
+				scanned = append(scanned, keys)
+			}
+			assert.Equal(t, test.responses, scanned)
+		})
+	}
+}
+
+// testLeaderController runs the hooks of a test for the methods that it
+// overrides.
+type testLeaderController struct {
+	lead.LeaderController
+	isFeatureEnabled func(proto.Feature) bool
+	list             func(*proto.ListRequest, func(string) error) error
+	rangeScan        func(*proto.RangeScanRequest, func(*proto.GetResponse) error) error
+}
+
+func (lc *testLeaderController) IsFeatureEnabled(f proto.Feature) bool {
+	return lc.isFeatureEnabled(f)
+}
+
+func (lc *testLeaderController) List(_ context.Context, request *proto.ListRequest, onNext func(string) error) error {
+	return lc.list(request, onNext)
+}
+
+func (lc *testLeaderController) RangeScan(_ context.Context, request *proto.RangeScanRequest,
+	onNext func(*proto.GetResponse) error) error {
+	return lc.rangeScan(request, onNext)
+}
+
+type listStream struct {
+	proto.OxiaClient_ListServer
+	sent []*proto.ListResponse
+}
+
+func (*listStream) Context() context.Context { return context.Background() }
+
+func (s *listStream) Send(response *proto.ListResponse) error {
+	s.sent = append(s.sent, response)
+	return nil
+}
+
+type rangeScanStream struct {
+	proto.OxiaClient_RangeScanServer
+	sent []*proto.RangeScanResponse
+}
+
+func (*rangeScanStream) Context() context.Context { return context.Background() }
+
+func (s *rangeScanStream) Send(response *proto.RangeScanResponse) error {
+	s.sent = append(s.sent, response)
+	return nil
+}

@@ -28,6 +28,8 @@ type Executor interface {
 	// returned a request, it must keep returning that one.
 	ExecuteWrite(ctx context.Context, shardId int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error)
 	ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error)
-	ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error
-	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, rangeScanResponseConsumer func(*proto.RangeScanResponse)) error
+	ExecuteList(ctx context.Context, request *proto.ListRequest,
+		listResponseConsumer func(*proto.ListResponse) error) error
+	ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest,
+		rangeScanResponseConsumer func(*proto.RangeScanResponse) error) error
 }

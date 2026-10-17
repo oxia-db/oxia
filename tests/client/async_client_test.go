@@ -819,6 +819,80 @@ func TestSyncClientImpl_RangeScanUseIndexKeySorting(t *testing.T) {
 	}
 }
 
+// A list or a range scan with an inclusive end returns the records of the end,
+// from every shard, in either key sorting. Through an index, a range from a
+// secondary key to the same one returns the records with that secondary key,
+// and none of the ones whose secondary key extends it.
+func TestSyncClientImplListAndRangeScanEndInclusive(t *testing.T) {
+	records := []struct{ key, secondaryKey string }{
+		{"p-0", "/t/k-1"}, {"p-3", "/t/k-1"}, {"p-4", "/t/k-1"},
+		{"p-1", "/t/k-12"}, {"p-10", "/t/k-1:a"}, {"p-12", "/t/k-1_b"},
+		{"p-6", "/t/k-0"}, {"p-7", "/t/k-2"},
+	}
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			config := dataserver.NewTestConfig(t.TempDir())
+			config.NumShards = 4
+			config.KeySorting = keySorting
+
+			// The records of "/t/k-1" are on several shards
+			shards := map[int64]bool{}
+			for _, record := range records[:3] {
+				shards[shardOf(record.key, config.NumShards)] = true
+			}
+			require.Greater(t, len(shards), 1)
+
+			standaloneServer, err := dataserver.NewStandalone(config)
+			require.NoError(t, err)
+			defer standaloneServer.Close()
+
+			client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr(), oxia.WithBatchLinger(0))
+			require.NoError(t, err)
+			defer client.Close()
+
+			for _, record := range records {
+				_, _, err = client.Put(t.Context(), record.key, []byte(record.key),
+					oxia.SecondaryIndex("idx", record.secondaryKey))
+				require.NoError(t, err)
+			}
+			for _, key := range []string{"q-1", "q-2"} {
+				_, _, err = client.Put(t.Context(), key, []byte(key), oxia.PartitionKey("q"))
+				require.NoError(t, err)
+			}
+
+			list := func(start, end string, options ...oxia.ListOption) []string {
+				keys, err := client.List(t.Context(), start, end, options...)
+				require.NoError(t, err)
+				return keys
+			}
+			scan := func(start, end string, options ...oxia.RangeScanOption) []string {
+				var keys []string
+				for result := range client.RangeScan(t.Context(), start, end, options...) {
+					require.NoError(t, result.Err)
+					keys = append(keys, result.Key)
+				}
+				return keys
+			}
+			index, endInclusive := oxia.UseIndex("idx"), oxia.EndInclusive()
+
+			assert.ElementsMatch(t, []string{"p-0", "p-3", "p-4"}, list("/t/k-1", "/t/k-1", index, endInclusive))
+			assert.Equal(t, []string{"p-0", "p-3", "p-4"}, scan("/t/k-1", "/t/k-1", index, endInclusive))
+			assert.Empty(t, list("/t/k-1", "/t/k-1", index))
+
+			assert.ElementsMatch(t, []string{"p-6", "p-0", "p-3", "p-4"},
+				list("/t/k-0", "/t/k-1", index, endInclusive))
+			assert.Equal(t, []string{"p-6", "p-0", "p-3", "p-4"}, scan("/t/k-0", "/t/k-1", index, endInclusive))
+
+			// On the primary keys
+			assert.ElementsMatch(t, []string{"p-1", "p-10", "p-12", "p-3"}, list("p-1", "p-3", endInclusive))
+			assert.Equal(t, []string{"p-1", "p-10", "p-12", "p-3"}, scan("p-1", "p-3", endInclusive))
+			assert.Equal(t, []string{"q-1", "q-2"}, list("q-1", "q-2", oxia.PartitionKey("q"), endInclusive))
+			assert.Equal(t, []string{"q-1", "q-2"}, scan("q-1", "q-2", oxia.PartitionKey("q"), endInclusive))
+		})
+	}
+}
+
 // shardOf returns the shard of a standalone server that stores the key.
 func shardOf(key string, numShards uint32) int64 {
 	code := hash.Xxh332(key)

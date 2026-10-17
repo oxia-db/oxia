@@ -38,9 +38,12 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 )
 
-// testOxiaClientServer answers every data request with an empty success.
+// testOxiaClientServer answers every data request with an empty success, or
+// runs the hook of a test for the lists and the range scans.
 type testOxiaClientServer struct {
 	proto.UnimplementedOxiaClientServer
+	list      func(*proto.ListRequest, proto.OxiaClient_ListServer) error
+	rangeScan func(*proto.RangeScanRequest, proto.OxiaClient_RangeScanServer) error
 }
 
 func (testOxiaClientServer) WriteStream(stream proto.OxiaClient_WriteStreamServer) error {
@@ -70,11 +73,18 @@ func (testOxiaClientServer) Read(request *proto.ReadRequest, stream proto.OxiaCl
 	return stream.Send(response)
 }
 
-func (testOxiaClientServer) List(_ *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
+func (s testOxiaClientServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
+	if s.list != nil {
+		return s.list(request, stream)
+	}
 	return stream.Send(&proto.ListResponse{})
 }
 
-func (testOxiaClientServer) RangeScan(_ *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
+func (s testOxiaClientServer) RangeScan(request *proto.RangeScanRequest,
+	stream proto.OxiaClient_RangeScanServer) error {
+	if s.rangeScan != nil {
+		return s.rangeScan(request, stream)
+	}
 	return stream.Send(&proto.RangeScanResponse{})
 }
 
@@ -234,10 +244,12 @@ func shardRequests(shardId *int64) []shardRequest {
 			return err
 		}},
 		{"list", func(ctx context.Context, provider RpcProvider) error {
-			return provider.ExecuteList(ctx, &proto.ListRequest{Shard: shardId}, func(*proto.ListResponse) {})
+			return provider.ExecuteList(ctx, &proto.ListRequest{Shard: shardId},
+				func(*proto.ListResponse) error { return nil })
 		}},
 		{"range-scan", func(ctx context.Context, provider RpcProvider) error {
-			return provider.ExecuteRangeScan(ctx, &proto.RangeScanRequest{Shard: shardId}, func(*proto.RangeScanResponse) {})
+			return provider.ExecuteRangeScan(ctx, &proto.RangeScanRequest{Shard: shardId},
+				func(*proto.RangeScanResponse) error { return nil })
 		}},
 	}
 }
@@ -572,4 +584,59 @@ func TestExecuteWithRetryWakesUpOnShardMapChange(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, 2, result)
+}
+
+// The consumer of the responses of a list or a range scan ends it with an
+// error, which is returned without a retry.
+func TestRpcProviderListAndRangeScanConsumerError(t *testing.T) {
+	var requests atomic.Int32
+	keys := []string{"a", "b", "c"}
+	address := startTestOxiaClientServer(t, testOxiaClientServer{
+		list: func(_ *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
+			requests.Add(1)
+			for _, key := range keys {
+				if err := stream.Send(&proto.ListResponse{Keys: []string{key}}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		rangeScan: func(_ *proto.RangeScanRequest, stream proto.OxiaClient_RangeScanServer) error {
+			requests.Add(1)
+			for _, key := range keys {
+				if err := stream.Send(&proto.RangeScanResponse{Records: []*proto.GetResponse{{Key: &key}}}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+	shardManager := &testShardManager{}
+	shardManager.leader.Store(&address)
+	provider := NewRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, address,
+		func() ShardManager { return shardManager })
+	defer func() {
+		assert.NoError(t, provider.Close())
+	}()
+
+	shardId := int64(0)
+	failure := errors.New("failure")
+	consumed := 0
+	err := provider.ExecuteList(t.Context(), &proto.ListRequest{Shard: &shardId}, func(*proto.ListResponse) error {
+		consumed++
+		return failure
+	})
+	assert.ErrorIs(t, err, failure)
+	assert.Equal(t, 1, consumed)
+	assert.Equal(t, int32(1), requests.Load())
+
+	consumed = 0
+	err = provider.ExecuteRangeScan(t.Context(), &proto.RangeScanRequest{Shard: &shardId},
+		func(*proto.RangeScanResponse) error {
+			consumed++
+			return failure
+		})
+	assert.ErrorIs(t, err, failure)
+	assert.Equal(t, 1, consumed)
+	assert.Equal(t, int32(2), requests.Load())
 }

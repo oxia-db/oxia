@@ -42,6 +42,11 @@ var (
 
 	// ErrUnknownStatus Unknown error.
 	ErrUnknownStatus = errors.New("unknown status")
+
+	// ErrEndInclusiveUnsupported A List or a RangeScan with [EndInclusive] went
+	// to a shard whose leader excluded the end of the range: its server is
+	// older, or not all the servers of the shard support it yet.
+	ErrEndInclusiveUnsupported = errors.New("the shard does not support an inclusive end of range")
 )
 
 // AsyncClient Oxia client with methods suitable for asynchronous operations.

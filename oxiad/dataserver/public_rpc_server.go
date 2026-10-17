@@ -354,12 +354,24 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 	if err != nil {
 		return err
 	}
+	// The leader controller includes the end of the range when the request says
+	// so, and the responses say whether it did
+	request.EndInclusive = includesRangeEnd(lc, request.EndInclusive)
+	sent := false
 	batcher := concurrent.NewBatcher[string](maxTotalListKeyCount, maxTotalListKeySize,
 		func(key string) int { return protowire.SizeBytes(len(key)) },
-		func(container []string) error { return stream.Send(&proto.ListResponse{Keys: container}) })
+		func(container []string) error {
+			sent = true
+			return stream.Send(&proto.ListResponse{Keys: container, EndInclusive: request.EndInclusive})
+		})
 
 	if err = lc.List(ctx, request, batcher.Add); err == nil {
 		err = batcher.Flush()
+	}
+	if err == nil && request.EndInclusive && !sent {
+		// Without keys in the range, the client still needs a response that says
+		// that it includes its end
+		err = stream.Send(&proto.ListResponse{EndInclusive: true})
 	}
 	if err != nil {
 		s.warnOnStreamError(ctx, "list", err)
@@ -384,20 +396,40 @@ func (s *publicRpcServer) RangeScan(request *proto.RangeScanRequest, stream prot
 		return err
 	}
 
+	// The leader controller includes the end of the range when the request says
+	// so, and the responses say whether it did
+	request.EndInclusive = includesRangeEnd(lc, request.EndInclusive)
+	sent := false
 	batcher := concurrent.NewBatcher[*proto.GetResponse](maxTotalScanBatchCount, maxTotalReadValueSize,
 		func(response *proto.GetResponse) int { return len(response.Value) },
 		func(container []*proto.GetResponse) error {
-			return stream.Send(&proto.RangeScanResponse{Records: container})
+			sent = true
+			return stream.Send(&proto.RangeScanResponse{Records: container, EndInclusive: request.EndInclusive})
 		})
 
 	if err = lc.RangeScan(ctx, request, batcher.Add); err == nil {
 		err = batcher.Flush()
+	}
+	if err == nil && request.EndInclusive && !sent {
+		// Without keys in the range, the client still needs a response that says
+		// that it includes its end
+		err = stream.Send(&proto.RangeScanResponse{EndInclusive: true})
 	}
 	if err != nil {
 		s.warnOnStreamError(ctx, "range-scan", err)
 		return constant.IntoGrpcStatusError(err)
 	}
 	return nil
+}
+
+// includesRangeEnd reports whether the leader includes the end of the range of
+// a List or a RangeScan request, with end_inclusive: only on a shard that
+// enabled FEATURE_RANGE_END_INCLUSIVE, which a server without it can't lead
+// afterwards. The responses say whether it did, since older servers ignore
+// end_inclusive. It's checked once per request, as the feature can be enabled
+// while the request runs.
+func includesRangeEnd(lc lead.LeaderController, endInclusive bool) bool {
+	return endInclusive && lc.IsFeatureEnabled(proto.Feature_FEATURE_RANGE_END_INCLUSIVE)
 }
 
 func (s *publicRpcServer) GetNotifications(req *proto.NotificationsRequest, stream proto.OxiaClient_GetNotificationsServer) error {

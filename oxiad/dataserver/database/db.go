@@ -804,7 +804,10 @@ func (d *db) List(request *proto.ListRequest) (kvstore.KeyIterator, error) {
 	d.listCounter.Add(1)
 	d.readOpsTotal.Add(1)
 
-	opts := kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys}
+	opts := kvstore.IteratorOpts{
+		IncludeInternalKeys: request.IncludeInternalKeys,
+		IncludeUpperBound:   request.EndInclusive,
+	}
 	if splitFilter := d.deferredSplitFilter.Load(); splitFilter != nil {
 		it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive, opts)
 		if err != nil {
@@ -881,8 +884,10 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 	// Loaded before the iterator, which holds the records of the time it's
 	// created: the filter goes once its last step deleted the records
 	splitFilter := d.deferredSplitFilter.Load()
-	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive,
-		kvstore.IteratorOpts{IncludeInternalKeys: request.IncludeInternalKeys})
+	it, err := d.kv.RangeScan(request.StartInclusive, request.EndExclusive, kvstore.IteratorOpts{
+		IncludeInternalKeys: request.IncludeInternalKeys,
+		IncludeUpperBound:   request.EndInclusive,
+	})
 	if err != nil {
 		return nil, err
 	}

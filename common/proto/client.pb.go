@@ -1564,12 +1564,18 @@ type ListRequest struct {
 	Shard *int64 `protobuf:"varint,1,opt,name=shard,proto3,oneof" json:"shard,omitempty"`
 	// The start of the range, inclusive
 	StartInclusive string `protobuf:"bytes,2,opt,name=start_inclusive,json=startInclusive,proto3" json:"start_inclusive,omitempty"`
-	// The end of the range, exclusive
+	// The end of the range, exclusive unless end_inclusive is set
 	EndExclusive        string  `protobuf:"bytes,3,opt,name=end_exclusive,json=endExclusive,proto3" json:"end_exclusive,omitempty"`
 	SecondaryIndexName  *string `protobuf:"bytes,4,opt,name=secondary_index_name,json=secondaryIndexName,proto3,oneof" json:"secondary_index_name,omitempty"`
 	IncludeInternalKeys bool    `protobuf:"varint,5,opt,name=include_internal_keys,json=includeInternalKeys,proto3" json:"include_internal_keys,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The range includes its end: the key end_exclusive, or with
+	// secondary_index_name, the records whose secondary key is end_exclusive.
+	// An empty end_exclusive is then the empty key, not an open end. The leader
+	// includes it on the shards with FEATURE_RANGE_END_INCLUSIVE, and says so in
+	// its responses: the other servers exclude the end.
+	EndInclusive  bool `protobuf:"varint,6,opt,name=end_inclusive,json=endInclusive,proto3" json:"end_inclusive,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListRequest) Reset() {
@@ -1637,12 +1643,24 @@ func (x *ListRequest) GetIncludeInternalKeys() bool {
 	return false
 }
 
+func (x *ListRequest) GetEndInclusive() bool {
+	if x != nil {
+		return x.EndInclusive
+	}
+	return false
+}
+
 // *
 // The response to a list request.
 type ListResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// A portion of the keys found within the specified range
-	Keys          []string `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	Keys []string `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	// The leader included the end of the range of a request with end_inclusive.
+	// It sets it in all its responses to such a request, and sends at least
+	// one, with no keys if the range has none. A server that excluded the end
+	// leaves it unset.
+	EndInclusive  bool `protobuf:"varint,2,opt,name=end_inclusive,json=endInclusive,proto3" json:"end_inclusive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1684,6 +1702,13 @@ func (x *ListResponse) GetKeys() []string {
 	return nil
 }
 
+func (x *ListResponse) GetEndInclusive() bool {
+	if x != nil {
+		return x.EndInclusive
+	}
+	return false
+}
+
 // *
 // Input to a range-scan request
 type RangeScanRequest struct {
@@ -1693,12 +1718,14 @@ type RangeScanRequest struct {
 	Shard *int64 `protobuf:"varint,1,opt,name=shard,proto3,oneof" json:"shard,omitempty"`
 	// The start of the range, inclusive
 	StartInclusive string `protobuf:"bytes,2,opt,name=start_inclusive,json=startInclusive,proto3" json:"start_inclusive,omitempty"`
-	// The end of the range, exclusive
+	// The end of the range, exclusive unless end_inclusive is set
 	EndExclusive        string  `protobuf:"bytes,3,opt,name=end_exclusive,json=endExclusive,proto3" json:"end_exclusive,omitempty"`
 	SecondaryIndexName  *string `protobuf:"bytes,4,opt,name=secondary_index_name,json=secondaryIndexName,proto3,oneof" json:"secondary_index_name,omitempty"`
 	IncludeInternalKeys bool    `protobuf:"varint,5,opt,name=include_internal_keys,json=includeInternalKeys,proto3" json:"include_internal_keys,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The range includes its end, as in ListRequest
+	EndInclusive  bool `protobuf:"varint,6,opt,name=end_inclusive,json=endInclusive,proto3" json:"end_inclusive,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RangeScanRequest) Reset() {
@@ -1766,12 +1793,21 @@ func (x *RangeScanRequest) GetIncludeInternalKeys() bool {
 	return false
 }
 
+func (x *RangeScanRequest) GetEndInclusive() bool {
+	if x != nil {
+		return x.EndInclusive
+	}
+	return false
+}
+
 // *
 // The response to a range-scan request.
 type RangeScanResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// A portion of the records found within the specified range
-	Records       []*GetResponse `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	Records []*GetResponse `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	// The leader included the end of the range, as in ListResponse
+	EndInclusive  bool `protobuf:"varint,2,opt,name=end_inclusive,json=endInclusive,proto3" json:"end_inclusive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1811,6 +1847,13 @@ func (x *RangeScanResponse) GetRecords() []*GetResponse {
 		return x.Records
 	}
 	return nil
+}
+
+func (x *RangeScanResponse) GetEndInclusive() bool {
+	if x != nil {
+		return x.EndInclusive
+	}
+	return false
 }
 
 type GetSequenceUpdatesRequest struct {
@@ -2625,27 +2668,31 @@ const file_client_proto_rawDesc = "" +
 	"\rend_exclusive\x18\x02 \x01(\tR\fendExclusive\x12\x19\n" +
 	"\bop_index\x18\x03 \x01(\rR\aopIndex\"G\n" +
 	"\x13DeleteRangeResponse\x120\n" +
-	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\"\x84\x02\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x18.io.oxia.proto.v1.StatusR\x06status\"\xa9\x02\n" +
 	"\vListRequest\x12\x19\n" +
 	"\x05shard\x18\x01 \x01(\x03H\x00R\x05shard\x88\x01\x01\x12'\n" +
 	"\x0fstart_inclusive\x18\x02 \x01(\tR\x0estartInclusive\x12#\n" +
 	"\rend_exclusive\x18\x03 \x01(\tR\fendExclusive\x125\n" +
 	"\x14secondary_index_name\x18\x04 \x01(\tH\x01R\x12secondaryIndexName\x88\x01\x01\x122\n" +
-	"\x15include_internal_keys\x18\x05 \x01(\bR\x13includeInternalKeysB\b\n" +
+	"\x15include_internal_keys\x18\x05 \x01(\bR\x13includeInternalKeys\x12#\n" +
+	"\rend_inclusive\x18\x06 \x01(\bR\fendInclusiveB\b\n" +
 	"\x06_shardB\x17\n" +
-	"\x15_secondary_index_name\"\"\n" +
+	"\x15_secondary_index_name\"G\n" +
 	"\fListResponse\x12\x12\n" +
-	"\x04keys\x18\x01 \x03(\tR\x04keys\"\x89\x02\n" +
+	"\x04keys\x18\x01 \x03(\tR\x04keys\x12#\n" +
+	"\rend_inclusive\x18\x02 \x01(\bR\fendInclusive\"\xae\x02\n" +
 	"\x10RangeScanRequest\x12\x19\n" +
 	"\x05shard\x18\x01 \x01(\x03H\x00R\x05shard\x88\x01\x01\x12'\n" +
 	"\x0fstart_inclusive\x18\x02 \x01(\tR\x0estartInclusive\x12#\n" +
 	"\rend_exclusive\x18\x03 \x01(\tR\fendExclusive\x125\n" +
 	"\x14secondary_index_name\x18\x04 \x01(\tH\x01R\x12secondaryIndexName\x88\x01\x01\x122\n" +
-	"\x15include_internal_keys\x18\x05 \x01(\bR\x13includeInternalKeysB\b\n" +
+	"\x15include_internal_keys\x18\x05 \x01(\bR\x13includeInternalKeys\x12#\n" +
+	"\rend_inclusive\x18\x06 \x01(\bR\fendInclusiveB\b\n" +
 	"\x06_shardB\x17\n" +
-	"\x15_secondary_index_name\"L\n" +
+	"\x15_secondary_index_name\"q\n" +
 	"\x11RangeScanResponse\x127\n" +
-	"\arecords\x18\x01 \x03(\v2\x1d.io.oxia.proto.v1.GetResponseR\arecords\"C\n" +
+	"\arecords\x18\x01 \x03(\v2\x1d.io.oxia.proto.v1.GetResponseR\arecords\x12#\n" +
+	"\rend_inclusive\x18\x02 \x01(\bR\fendInclusive\"C\n" +
 	"\x19GetSequenceUpdatesRequest\x12\x14\n" +
 	"\x05shard\x18\x01 \x01(\x03R\x05shard\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\"N\n" +

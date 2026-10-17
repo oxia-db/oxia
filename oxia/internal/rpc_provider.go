@@ -165,7 +165,8 @@ func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadReques
 	}, isRetryableShardRequest)
 }
 
-func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest, listResponseConsumer func(*proto.ListResponse)) error {
+func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListRequest,
+	listResponseConsumer func(*proto.ListResponse) error) error {
 	verified := false
 	_, err := executeWithRetry(ctx, func(hint constant.ErrorMetadata) (struct{}, error) {
 		target, err := p.getTargetByShard(request.Shard, hint)
@@ -189,7 +190,9 @@ func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListReques
 			if err != nil {
 				return struct{}{}, err
 			}
-			listResponseConsumer(response)
+			if err = listResponseConsumer(response); err != nil {
+				return struct{}{}, err
+			}
 			verified = true
 		}
 	}, func(err error) bool {
@@ -198,7 +201,8 @@ func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListReques
 	return err
 }
 
-func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest, rangeScanResponseConsumer func(*proto.RangeScanResponse)) error {
+func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest,
+	rangeScanResponseConsumer func(*proto.RangeScanResponse) error) error {
 	verified := false
 	_, err := executeWithRetry(ctx, func(hint constant.ErrorMetadata) (struct{}, error) {
 		target, err := p.getTargetByShard(request.Shard, hint)
@@ -222,7 +226,9 @@ func (p *rpcProvider) ExecuteRangeScan(ctx context.Context, request *proto.Range
 			if err != nil {
 				return struct{}{}, err
 			}
-			rangeScanResponseConsumer(response)
+			if err = rangeScanResponseConsumer(response); err != nil {
+				return struct{}{}, err
+			}
 			verified = true
 		}
 	}, func(err error) bool {

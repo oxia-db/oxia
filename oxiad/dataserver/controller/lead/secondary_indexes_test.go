@@ -15,10 +15,14 @@
 package lead
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,8 +30,11 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/dataserver/option"
 
+	"github.com/oxia-db/oxia/common/compare"
 	"github.com/oxia-db/oxia/common/rpc"
+	time2 "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -898,6 +905,247 @@ func TestSecondaryIndices_ListFollowsKeySorting(t *testing.T) {
 			assert.NoError(t, walFactory.Close())
 		})
 	}
+}
+
+// A range through an index with an inclusive end returns the records of the
+// range without its end, followed by the records whose secondary key is the
+// end, unless the start is after the end. The secondary keys aren't unique, and
+// many extend others: with a byte below '~', like "k-12" for "k-1", with the
+// separator of the index entries, or with a byte below it. None of them may
+// come with the records of the end, in either key sorting, nor may the entries
+// of another index or the session shadow key of an ephemeral record, which the
+// hierarchical sorting puts between the levels of the entries. On the primary
+// keys, a range with an inclusive end returns the record of the end too.
+func TestSecondaryIndexListAndRangeScanEndInclusive(t *testing.T) {
+	var shard int64 = 1
+
+	secondaryKeys := []string{
+		"k-1", "k-12", "k-1:a", "k-1_b", "k-1~", "k-1\x00", "k-1\x01", "k-1\x01x", "k-0", "k-2",
+		"", "/", "//", "a/b", "a/b/c", "a//", "/a", "/a//", "z",
+	}
+	bounds := append(slices.Clone(secondaryKeys), "k", "k-1~~", "a/", "~")
+
+	// Two records for each secondary key. An index entry has the escaped
+	// primary key, so the record with a '/' in its key comes first.
+	type record struct{ key, secondaryKey string }
+	var records []record
+	for i, secondaryKey := range secondaryKeys {
+		records = append(records,
+			record{fmt.Sprintf("p-%02d", i), secondaryKey},
+			record{fmt.Sprintf("p/%02d", i), secondaryKey})
+	}
+	ephemeralKey := records[0].key
+	// Records without an index, with keys that end in "//" or extend others
+	unindexedKeys := []string{"q/", "q//", "q-1", "q-1\x00"}
+	primaryBounds := append(slices.Clone(unindexedKeys), "p-00", "p-05", "p/00", "p/05~", "p", "q", "r")
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			encoder := compare.EncoderNatural
+			if keySorting == proto.KeySortingType_HIERARCHICAL {
+				encoder = compare.EncoderHierarchical
+			}
+			compareKeys := func(a, b string) int {
+				return bytes.Compare(encoder.Encode(a), encoder.Encode(b))
+			}
+
+			kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			walFactory := newTestWalFactory(t)
+
+			lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+				walFactory, kvFactory, &proto.NewTermOptions{KeySorting: keySorting})
+			_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+				FollowerMaps:      nil,
+			})
+
+			session, err := lc.CreateSession(&proto.CreateSessionRequest{Shard: shard, SessionTimeoutMs: 60_000})
+			require.NoError(t, err)
+
+			var puts []*proto.PutRequest
+			for _, r := range records {
+				put := &proto.PutRequest{
+					Key:   r.key,
+					Value: []byte(r.key),
+					SecondaryIndexes: []*proto.SecondaryIndex{
+						{IndexName: "idx", SecondaryKey: r.secondaryKey},
+						{IndexName: "other", SecondaryKey: r.secondaryKey},
+					},
+				}
+				if r.key == ephemeralKey {
+					put.SessionId = &session.SessionId
+				}
+				puts = append(puts, put)
+			}
+			for _, key := range unindexedKeys {
+				puts = append(puts, &proto.PutRequest{Key: key, Value: []byte(key)})
+			}
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			require.NoError(t, err)
+
+			list := func(start, end string, index *string, endInclusive bool) []string {
+				listed, err := lc.ListBlock(context.Background(), &proto.ListRequest{
+					Shard:              &shard,
+					StartInclusive:     start,
+					EndExclusive:       end,
+					SecondaryIndexName: index,
+					EndInclusive:       endInclusive,
+				})
+				require.NoError(t, err)
+				return listed
+			}
+			scan := func(start, end string, index *string, endInclusive bool) []record {
+				results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+					Shard:              &shard,
+					StartInclusive:     start,
+					EndExclusive:       end,
+					SecondaryIndexName: index,
+					EndInclusive:       endInclusive,
+				})
+				require.NoError(t, err)
+				var scanned []record
+				for _, result := range results {
+					// Each record has its key as value
+					assert.Equal(t, result.GetKey(), string(result.Value))
+					scanned = append(scanned, record{result.GetKey(), result.GetSecondaryIndexKey()})
+				}
+				return scanned
+			}
+
+			// The records in the order of their entries in the index: for the
+			// keys that no other key extends with a byte up to the separator, and
+			// that don't end in "//", which the hierarchical sorting puts one
+			// level after the key, it's the order of the secondary keys
+			ordered := slices.Clone(records)
+			slices.SortFunc(ordered, func(a, b record) int {
+				if c := compareKeys(a.secondaryKey, b.secondaryKey); c != 0 {
+					return c
+				}
+				return strings.Compare(url.PathEscape(a.key), url.PathEscape(b.key))
+			})
+			plain := func(key string) bool {
+				return !strings.ContainsAny(key, "\x00\x01") && !strings.HasSuffix(key, "//")
+			}
+
+			idx := pb.String("idx")
+			// The point lookup of the motivation: none of the keys that extend
+			// "k-1" comes with it
+			assert.Equal(t, []string{"p/00", "p-00"}, list("k-1", "k-1", idx, true))
+			assert.Empty(t, list("k-1", "k-1", idx, false))
+
+			for _, start := range bounds {
+				for _, end := range bounds {
+					expected := list(start, end, idx, false)
+					expectedScan := scan(start, end, idx, false)
+					if compareKeys(start, end) <= 0 {
+						for _, r := range ordered {
+							if r.secondaryKey == end {
+								expected = append(expected, r.key)
+								expectedScan = append(expectedScan, r)
+							}
+						}
+					}
+					listed := list(start, end, idx, true)
+					assert.Equal(t, expected, listed, "List [%q, %q]", start, end)
+					assert.Equal(t, expectedScan, scan(start, end, idx, true), "RangeScan [%q, %q]", start, end)
+
+					if !plain(start) || !plain(end) {
+						continue
+					}
+					// Through the plain keys, the range is the one of the key sorting
+					var inRange []string
+					for _, r := range ordered {
+						if plain(r.secondaryKey) &&
+							compareKeys(start, r.secondaryKey) <= 0 && compareKeys(r.secondaryKey, end) <= 0 {
+							inRange = append(inRange, r.key)
+						}
+					}
+					var listedPlain []string
+					for _, key := range listed {
+						i := slices.IndexFunc(records, func(r record) bool { return r.key == key })
+						if plain(records[i].secondaryKey) {
+							listedPlain = append(listedPlain, key)
+						}
+					}
+					assert.Equal(t, inRange, listedPlain, "List [%q, %q] of the plain keys", start, end)
+				}
+			}
+
+			// On the primary keys, the end is a key like any other
+			stored := func(key string) bool {
+				return slices.Contains(unindexedKeys, key) ||
+					slices.ContainsFunc(records, func(r record) bool { return r.key == key })
+			}
+			for _, start := range primaryBounds {
+				for _, end := range primaryBounds {
+					expected := list(start, end, nil, false)
+					expectedScan := scan(start, end, nil, false)
+					if compareKeys(start, end) <= 0 && stored(end) {
+						expected = append(expected, end)
+						expectedScan = append(expectedScan, record{key: end})
+					}
+					assert.Equal(t, expected, list(start, end, nil, true), "List [%q, %q]", start, end)
+					assert.Equal(t, expectedScan, scan(start, end, nil, true), "RangeScan [%q, %q]", start, end)
+				}
+			}
+			// With an inclusive end, an empty end is the empty key, not an open end
+			assert.Empty(t, list("", "", nil, true))
+			assert.Empty(t, scan("", "", nil, true))
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
+// With the hierarchical sorting, the entries of a key ending in "//" are one
+// level after the end bound of the key. A range with an inclusive end seeks to
+// them, rather than step through the rest of the level and the start of the
+// next one, and stops after them, before the entries of the keys that extend
+// the end key with the byte after the separator.
+func TestSecondaryIndexListEndInclusiveSeeksToEndKey(t *testing.T) {
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	db, err := database.NewDB(constant.DefaultNamespace, 1, kvFactory, proto.KeySortingType_HIERARCHICAL,
+		time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
+
+	write := &proto.WriteRequest{}
+	add := func(key, secondaryKey string) {
+		write.Puts = append(write.Puts, &proto.PutRequest{Key: key, Value: []byte(key),
+			SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: secondaryKey}}})
+	}
+	add("p-a", "a//")
+	for i := range 100 {
+		// After the end bound of "a//", in its level
+		add(fmt.Sprintf("p-b%03d", i), fmt.Sprintf("b/%03d", i))
+		// In the next level, before the entries of "a//"
+		add(fmt.Sprintf("p-c%03d", i), fmt.Sprintf("0/0/%03d", i))
+		// After the entries of "a//"
+		add(fmt.Sprintf("p-d%03d", i), fmt.Sprintf("a//\x02%03d", i))
+	}
+	_, err = db.ProcessWrite(write, 0, 0, WrapperUpdateOperationCallback)
+	require.NoError(t, err)
+
+	hooked := &hookedPrefixDB{DB: db}
+	it, err := newSecondaryIndexListIterator(&proto.ListRequest{
+		SecondaryIndexName: pb.String("idx"), StartInclusive: "a//", EndExclusive: "a//", EndInclusive: true,
+	}, hooked)
+	require.NoError(t, err)
+	var listed []string
+	for ; it.Valid(); it.Next() {
+		listed = append(listed, it.Key())
+	}
+	require.NoError(t, it.Close())
+	assert.Equal(t, []string{"p-a"}, listed)
+	// The step from the entry of "a//" to the end of the range
+	assert.Equal(t, 1, hooked.nextCalls)
 }
 
 func TestSecondaryIndices_SecondaryKeyWithSeparator(t *testing.T) {

@@ -281,6 +281,54 @@ func TestPebbleRangeScanWithSlashOrder(t *testing.T) {
 	assert.NoError(t, it.Close())
 }
 
+// A range scan that includes its upper bound returns the key of the bound with
+// the keys of the range, in either key sorting. Its end is the smallest stored
+// key after the one of the bound: with the hierarchical sorting, it is not the
+// one of the key followed by a zero byte for a key ending in "//", which has a
+// level less than its separators. An empty upper bound is the empty key.
+func TestPebbleRangeScanIncludeUpperBound(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, factory.Close()) }()
+			kv, err := factory.NewKV(constant.DefaultNamespace, 1, keySorting)
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, kv.Close()) }()
+			p := kv.(*Pebble)
+
+			keys := []string{"", "a", "a\x00", "a/", "a//", "a//\x00", "a//b", "a/b", "b", "/", "//", "/a//"}
+			if keySorting == proto.KeySortingType_NATURAL {
+				keys = append(keys, keyBeforeInternalRegion, keyAfterInternalRegion)
+			}
+			putAll(t, kv, keys...)
+			putAll(t, kv, constant.InternalKeyPrefix+"a", constant.InternalKeyPrefix+"z")
+			compareKeys := func(a, b string) int {
+				return bytes.Compare(p.keyEncoder.Encode(a), p.keyEncoder.Encode(b))
+			}
+
+			for _, lower := range keys {
+				for _, upper := range keys {
+					var expected []string
+					for _, key := range storedOrder(p, keys) {
+						if compareKeys(lower, key) <= 0 && compareKeys(key, upper) <= 0 {
+							expected = append(expected, key)
+						}
+					}
+					it, err := kv.RangeScan(lower, upper, IteratorOpts{IncludeUpperBound: true})
+					require.NoError(t, err)
+					var scanned []string
+					for ; it.Valid(); it.Next() {
+						scanned = append(scanned, it.Key())
+					}
+					require.NoError(t, it.Close())
+					assert.Equal(t, expected, scanned, "[%q, %q]", lower, upper)
+				}
+			}
+		})
+	}
+}
+
 func TestPebbleCompareKeys(t *testing.T) {
 	keys := []string{"/", "a", "a.c", "a/", "a/y/z", "a0", "b/x", "__oxia/term", "__oxia/idx/i/a\x01a"}
 

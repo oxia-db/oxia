@@ -205,13 +205,23 @@ func updateSecondaryIndexes(batch kvstore.WriteBatch, primaryKey string,
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func newSecondaryIndexListIterator(req *proto.ListRequest, db database.DB) (kvstore.KeyIterator, error) {
-	return newSecondaryIndexIterator(db, *req.SecondaryIndexName, req.StartInclusive, req.EndExclusive)
+	return newSecondaryIndexIterator(db, req)
 }
 
-// newSecondaryIndexIterator returns an iterator over the entries of an index
-// whose secondary key is in [start, end).
-func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*secondaryIndexListIterator, error) {
-	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, indexName, "")
+// secondaryIndexRange is a list or a range scan request through an index.
+type secondaryIndexRange interface {
+	GetSecondaryIndexName() string
+	GetStartInclusive() string
+	GetEndExclusive() string
+	GetEndInclusive() bool
+}
+
+// newSecondaryIndexIterator returns an iterator over the entries of the index of
+// a request whose secondary key is in [start, end), followed, if the end is
+// inclusive and the start is not after it, by the entries of the end.
+func newSecondaryIndexIterator(db database.DB, r secondaryIndexRange) (*secondaryIndexListIterator, error) {
+	start, end := r.GetStartInclusive(), r.GetEndExclusive()
+	indexPrefix := fmt.Sprintf(secondaryIdxRangePrefixFormat, r.GetSecondaryIndexName(), "")
 	// The iterator only visits the entries of the index. With the hierarchical
 	// key sorting, they are not contiguous: they are grouped by level, and other
 	// internal keys sort between the groups, like the entries of other indexes
@@ -219,15 +229,27 @@ func newSecondaryIndexIterator(db database.DB, indexName, start, end string) (*s
 	// The split filter is loaded before the iterator, which holds the entries
 	// of the time it's created (see database.DB.RangeScan).
 	splitFilter := db.DeferredSplitFilter()
-	it, err := db.ListPrefix(indexPrefix, secondaryIndexRangeBound(indexPrefix, end))
+	listIt := &secondaryIndexListIterator{}
+	readEnd := secondaryIndexRangeBound(indexPrefix, end)
+	if r.GetEndInclusive() && db.CompareKeys(start, end) <= 0 {
+		// The entries of the end key are the ones that start with the key and
+		// the separator, without another separator after it, since the escaped
+		// primary key has none. They sort after the end bound, and before the
+		// key followed by the byte after the separator, in either key sorting,
+		// where the iterator stops instead.
+		listIt.db = db
+		listIt.end = readEnd
+		listIt.endKeyEntries = indexPrefix + end + secondaryIdxSeparator
+		readEnd = indexPrefix + end + "\x02"
+	}
+	it, err := db.ListPrefix(indexPrefix, readEnd)
 	if err != nil {
 		return nil, err
 	}
 	// The iterator stops at the end, so keptIndexEntries needs none
-	it = keptIndexEntries(db, splitFilter, it, "")
+	listIt.it = keptIndexEntries(db, splitFilter, it, "")
 
-	it.SeekGE(secondaryIndexRangeBound(indexPrefix, start))
-	listIt := &secondaryIndexListIterator{it: it}
+	listIt.it.SeekGE(secondaryIndexRangeBound(indexPrefix, start))
 	listIt.readKey()
 	return listIt, nil
 }
@@ -260,6 +282,13 @@ type secondaryIndexListIterator struct {
 	it    database.PrefixIterator
 	key   string
 	valid bool
+	// With an inclusive end, the end bound of the range without its end, and
+	// the prefix of the entries of the end key, which the iterator goes through
+	// after that range, skipping the ones of the secondary keys that extend the
+	// end key with the separator
+	db            database.DB
+	end           string
+	endKeyEntries string
 }
 
 func (it *secondaryIndexListIterator) Valid() bool {
@@ -267,13 +296,31 @@ func (it *secondaryIndexListIterator) Valid() bool {
 }
 
 // readKey reads the key of the entry that the iterator is on, if any, and
-// reports whether it is on one.
+// reports whether it is on one. With an inclusive end, it goes from the range
+// without its end to the entries of the end key.
 func (it *secondaryIndexListIterator) readKey() bool {
-	it.valid = it.it.Valid()
-	if it.valid {
+	for it.valid = it.it.Valid(); it.valid; it.valid = it.it.Valid() {
 		it.key = it.it.Key()
+		if it.endKeyEntries == "" || it.db.CompareKeys(it.key, it.end) < 0 {
+			return true
+		}
+		switch {
+		case it.db.CompareKeys(it.key, it.endKeyEntries) < 0:
+			// With the hierarchical sorting, the entries of a key ending in "//"
+			// are one level after the end bound, which can be a whole level of
+			// entries before them
+			it.it.SeekGE(it.endKeyEntries)
+		case !strings.Contains(it.key[len(it.endKeyEntries):], secondaryIdxSeparator):
+			// The entries from endKeyEntries to the end of the iterator all start
+			// with it, in either key sorting, and only the ones of the end key
+			// have no other separator
+			return true
+		default:
+			// The entry of a secondary key that extends the end key
+			it.it.Next()
+		}
 	}
-	return it.valid
+	return false
 }
 
 func (it *secondaryIndexListIterator) Key() string {
@@ -320,7 +367,7 @@ func (it *secondaryIndexListIterator) Close() error {
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db database.DB) (database.RangeScanIterator, error) {
-	listIt, err := newSecondaryIndexIterator(db, *req.SecondaryIndexName, req.StartInclusive, req.EndExclusive)
+	listIt, err := newSecondaryIndexIterator(db, req)
 	if err != nil {
 		return nil, err
 	}

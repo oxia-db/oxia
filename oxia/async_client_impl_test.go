@@ -481,6 +481,64 @@ func TestAsyncClientRangeScanEndsTheOtherShardsAtTheFirstError(t *testing.T) {
 	assertGoroutinesEnd(t, "(*clientImpl).RangeScan")
 }
 
+// A list with EndInclusive fails with ErrEndInclusiveUnsupported unless the
+// leader of every shard includes the end of the range, which it says in all its
+// responses, sending one at least: older servers ignore EndInclusive, and leave
+// the end out. The client drops the keys of a response that doesn't say so.
+func TestAsyncClientListEndInclusive(t *testing.T) {
+	for _, test := range endInclusiveTests() {
+		t.Run(test.name, func(t *testing.T) {
+			client := newScanTestClient(test.executor, 1, 2)
+			var keys []string
+			var err error
+			// The channel is closed once all the shards responded
+			for result := range client.List(context.Background(), "a", "z", test.options...) {
+				if result.Err != nil {
+					err = result.Err
+					continue
+				}
+				keys = append(keys, result.Keys...)
+			}
+			if test.err != nil {
+				assert.ErrorIs(t, err, test.err)
+				assert.NotContains(t, keys, "c")
+			} else {
+				require.NoError(t, err)
+				assert.ElementsMatch(t, test.expected, keys)
+			}
+		})
+	}
+}
+
+// A range scan with EndInclusive fails like a list.
+func TestAsyncClientRangeScanEndInclusive(t *testing.T) {
+	for _, test := range endInclusiveTests() {
+		t.Run(test.name, func(t *testing.T) {
+			client := newScanTestClient(test.executor, 1, 2)
+			var options []RangeScanOption
+			for _, option := range test.options {
+				options = append(options, option)
+			}
+			var keys []string
+			var err error
+			for result := range client.RangeScan(context.Background(), "a", "z", options...) {
+				if result.Err != nil {
+					err = result.Err
+					continue
+				}
+				keys = append(keys, result.Key)
+			}
+			if test.err != nil {
+				assert.ErrorIs(t, err, test.err)
+				assert.NotContains(t, keys, "c")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, test.expected, keys)
+			}
+		})
+	}
+}
+
 // staticExecutor answers the lists and the range scans of each shard with its
 // keys, one per response, then with its error, if it has one. It sends the
 // keys whatever the context, like a stream whose responses were already
@@ -492,24 +550,54 @@ type staticExecutor struct {
 	// The shards whose scans end only once their context is done, like a scan
 	// that is still streaming
 	slow map[int64]bool
+	// The shards that include the end of the range of the requests that ask
+	// for it, like a server with FEATURE_RANGE_END_INCLUSIVE: their responses
+	// say so, and they send one without keys if they have none
+	endInclusive map[int64]bool
 }
 
 func (e *staticExecutor) ExecuteList(ctx context.Context, request *proto.ListRequest,
-	listResponseConsumer func(*proto.ListResponse)) error {
-	for _, key := range e.keys[request.GetShard()] {
-		listResponseConsumer(&proto.ListResponse{Keys: []string{key}})
+	listResponseConsumer func(*proto.ListResponse) error) error {
+	responses, endInclusive := e.responses(request)
+	for _, keys := range responses {
+		if err := listResponseConsumer(&proto.ListResponse{Keys: keys, EndInclusive: endInclusive}); err != nil {
+			return err
+		}
 	}
 	return e.end(ctx, request.GetShard())
 }
 
 func (e *staticExecutor) ExecuteRangeScan(ctx context.Context, request *proto.RangeScanRequest,
-	rangeScanResponseConsumer func(*proto.RangeScanResponse)) error {
-	for _, key := range e.keys[request.GetShard()] {
-		rangeScanResponseConsumer(&proto.RangeScanResponse{
-			Records: []*proto.GetResponse{{Key: new(key), Version: &proto.Version{}}},
-		})
+	rangeScanResponseConsumer func(*proto.RangeScanResponse) error) error {
+	responses, endInclusive := e.responses(request)
+	for _, keys := range responses {
+		var records []*proto.GetResponse
+		for _, key := range keys {
+			records = append(records, &proto.GetResponse{Key: new(key), Version: &proto.Version{}})
+		}
+		response := &proto.RangeScanResponse{Records: records, EndInclusive: endInclusive}
+		if err := rangeScanResponseConsumer(response); err != nil {
+			return err
+		}
 	}
 	return e.end(ctx, request.GetShard())
+}
+
+// responses returns the keys of the responses of a shard to a list or a range
+// scan, and whether the responses say that they include the end of the range.
+func (e *staticExecutor) responses(request interface {
+	GetShard() int64
+	GetEndInclusive() bool
+}) (responses [][]string, endInclusive bool) {
+	endInclusive = request.GetEndInclusive() && e.endInclusive[request.GetShard()]
+	keys := e.keys[request.GetShard()]
+	if len(keys) == 0 && endInclusive {
+		return [][]string{nil}, true
+	}
+	for _, key := range keys {
+		responses = append(responses, []string{key})
+	}
+	return responses, endInclusive
 }
 
 func (e *staticExecutor) end(ctx context.Context, shardId int64) error {
@@ -539,4 +627,39 @@ func assertGoroutinesEnd(t *testing.T, function string) {
 		_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
 		return !strings.Contains(stacks.String(), createdBy)
 	}, 10*time.Second, 10*time.Millisecond, "a goroutine started by %s did not end", function)
+}
+
+type endInclusiveTest struct {
+	name     string
+	options  []ListOption
+	executor *staticExecutor
+	expected []string
+	err      error
+}
+
+// endInclusiveTests returns the cases of the tests of EndInclusive, on the
+// shards 1 and 2.
+func endInclusiveTests() []endInclusiveTest {
+	endInclusive := []ListOption{EndInclusive()}
+	return []endInclusiveTest{
+		{"included", endInclusive, &staticExecutor{
+			keys:         map[int64][]string{1: {"a", "b"}, 2: {"c"}},
+			endInclusive: map[int64]bool{1: true, 2: true},
+		}, []string{"a", "b", "c"}, nil},
+		{"included, empty shard", endInclusive, &staticExecutor{
+			keys:         map[int64][]string{1: {"a"}},
+			endInclusive: map[int64]bool{1: true, 2: true},
+		}, []string{"a"}, nil},
+		{"older server", endInclusive, &staticExecutor{
+			keys:         map[int64][]string{1: {"a"}, 2: {"c", "d"}},
+			endInclusive: map[int64]bool{1: true},
+		}, nil, ErrEndInclusiveUnsupported},
+		{"older server, empty shard", endInclusive, &staticExecutor{
+			keys:         map[int64][]string{1: {"a"}},
+			endInclusive: map[int64]bool{1: true},
+		}, nil, ErrEndInclusiveUnsupported},
+		{"not requested", nil, &staticExecutor{
+			keys: map[int64][]string{1: {"a"}, 2: {"c"}},
+		}, []string{"a", "c"}, nil},
+	}
 }

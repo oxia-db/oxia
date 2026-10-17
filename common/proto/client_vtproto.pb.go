@@ -509,6 +509,7 @@ func (m *ListRequest) CloneVT() *ListRequest {
 	r.StartInclusive = m.StartInclusive
 	r.EndExclusive = m.EndExclusive
 	r.IncludeInternalKeys = m.IncludeInternalKeys
+	r.EndInclusive = m.EndInclusive
 	if rhs := m.Shard; rhs != nil {
 		tmpVal := *rhs
 		r.Shard = &tmpVal
@@ -533,6 +534,7 @@ func (m *ListResponse) CloneVT() *ListResponse {
 		return (*ListResponse)(nil)
 	}
 	r := new(ListResponse)
+	r.EndInclusive = m.EndInclusive
 	if rhs := m.Keys; rhs != nil {
 		tmpContainer := make([]string, len(rhs))
 		copy(tmpContainer, rhs)
@@ -557,6 +559,7 @@ func (m *RangeScanRequest) CloneVT() *RangeScanRequest {
 	r.StartInclusive = m.StartInclusive
 	r.EndExclusive = m.EndExclusive
 	r.IncludeInternalKeys = m.IncludeInternalKeys
+	r.EndInclusive = m.EndInclusive
 	if rhs := m.Shard; rhs != nil {
 		tmpVal := *rhs
 		r.Shard = &tmpVal
@@ -581,6 +584,7 @@ func (m *RangeScanResponse) CloneVT() *RangeScanResponse {
 		return (*RangeScanResponse)(nil)
 	}
 	r := new(RangeScanResponse)
+	r.EndInclusive = m.EndInclusive
 	if rhs := m.Records; rhs != nil {
 		tmpContainer := make([]*GetResponse, len(rhs))
 		for k, v := range rhs {
@@ -1536,6 +1540,9 @@ func (this *ListRequest) EqualVT(that *ListRequest) bool {
 	if this.IncludeInternalKeys != that.IncludeInternalKeys {
 		return false
 	}
+	if this.EndInclusive != that.EndInclusive {
+		return false
+	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
@@ -1560,6 +1567,9 @@ func (this *ListResponse) EqualVT(that *ListResponse) bool {
 		if vx != vy {
 			return false
 		}
+	}
+	if this.EndInclusive != that.EndInclusive {
+		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -1590,6 +1600,9 @@ func (this *RangeScanRequest) EqualVT(that *RangeScanRequest) bool {
 		return false
 	}
 	if this.IncludeInternalKeys != that.IncludeInternalKeys {
+		return false
+	}
+	if this.EndInclusive != that.EndInclusive {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1624,6 +1637,9 @@ func (this *RangeScanResponse) EqualVT(that *RangeScanResponse) bool {
 				return false
 			}
 		}
+	}
+	if this.EndInclusive != that.EndInclusive {
+		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -3022,6 +3038,16 @@ func (m *ListRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.EndInclusive {
+		i--
+		if m.EndInclusive {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
+	}
 	if m.IncludeInternalKeys {
 		i--
 		if m.IncludeInternalKeys {
@@ -3091,6 +3117,16 @@ func (m *ListResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.EndInclusive {
+		i--
+		if m.EndInclusive {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
+	}
 	if len(m.Keys) > 0 {
 		for iNdEx := len(m.Keys) - 1; iNdEx >= 0; iNdEx-- {
 			i -= len(m.Keys[iNdEx])
@@ -3132,6 +3168,16 @@ func (m *RangeScanRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.EndInclusive {
+		i--
+		if m.EndInclusive {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
 	}
 	if m.IncludeInternalKeys {
 		i--
@@ -3201,6 +3247,16 @@ func (m *RangeScanResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.EndInclusive {
+		i--
+		if m.EndInclusive {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
 	}
 	if len(m.Records) > 0 {
 		for iNdEx := len(m.Records) - 1; iNdEx >= 0; iNdEx-- {
@@ -4261,6 +4317,9 @@ func (m *ListRequest) SizeVT() (n int) {
 	if m.IncludeInternalKeys {
 		n += 2
 	}
+	if m.EndInclusive {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4276,6 +4335,9 @@ func (m *ListResponse) SizeVT() (n int) {
 			l = len(s)
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
+	}
+	if m.EndInclusive {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -4305,6 +4367,9 @@ func (m *RangeScanRequest) SizeVT() (n int) {
 	if m.IncludeInternalKeys {
 		n += 2
 	}
+	if m.EndInclusive {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -4320,6 +4385,9 @@ func (m *RangeScanResponse) SizeVT() (n int) {
 			l = e.SizeVT()
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
+	}
+	if m.EndInclusive {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -7299,6 +7367,26 @@ func (m *ListRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.IncludeInternalKeys = bool(v != 0)
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -7382,6 +7470,26 @@ func (m *ListResponse) UnmarshalVT(dAtA []byte) error {
 			}
 			m.Keys = append(m.Keys, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -7570,6 +7678,26 @@ func (m *RangeScanRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.IncludeInternalKeys = bool(v != 0)
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -7655,6 +7783,26 @@ func (m *RangeScanResponse) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11789,6 +11937,26 @@ func (m *ListRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.IncludeInternalKeys = bool(v != 0)
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -11876,6 +12044,26 @@ func (m *ListResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 			}
 			m.Keys = append(m.Keys, stringValue)
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -12076,6 +12264,26 @@ func (m *RangeScanRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.IncludeInternalKeys = bool(v != 0)
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -12161,6 +12369,26 @@ func (m *RangeScanResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndInclusive", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EndInclusive = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

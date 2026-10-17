@@ -99,6 +99,9 @@ enum Feature {
   // shard is idle, instead of leaving the last one until the next write.
   // The backups taken from a follower depend on it
   FEATURE_COMMIT_ADVERTISEMENT = 11;
+  // The leader includes the end of the range of a List or a RangeScan request
+  // with end_inclusive, and says so in its responses
+  FEATURE_RANGE_END_INCLUSIVE = 12;
 }
 
 message GetInfoRequest {

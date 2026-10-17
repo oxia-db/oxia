@@ -528,14 +528,15 @@ func multiShardGetCallback(key string, comparisonType proto.KeyComparisonType, o
 	}
 }
 
-func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, showInternalKeys bool, shardId int64, secondaryIndexName *string,
-	ch chan<- ListResult) {
+func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string,
+	opts *listOptions, shardId int64, ch chan<- ListResult) {
 	request := &proto.ListRequest{
 		Shard:               &shardId,
 		StartInclusive:      minKeyInclusive,
 		EndExclusive:        maxKeyExclusive,
-		SecondaryIndexName:  secondaryIndexName,
-		IncludeInternalKeys: showInternalKeys,
+		SecondaryIndexName:  opts.secondaryIndexName,
+		IncludeInternalKeys: opts.showInternalKeys,
+		EndInclusive:        opts.endInclusive,
 	}
 
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
@@ -549,9 +550,23 @@ func (c *clientImpl) listFromShard(ctx context.Context, minKeyInclusive string, 
 		case <-ctx.Done():
 		}
 	}
-	if err := c.executor.ExecuteList(retryCtx, request, func(response *proto.ListResponse) {
-		send(ListResult{Keys: response.Keys})
-	}); err != nil {
+	// Older servers ignore EndInclusive, and leave the end out: a leader that
+	// includes it says so in all its responses, and sends at least one
+	responded := false
+	err := c.executor.ExecuteList(retryCtx, request, func(response *proto.ListResponse) error {
+		if request.EndInclusive && !response.EndInclusive {
+			return ErrEndInclusiveUnsupported
+		}
+		responded = true
+		if len(response.Keys) > 0 {
+			send(ListResult{Keys: response.Keys})
+		}
+		return nil
+	})
+	if err == nil && request.EndInclusive && !responded {
+		err = ErrEndInclusiveUnsupported
+	}
+	if err != nil {
 		send(ListResult{Err: err})
 	}
 }
@@ -564,7 +579,7 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 		// If the partition key is specified, we only need to make the request to one shard
 		shardId := c.getShardForKey("", opts)
 		go func() {
-			c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardId, opts.secondaryIndexName, ch)
+			c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts, shardId, ch)
 			close(ch)
 		}()
 	} else {
@@ -576,7 +591,7 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 		for _, shardId := range shardIDs {
 			shardIdPtr := shardId
 			wg.Go(func() {
-				c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardIdPtr, opts.secondaryIndexName, ch)
+				c.listFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts, shardIdPtr, ch)
 			})
 		}
 
@@ -591,24 +606,36 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 
 // rangeScanFromShard passes each record of the shard to onResult, with its
 // secondary key when the scan uses an index, or the error of the scan.
-func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, includeInternalKeys bool, shardId int64, secondaryIndexName *string,
-	onResult func(result GetResult, secondaryIndexKey *string)) {
+func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string,
+	opts *listOptions, shardId int64, onResult func(result GetResult, secondaryIndexKey *string)) {
 	request := &proto.RangeScanRequest{
 		Shard:               &shardId,
 		StartInclusive:      minKeyInclusive,
 		EndExclusive:        maxKeyExclusive,
-		SecondaryIndexName:  secondaryIndexName,
-		IncludeInternalKeys: includeInternalKeys,
+		SecondaryIndexName:  opts.secondaryIndexName,
+		IncludeInternalKeys: opts.showInternalKeys,
+		EndInclusive:        opts.endInclusive,
 	}
 
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
 	defer cancel()
 
-	if err := c.executor.ExecuteRangeScan(retryCtx, request, func(response *proto.RangeScanResponse) {
+	// As for a list, the responses say whether the leader included the end
+	responded := false
+	err := c.executor.ExecuteRangeScan(retryCtx, request, func(response *proto.RangeScanResponse) error {
+		if request.EndInclusive && !response.EndInclusive {
+			return ErrEndInclusiveUnsupported
+		}
+		responded = true
 		for _, record := range response.Records {
 			onResult(toGetResult(record, "", nil), record.SecondaryIndexKey)
 		}
-	}); err != nil {
+		return nil
+	})
+	if err == nil && request.EndInclusive && !responded {
+		err = ErrEndInclusiveUnsupported
+	}
+	if err != nil {
 		onResult(GetResult{Err: err}, nil)
 	}
 }
@@ -621,7 +648,7 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 		// If the partition key is specified, we only need to make the request to one shard
 		shardId := c.getShardForKey("", opts)
 		go func() {
-			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardId, opts.secondaryIndexName,
+			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, &opts.listOptions, shardId,
 				func(result GetResult, _ *string) { outCh <- result })
 			close(outCh)
 		}()
@@ -636,8 +663,8 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 			ch := make(chan rangeScanResult)
 			channels[i] = ch
 			go func() {
-				c.rangeScanFromShard(scanCtx, minKeyInclusive, maxKeyExclusive, opts.showInternalKeys, shardIdPtr,
-					opts.secondaryIndexName, func(result GetResult, secondaryIndexKey *string) {
+				c.rangeScanFromShard(scanCtx, minKeyInclusive, maxKeyExclusive, &opts.listOptions, shardIdPtr,
+					func(result GetResult, secondaryIndexKey *string) {
 						ch <- rangeScanResult{result, secondaryIndexKey}
 					})
 				close(ch)

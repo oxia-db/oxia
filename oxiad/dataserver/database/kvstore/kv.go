@@ -244,6 +244,10 @@ type Factory interface {
 
 type IteratorOpts struct {
 	IncludeInternalKeys bool
+	// IncludeUpperBound makes RangeScan and KeyRangeScan include the key of
+	// their upper bound. An empty upper bound is then the empty key, rather
+	// than no bound.
+	IncludeUpperBound bool
 }
 
 var (

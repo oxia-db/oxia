@@ -536,6 +536,28 @@ func TestSecondaryIndexes_DeferredSplitFilter(t *testing.T) {
 	require.NoError(t, scan.Close())
 	assert.Equal(t, expectedPrimaries, scanned)
 
+	// A range with an inclusive end, from a secondary key to the same one, has
+	// the kept entries of the key, which sort after the end bound
+	for i := -1; i <= 7; i++ {
+		key := fmt.Sprintf("sec-%02d", i)
+		var expected []string
+		for _, e := range kept {
+			if e.secondary == key {
+				expected = append(expected, e.primary)
+			}
+		}
+		it, err := newSecondaryIndexListIterator(&proto.ListRequest{
+			SecondaryIndexName: &idx, StartInclusive: key, EndExclusive: key, EndInclusive: true,
+		}, db)
+		require.NoError(t, err)
+		var listed []string
+		for ; it.Valid(); it.Next() {
+			listed = append(listed, it.Key())
+		}
+		require.NoError(t, it.Close())
+		assert.Equal(t, expected, listed, key)
+	}
+
 	// A get finds the closest kept entry, by the comparison of the request
 	for i := -1; i <= 7; i++ {
 		probe := fmt.Sprintf("sec-%02d", i)
@@ -643,11 +665,12 @@ func TestSessionDelete_DeferredSplitFilterNotifications(t *testing.T) {
 }
 
 // hookedPrefixDB runs a hook once the next iterator over a prefix is created,
-// and counts the checks of the entries of the secondary indexes by its
-// iterators.
+// and counts the steps of its iterators and their checks of the entries of the
+// secondary indexes.
 type hookedPrefixDB struct {
 	database.DB
 	afterPrefixIterator  func()
+	nextCalls            int
 	keepsIndexEntryCalls int
 }
 
@@ -673,6 +696,11 @@ func (db *hookedPrefixDB) KeyPrefixIterator(prefix, end string) (database.Prefix
 type hookedPrefixIterator struct {
 	database.PrefixIterator
 	db *hookedPrefixDB
+}
+
+func (it *hookedPrefixIterator) Next() bool {
+	it.db.nextCalls++
+	return it.PrefixIterator.Next()
 }
 
 func (it *hookedPrefixIterator) KeepsIndexEntry(filter *database.DeferredSplitFilter, indexKey string) (bool, error) {
