@@ -15,6 +15,8 @@
 package dataserver
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,6 +63,58 @@ func TestStandaloneSecondaryIndexNameValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, response.GetPuts(), 1)
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
+}
+
+func TestStandaloneListThroughIndexReturnsSecondaryKeys(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+	client := proto.NewOxiaClientClient(conn)
+
+	// The secondary keys sort in the reverse order of the keys
+	var puts []*proto.PutRequest
+	for key, secondaryKey := range map[string]string{"a": "z", "b": "y", "c": "x"} {
+		puts = append(puts, &proto.PutRequest{
+			Key:              key,
+			Value:            []byte("value"),
+			SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: secondaryKey}},
+		})
+	}
+	require.Eventually(t, func() bool {
+		response, err := client.Write(t.Context(), &proto.WriteRequest{Shard: pb.Int64(0), Puts: puts})
+		return err == nil && response.GetPuts()[0].GetStatus() == proto.Status_OK
+	}, 10*time.Second, 10*time.Millisecond)
+
+	list := func(request *proto.ListRequest) (keys []string, secondaryIndexKeys []string) {
+		stream, err := client.List(t.Context(), request)
+		require.NoError(t, err)
+		for {
+			response, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return keys, secondaryIndexKeys
+			}
+			require.NoError(t, err)
+			keys = append(keys, response.GetKeys()...)
+			secondaryIndexKeys = append(secondaryIndexKeys, response.GetSecondaryIndexKeys()...)
+		}
+	}
+
+	keys, secondaryIndexKeys := list(&proto.ListRequest{
+		Shard:              pb.Int64(0),
+		StartInclusive:     "a",
+		EndExclusive:       "~",
+		SecondaryIndexName: pb.String("idx"),
+	})
+	assert.Equal(t, []string{"c", "b", "a"}, keys)
+	assert.Equal(t, []string{"x", "y", "z"}, secondaryIndexKeys)
+
+	keys, secondaryIndexKeys = list(&proto.ListRequest{Shard: pb.Int64(0), StartInclusive: "a", EndExclusive: "d"})
+	assert.Equal(t, []string{"a", "b", "c"}, keys)
+	assert.Empty(t, secondaryIndexKeys)
 }
 
 func TestStandaloneSequenceKeyValidation(t *testing.T) {
