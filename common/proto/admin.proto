@@ -22,6 +22,7 @@ package io.oxia.proto.v1;
 option go_package = "github.com/oxia-db/oxia/common/proto";
 option java_multiple_files = true;
 
+import "backup.proto";
 import "metadata.proto";
 
 service OxiaAdmin {
@@ -44,6 +45,16 @@ service OxiaAdmin {
    */
   rpc SplitShard(SplitShardRequest) returns (SplitShardResponse);
 
+  /**
+   * Makes the backups of the selected shards due now, e.g. before an
+   * upgrade. The backups run in the background, see ListBackups.
+   */
+  rpc RequestBackup(RequestBackupRequest) returns (RequestBackupResponse);
+
+  /**
+   * Lists the backups of a namespace, through a data server.
+   */
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
 }
 
 message ListDataServersRequest {
@@ -144,4 +155,16 @@ message SplitShardRequest {
 message SplitShardResponse {
   int64 left_child_shard = 1;
   int64 right_child_shard = 2;
+}
+
+message RequestBackupRequest {
+  // All the namespaces when empty
+  string namespace = 1;
+  // All the shards of the namespace when absent
+  optional int64 shard = 2;
+}
+
+message RequestBackupResponse {
+  // The shards made due
+  uint32 shards = 1;
 }

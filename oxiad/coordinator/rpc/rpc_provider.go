@@ -61,7 +61,13 @@ type Provider interface {
 type BackupProvider interface {
 	BackupShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.BackupShardRequest) (*proto.BackupShardResponse, error)
 	ExpireBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error)
+	// ListBackups reads every manifest of the namespace on the data server:
+	// it is bounded by ListBackupsTimeout rather than the usual timeout.
+	ListBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ListBackupsRequest) (*proto.ListBackupsResponse, error)
 }
+
+// ListBackupsTimeout bounds the ListBackups calls.
+const ListBackupsTimeout = 5 * time.Minute
 
 var _ BackupProvider = (*rpcProvider)(nil)
 
@@ -246,6 +252,12 @@ func (r *rpcProvider) BackupShard(ctx context.Context, node *proto.DataServerIde
 func (r *rpcProvider) ExpireBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
 	return backupCall(ctx, r, node, r.timeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.ExpireBackupsResponse, error) {
 		return client.ExpireBackups(ctx, req)
+	})
+}
+
+func (r *rpcProvider) ListBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ListBackupsRequest) (*proto.ListBackupsResponse, error) {
+	return backupCall(ctx, r, node, ListBackupsTimeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.ListBackupsResponse, error) {
+		return client.ListBackups(ctx, req)
 	})
 }
 

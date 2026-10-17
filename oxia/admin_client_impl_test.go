@@ -598,3 +598,11 @@ func TestWrapAdminErrorPreservesCause(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnknown)
 	assert.True(t, errors.Is(err, cause))
 }
+
+func (*mockAdminRpcClient) RequestBackup(context.Context, *proto.RequestBackupRequest, ...grpc.CallOption) (*proto.RequestBackupResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (*mockAdminRpcClient) ListBackups(context.Context, *proto.ListBackupsRequest, ...grpc.CallOption) (*proto.ListBackupsResponse, error) {
+	return nil, errors.New("not implemented")
+}

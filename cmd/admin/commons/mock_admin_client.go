@@ -128,3 +128,19 @@ func (m *MockAdminClient) SplitShard(_ context.Context, namespace string, shardI
 		Error: errors.New("split shard failed"),
 	}
 }
+
+func (m *MockAdminClient) RequestBackup(_ context.Context, namespace string, shardId *int64) (uint32, error) {
+	args := m.MethodCalled("RequestBackup", namespace, shardId)
+	if v, ok := args.Get(0).(uint32); ok {
+		return v, args.Error(1)
+	}
+	return 0, errors.New("failed to request backup")
+}
+
+func (m *MockAdminClient) ListBackups(_ context.Context, namespace string, shardId *int64, destination string) ([]*proto.BackupInfo, error) {
+	args := m.MethodCalled("ListBackups", namespace, shardId, destination)
+	if v, ok := args.Get(0).([]*proto.BackupInfo); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("no backups available")
+}

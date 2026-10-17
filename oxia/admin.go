@@ -37,6 +37,14 @@ type AdminClient interface {
 	GetNamespace(ctx context.Context, namespace string) (*proto.NamespaceView, error)
 
 	SplitShard(ctx context.Context, namespace string, shardId int64, splitPoint *uint32) *SplitShardResult
+
+	// RequestBackup makes the backups of the shards of a namespace, or of one
+	// of its shards, or of every namespace when it is empty, due now, and
+	// returns how many shards.
+	RequestBackup(ctx context.Context, namespace string, shardId *int64) (uint32, error)
+	// ListBackups lists the backups of a namespace, or of one of its shards,
+	// at the destination of the backup policy, or at the given one.
+	ListBackups(ctx context.Context, namespace string, shardId *int64, destination string) ([]*proto.BackupInfo, error)
 }
 
 type SplitShardResult struct {
