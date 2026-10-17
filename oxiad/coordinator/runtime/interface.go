@@ -60,4 +60,9 @@ type Runtime interface {
 	// at the destination of the policy or the given one, through a running
 	// data server.
 	ListBackups(ctx context.Context, namespace string, shard *int64, destination string) ([]*proto.BackupInfo, error)
+	// RestoreNamespace restores a namespace as of a point in time into a new
+	// namespace, see docs/backups.md. It returns the shards of the new
+	// namespace, which install their backups and elect their leaders in the
+	// background.
+	RestoreNamespace(ctx context.Context, req *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error)
 }

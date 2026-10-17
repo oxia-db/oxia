@@ -537,6 +537,11 @@ func (s *internalRpcServer) ListBackups(ctx context.Context, req *proto.ListBack
 	return res, constant.IntoGrpcStatusError(err)
 }
 
+func (s *internalRpcServer) RestoreShard(ctx context.Context, req *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error) {
+	res, err := s.backups.RestoreShard(ctx, req)
+	return res, constant.IntoGrpcStatusError(err)
+}
+
 func (s *internalRpcServer) DeleteShard(_ context.Context, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	res, err := s.shardsDirector.DeleteShard(req)
 	return res, constant.IntoGrpcStatusError(err)

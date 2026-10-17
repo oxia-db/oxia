@@ -346,6 +346,68 @@ func TestExecutorListBackupsReturnsTheBackupsOfANamespace(t *testing.T) {
 	assert.ErrorContains(t, err, "no destination")
 }
 
+func TestExecutorRestoreShardInstallsABackupAndReportsItOnce(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, sstFiles(2))
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	done := awaitBackup(t, e, backupRequest(destination, 1))
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, done.State)
+
+	req := &proto.RestoreShardRequest{
+		Namespace:       "restored",
+		Shard:           7,
+		HashRange:       fullRange(),
+		Destination:     destination,
+		SourceNamespace: "ns",
+		SourceShard:     1,
+		BackupId:        done.LastBackup.BackupId,
+	}
+	res, err := e.RestoreShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.RestoreShard(t.Context(), req)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+	assert.EqualValues(t, 42, res.CommitOffset)
+	assert.EqualValues(t, 3, res.Term)
+	installer := host.installer(7)
+	require.NotNil(t, installer)
+	assert.Equal(t, host.shards[1].files, installer.files)
+	assert.True(t, installer.completed)
+
+	res, err = e.RestoreShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State, "reported once, then installed again")
+}
+
+func TestExecutorRestoreShardReportsAFailure(t *testing.T) {
+	host := newFakeHost(t)
+	host.installerErr = errors.New("shard is led here")
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	req := &proto.RestoreShardRequest{Namespace: "restored", Shard: 7, HashRange: fullRange(), Destination: destination,
+		SourceNamespace: "ns", SourceShard: 1, BackupId: "2026-10-03T14-00-00Z-abcd"}
+	res, err := e.RestoreShard(t.Context(), req)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.RestoreShard(t.Context(), req)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "shard is led here")
+
+	_, err = e.RestoreShard(t.Context(), &proto.RestoreShardRequest{Namespace: "restored", Shard: 7, BackupId: "garbage"})
+	assert.ErrorIs(t, err, backup.ErrInvalidID)
+	_, err = e.RestoreShard(t.Context(), &proto.RestoreShardRequest{BackupId: "garbage"})
+	assert.ErrorContains(t, err, "needs a namespace")
+}
+
 func TestExecutorCloseWaitsForTheRunningJobs(t *testing.T) {
 	host := newFakeHost(t)
 	host.addShard(1, sstFiles(1))

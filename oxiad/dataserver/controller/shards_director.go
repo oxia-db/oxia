@@ -64,6 +64,10 @@ type ShardsDirector interface {
 	// generation was taken from, see lead.LeaderController.WithDatabase, or
 	// returns constant.ErrNodeIsNotMember.
 	WithDatabase(shardId int64, generation uint64, fn func(dir string) error) error
+	// NewInstaller starts the installation of a database of a shard from its
+	// files, for a restore. The shard must not be led from here. A follower
+	// of it is closed, and created again by the next term.
+	NewInstaller(namespace string, shardId int64) (Installer, error)
 	// DatabaseDir returns the directory of the database of a shard.
 	DatabaseDir(namespace string, shardId int64) string
 }
@@ -304,6 +308,25 @@ func (s *shardsDirector) WithDatabase(shardId int64, generation uint64, fn func(
 	default:
 		return constant.ErrNodeIsNotMember
 	}
+}
+
+func (s *shardsDirector) NewInstaller(namespace string, shardId int64) (Installer, error) {
+	s.Lock()
+	defer s.Unlock()
+	if s.closed {
+		return nil, constant.ErrResourceUnavailable
+	}
+	if _, ok := s.leaders[shardId]; ok {
+		return nil, errors.Join(constant.ErrResourceConflict, errors.New("the shard is led from this data server"))
+	}
+	if follower, ok := s.followers[shardId]; ok {
+		if err := follower.Close(); err != nil {
+			return nil, err
+		}
+		delete(s.followers, shardId)
+		s.followersCounter.Dec()
+	}
+	return newInstaller(s.storageOptions, namespace, shardId, s.walFactory, s.kvFactory)
 }
 
 func (s *shardsDirector) DatabaseDir(namespace string, shardId int64) string {

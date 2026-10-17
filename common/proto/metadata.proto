@@ -190,6 +190,20 @@ message SplitMetadata {
   map<int64, string> child_leaders_at_bootstrap = 7;
 }
 
+// RestoreMetadata marks a shard of a namespace being restored from a backup:
+// its ensemble installs the backup before the shard's first election, which
+// clears the mark.
+message RestoreMetadata {
+  // @gotags: yaml:"destination"
+  string destination = 1;
+  // @gotags: yaml:"sourceNamespace"
+  string source_namespace = 2;
+  // @gotags: yaml:"sourceShardId"
+  int64 source_shard_id = 3;
+  // @gotags: yaml:"backupId"
+  string backup_id = 4;
+}
+
 enum ShardStatus {
   ShardStatusUnknown = 0;
   SteadyState = 1;
@@ -219,6 +233,8 @@ message ShardMetadata {
   // replica uploads the whole shard again.
   // @gotags: yaml:"backupReplica,omitempty"
   DataServerIdentity backup_replica = 9;
+  // @gotags: yaml:"restore,omitempty"
+  RestoreMetadata restore = 10;
 }
 
 message NamespaceStatus {

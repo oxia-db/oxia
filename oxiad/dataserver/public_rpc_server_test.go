@@ -99,6 +99,9 @@ func (*testShardsDirector) CommitOffset(int64) (int64, error) { panic("unexpecte
 func (*testShardsDirector) WithDatabase(int64, uint64, func(string) error) error {
 	panic("unexpected call")
 }
+func (*testShardsDirector) NewInstaller(string, int64) (controller.Installer, error) {
+	panic("unexpected call")
+}
 func (*testShardsDirector) DatabaseDir(string, int64) string { panic("unexpected call") }
 
 var _ controller.ShardsDirector = (*testShardsDirector)(nil)

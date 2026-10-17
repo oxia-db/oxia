@@ -16,6 +16,7 @@ package commons
 
 import (
 	"context"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
@@ -143,4 +144,12 @@ func (m *MockAdminClient) ListBackups(_ context.Context, namespace string, shard
 		return v, args.Error(1)
 	}
 	return nil, errors.New("no backups available")
+}
+
+func (m *MockAdminClient) RestoreNamespace(_ context.Context, sourceNamespace string, asOf time.Time, targetNamespace string, destination string) ([]*proto.RestoredShard, error) {
+	args := m.MethodCalled("RestoreNamespace", sourceNamespace, asOf, targetNamespace, destination)
+	if v, ok := args.Get(0).([]*proto.RestoredShard); ok {
+		return v, args.Error(1)
+	}
+	return nil, errors.New("failed to restore namespace")
 }

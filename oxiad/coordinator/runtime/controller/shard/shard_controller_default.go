@@ -249,30 +249,8 @@ func (s *controller) run(bo backoff.BackOff) error {
 		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	// Do initial check or leader election
-	switch {
-	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
-		s.Delete()
-	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
-		// Child shard during a split: the SplitController manages its lifecycle.
-		// Wait until the split is complete (Split metadata cleared) before
-		// entering the normal event loop, to prevent the load balancer from
-		// triggering elections that would interfere with the split controller.
-		s.logger.Info("Child shard during split, waiting for split to complete")
-		s.waitForSplitComplete()
-	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
-		s.electLeader(initShardMeta, nil)
-	default:
-		s.logger.Info(
-			"There is already a data server marked as leader on the shard, verifying",
-			slog.Any("current-leader", initShardMeta.Leader),
-		)
-
-		if !s.verifyCurrentEnsemble(initShardMeta) {
-			s.electLeader(initShardMeta, nil)
-		} else {
-			s.Refresh()
-		}
+	if err := s.start(initShardMeta); err != nil {
+		return err
 	}
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
@@ -307,6 +285,43 @@ func (s *controller) run(bo backoff.BackOff) error {
 		}
 	}
 	s.logger.Info("Shard controller is stopped, stopping event loop")
+	return nil
+}
+
+// start does the initial check or leader election of the shard, when the
+// controller starts.
+func (s *controller) start(initShardMeta *proto.ShardMetadata) error {
+	switch {
+	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
+		s.Delete()
+	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
+		// Child shard during a split: the SplitController manages its lifecycle.
+		// Wait until the split is complete (Split metadata cleared) before
+		// entering the normal event loop, to prevent the load balancer from
+		// triggering elections that would interfere with the split controller.
+		s.logger.Info("Child shard during split, waiting for split to complete")
+		s.waitForSplitComplete()
+	case initShardMeta.GetRestore() != nil:
+		// A shard created by a restore: its members install the backup before
+		// its first election
+		if err := s.restoreShard(initShardMeta); err != nil {
+			return err
+		}
+		s.electLeader(initShardMeta, nil)
+	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
+		s.electLeader(initShardMeta, nil)
+	default:
+		s.logger.Info(
+			"There is already a data server marked as leader on the shard, verifying",
+			slog.Any("current-leader", initShardMeta.Leader),
+		)
+
+		if !s.verifyCurrentEnsemble(initShardMeta) {
+			s.electLeader(initShardMeta, nil)
+		} else {
+			s.Refresh()
+		}
+	}
 	return nil
 }
 

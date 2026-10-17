@@ -1334,3 +1334,7 @@ func (*testRuntime) RequestBackup(string, *int64) (int, error) {
 func (*testRuntime) ListBackups(context.Context, string, *int64, string) ([]*proto.BackupInfo, error) {
 	return nil, coordruntime.ErrBackupsUnsupported
 }
+
+func (*testRuntime) RestoreNamespace(context.Context, *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	return nil, coordruntime.ErrBackupsUnsupported
+}

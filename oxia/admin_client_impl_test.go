@@ -606,3 +606,7 @@ func (*mockAdminRpcClient) RequestBackup(context.Context, *proto.RequestBackupRe
 func (*mockAdminRpcClient) ListBackups(context.Context, *proto.ListBackupsRequest, ...grpc.CallOption) (*proto.ListBackupsResponse, error) {
 	return nil, errors.New("not implemented")
 }
+
+func (*mockAdminRpcClient) RestoreNamespace(context.Context, *proto.RestoreNamespaceRequest, ...grpc.CallOption) (*proto.RestoreNamespaceResponse, error) {
+	return nil, errors.New("not implemented")
+}
