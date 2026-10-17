@@ -443,6 +443,11 @@ message ListRequest {
 message ListResponse {
   // A portion of the keys found within the specified range
   repeated string keys = 1;
+  // For a list through a secondary index, the secondary key of each of the
+  // keys, in the same order. The shards return the keys in the order of the
+  // secondary keys, so that a client can merge the lists of several shards in
+  // the same order. Older servers leave it empty.
+  repeated string secondary_index_keys = 2;
 }
 
 /**

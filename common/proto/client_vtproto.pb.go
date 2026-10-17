@@ -538,6 +538,11 @@ func (m *ListResponse) CloneVT() *ListResponse {
 		copy(tmpContainer, rhs)
 		r.Keys = tmpContainer
 	}
+	if rhs := m.SecondaryIndexKeys; rhs != nil {
+		tmpContainer := make([]string, len(rhs))
+		copy(tmpContainer, rhs)
+		r.SecondaryIndexKeys = tmpContainer
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -1557,6 +1562,15 @@ func (this *ListResponse) EqualVT(that *ListResponse) bool {
 	}
 	for i, vx := range this.Keys {
 		vy := that.Keys[i]
+		if vx != vy {
+			return false
+		}
+	}
+	if len(this.SecondaryIndexKeys) != len(that.SecondaryIndexKeys) {
+		return false
+	}
+	for i, vx := range this.SecondaryIndexKeys {
+		vy := that.SecondaryIndexKeys[i]
 		if vx != vy {
 			return false
 		}
@@ -3091,6 +3105,15 @@ func (m *ListResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.SecondaryIndexKeys) > 0 {
+		for iNdEx := len(m.SecondaryIndexKeys) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.SecondaryIndexKeys[iNdEx])
+			copy(dAtA[i:], m.SecondaryIndexKeys[iNdEx])
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.SecondaryIndexKeys[iNdEx])))
+			i--
+			dAtA[i] = 0x12
+		}
+	}
 	if len(m.Keys) > 0 {
 		for iNdEx := len(m.Keys) - 1; iNdEx >= 0; iNdEx-- {
 			i -= len(m.Keys[iNdEx])
@@ -4273,6 +4296,12 @@ func (m *ListResponse) SizeVT() (n int) {
 	_ = l
 	if len(m.Keys) > 0 {
 		for _, s := range m.Keys {
+			l = len(s)
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+		}
+	}
+	if len(m.SecondaryIndexKeys) > 0 {
+		for _, s := range m.SecondaryIndexKeys {
 			l = len(s)
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
@@ -7381,6 +7410,38 @@ func (m *ListResponse) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Keys = append(m.Keys, string(dAtA[iNdEx:postIndex]))
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SecondaryIndexKeys", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.SecondaryIndexKeys = append(m.SecondaryIndexKeys, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -11875,6 +11936,42 @@ func (m *ListResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
 			}
 			m.Keys = append(m.Keys, stringValue)
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SecondaryIndexKeys", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var stringValue string
+			if intStringLen > 0 {
+				stringValue = unsafe.String(&dAtA[iNdEx], intStringLen)
+			}
+			m.SecondaryIndexKeys = append(m.SecondaryIndexKeys, stringValue)
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

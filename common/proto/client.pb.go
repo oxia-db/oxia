@@ -1642,9 +1642,14 @@ func (x *ListRequest) GetIncludeInternalKeys() bool {
 type ListResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// A portion of the keys found within the specified range
-	Keys          []string `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Keys []string `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	// For a list through a secondary index, the secondary key of each of the
+	// keys, in the same order. The shards return the keys in the order of the
+	// secondary keys, so that a client can merge the lists of several shards in
+	// the same order. Older servers leave it empty.
+	SecondaryIndexKeys []string `protobuf:"bytes,2,rep,name=secondary_index_keys,json=secondaryIndexKeys,proto3" json:"secondary_index_keys,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ListResponse) Reset() {
@@ -1680,6 +1685,13 @@ func (*ListResponse) Descriptor() ([]byte, []int) {
 func (x *ListResponse) GetKeys() []string {
 	if x != nil {
 		return x.Keys
+	}
+	return nil
+}
+
+func (x *ListResponse) GetSecondaryIndexKeys() []string {
+	if x != nil {
+		return x.SecondaryIndexKeys
 	}
 	return nil
 }
@@ -2633,9 +2645,10 @@ const file_client_proto_rawDesc = "" +
 	"\x14secondary_index_name\x18\x04 \x01(\tH\x01R\x12secondaryIndexName\x88\x01\x01\x122\n" +
 	"\x15include_internal_keys\x18\x05 \x01(\bR\x13includeInternalKeysB\b\n" +
 	"\x06_shardB\x17\n" +
-	"\x15_secondary_index_name\"\"\n" +
+	"\x15_secondary_index_name\"T\n" +
 	"\fListResponse\x12\x12\n" +
-	"\x04keys\x18\x01 \x03(\tR\x04keys\"\x89\x02\n" +
+	"\x04keys\x18\x01 \x03(\tR\x04keys\x120\n" +
+	"\x14secondary_index_keys\x18\x02 \x03(\tR\x12secondaryIndexKeys\"\x89\x02\n" +
 	"\x10RangeScanRequest\x12\x19\n" +
 	"\x05shard\x18\x01 \x01(\x03H\x00R\x05shard\x88\x01\x01\x12'\n" +
 	"\x0fstart_inclusive\x18\x02 \x01(\tR\x0estartInclusive\x12#\n" +

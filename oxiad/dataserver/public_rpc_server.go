@@ -341,6 +341,11 @@ func (s *publicRpcServer) Read(request *proto.ReadRequest, stream proto.OxiaClie
 	return nil
 }
 
+type listEntry struct {
+	key               string
+	secondaryIndexKey string
+}
+
 func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClient_ListServer) error {
 	ctx := stream.Context()
 	if s.log.Enabled(ctx, slog.LevelDebug) {
@@ -354,11 +359,34 @@ func (s *publicRpcServer) List(request *proto.ListRequest, stream proto.OxiaClie
 	if err != nil {
 		return err
 	}
-	batcher := concurrent.NewBatcher[string](maxTotalListKeyCount, maxTotalListKeySize,
-		func(key string) int { return protowire.SizeBytes(len(key)) },
-		func(container []string) error { return stream.Send(&proto.ListResponse{Keys: container}) })
+	// Through an index, each key comes with its secondary key
+	withIndex := request.SecondaryIndexName != nil
+	batcher := concurrent.NewBatcher[listEntry](maxTotalListKeyCount, maxTotalListKeySize,
+		func(entry listEntry) int {
+			size := protowire.SizeBytes(len(entry.key))
+			if withIndex {
+				size += protowire.SizeBytes(len(entry.secondaryIndexKey))
+			}
+			return size
+		},
+		func(container []listEntry) error {
+			response := &proto.ListResponse{Keys: make([]string, len(container))}
+			if withIndex {
+				response.SecondaryIndexKeys = make([]string, len(container))
+			}
+			for i, entry := range container {
+				response.Keys[i] = entry.key
+				if withIndex {
+					response.SecondaryIndexKeys[i] = entry.secondaryIndexKey
+				}
+			}
+			return stream.Send(response)
+		})
 
-	if err = lc.List(ctx, request, batcher.Add); err == nil {
+	err = lc.List(ctx, request, func(key string, secondaryIndexKey string) error {
+		return batcher.Add(listEntry{key: key, secondaryIndexKey: secondaryIndexKey})
+	})
+	if err == nil {
 		err = batcher.Flush()
 	}
 	if err != nil {
