@@ -912,6 +912,55 @@ func TestPebbleSnapshot(t *testing.T) {
 	}
 }
 
+// A snapshot a caller keeps open outlives its database when the shard is
+// closed and reopened, e.g. a follower promoted to leader: the reopened
+// database must not name its next snapshot after the one still held.
+func TestPebbleSnapshotPathsStayUniqueAcrossReopen(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	held, err := kv.Snapshot()
+	require.NoError(t, err)
+	require.NoError(t, kv.Close())
+
+	kv, err = factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	next, err := kv.Snapshot()
+	require.NoError(t, err)
+	assert.NotEqual(t, held.BasePath(), next.BasePath())
+	_, err = os.Stat(held.BasePath())
+	assert.NoError(t, err, "the held snapshot is intact")
+
+	assert.NoError(t, next.Close())
+	assert.NoError(t, held.Close())
+	assert.NoError(t, kv.Close())
+	assert.NoError(t, factory.Close())
+}
+
+func TestPebbleDatabaseGenerationCountsReplacementsAndDeletions(t *testing.T) {
+	factory, err := NewPebbleKVFactory(NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	kv, err := factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, factory.DatabaseGeneration(constant.DefaultNamespace, 1))
+	require.NoError(t, kv.Close())
+
+	loader, err := factory.NewSnapshotLoader(constant.DefaultNamespace, 1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, factory.DatabaseGeneration(constant.DefaultNamespace, 1),
+		"a snapshot loader replaces the database from its creation")
+	assert.EqualValues(t, 0, factory.DatabaseGeneration(constant.DefaultNamespace, 2), "other shards are not affected")
+	require.NoError(t, loader.Close())
+
+	kv, err = factory.NewKV(constant.DefaultNamespace, 1, proto.KeySortingType_NATURAL)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, factory.DatabaseGeneration(constant.DefaultNamespace, 1), "reopening keeps the database")
+	require.NoError(t, kv.Delete())
+	assert.EqualValues(t, 2, factory.DatabaseGeneration(constant.DefaultNamespace, 1))
+	assert.NoError(t, factory.Close())
+}
+
 func TestPebbleSnapshot_Loader(t *testing.T) {
 	originalLocation := t.TempDir()
 	newLocation := t.TempDir()
