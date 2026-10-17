@@ -97,6 +97,16 @@ type PebbleFactory struct {
 	memTableSlotsLock sync.Mutex
 	memTableSlots     []func()
 
+	// snapshotCounter names the snapshot directories, across every database
+	// the factory opens: a database reopened on the same shard must not
+	// reuse the path of a snapshot a caller still holds
+	snapshotCounter atomic.Int64
+
+	// generations counts the replacements of the database of each shard,
+	// see Factory.DatabaseGeneration
+	generationsLock sync.Mutex
+	generations     map[string]uint64
+
 	gaugeCacheSize metric.Gauge
 }
 
@@ -183,6 +193,31 @@ func (p *PebbleFactory) NewSnapshotLoader(namespace string, shardId int64) (Snap
 	return newPebbleSnapshotLoader(p, vfs.Default, namespace, shardId)
 }
 
+func (p *PebbleFactory) DatabaseDir(namespace string, shardId int64) string {
+	return p.getKVPath(namespace, shardId)
+}
+
+func (p *PebbleFactory) DatabaseGeneration(namespace string, shardId int64) uint64 {
+	p.generationsLock.Lock()
+	defer p.generationsLock.Unlock()
+	return p.generations[generationKey(namespace, shardId)]
+}
+
+// databaseReplaced records that the database of a shard is being replaced
+// or deleted.
+func (p *PebbleFactory) databaseReplaced(namespace string, shardId int64) {
+	p.generationsLock.Lock()
+	defer p.generationsLock.Unlock()
+	if p.generations == nil {
+		p.generations = map[string]uint64{}
+	}
+	p.generations[generationKey(namespace, shardId)]++
+}
+
+func generationKey(namespace string, shardId int64) string {
+	return fmt.Sprintf("%s/%d", namespace, shardId)
+}
+
 func (p *PebbleFactory) getKVPath(namespace string, shard int64) string {
 	if namespace == "" {
 		slog.Warn(
@@ -196,16 +231,15 @@ func (p *PebbleFactory) getKVPath(namespace string, shard int64) string {
 }
 
 type Pebble struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	factory         *PebbleFactory
-	namespace       string
-	shardId         int64
-	dbPath          string
-	db              *pebble.DB
-	snapshotCounter atomic.Int64
-	writeOptions    *pebble.WriteOptions
-	memTableSlot    bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	factory      *PebbleFactory
+	namespace    string
+	shardId      int64
+	dbPath       string
+	db           *pebble.DB
+	writeOptions *pebble.WriteOptions
+	memTableSlot bool
 
 	keyEncoder compare.Encoder
 
@@ -512,6 +546,7 @@ func (p *Pebble) Close() error {
 }
 
 func (p *Pebble) Delete() error {
+	p.factory.databaseReplaced(p.namespace, p.shardId)
 	return multierr.Combine(
 		p.Close(),
 		os.RemoveAll(p.factory.getKVPath(p.namespace, p.shardId)),
@@ -1247,6 +1282,9 @@ func newPebbleSnapshotLoader(pf *PebbleFactory, fs vfs.FS, namespace string, sha
 		dbPath:    pf.getKVPath(namespace, shard),
 	}
 
+	// The database is replaced from here on, whether or not the install
+	// completes
+	pf.databaseReplaced(namespace, shard)
 	if err := fs.RemoveAll(sl.dbPath); err != nil {
 		return nil, errors.Wrap(err, "failed to remove existing database")
 	}
