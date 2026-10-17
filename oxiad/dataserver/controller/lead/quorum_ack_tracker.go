@@ -82,6 +82,10 @@ type QuorumAckTracker interface {
 	// Note this can go ahead of the head-offset as there can be multiple operations in flight.
 	NextOffset() int64
 
+	// ReleaseOffset gives back the offset that NextOffset returned last, when
+	// its entry could not be appended to the wal: the next entry takes it.
+	ReleaseOffset(offset int64)
+
 	HeadOffset() int64
 
 	AdvanceHeadOffset(headOffset int64)
@@ -251,6 +255,10 @@ func (q *quorumAckTracker) AdvanceHeadOffset(headOffset int64) {
 
 func (q *quorumAckTracker) NextOffset() int64 {
 	return q.nextOffset.Add(1)
+}
+
+func (q *quorumAckTracker) ReleaseOffset(offset int64) {
+	q.nextOffset.CompareAndSwap(offset, offset-1)
 }
 
 func (q *quorumAckTracker) CommitOffset() int64 {
