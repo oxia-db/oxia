@@ -107,14 +107,10 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 	// the leader has committed key1-key7 and the checksum reflects that state.
 	lead, err := serverInstanceIndex[leader.GetNameOrDefault()].GetShardDirector().GetLeader(0)
 	assert.NoError(t, err)
-	leaderChecksum := lead.Checksum().Value()
 
 	// Write one more entry to propagate the commit notification for key7.
-	// Commit notifications are piggybacked on replication messages, so the
-	// last committed entry requires a subsequent write to notify followers.
-	// After this, followers will have committed up to key7 (matching the
-	// captured checksum) but key8 itself remains uncommitted on followers
-	// since its commit notification has not been propagated yet.
+	// The leader advertises the commit offset to the followers: they reach
+	// its checksum, key8 included.
 	_, _, err = client.Put(context.Background(), "/key8", []byte("value"))
 	assert.NoError(t, err)
 
@@ -128,7 +124,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		}
 		assert.Eventually(t, func() bool {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
-			return err == nil && follow.Checksum().Value() == leaderChecksum
+			return err == nil && follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 }

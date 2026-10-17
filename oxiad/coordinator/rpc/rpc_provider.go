@@ -55,6 +55,16 @@ type Provider interface {
 	GetHealthClient(node *proto.DataServerIdentity) (grpc_health_v1.HealthClient, error)
 }
 
+// BackupProvider is the OxiaBackup service of the data servers, which the
+// provider of the coordination calls implements too: the coordinator's
+// backup scheduler uses it when its provider has it.
+type BackupProvider interface {
+	BackupShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.BackupShardRequest) (*proto.BackupShardResponse, error)
+	ExpireBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error)
+}
+
+var _ BackupProvider = (*rpcProvider)(nil)
+
 type rpcProvider struct {
 	pool    commonrpc.ClientPool
 	timeout time.Duration
@@ -223,6 +233,37 @@ func (r *rpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIde
 	defer cancel()
 
 	response, err := client.FreezeShard(ctx, req)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
+}
+
+func (r *rpcProvider) BackupShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.BackupShardRequest) (*proto.BackupShardResponse, error) {
+	return backupCall(ctx, r, node, r.timeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.BackupShardResponse, error) {
+		return client.BackupShard(ctx, req)
+	})
+}
+
+func (r *rpcProvider) ExpireBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	return backupCall(ctx, r, node, r.timeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.ExpireBackupsResponse, error) {
+		return client.ExpireBackups(ctx, req)
+	})
+}
+
+// backupCall calls the OxiaBackup service of a data server, within the
+// timeout, and returns its error as an oxia error.
+func backupCall[T any](ctx context.Context, r *rpcProvider, node *proto.DataServerIdentity, timeout time.Duration,
+	call func(ctx context.Context, client proto.OxiaBackupClient) (T, error)) (T, error) {
+	var zero T
+	client, err := r.pool.GetBackupRpc(node.Internal)
+	if err != nil {
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return zero, oxiaErr
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	response, err := call(ctx, client)
 	oxiaErr, _ := constant.FromGrpcError(err)
 	return response, oxiaErr
 }

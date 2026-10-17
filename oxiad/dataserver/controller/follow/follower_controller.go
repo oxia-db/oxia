@@ -58,6 +58,16 @@ type FollowerController interface {
 	CommitOffset() int64
 	Status() proto.ServingStatus
 	GetStatus(request *proto.GetStatusRequest) (*proto.GetStatusResponse, error)
+	// Checkpoint takes a checkpoint of the database, for a backup. It holds
+	// the controller's read lock during the flush: a snapshot install waits
+	// for it, and it fails while one replaces the database.
+	Checkpoint() (*database.Checkpoint, error)
+	// WithDatabase runs fn with the directory of the database, under the
+	// controller's read lock, while the database is still the one a
+	// checkpoint of the given generation was taken from; it returns
+	// database.ErrDatabaseReplaced otherwise. A file fn writes next to the
+	// database thus never lands in a database that replaced it.
+	WithDatabase(generation uint64, fn func(dir string) error) error
 	// NewTerm
 	//
 	// Node handles a new term request
@@ -899,6 +909,32 @@ func (fc *followerController) loadSnapshotChunks(loader kvstore.SnapshotLoader, 
 		}
 		totalSize += int64(len(snapChunk.Content))
 	}
+}
+
+func (fc *followerController) Checkpoint() (*database.Checkpoint, error) {
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
+	if fc.closed.Load() || fc.db == nil {
+		return nil, constant.ErrResourceUnavailable
+	}
+	checkpoint, err := fc.db.Checkpoint()
+	if err != nil {
+		return nil, err
+	}
+	checkpoint.Generation = fc.kvFactory.DatabaseGeneration(fc.namespace, fc.shardId)
+	return checkpoint, nil
+}
+
+func (fc *followerController) WithDatabase(generation uint64, fn func(dir string) error) error {
+	fc.rwMutex.RLock()
+	defer fc.rwMutex.RUnlock()
+	if fc.closed.Load() || fc.db == nil {
+		return constant.ErrResourceUnavailable
+	}
+	if fc.kvFactory.DatabaseGeneration(fc.namespace, fc.shardId) != generation {
+		return database.ErrDatabaseReplaced
+	}
+	return fn(fc.kvFactory.DatabaseDir(fc.namespace, fc.shardId))
 }
 
 func (fc *followerController) GetStatus(_ *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {

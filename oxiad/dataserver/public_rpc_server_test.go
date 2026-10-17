@@ -42,6 +42,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/follow"
 	"github.com/oxia-db/oxia/oxiad/dataserver/controller/lead"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
 func init() {
@@ -91,6 +92,14 @@ func (*testShardsDirector) DeleteShard(*proto.DeleteShardRequest) (*proto.Delete
 	panic("unexpected call")
 }
 func (*testShardsDirector) GetAllLeaders() []lead.LeaderController { panic("unexpected call") }
+func (*testShardsDirector) Checkpoint(int64) (*database.Checkpoint, error) {
+	panic("unexpected call")
+}
+func (*testShardsDirector) CommitOffset(int64) (int64, error) { panic("unexpected call") }
+func (*testShardsDirector) WithDatabase(int64, uint64, func(string) error) error {
+	panic("unexpected call")
+}
+func (*testShardsDirector) DatabaseDir(string, int64) string { panic("unexpected call") }
 
 var _ controller.ShardsDirector = (*testShardsDirector)(nil)
 

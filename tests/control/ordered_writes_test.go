@@ -86,10 +86,9 @@ func TestOrderedWrites(t *testing.T) {
 	assert.Equal(t, []byte("v2"), getResult.Value)
 
 	// The followers must apply the batch in the same order as the leader.
-	// Commit notifications are piggybacked on replication messages, so one
-	// more write is needed for the followers to commit the batch.
-	leaderChecksum := lead.Checksum().Value()
-	assert.NotZero(t, leaderChecksum)
+	// The leader advertises the commit offset to the followers: they reach
+	// its checksum.
+	assert.NotZero(t, lead.Checksum().Value())
 	assert.NoError(t, (<-client.Put("/flush", []byte("v"))).Err)
 
 	for _, dataServer := range shardMetadata.Ensemble {
@@ -101,7 +100,7 @@ func TestOrderedWrites(t *testing.T) {
 			follow, err := serverInstanceIndex[targetId].GetShardDirector().GetFollower(0)
 			return err == nil &&
 				follow.IsFeatureEnabled(proto.Feature_FEATURE_ORDERED_WRITES) &&
-				follow.Checksum().Value() == leaderChecksum
+				follow.Checksum().Value() == lead.Checksum().Value()
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 }

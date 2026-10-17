@@ -40,6 +40,7 @@ type ClientPool interface {
 	GetCoordinationRpc(target string) (proto.OxiaCoordinationClient, error)
 	GetReplicationRpc(target string) (proto.OxiaLogReplicationClient, error)
 	GetAminRpc(target string) (proto.OxiaAdminClient, error)
+	GetBackupRpc(target string) (proto.OxiaBackupClient, error)
 }
 
 type clientPool struct {
@@ -114,6 +115,15 @@ func (cp *clientPool) GetCoordinationRpc(target string) (proto.OxiaCoordinationC
 	}
 
 	return proto.NewOxiaCoordinationClient(cnx), nil
+}
+
+func (cp *clientPool) GetBackupRpc(target string) (proto.OxiaBackupClient, error) {
+	cnx, err := cp.getConnectionFromPool(target)
+	if err != nil {
+		return nil, err
+	}
+
+	return proto.NewOxiaBackupClient(cnx), nil
 }
 
 func (cp *clientPool) GetReplicationRpc(target string) (proto.OxiaLogReplicationClient, error) {

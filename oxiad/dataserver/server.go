@@ -261,6 +261,10 @@ func (s *Server) Close() error {
 	err := multierr.Combine(
 		s.healthServer.Close(),
 		s.shardAssignmentDispatcher.Close(),
+		// The backup jobs checkpoint the shards: they end before the shards
+		// close, and the shards before the servers, whose graceful stop
+		// waits for the replication streams the shards hold
+		s.stopBackups(),
 		s.shardsDirector.Close(),
 		s.publicRpcServer.Close(),
 		s.internalRpcServer.Close(),
