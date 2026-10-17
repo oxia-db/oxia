@@ -17,15 +17,17 @@ package database
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSequencesWaitTracker(t *testing.T) {
 	swt := NewSequencesWaitTracker()
 
-	w1 := swt.AddSequenceWaiter("key-1")
-	w2 := swt.AddSequenceWaiter("key-2")
+	w1 := addSequenceWaiter(t, swt, "key-1")
+	w2 := addSequenceWaiter(t, swt, "key-2")
 
 	assert.Empty(t, w1.Ch())
 	assert.Empty(t, w2.Ch())
@@ -46,7 +48,7 @@ func TestSequencesWaitTracker(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "key-2-456", x2)
 
-	w3 := swt.AddSequenceWaiter("key-1")
+	w3 := addSequenceWaiter(t, swt, "key-1")
 
 	swt.SequenceUpdated("key-1", "key-1-890")
 	x3 := <-w1.Ch()
@@ -74,8 +76,42 @@ func TestSequencesWaitTracker(t *testing.T) {
 func TestSequencesWaitTrackerMultipleClose(t *testing.T) {
 	swt := NewSequencesWaitTracker()
 
-	w1 := swt.AddSequenceWaiter("key-1")
+	w1 := addSequenceWaiter(t, swt, "key-1")
 	assert.Empty(t, swt.Close())
 
 	assert.NoError(t, w1.Close())
+}
+
+// A commit that the read of the last key misses must not be overridden by the
+// key that the read returns.
+func TestSequencesWaitTrackerAddSequenceWaiterKeepsNewerKey(t *testing.T) {
+	swt := NewSequencesWaitTracker()
+
+	updated := make(chan struct{})
+	w, err := swt.AddSequenceWaiter("key", func() (string, bool, error) {
+		// The commit of key-2 completes while the read returns key-1
+		go func() {
+			swt.SequenceUpdated("key", "key-2")
+			close(updated)
+		}()
+		select {
+		case <-updated:
+		case <-time.After(100 * time.Millisecond):
+		}
+		return "key-1", true, nil
+	})
+	require.NoError(t, err)
+	<-updated
+
+	last, err := w.Receive(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, "key-2", last)
+	assert.NoError(t, w.Close())
+}
+
+func addSequenceWaiter(t *testing.T, swt SequenceWaiterTracker, key string) *sequenceWaiter {
+	t.Helper()
+	w, err := swt.AddSequenceWaiter(key, func() (string, bool, error) { return "", false, nil })
+	require.NoError(t, err)
+	return w
 }

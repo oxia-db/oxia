@@ -769,23 +769,27 @@ func (d *db) Get(request *proto.GetRequest) (*proto.GetResponse, error) {
 func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 	d.getSequenceUpdatesCounter.Add(1)
 
-	sw := d.sequenceWaiterTracker.AddSequenceWaiter(prefixKey)
+	sw, err := d.sequenceWaiterTracker.AddSequenceWaiter(prefixKey, func() (string, bool, error) {
+		it, err := d.kv.KeyRangeScanReverse(
+			fmt.Sprintf("%s-%020d", prefixKey, 0),
+			fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
+			kvstore.NoInternalKeys)
+		if err != nil {
+			return "", false, err
+		}
+		lastKey, found := "", it.Valid()
+		if found {
+			lastKey = it.Key()
+		}
 
-	// First read last key in the sequence
-	it, err := d.kv.KeyRangeScanReverse(
-		fmt.Sprintf("%s-%020d", prefixKey, 0),
-		fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
-		kvstore.NoInternalKeys)
+		// The iterator is also invalid when the read failed: Close returns the error
+		if err := it.Close(); err != nil {
+			return "", false, errors.Wrap(err, "failed to read the last key of the sequence")
+		}
+		return lastKey, found, nil
+	})
 	if err != nil {
-		err = multierr.Append(err, sw.Close())
 		return nil, err
-	} else if it.Valid() {
-		sw.och.WriteLast(it.Key())
-	}
-
-	// The iterator is also invalid when the read failed: Close returns the error
-	if err := it.Close(); err != nil {
-		return nil, multierr.Append(errors.Wrap(err, "failed to read the last key of the sequence"), sw.Close())
 	}
 	return sw, nil
 }
