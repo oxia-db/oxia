@@ -110,7 +110,9 @@ func WithOnLeadershipLost(handler func()) ServerOption {
 // cluster configuration when none exists yet. It allows bootstrapping a
 // cluster programmatically, without a cluster configuration file or a
 // separate admin call. If a configuration is already present it is left
-// untouched.
+// untouched. A configuration that was deleted while the cluster status still
+// has namespaces is not seeded again: the coordinator doesn't start until the
+// configuration is restored.
 //
 // The configuration is validated before the coordinator starts: an invalid
 // one fails [New] and is never stored.

@@ -103,6 +103,35 @@ func TestMetadataWaitToBecomeLeaderFailsWhenRecoveryFails(t *testing.T) {
 	require.ErrorContains(t, err, "store unavailable")
 }
 
+// A takeover with a missing configuration and a status with namespaces fails,
+// and writes nothing: the configuration was deleted, and reconciling it as
+// empty would delete every namespace.
+func TestMetadataWaitToBecomeLeaderRejectsDeletedConfiguration(t *testing.T) {
+	statusProvider := newStoredStatusProvider(t)
+	version := loaded(t, statusProvider).Version
+	metadata := newTestMetadata(t, statusProvider, newConfigProvider(), "")
+
+	_, err := metadata.WaitToBecomeLeader()
+	require.ErrorContains(t, err, "the cluster configuration is missing")
+	require.Equal(t, version, loaded(t, statusProvider).Version)
+}
+
+// A cluster that was never configured, e.g. one set up through the admin API,
+// restarts with an instance id and no configuration: an empty configuration
+// deletes nothing, so the takeover succeeds.
+func TestMetadataWaitToBecomeLeaderAcceptsUnconfiguredCluster(t *testing.T) {
+	statusProvider := newStatusProvider()
+	_, err := statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+		Value:   &commonproto.ClusterStatus{InstanceId: "instance"},
+		Version: metadataconstant.NotExists,
+	})
+	require.NoError(t, err)
+	metadata := newTestMetadata(t, statusProvider, newConfigProvider(), "")
+
+	_, err = metadata.WaitToBecomeLeader()
+	require.NoError(t, err)
+}
+
 // newLeaderMetadata returns a metadata that holds the leadership. Closing lost
 // loses it, and once superseded is set, every status write is refused on the
 // version, as when another coordinator took over and wrote the status.

@@ -206,6 +206,9 @@ func (m *defaultMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return nil, errors.New("lost the leadership while reloading the metadata")
 	default:
 	}
+	if err := m.checkConfigNotDeleted(); err != nil {
+		return nil, err
+	}
 	m.statusLock.Lock()
 	m.leadershipLost = leadershipLost
 	m.statusLock.Unlock()
@@ -221,6 +224,30 @@ func (m *defaultMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return nil, fmt.Errorf("failed to initialize the instance id: %w", err)
 	}
 	return leadershipLost, nil
+}
+
+// checkConfigNotDeleted fails if the configuration is missing while the status
+// has namespaces. The status only gets a namespace from a configuration, so
+// this one was deleted: reconciling it as empty would drain every data server
+// and delete every namespace. Unlike what a provider remembers of the
+// documents it read, the status survives a restart.
+func (m *defaultMetadata) checkConfigNotDeleted() error {
+	config, err := m.configProvider.Load()
+	if err != nil {
+		return err
+	}
+	if config.Version != metadatacommon.NotExists {
+		return nil
+	}
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return err
+	}
+	if len(status.Value.GetNamespaces()) > 0 {
+		return errors.New("the cluster configuration is missing, but the cluster status has namespaces: " +
+			"restore the configuration")
+	}
+	return nil
 }
 
 func (m *defaultMetadata) AllocateShardIDs(count uint32) (int64, error) {

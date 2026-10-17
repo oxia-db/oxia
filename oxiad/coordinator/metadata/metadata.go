@@ -59,7 +59,10 @@ type Metadata interface {
 	io.Closer
 
 	// WaitToBecomeLeader blocks until this coordinator holds the leadership.
-	// lost is closed when the leadership is lost, or nil if it can't be.
+	// lost is closed when the leadership is lost, or nil if it can't be. It
+	// fails if there is no configuration while the status has namespaces: the
+	// configuration was deleted, and reconciling it as empty would delete
+	// every namespace.
 	WaitToBecomeLeader() (lost <-chan struct{}, err error)
 	// GetSelf returns this coordinator, from the configuration.
 	GetSelf() (*commonproto.Coordinator, error)
