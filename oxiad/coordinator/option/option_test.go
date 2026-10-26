@@ -147,6 +147,50 @@ func TestPublicServerOptionsUnmarshalYAMLRejectsInvalidNode(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestServerOptionsUnmarshalYAMLAcceptsDeprecatedAdmin(t *testing.T) {
+	opts := readOptions(t, `
+server:
+  admin:
+    bindAddress: 127.0.0.1:7000
+    tls:
+      certFile: /certs/admin.pem
+  internal:
+    bindAddress: 127.0.0.1:7001
+metadata:
+  providerName: memory
+`)
+
+	require.NoError(t, opts.Validate())
+	require.Equal(t, "127.0.0.1:7000", opts.Server.Public.BindAddress)
+	require.Equal(t, "/certs/admin.pem", opts.Server.Public.TLS.CertFile)
+	require.Equal(t, "127.0.0.1:7001", opts.Server.Internal.BindAddress)
+}
+
+func TestServerOptionsUnmarshalYAMLKeepsUnsetFields(t *testing.T) {
+	opts := &Options{Server: ServerOptions{Internal: InternalServerOptions{BindAddress: "127.0.0.1:7001"}}}
+	require.NoError(t, yaml.Unmarshal([]byte("server:\n  public:\n    bindAddress: 127.0.0.1:7000\n"), opts))
+
+	require.Equal(t, "127.0.0.1:7000", opts.Server.Public.BindAddress)
+	require.Equal(t, "127.0.0.1:7001", opts.Server.Internal.BindAddress)
+}
+
+func TestServerOptionsUnmarshalYAMLRejectsPublicAndAdmin(t *testing.T) {
+	opts := &Options{}
+	err := yaml.Unmarshal([]byte(`
+server:
+  public:
+    bindAddress: 127.0.0.1:7000
+  admin:
+    bindAddress: 127.0.0.1:7002
+`), opts)
+	require.ErrorContains(t, err, "server.public and deprecated server.admin are both set")
+}
+
+func TestServerOptionsUnmarshalYAMLRejectsInvalidNode(t *testing.T) {
+	opts := &Options{}
+	require.Error(t, yaml.Unmarshal([]byte("server: [a, b]\n"), opts))
+}
+
 func TestMetadataOptionsValidateRejectsEmptyName(t *testing.T) {
 	mo := &MetadataOptions{Name: "  ", ProviderOptions: ProviderOptions{ProviderName: ProviderMemory}}
 	require.ErrorContains(t, mo.Validate(), "metadata.name must be set")

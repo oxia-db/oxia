@@ -77,6 +77,28 @@ type ServerOptions struct {
 	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
 }
 
+func (so *ServerOptions) UnmarshalYAML(value *yaml.Node) error {
+	type Fields ServerOptions
+	decoded := struct {
+		Fields `yaml:",inline"`
+		Admin  *PublicServerOptions `yaml:"admin"`
+	}{Fields: Fields(*so)}
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+	*so = ServerOptions(decoded.Fields)
+	if decoded.Admin == nil {
+		return nil
+	}
+	for i := 0; i < len(value.Content); i += 2 {
+		if value.Content[i].Value == "public" {
+			return errors.New("server.public and deprecated server.admin are both set")
+		}
+	}
+	so.Public = *decoded.Admin
+	return nil
+}
+
 func (so *ServerOptions) WithDefault() {
 	so.Public.WithDefault()
 	so.Internal.WithDefault()
