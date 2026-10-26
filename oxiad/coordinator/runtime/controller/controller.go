@@ -27,6 +27,10 @@ type ShardEventListener interface {
 	LeaderElected(shard int64, leader *commonproto.DataServerIdentity, followers []*commonproto.DataServerIdentity)
 
 	ShardDeleted(shard int64)
+
+	// ShardSplitEventListener receives the outcome of the split of a shard,
+	// from the shard controller of its parent.
+	ShardSplitEventListener
 }
 
 type ShardSplitEventListener interface {

@@ -651,6 +651,10 @@ func (*mockNamespaceRuntime) LeaderElected(int64, *proto.DataServerIdentity, []*
 
 func (*mockNamespaceRuntime) ShardDeleted(int64) {}
 
+func (*mockNamespaceRuntime) SplitComplete(int64, int64, int64) {}
+
+func (*mockNamespaceRuntime) SplitAborted(int64, int64, int64) {}
+
 func (*mockNamespaceRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
 	return commonwatch.New(&proto.ShardAssignments{}).Subscribe()
 }

@@ -76,6 +76,13 @@ type controller struct {
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	// splitTick asks the event loop to start the split recorded in the shard
+	// status, if it doesn't run it yet.
+	splitTick chan any
+	// splitStatusOp takes the status writes of the current split. It is
+	// unbuffered: a write is either taken by the event loop, or dropped by the
+	// split once it stops.
+	splitStatusOp chan *splitStatusWrite
 
 	// The features of a data server are reported only when they change, so
 	// unlike the other notifications they must not be dropped when the event
@@ -97,6 +104,11 @@ type controller struct {
 	// replaces it. The term gauge, which runs on the goroutine that collects
 	// the metrics, borrows it to read its term: hence the atomic pointer.
 	currentElection atomic.Pointer[Election]
+	// currentSplit is the split of the shard, as its parent. It is owned by
+	// the event loop, which creates and stops it, and by Close once the event
+	// loop has stopped. The split runs on its own goroutine, and sends its
+	// status writes to the event loop.
+	currentSplit *Split
 
 	leaderElectionLatencyHistogram metric.LatencyHistogram
 	newTermQuorumLatencyHistogram  metric.LatencyHistogram
@@ -159,6 +171,8 @@ func NewController(
 		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers:               make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:                make(chan any, 1),
+		splitTick:                           make(chan any, 1),
+		splitStatusOp:                       make(chan *splitStatusWrite),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -254,10 +268,10 @@ func (s *controller) run(bo backoff.BackOff) error {
 	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
 		s.Delete()
 	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
-		// Child shard during a split: the SplitController manages its lifecycle.
+		// Child shard during a split: the split of the parent manages its lifecycle.
 		// Wait until the split is complete (Split metadata cleared) before
 		// entering the normal event loop, to prevent the load balancer from
-		// triggering elections that would interfere with the split controller.
+		// triggering elections that would interfere with the split.
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
@@ -276,9 +290,16 @@ func (s *controller) run(bo backoff.BackOff) error {
 	}
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
+	// Resume the split of the shard, as its parent, if it has one
+	channel.PushNoBlock(s.splitTick, nil)
 	// A failure from now on is retried from the initial interval
 	bo.Reset()
 
+	s.runEventLoop()
+	return nil
+}
+
+func (s *controller) runEventLoop() {
 	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
 	defer periodicTasksTimer.Stop()
 
@@ -290,8 +311,9 @@ func (s *controller) run(bo backoff.BackOff) error {
 	for !s.terminating.Load() {
 		select {
 		case <-s.ctx.Done():
-			return nil
+			return
 		case <-s.deleteOp:
+			s.stopSplit()
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailureWithRetries(n)
@@ -299,6 +321,12 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
+		case <-s.splitTick:
+			s.handleSplitTickWithRetries()
+		case write := <-s.splitStatusOp:
+			write.result <- write.write()
+		case <-s.splitDone():
+			s.stopSplit()
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
@@ -307,13 +335,12 @@ func (s *controller) run(bo backoff.BackOff) error {
 		}
 	}
 	s.logger.Info("Shard controller is stopped, stopping event loop")
-	return nil
 }
 
 // waitForSplitComplete blocks until the Split metadata is cleared from this
-// shard in the status resource, indicating the split controller has finished
-// and the shard can operate normally. This prevents the load balancer from
-// triggering elections that would interfere with the split controller.
+// shard in the status resource, indicating the split has finished and the
+// shard can operate normally. This prevents the load balancer from triggering
+// elections that would interfere with the split.
 func (s *controller) waitForSplitComplete() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -720,6 +747,7 @@ func (s *controller) Close() error {
 		// NOTE: we must wait the run goroutine to exit, otherwise
 		// the controller maybe running after close is returned.
 		s.wg.Wait()
+		s.stopSplit()
 
 	drainPendingOps:
 		for {
@@ -729,6 +757,7 @@ func (s *controller) Close() error {
 			case <-s.deleteOp:
 			case <-s.dataServerFailureOp:
 			case <-s.featuresDiscoveredOp:
+			case <-s.splitTick:
 			case op := <-s.changeEnsembleOp:
 				op.Error(constant.ErrResourceUnavailable)
 			default:
@@ -789,6 +818,9 @@ func (s *controller) Refresh() {
 	if s.terminating.Load() {
 		return
 	}
+	// A pending start covers this one too
+	channel.PushNoBlock(s.splitTick, nil)
+
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
 		s.logger.Warn("Failed to refresh the ensemble addresses", slog.Any("error", err))
@@ -819,6 +851,92 @@ func (s *controller) Refresh() {
 	s.logger.Info("server address changed, start a new leader election")
 	if !channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard)) {
 		s.logger.Debug("Discarding refresh election because queue is full")
+	}
+}
+
+// handleSplitTickWithRetries starts the split recorded in the status of the
+// shard, if the shard is the parent of a split that doesn't run yet. It
+// retries a second later if the status can't be loaded.
+func (s *controller) handleSplitTickWithRetries() {
+	if s.currentSplit != nil {
+		return
+	}
+	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	if err != nil {
+		s.logger.Warn("Failed to start the split, retrying later", slog.Any("error", err))
+		time.AfterFunc(time.Second, func() { channel.PushNoBlock(s.splitTick, nil) })
+		return
+	}
+	if !exists {
+		return
+	}
+	split := borrowedMeta.UnsafeBorrow().GetSplit()
+	if len(split.GetChildShardIds()) != 2 {
+		// Not the parent of a split
+		return
+	}
+	s.logger.Info("Starting the split of the shard",
+		slog.String("phase", split.GetPhaseOrDefault().String()),
+		slog.Any("children", split.GetChildShardIds()),
+	)
+	s.currentSplit = NewSplit(SplitConfig{
+		Namespace:     s.namespace,
+		ShardId:       s.shard,
+		Metadata:      s.metadataStore,
+		RpcProvider:   s.rpc,
+		SplitMetadata: split,
+		Features:      s.dataServerSupportedFeaturesSupplier,
+		StatusWriter:  s.writeSplitStatus,
+	})
+	s.currentSplit.Start()
+}
+
+// splitStatusWrite is a status write of the split, which the event loop runs.
+type splitStatusWrite struct {
+	write  func() error
+	result chan error
+}
+
+// writeSplitStatus runs a status write of the split on the event loop, so
+// that it doesn't interleave with the status writes of the leader elections.
+func (s *controller) writeSplitStatus(ctx context.Context, write func() error) error {
+	w := &splitStatusWrite{write: write, result: make(chan error, 1)}
+	select {
+	case s.splitStatusOp <- w:
+		return <-w.result
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// splitDone returns the channel closed once the current split ended, or nil,
+// which never receives, if the shard has no split running.
+func (s *controller) splitDone() <-chan struct{} {
+	if s.currentSplit == nil {
+		return nil
+	}
+	return s.currentSplit.Done()
+}
+
+// stopSplit stops the current split, if any, and notifies the listener if it
+// completed or aborted. A split that didn't end resumes from its status when a
+// shard controller starts it again.
+func (s *controller) stopSplit() {
+	split := s.currentSplit
+	if split == nil {
+		return
+	}
+	s.currentSplit = nil
+	outcome := split.Stop()
+	if s.eventListener == nil {
+		return
+	}
+	switch outcome {
+	case SplitCompleted:
+		s.eventListener.SplitComplete(s.shard, split.leftChildId, split.rightChildId)
+	case SplitAborted:
+		s.eventListener.SplitAborted(s.shard, split.leftChildId, split.rightChildId)
+	default:
 	}
 }
 

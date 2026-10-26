@@ -81,6 +81,10 @@ func (*testRuntime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.Dat
 
 func (*testRuntime) ShardDeleted(int64) {}
 
+func (*testRuntime) SplitComplete(int64, int64, int64) {}
+
+func (*testRuntime) SplitAborted(int64, int64, int64) {}
+
 func (*testRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.ShardAssignments] {
 	return commonwatch.New(&proto.ShardAssignments{}).Subscribe()
 }

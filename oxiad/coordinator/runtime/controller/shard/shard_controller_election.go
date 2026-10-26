@@ -634,7 +634,7 @@ func (e *Election) abortChangeEnsemble(retryShardMetadata *proto.ShardMetadata, 
 // completed: electing it would let it accept writes that the children, which
 // take over its key range, never receive. The check is part of the status
 // update, and the split passes the point of no return only if the parent is
-// still in the term it froze (see SplitController.passPointOfNoReturn): either
+// still in the term it froze (see Split.persistPointOfNoReturn): either
 // the split passes it first, and the election stops here, or the election
 // stores its term first, and the split starts over.
 //
