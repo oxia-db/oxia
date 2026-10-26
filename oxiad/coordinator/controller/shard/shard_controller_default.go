@@ -29,11 +29,11 @@ import (
 
 	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
-	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	"github.com/oxia-db/oxia/common"
 	"github.com/oxia-db/oxia/common/channel"

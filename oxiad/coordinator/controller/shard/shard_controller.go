@@ -19,7 +19,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 )
 
 // FeaturesSupplier returns the features that each data server supports, by

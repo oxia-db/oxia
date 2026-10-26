@@ -36,6 +36,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
+	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
@@ -43,8 +45,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc/rpctest"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/ensemble"
-	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
-	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/shard"
 )
 
 // The data server controllers that New starts may discover a node's features

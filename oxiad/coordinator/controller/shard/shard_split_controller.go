@@ -30,9 +30,9 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
 
 // SplitController drives the shard split state machine through 4 phases

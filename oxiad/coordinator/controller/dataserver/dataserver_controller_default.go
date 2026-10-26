@@ -32,8 +32,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 
 	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
