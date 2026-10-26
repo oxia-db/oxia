@@ -115,10 +115,14 @@ func TestNotificationsTrimmer_TrimmedOffset(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			// The batches up to offset 4 are past the retention time
+			// The batches up to offset 4 are past the retention time. The
+			// trimmer records the trimmed offset before it deletes them, and
+			// drops them from the cache after: wait until a read finds them
+			// trimmed too
 			clock.Set(14)
 			require.Eventually(t, func() bool {
-				return db.TrimmedNotificationsOffset() == 4
+				_, err := db.ReadNextNotifications(context.Background(), 0)
+				return db.TrimmedNotificationsOffset() == 4 && errors.Is(err, ErrNotificationsTrimmed)
 			}, 10*time.Second, 10*time.Millisecond)
 
 			assertTrimmed := func(db DB) {
