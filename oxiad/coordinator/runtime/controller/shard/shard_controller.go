@@ -18,7 +18,7 @@ import (
 	"io"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 )
 

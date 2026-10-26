@@ -46,8 +46,8 @@ import (
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	coordrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc/rpctest"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller"
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
 
