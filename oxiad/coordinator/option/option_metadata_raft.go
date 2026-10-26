@@ -14,8 +14,21 @@
 
 package option
 
+// RaftMetadata configures the raft provider, which replicates the cluster
+// configuration and status in a Raft group of the coordinators. Each
+// coordinator is a member of the group, and the leader of the group manages
+// the cluster.
 type RaftMetadata struct {
-	BootstrapNodes []string `yaml:"bootstrapNodes" json:"bootstrapNodes" jsonschema:"description=List of bootstrap nodes for Raft cluster initialization"`
-	Address        string   `yaml:"address" json:"address" jsonschema:"description=Address of this node in the Raft cluster,example=localhost:8080"`
-	DataDir        string   `yaml:"dataDir" json:"dataDir" jsonschema:"description=Directory for Raft metadata storage,example=./data/raft"`
+	// BootstrapNodes are the Raft addresses of the coordinators that form the
+	// group, including this one. They are used only when this coordinator
+	// starts without any Raft state: a coordinator that has some keeps the
+	// members it recorded.
+	BootstrapNodes []string `yaml:"bootstrapNodes" json:"bootstrapNodes" jsonschema:"description=Raft addresses of the coordinators that form the group\\, including this one. Used only when the coordinator starts without any Raft state"`
+	// Address is the host:port of this coordinator in the Raft group. It also
+	// identifies the coordinator in the group, so it must be stable across
+	// restarts.
+	Address string `yaml:"address" json:"address" jsonschema:"description=host:port of this coordinator in the Raft group. Must be stable across restarts,example=localhost:8080"`
+	// DataDir is the directory of the Raft log and snapshots. The coordinator
+	// keeps them in a subdirectory named after its address.
+	DataDir string `yaml:"dataDir" json:"dataDir" jsonschema:"description=Directory of the Raft log and snapshots,example=./data/raft"`
 }

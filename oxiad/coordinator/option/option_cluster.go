@@ -14,8 +14,16 @@
 
 package option
 
+// ClusterOptions holds the deprecated cluster settings, still accepted for
+// compatibility: set the location of the cluster configuration in the
+// metadata options instead (see MetadataOptions.ApplyLegacyClusterConfigPath).
 type ClusterOptions struct {
-	ConfigPath string `yaml:"configPath,omitempty" json:"configPath,omitempty" jsonschema:"description=Deprecated path to the cluster configuration file,example=./configs/cluster.yaml"`
+	// ConfigPath is the location of the cluster configuration: the path of a
+	// file, or configmap:<namespace>/<name> for a Kubernetes ConfigMap. It is
+	// moved into the options of the metadata provider, and it must not
+	// conflict with them. It is deprecated: set metadata.file.configName, or
+	// metadata.kubernetes.namespace and metadata.kubernetes.configName.
+	ConfigPath string `yaml:"configPath,omitempty" json:"configPath,omitempty" jsonschema:"description=Deprecated: use metadata.file.configName or metadata.kubernetes.configName. Path of the cluster configuration file\\, or configmap:<namespace>/<name> for a ConfigMap,example=./configs/cluster.yaml"`
 }
 
 func (*ClusterOptions) WithDefault() {

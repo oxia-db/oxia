@@ -28,10 +28,24 @@ const (
 	DefaultFileConfigName = "cluster.yaml"
 )
 
+// FileMetadata configures the file provider, which keeps the cluster
+// configuration and status in two local files. The names of the files are
+// relative to Dir, or are paths, relative to the working directory, when Dir
+// is empty.
+//
+// The deprecated path is still accepted as the path of the status file, but
+// not together with a different dir or statusName.
 type FileMetadata struct {
-	Dir        string `yaml:"dir,omitempty" json:"dir,omitempty" jsonschema:"description=Directory for file-based metadata storage,example=./metadata"`
-	StatusName string `yaml:"statusName,omitempty" json:"statusName,omitempty" jsonschema:"description=File name for cluster status, or full path when dir is unset,example=cluster-status.json"`
-	ConfigName string `yaml:"configName,omitempty" json:"configName,omitempty" jsonschema:"description=File name for cluster configuration, or full path when dir is unset,example=cluster.yaml"`
+	// Dir is the directory of the files. When it is empty, StatusName and
+	// ConfigName are paths.
+	Dir string `yaml:"dir,omitempty" json:"dir,omitempty" jsonschema:"description=Directory of the files. When it is empty\\, the names are paths,example=./metadata"`
+	// StatusName is the name of the file of the cluster status, which the
+	// coordinator writes. It defaults to cluster-status.json.
+	StatusName string `yaml:"statusName,omitempty" json:"statusName,omitempty" jsonschema:"description=Name of the file of the cluster status\\, or its path when dir is empty,default=cluster-status.json,example=cluster-status.json"`
+	// ConfigName is the name of the file of the cluster configuration, which
+	// the coordinator reads, and watches for changes. It defaults to
+	// cluster.yaml.
+	ConfigName string `yaml:"configName,omitempty" json:"configName,omitempty" jsonschema:"description=Name of the file of the cluster configuration\\, or its path when dir is empty,default=cluster.yaml,example=cluster.yaml"`
 }
 
 type fileMetadataCompat struct {

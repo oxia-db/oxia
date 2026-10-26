@@ -26,10 +26,22 @@ const (
 	DefaultK8sConfigName = "oxia-cluster-config"
 )
 
+// K8sMetadata configures the configmap provider, which keeps the cluster
+// configuration and status in two ConfigMaps of a Kubernetes namespace. The
+// coordinator needs the permissions to read and write them.
+//
+// The deprecated configMapName is still accepted as the name of the status
+// ConfigMap, but not together with a different statusName.
 type K8sMetadata struct {
-	Namespace  string `yaml:"namespace" json:"namespace" jsonschema:"description=Kubernetes namespace for ConfigMap storage,example=default"`
-	StatusName string `yaml:"statusName,omitempty" json:"statusName,omitempty" jsonschema:"description=Name of the ConfigMap for cluster status,example=oxia-cluster-status"`
-	ConfigName string `yaml:"configName,omitempty" json:"configName,omitempty" jsonschema:"description=Name of the ConfigMap for cluster configuration,example=oxia-cluster-config"`
+	// Namespace is the Kubernetes namespace of the ConfigMaps. It must be set.
+	Namespace string `yaml:"namespace" json:"namespace" jsonschema:"description=Kubernetes namespace of the ConfigMaps. Must be set,example=default"`
+	// StatusName is the name of the ConfigMap of the cluster status, which the
+	// coordinator writes. It defaults to oxia-cluster-status.
+	StatusName string `yaml:"statusName,omitempty" json:"statusName,omitempty" jsonschema:"description=Name of the ConfigMap of the cluster status,default=oxia-cluster-status,example=oxia-cluster-status"`
+	// ConfigName is the name of the ConfigMap of the cluster configuration,
+	// which the coordinator reads, and watches for changes. It defaults to
+	// oxia-cluster-config.
+	ConfigName string `yaml:"configName,omitempty" json:"configName,omitempty" jsonschema:"description=Name of the ConfigMap of the cluster configuration,default=oxia-cluster-config,example=oxia-cluster-config"`
 }
 
 type k8sMetadataCompat struct {

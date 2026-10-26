@@ -23,7 +23,7 @@ import (
 	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 )
 
-// Valid MetadataOptions.ProviderName values.
+// The valid values of ProviderOptions.ProviderName.
 const (
 	ProviderMemory    = metadataconstant.NameMemory
 	ProviderFile      = metadataconstant.NameFile
@@ -31,15 +31,37 @@ const (
 	ProviderRaft      = metadataconstant.NameRaft
 )
 
+// ProviderOptions selects where the coordinator keeps the cluster
+// configuration and status, and configures that provider. Only the options of
+// the selected provider are used.
 type ProviderOptions struct {
-	ProviderName string       `yaml:"providerName" json:"providerName" jsonschema:"description=Metadata provider type. Valid values: memory/configmap/file/raft,example=configmap"`
-	Kubernetes   K8sMetadata  `yaml:"kubernetes,omitempty" json:"kubernetes,omitempty" jsonschema:"description=Kubernetes ConfigMap metadata configuration"`
-	File         FileMetadata `yaml:"file,omitempty" json:"file,omitempty" jsonschema:"description=File-based metadata configuration"`
-	Raft         RaftMetadata `yaml:"raft,omitempty" json:"raft,omitempty" jsonschema:"description=Raft-based metadata configuration"`
+	// ProviderName selects the provider. It must be set:
+	//   - file keeps them in local files (see FileMetadata);
+	//   - configmap keeps them in Kubernetes ConfigMaps (see K8sMetadata);
+	//   - raft replicates them between the coordinators (see RaftMetadata);
+	//   - memory keeps them in memory, and loses them on a restart: use it
+	//     only for tests.
+	ProviderName string `yaml:"providerName" json:"providerName" jsonschema:"description=Provider of the cluster configuration and status,enum=file,enum=configmap,enum=raft,enum=memory,example=configmap"`
+	// Kubernetes configures the configmap provider.
+	Kubernetes K8sMetadata `yaml:"kubernetes,omitempty" json:"kubernetes,omitempty" jsonschema:"description=Options of the configmap provider"`
+	// File configures the file provider.
+	File FileMetadata `yaml:"file,omitempty" json:"file,omitempty" jsonschema:"description=Options of the file provider"`
+	// Raft configures the raft provider.
+	Raft RaftMetadata `yaml:"raft,omitempty" json:"raft,omitempty" jsonschema:"description=Options of the raft provider"`
 }
 
+// MetadataOptions configures the metadata of the coordinator: the provider of
+// the cluster configuration and status, and the name of the coordinator.
+// Several coordinators can share the metadata, e.g. for high availability:
+// they elect a leader, which is the only one to manage the cluster.
 type MetadataOptions struct {
-	Name            string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Stable coordinator name used by metadata leader election,example=coordinator-0"`
+	// Name identifies the coordinator in the leader election between the
+	// coordinators that share the metadata. It must be unique among them, and
+	// stable across restarts, e.g. the name of its pod. It defaults to the
+	// hostname.
+	Name string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=Name of the coordinator in the leader election between the coordinators that share the metadata. Must be unique and stable across restarts. Defaults to the hostname,example=coordinator-0"`
+	// ProviderOptions selects and configures the provider. Its keys are at
+	// the level of name.
 	ProviderOptions `yaml:",inline"`
 }
 
@@ -64,6 +86,11 @@ func (mo *MetadataOptions) GetStatusProviderOptions() ProviderOptions {
 
 const legacyConfigMapClusterConfigPrefix = "configmap:"
 
+// ApplyLegacyClusterConfigPath moves the deprecated cluster.configPath into the
+// options of the provider: a path prefixed with configmap: names the ConfigMap
+// of the configuration, and any other path its file. It fails if the options
+// of the provider set another location, or on a ConfigMap path with the file
+// provider; the other providers ignore a ConfigMap path.
 func (mo *MetadataOptions) ApplyLegacyClusterConfigPath(configPath string) error {
 	if configPath == "" {
 		return nil

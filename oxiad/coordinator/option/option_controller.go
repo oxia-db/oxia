@@ -18,8 +18,15 @@ import (
 	"github.com/oxia-db/oxia/common/security"
 )
 
+// ControllerOptions configures the connections of the coordinator to the data
+// servers, through which it assigns their shards and elects the leaders.
 type ControllerOptions struct {
-	TLS security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing controller communication"`
+	// TLS secures the connections of the coordinator to the internal servers
+	// of the data servers, as their client: set it when the data servers
+	// enable TLS on their internal server. It is disabled by default: it is
+	// enabled when enabled is true, or, when enabled is unset, when a
+	// certificate file is set.
+	TLS security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=Client TLS of the connections to the internal servers of the data servers. Disabled by default"`
 }
 
 func (co *ControllerOptions) WithDefault() {

@@ -26,9 +26,14 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
 
+// ServerOptions configures the two gRPC servers of the coordinator: the public
+// server, which serves the admin API, and the internal server.
 type ServerOptions struct {
-	Public   PublicServerOptions   `yaml:"public" json:"public" jsonschema:"description=Public server configuration for management API endpoints"`
-	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server configuration for cluster communication"`
+	// Public configures the public server. The deprecated admin key is still
+	// accepted in its place, but not together with it.
+	Public PublicServerOptions `yaml:"public" json:"public" jsonschema:"description=Public server\\, which serves the admin API. The deprecated admin key is still accepted in its place"`
+	// Internal configures the internal server.
+	Internal InternalServerOptions `yaml:"internal" json:"internal" jsonschema:"description=Internal server\\, which serves the health checks"`
 }
 
 func (so *ServerOptions) UnmarshalYAML(value *yaml.Node) error {
@@ -62,10 +67,19 @@ func (so *ServerOptions) Validate() error {
 	return multierr.Combine(so.Public.Validate(), so.Internal.Validate())
 }
 
+// InternalServerOptions configures the internal gRPC server of the
+// coordinator, which serves its health checks.
 type InternalServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for internal server-to-server communication,example=0.0.0.0:6649,format=hostname"`
-	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for internal server-to-server communication"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing internal cluster communication"`
+	// BindAddress is the host:port that the server listens on. A port of 0
+	// picks a free port. It defaults to 0.0.0.0:6649.
+	BindAddress string `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=host:port that the internal server listens on,default=0.0.0.0:6649,example=0.0.0.0:6649,format=hostname"`
+	// Auth authenticates the clients of the server. It is disabled by default:
+	// it is enabled when a provider is set, or when enabled is true.
+	Auth auth.Options `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication of the clients of the internal server. Disabled by default"`
+	// TLS secures the connections to the server. It is disabled by default: it
+	// is enabled when enabled is true, or, when enabled is unset, when a
+	// certificate file is set.
+	TLS security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS of the internal server. Disabled by default"`
 }
 
 func (iso *InternalServerOptions) WithDefault() {
@@ -83,10 +97,20 @@ func (iso *InternalServerOptions) Validate() error {
 	)
 }
 
+// PublicServerOptions configures the public gRPC server of the coordinator,
+// which serves the admin API, e.g. to the oxia admin commands, and its health
+// checks.
 type PublicServerOptions struct {
-	BindAddress string              `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=Bind address for the public management API server,example=0.0.0.0:6651,format=hostname"`
-	Auth        auth.Options        `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication configuration for the public management API"`
-	TLS         security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS configuration for securing public management API connections"`
+	// BindAddress is the host:port that the server listens on. A port of 0
+	// picks a free port. It defaults to 0.0.0.0:6651.
+	BindAddress string `yaml:"bindAddress" json:"bindAddress" jsonschema:"description=host:port that the public server listens on,default=0.0.0.0:6651,example=0.0.0.0:6651,format=hostname"`
+	// Auth authenticates the clients of the server. It is disabled by default:
+	// it is enabled when a provider is set, or when enabled is true.
+	Auth auth.Options `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=Authentication of the clients of the public server. Disabled by default"`
+	// TLS secures the connections to the server. It is disabled by default: it
+	// is enabled when enabled is true, or, when enabled is unset, when a
+	// certificate file is set.
+	TLS security.TLSOptions `yaml:"tls,omitempty" json:"tls,omitempty" jsonschema:"description=TLS of the public server. Disabled by default"`
 }
 
 func (pso *PublicServerOptions) WithDefault() {
