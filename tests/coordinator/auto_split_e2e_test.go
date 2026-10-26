@@ -78,7 +78,7 @@ func TestCoordinator_AutoSplit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	defer func() { assert.NoError(t, coordinatorInstance.Close()) }()
 	metadata := coordinatorInstance.Metadata()
 

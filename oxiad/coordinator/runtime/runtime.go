@@ -86,7 +86,7 @@ type runtime struct {
 
 	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
 
-	rpc rpc.Provider
+	rpc rpc.ControllerRPCProvider
 }
 
 func (c *runtime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataServerIdentity) {
@@ -669,7 +669,7 @@ func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.Namesp
 
 func New(
 	metadata coordmetadata.Metadata,
-	rpcProvider rpc.ProviderFactory,
+	rpcProvider rpc.ControllerRPCProviderFactory,
 ) (Runtime, error) {
 	clusterStatus, err := metadata.ListNamespaceStatus()
 	if err != nil {

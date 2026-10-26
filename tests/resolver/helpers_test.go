@@ -31,7 +31,7 @@ func newCoordinatorInstance(
 	t *testing.T,
 	metadataProvider provider.Provider[*proto.ClusterStatus],
 	configProvider provider.Provider[*proto.ClusterConfiguration],
-	rpcProvider coordinatorrpc.ProviderFactory,
+	rpcProvider coordinatorrpc.ControllerRPCProviderFactory,
 ) coordruntime.Runtime {
 	t.Helper()
 

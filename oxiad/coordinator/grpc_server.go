@@ -271,7 +271,7 @@ func newGrpcServer(parent context.Context, optionsWatch *commonwatch.Watch[*opti
 	if err = so.seedClusterConfig(metadataFactory); err != nil {
 		return nil, err
 	}
-	runtime, err = coordruntime.New(metadata, rpc.NewRpcProviderFactory(controllerTLS)) //nolint:contextcheck
+	runtime, err = coordruntime.New(metadata, rpc.NewControllerRPCProviderFactory(controllerTLS)) //nolint:contextcheck
 	if err = failpoints.Fail("newGrpcServer.newRuntime", err); err != nil {
 		return nil, err
 	}

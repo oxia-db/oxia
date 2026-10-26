@@ -56,7 +56,7 @@ type controller struct {
 	ctx                 context.Context
 	ctxCancel           context.CancelFunc
 	dataServer          *proto.DataServer
-	rpc                 rpc.Provider
+	rpc                 rpc.ControllerRPCProvider
 	insID               string
 	assignmentsProvider controllerapi.ShardAssignmentsProvider
 	listener            controllerapi.DataServerEventListener
@@ -500,7 +500,7 @@ func (n *controller) handleHealthCheck(observedEpoch int64, response *grpc_healt
 func NewController(ctx context.Context, dataServer *proto.DataServer,
 	shardAssignmentsProvider controllerapi.ShardAssignmentsProvider,
 	dataServerEventListener controllerapi.DataServerEventListener,
-	rpcProvider rpc.Provider,
+	rpcProvider rpc.ControllerRPCProvider,
 	insID string,
 	initialRetryBackoff time.Duration,
 	healthPolicy health.CheckPolicy) Controller {

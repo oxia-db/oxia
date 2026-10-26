@@ -133,7 +133,7 @@ func TestClusterHandshakeSuccess(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 }
 
@@ -158,7 +158,7 @@ func TestClientHandshakeFailByNoTlsConfig(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	client, err := oxia.NewSyncClient(sa1.Public, oxia.WithRequestTimeout(1*time.Second))
@@ -187,7 +187,7 @@ func TestClientHandshakeByAuthFail(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -222,7 +222,7 @@ func TestClientHandshakeWithInsecure(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -258,7 +258,7 @@ func TestClientHandshakeSuccess(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(tlsConf))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(tlsConf))
 	defer coordinatorInstance.Close()
 
 	tlsOption, err := getClientTLSOption()
@@ -291,7 +291,7 @@ func TestOnlyEnablePublicTls(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// failed without cert

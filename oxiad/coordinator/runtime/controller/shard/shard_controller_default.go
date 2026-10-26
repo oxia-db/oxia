@@ -66,7 +66,7 @@ type controller struct {
 	shard                               int64
 	namespaceConfig                     *proto.Namespace
 	periodicTasksInterval               time.Duration
-	rpc                                 rpc.Provider
+	rpc                                 rpc.ControllerRPCProvider
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       controllerapi.ShardEventListener
 	metadataStore                       coordmetadata.Metadata
@@ -141,7 +141,7 @@ func NewController(
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier FeaturesSupplier,
 	eventListener controllerapi.ShardEventListener,
-	rpcProvider rpc.Provider,
+	rpcProvider rpc.ControllerRPCProvider,
 	periodTasksInterval time.Duration) Controller {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &controller{

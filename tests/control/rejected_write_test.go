@@ -58,7 +58,7 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc.NewControllerRPCProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	shardMetadata := waitForLeaderFeature(t, coordinatorInstance.Metadata(), servers,
