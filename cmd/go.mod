@@ -9,7 +9,7 @@ require (
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/invopop/jsonschema v0.13.0
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
-	github.com/oxia-db/oxia/common v0.17.1
+	github.com/oxia-db/oxia/common v0.18.0
 	github.com/oxia-db/oxia/oxia v0.0.0
 	github.com/oxia-db/oxia/oxiad v0.0.0-20260428162417-110425299484
 	github.com/pkg/errors v0.9.1
