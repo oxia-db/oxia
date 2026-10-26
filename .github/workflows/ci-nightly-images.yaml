@@ -26,7 +26,7 @@ concurrency:
 # Override these defaults with repository variables when a channel moves to a
 # new release line or branch.
 env:
-  NIGHTLY_STABLE_REF: ${{ vars.NIGHTLY_STABLE_REF || 'release-0.16' }}
+  NIGHTLY_STABLE_REF: ${{ vars.NIGHTLY_STABLE_REF || 'release-0.18' }}
   NIGHTLY_BETA_REF: ${{ vars.NIGHTLY_BETA_REF || 'main' }}
 
 jobs:
