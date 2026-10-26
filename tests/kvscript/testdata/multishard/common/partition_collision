@@ -1,0 +1,82 @@
+# tenant-a and tenant-c collide on one shard; tenant-b selects another.
+# PartitionKey selects a shard, rather than filtering records by partition string.
+
+put key=a value=first partition=tenant-a
+----
+ok key="a" modifications=0
+
+put key=b value=second partition=tenant-c
+----
+ok key="b" modifications=0
+
+put key=c value=outside partition=tenant-b save=outside
+----
+ok key="c" modifications=0
+
+put key=d value=boundary
+----
+ok key="d" modifications=0
+
+# Each colliding routing string must agree with both observed record locations.
+placement keys=(a,b) partition=tenant-a require-override
+----
+ok
+
+placement keys=(a,b) partition=tenant-c require-override
+----
+ok
+
+# c and d retain their default routes and prove the other shard is populated.
+placement keys=(c,d) min-shards=2
+----
+ok
+
+get key=c partition=tenant-b save-record=outside
+----
+key="c" value="outside" modifications=0
+
+get key=b partition=tenant-a
+----
+key="b" value="second" modifications=0
+
+range start=a end=d partition=tenant-a
+----
+key="a" value="first" modifications=0
+key="b" value="second" modifications=0
+
+list start=a end=d partition=tenant-c
+----
+key="a"
+key="b"
+
+delete-range start=a end=c partition=tenant-a
+----
+ok
+
+get key=a partition=tenant-a
+----
+error: key not found
+
+get key=b partition=tenant-c
+----
+error: key not found
+
+assert-record key=a partition=tenant-a missing
+----
+ok
+
+assert-record key=b partition=tenant-c missing
+----
+ok
+
+assert-record key=c partition=tenant-b unchanged=@outside
+----
+ok
+
+get key=d
+----
+key="d" value="boundary" modifications=0
+
+put key=c value=outside-updated partition=tenant-b expected-version=@outside
+----
+ok key="c" modifications=1

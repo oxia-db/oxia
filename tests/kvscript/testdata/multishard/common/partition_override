@@ -1,0 +1,79 @@
+# qa, qb, and qd have different default routes; tenant co-locates them.
+
+put key=qd value=last partition=tenant
+----
+ok key="qd" modifications=0
+
+put key=qa value=first partition=tenant
+----
+ok key="qa" modifications=0
+
+put key=qb value=second partition=tenant
+----
+ok key="qb" modifications=0
+
+placement keys=(qa,qb,qd) partition=tenant require-override
+----
+ok
+
+get key=qa
+----
+error: key not found
+
+get key=qd
+----
+error: key not found
+
+get key=qa partition=tenant
+----
+key="qa" value="first" modifications=0
+
+# A partition scan has a single-shard ordering guarantee.
+range start=qa end=qe partition=tenant
+----
+key="qa" value="first" modifications=0
+key="qb" value="second" modifications=0
+key="qd" value="last" modifications=0
+
+list start=qa end=qe partition=tenant
+----
+key="qa"
+key="qb"
+key="qd"
+
+get key=qc comparison=floor partition=tenant
+----
+key="qb" value="second" modifications=0
+
+get key=qc comparison=ceiling partition=tenant
+----
+key="qd" value="last" modifications=0
+
+delete key=qa partition=tenant
+----
+ok
+
+assert-record key=qa partition=tenant missing
+----
+ok
+
+range start=qa end=qe partition=tenant
+----
+key="qb" value="second" modifications=0
+key="qd" value="last" modifications=0
+
+delete-range start=qa end=qe partition=tenant
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+assert-record key=qd partition=tenant missing
+----
+ok
+
+range start=qa end=qe partition=tenant
+----
+(empty)
