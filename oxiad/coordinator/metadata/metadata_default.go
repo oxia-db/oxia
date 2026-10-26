@@ -30,8 +30,8 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 

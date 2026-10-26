@@ -37,8 +37,8 @@ import (
 	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/common/metric"
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	metadataprovider "github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 )
 

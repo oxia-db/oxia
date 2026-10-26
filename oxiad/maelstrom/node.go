@@ -23,7 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"

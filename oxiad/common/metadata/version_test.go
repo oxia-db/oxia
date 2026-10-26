@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package metadata
 
-import "github.com/pkg/errors"
+import (
+	"testing"
 
-var (
-	ErrNotInitialized     = errors.New("metadata not initialized")
-	ErrBadVersion         = errors.New("metadata bad version")
-	ErrConflict           = errors.New("metadata conflict")
-	ErrAlreadyExists      = errors.New("metadata already exists")
-	ErrNotFound           = errors.New("metadata not found")
-	ErrFailedPrecondition = errors.New("metadata failed precondition")
+	"github.com/stretchr/testify/assert"
 )
+
+func TestNextVersion(t *testing.T) {
+	assert.Equal(t, Version("0"), NextVersion(NotExists))
+	assert.Equal(t, Version("42"), NextVersion("41"))
+}
+
+func TestNextVersionOfInvalidVersionIsEmpty(t *testing.T) {
+	assert.Equal(t, Version(""), NextVersion("not-a-number"))
+}

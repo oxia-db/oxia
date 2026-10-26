@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package metadata
 
-type WatchMode bool
+import "github.com/pkg/errors"
 
-const (
-	WatchDisabled WatchMode = false
-	WatchEnabled  WatchMode = true
+var (
+	ErrNotInitialized     = errors.New("metadata not initialized")
+	ErrBadVersion         = errors.New("metadata bad version")
+	ErrConflict           = errors.New("metadata conflict")
+	ErrAlreadyExists      = errors.New("metadata already exists")
+	ErrNotFound           = errors.New("metadata not found")
+	ErrFailedPrecondition = errors.New("metadata failed precondition")
 )
-
-func (wm WatchMode) Enabled() bool {
-	return bool(wm)
-}

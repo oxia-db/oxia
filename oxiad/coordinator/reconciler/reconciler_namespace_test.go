@@ -29,11 +29,11 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )

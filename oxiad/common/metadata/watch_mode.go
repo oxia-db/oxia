@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package metadata
+
+type WatchMode bool
 
 const (
-	NameMemory    = "memory"
-	NameConfigMap = "configmap"
-	NameRaft      = "raft"
-	NameFile      = "file"
+	WatchDisabled WatchMode = false
+	WatchEnabled  WatchMode = true
 )
 
-const (
-	ClusterStatusConfigMapDataKey = "status"
-	ClusterConfigConfigMapDataKey = "config.yaml"
-)
+func (wm WatchMode) Enabled() bool {
+	return bool(wm)
+}

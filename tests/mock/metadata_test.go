@@ -26,7 +26,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 )
 
 func TestNewConfigProviderStoresConfig(t *testing.T) {

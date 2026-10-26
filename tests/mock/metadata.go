@@ -22,8 +22,8 @@ import (
 
 	"github.com/google/uuid"
 
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/stretchr/testify/require"

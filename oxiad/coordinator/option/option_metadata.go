@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 
-	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadataconstant "github.com/oxia-db/oxia/oxiad/common/metadata"
 )
 
 // The valid values of ProviderOptions.ProviderName.

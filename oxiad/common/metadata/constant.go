@@ -12,19 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package metadata
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+const (
+	NameMemory    = "memory"
+	NameConfigMap = "configmap"
+	NameRaft      = "raft"
+	NameFile      = "file"
 )
 
-func TestNextVersion(t *testing.T) {
-	assert.Equal(t, Version("0"), NextVersion(NotExists))
-	assert.Equal(t, Version("42"), NextVersion("41"))
-}
-
-func TestNextVersionOfInvalidVersionIsEmpty(t *testing.T) {
-	assert.Equal(t, Version(""), NextVersion("not-a-number"))
-}
+const (
+	ClusterStatusConfigMapDataKey = "status"
+	ClusterConfigConfigMapDataKey = "config.yaml"
+)

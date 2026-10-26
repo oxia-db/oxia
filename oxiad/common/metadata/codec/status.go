@@ -21,7 +21,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 )
 
 func (codec statusCodec) UnmarshalYAML(data []byte) (*commonproto.ClusterStatus, error) {
