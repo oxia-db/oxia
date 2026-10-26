@@ -16,10 +16,10 @@ package rpc
 
 import "crypto/tls"
 
-type ProviderFactory = func(instanceID string) Provider
+type ControllerRPCProviderFactory = func(instanceID string) ControllerRPCProvider
 
-func NewRpcProviderFactory(tlsConf *tls.Config) ProviderFactory {
-	return func(instanceID string) Provider {
-		return NewRpcProvider(tlsConf, instanceID)
+func NewControllerRPCProviderFactory(tlsConf *tls.Config) ControllerRPCProviderFactory {
+	return func(instanceID string) ControllerRPCProvider {
+		return NewControllerRPCProvider(tlsConf, instanceID)
 	}
 }

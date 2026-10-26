@@ -89,7 +89,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	clientPool := rpc.NewClientPool(nil, nil)
 
 	metadata := coordinatorInstance.Metadata()
@@ -769,12 +769,12 @@ type splitTestCluster struct {
 // be ready, and returns the cluster handle. Callers must call close() when done.
 func setupSplitCluster(t *testing.T) *splitTestCluster {
 	t.Helper()
-	return setupSplitClusterWithRpc(t, rpc2.NewRpcProviderFactory(nil))
+	return setupSplitClusterWithRpc(t, rpc2.NewControllerRPCProviderFactory(nil))
 }
 
 // setupSplitClusterWithRpc is setupSplitCluster, with a coordinator that uses
 // the given rpc provider factory.
-func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ProviderFactory) *splitTestCluster {
+func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ControllerRPCProviderFactory) *splitTestCluster {
 	t.Helper()
 	return setupSplitClusterWithRpcAndShardCount(t, rpcProviderFactory, 1)
 }
@@ -783,10 +783,10 @@ func setupSplitClusterWithRpc(t *testing.T, rpcProviderFactory rpc2.ProviderFact
 // initialShardCount shards.
 func setupSplitClusterWithShardCount(t *testing.T, initialShardCount uint32) *splitTestCluster {
 	t.Helper()
-	return setupSplitClusterWithRpcAndShardCount(t, rpc2.NewRpcProviderFactory(nil), initialShardCount)
+	return setupSplitClusterWithRpcAndShardCount(t, rpc2.NewControllerRPCProviderFactory(nil), initialShardCount)
 }
 
-func setupSplitClusterWithRpcAndShardCount(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+func setupSplitClusterWithRpcAndShardCount(t *testing.T, rpcProviderFactory rpc2.ControllerRPCProviderFactory,
 	initialShardCount uint32) *splitTestCluster {
 	t.Helper()
 
@@ -803,7 +803,7 @@ func setupSplitClusterWithRpcAndShardCount(t *testing.T, rpcProviderFactory rpc2
 }
 
 // setupSplitClusterWith is setupSplitClusterWithRpc, on the given data servers.
-func setupSplitClusterWith(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+func setupSplitClusterWith(t *testing.T, rpcProviderFactory rpc2.ControllerRPCProviderFactory,
 	servers map[string]*dataserver.Server, addresses []*proto.DataServerIdentity) *splitTestCluster {
 	t.Helper()
 	return setupSplitClusterWithShards(t, rpcProviderFactory, servers, addresses, 1)
@@ -811,7 +811,7 @@ func setupSplitClusterWith(t *testing.T, rpcProviderFactory rpc2.ProviderFactory
 
 // setupSplitClusterWithShards is setupSplitClusterWith, with a namespace of
 // initialShardCount shards.
-func setupSplitClusterWithShards(t *testing.T, rpcProviderFactory rpc2.ProviderFactory,
+func setupSplitClusterWithShards(t *testing.T, rpcProviderFactory rpc2.ControllerRPCProviderFactory,
 	servers map[string]*dataserver.Server, addresses []*proto.DataServerIdentity,
 	initialShardCount uint32) *splitTestCluster {
 	t.Helper()
@@ -1558,18 +1558,18 @@ func TestCoordinator_ShardSplit_InheritedSessionKeptAlive(t *testing.T) {
 // fenceHookRpcProvider calls afterFence once a data server is fenced in a new
 // term of a shard. The new term waits for it to return.
 type fenceHookRpcProvider struct {
-	rpc2.Provider
+	rpc2.ControllerRPCProvider
 	afterFence func(req *proto.NewTermRequest)
 }
 
-func (p *fenceHookRpcProvider) factory(instanceID string) rpc2.Provider {
-	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+func (p *fenceHookRpcProvider) factory(instanceID string) rpc2.ControllerRPCProvider {
+	p.ControllerRPCProvider = rpc2.NewControllerRPCProvider(nil, instanceID)
 	return p
 }
 
 func (p *fenceHookRpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
-	response, err := p.Provider.NewTerm(ctx, node, req)
+	response, err := p.ControllerRPCProvider.NewTerm(ctx, node, req)
 	if err == nil {
 		p.afterFence(req)
 	}
@@ -1735,13 +1735,13 @@ func TestCoordinator_ShardSplit_SessionCreatedDuringCatchUp(t *testing.T) {
 // cutover of a split does with the parent, and afterFreeze once the shard is
 // frozen. The cutover waits for them to return.
 type freezeHookRpcProvider struct {
-	rpc2.Provider
+	rpc2.ControllerRPCProvider
 	beforeFreeze func()
 	afterFreeze  func()
 }
 
-func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.Provider {
-	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+func (p *freezeHookRpcProvider) factory(instanceID string) rpc2.ControllerRPCProvider {
+	p.ControllerRPCProvider = rpc2.NewControllerRPCProvider(nil, instanceID)
 	return p
 }
 
@@ -1750,7 +1750,7 @@ func (p *freezeHookRpcProvider) FreezeShard(ctx context.Context, node *proto.Dat
 	if req.Frozen && p.beforeFreeze != nil {
 		p.beforeFreeze()
 	}
-	response, err := p.Provider.FreezeShard(ctx, node, req)
+	response, err := p.ControllerRPCProvider.FreezeShard(ctx, node, req)
 	if err == nil && req.Frozen && p.afterFreeze != nil {
 		p.afterFreeze()
 	}
@@ -2054,7 +2054,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 				Version: metadatacommon.NotExists,
 			})
 			require.NoError(t, err)
-			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 			metadata := coordinatorInstance.Metadata()
 			status := mock.StatusSnapshot(t, metadata)
@@ -2124,7 +2124,7 @@ func TestCoordinator_MultiShardKeySorting(t *testing.T) {
 				Version: metadatacommon.NotExists,
 			})
 			require.NoError(t, err)
-			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+			coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 			defer coordinatorInstance.Close()
 
 			require.Eventually(t, func() bool {
@@ -2270,7 +2270,7 @@ func TestCoordinator_ShardSplit_ParentLeaderKillDuringSplit(t *testing.T) {
 // that still reports the data that it received in an earlier term of the
 // parent.
 type cutoverHoldingRpcProvider struct {
-	rpc2.Provider
+	rpc2.ControllerRPCProvider
 	cutoverReached chan struct{}
 	resumeCutover  chan struct{}
 	holdOnce       sync.Once
@@ -2308,8 +2308,8 @@ func newCutoverHoldingRpcProvider() *cutoverHoldingRpcProvider {
 	}
 }
 
-func (p *cutoverHoldingRpcProvider) factory(instanceID string) rpc2.Provider {
-	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+func (p *cutoverHoldingRpcProvider) factory(instanceID string) rpc2.ControllerRPCProvider {
+	p.ControllerRPCProvider = rpc2.NewControllerRPCProvider(nil, instanceID)
 	return p
 }
 
@@ -2336,12 +2336,12 @@ func (p *cutoverHoldingRpcProvider) AddFollower(ctx context.Context, node *proto
 		return &proto.AddFollowerResponse{}, nil
 	}
 	p.mu.Unlock()
-	return p.Provider.AddFollower(ctx, node, req)
+	return p.ControllerRPCProvider.AddFollower(ctx, node, req)
 }
 
 func (p *cutoverHoldingRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
-	res, err := p.Provider.GetStatus(ctx, node, req)
+	res, err := p.ControllerRPCProvider.GetStatus(ctx, node, req)
 	if err == nil && res.CommitOffset < 0 {
 		// The member of the child has no data: the parent must send it a
 		// snapshot
@@ -2358,7 +2358,7 @@ func (p *cutoverHoldingRpcProvider) NewTerm(ctx context.Context, node *proto.Dat
 	if finalizeFence {
 		p.fenceOnce.Do(func() { p.startChildSnapshots(ctx) })
 	}
-	return p.Provider.NewTerm(ctx, node, req)
+	return p.ControllerRPCProvider.NewTerm(ctx, node, req)
 }
 
 func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, member childMember) {
@@ -2369,7 +2369,7 @@ func (p *cutoverHoldingRpcProvider) addDelayedObserver(ctx context.Context, memb
 	if observer == nil {
 		return
 	}
-	if _, err := p.Provider.AddFollower(ctx, observer.parentLeader, observer.req); err != nil {
+	if _, err := p.ControllerRPCProvider.AddFollower(ctx, observer.parentLeader, observer.req); err != nil {
 		slog.Warn("Failed to add the delayed observer", slog.Int64("child-shard", member.child),
 			slog.String("member", member.internal), slog.Any("error", err))
 	}
@@ -2389,7 +2389,7 @@ func (p *cutoverHoldingRpcProvider) startChildSnapshots(ctx context.Context) {
 	for member := range childMembers {
 		node := &proto.DataServerIdentity{Internal: member.internal}
 		for ; time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-			res, err := p.Provider.GetStatus(ctx, node, &proto.GetStatusRequest{Shard: member.child})
+			res, err := p.ControllerRPCProvider.GetStatus(ctx, node, &proto.GetStatusRequest{Shard: member.child})
 			if err == nil && (res.Status == proto.ServingStatus_FOLLOWER || res.CommitOffset < 0) {
 				break
 			}
@@ -2408,12 +2408,12 @@ func (p *cutoverHoldingRpcProvider) FreezeShard(ctx context.Context, node *proto
 			}
 		})
 	}
-	return p.Provider.FreezeShard(ctx, node, req)
+	return p.ControllerRPCProvider.FreezeShard(ctx, node, req)
 }
 
 func (p *cutoverHoldingRpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
-	res, err := p.Provider.BecomeLeader(ctx, node, req)
+	res, err := p.ControllerRPCProvider.BecomeLeader(ctx, node, req)
 	if errors.Is(err, constant.ErrUnsupportedFeatures) {
 		p.mu.Lock()
 		p.refusedBecomeLeader[req.Shard]++
@@ -2780,7 +2780,7 @@ func TestCoordinator_ShardSplit_ChildWriteSurvivesLeaderLoss(t *testing.T) {
 // missed it. They get it from a snapshot of the child leader once the split
 // elects it in a clean term.
 type leaderOnlyChildObservers struct {
-	rpc2.Provider
+	rpc2.ControllerRPCProvider
 
 	// The coordinator's metadata, once the cluster is up
 	metadata atomic.Value
@@ -2810,12 +2810,12 @@ func (p *leaderOnlyChildObservers) AddFollower(ctx context.Context, node *proto.
 		leader.GetInternal() != req.FollowerName {
 		return &proto.AddFollowerResponse{}, nil
 	}
-	return p.Provider.AddFollower(ctx, node, req)
+	return p.ControllerRPCProvider.AddFollower(ctx, node, req)
 }
 
 func (p *leaderOnlyChildObservers) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
-	res, err := p.Provider.GetStatus(ctx, node, req)
+	res, err := p.ControllerRPCProvider.GetStatus(ctx, node, req)
 	if leader := p.splittingChildLeader(req.Shard); err == nil && leader != nil &&
 		leader.GetNameOrDefault() != node.GetNameOrDefault() {
 		res = res.CloneVT()
@@ -2832,8 +2832,8 @@ type followerlessChildRpcProvider struct {
 	leaderOnlyChildObservers
 }
 
-func (p *followerlessChildRpcProvider) factory(instanceID string) rpc2.Provider {
-	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+func (p *followerlessChildRpcProvider) factory(instanceID string) rpc2.ControllerRPCProvider {
+	p.ControllerRPCProvider = rpc2.NewControllerRPCProvider(nil, instanceID)
 	return p
 }
 
@@ -2843,7 +2843,7 @@ func (p *followerlessChildRpcProvider) BecomeLeader(ctx context.Context, node *p
 		req = req.CloneVT()
 		req.FollowerMaps = nil
 	}
-	return p.Provider.BecomeLeader(ctx, node, req)
+	return p.ControllerRPCProvider.BecomeLeader(ctx, node, req)
 }
 
 func (p *followerlessChildRpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity,
@@ -3018,7 +3018,7 @@ func (p *finalizeRetryRpcProvider) BecomeLeader(ctx context.Context, node *proto
 	leftChild, leftLeader := p.leftChild, p.leftLeader
 	p.mu.Unlock()
 	if !failRight {
-		return p.Provider.BecomeLeader(ctx, node, req)
+		return p.ControllerRPCProvider.BecomeLeader(ctx, node, req)
 	}
 
 	// The left child leader records a checksum within a second, an entry that
@@ -3070,8 +3070,8 @@ func TestCoordinator_ShardSplit_ChildElectionSlowerThanRpcTimeout(t *testing.T) 
 		addresses = append(addresses, addr)
 	}
 	rpcProvider := &finalizeRetryRpcProvider{finalizeElections: make(map[int64]int)}
-	cluster := setupSplitClusterWith(t, func(instanceID string) rpc2.Provider {
-		rpcProvider.Provider = rpc2.NewRpcProviderWithTimeout(nil, instanceID, rpcTimeout)
+	cluster := setupSplitClusterWith(t, func(instanceID string) rpc2.ControllerRPCProvider {
+		rpcProvider.ControllerRPCProvider = rpc2.NewControllerRPCProviderWithTimeout(nil, instanceID, rpcTimeout)
 		return rpcProvider
 	}, servers, addresses)
 	defer cluster.close(t)
@@ -3130,7 +3130,7 @@ func TestCoordinator_ShardSplit_ChildDataSurvivesLeaderLossAfterSplit(t *testing
 		servers[addr.GetNameOrDefault()] = s
 		addresses = append(addresses, addr)
 	}
-	cluster := setupSplitClusterWith(t, rpc2.NewRpcProviderFactory(nil), servers, addresses)
+	cluster := setupSplitClusterWith(t, rpc2.NewControllerRPCProviderFactory(nil), servers, addresses)
 	defer cluster.close(t)
 
 	ctx := context.Background()
@@ -3208,8 +3208,8 @@ func newFeaturelessServerRpcProvider(featurelessServer string) *featurelessServe
 	}
 }
 
-func (p *featurelessServerRpcProvider) factory(instanceID string) rpc2.Provider {
-	p.Provider = rpc2.NewRpcProvider(nil, instanceID)
+func (p *featurelessServerRpcProvider) factory(instanceID string) rpc2.ControllerRPCProvider {
+	p.ControllerRPCProvider = rpc2.NewControllerRPCProvider(nil, instanceID)
 	return p
 }
 
@@ -3219,7 +3219,7 @@ func (p *featurelessServerRpcProvider) resume() {
 
 func (p *featurelessServerRpcProvider) Handshake(ctx context.Context, node *proto.DataServerIdentity,
 	req *proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
-	res, err := p.Provider.Handshake(ctx, node, req)
+	res, err := p.ControllerRPCProvider.Handshake(ctx, node, req)
 	if res != nil && node.GetNameOrDefault() == p.featurelessServer {
 		res.FeaturesSupported = nil
 	}
@@ -3237,14 +3237,14 @@ func (p *featurelessServerRpcProvider) FreezeShard(ctx context.Context, node *pr
 			}
 		})
 	}
-	return p.Provider.FreezeShard(ctx, node, req)
+	return p.ControllerRPCProvider.FreezeShard(ctx, node, req)
 }
 
 // setupSplitClusterWithDbDirs is setupSplitClusterWithRpc, with data servers
 // named s1, s2 and s3. It also returns the database directory of each data
 // server.
 func setupSplitClusterWithDbDirs(t *testing.T,
-	rpcProviderFactory rpc2.ProviderFactory) (*splitTestCluster, map[string]string) {
+	rpcProviderFactory rpc2.ControllerRPCProviderFactory) (*splitTestCluster, map[string]string) {
 	t.Helper()
 
 	servers := make(map[string]*dataserver.Server)

@@ -121,7 +121,7 @@ func newTestController( //nolint:revive // Test helper mirrors NewController and
 	namespaceConfig *proto.Namespace,
 	shardMetadata *proto.ShardMetadata,
 	dataServerSupportedFeaturesSupplier FeaturesSupplier,
-	rpcProvider coordrpc.Provider,
+	rpcProvider coordrpc.ControllerRPCProvider,
 	periodicTasksInterval time.Duration,
 ) Controller {
 	t.Helper()

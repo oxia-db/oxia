@@ -116,7 +116,7 @@ func newOxiaClusterWithAuth(t *testing.T, issueURL string, audiences string) (ad
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	return s1Addr.Public, func() {
 		s1.Close()
@@ -308,7 +308,7 @@ func TestOIDCWithPerIssuerConfig(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// Test authentication with issuer 1
@@ -462,7 +462,7 @@ func TestOIDCWithStaticKeyFile(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// Create a valid token

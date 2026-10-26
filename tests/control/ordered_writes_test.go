@@ -57,7 +57,7 @@ func TestOrderedWrites(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 

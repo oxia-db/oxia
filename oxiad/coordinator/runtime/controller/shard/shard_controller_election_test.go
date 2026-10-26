@@ -1027,7 +1027,7 @@ func testDataServer(id string) *proto.DataServerIdentity {
 
 // startElection starts a leader election of the shard, as its shard
 // controller does, and returns the elected leader once the election ends.
-func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.Provider, shard int64) <-chan *proto.DataServerIdentity {
+func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.ControllerRPCProvider, shard int64) <-chan *proto.DataServerIdentity {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
 	s := &controller{
@@ -1112,7 +1112,7 @@ func updateSplitParent(t *testing.T, metadata coordmetadata.Metadata, update fun
 
 // newTestElection creates an election of the shard, as its shard controller
 // does, that the test drives step by step.
-func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.Provider, shard int64,
+func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.ControllerRPCProvider, shard int64,
 	shardMeta *proto.ShardMetadata) *Election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)

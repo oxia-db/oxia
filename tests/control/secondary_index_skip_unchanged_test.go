@@ -58,7 +58,7 @@ func TestSecondaryIndexSkipUnchanged(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc.NewControllerRPCProviderFactory(nil))
 	defer coordinatorInstance.Close()
 
 	// All the data servers support the feature, so the coordinator enables it

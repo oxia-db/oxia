@@ -54,7 +54,7 @@ func TestLeaderHintWithoutClient(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 
@@ -116,7 +116,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 
@@ -178,7 +178,7 @@ func TestLeaderHintListWithClient(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 
@@ -230,7 +230,7 @@ func TestLeaderHintRangeScanWithoutClient(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 
@@ -292,7 +292,7 @@ func TestLeaderHintRangeScanWithClient(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 
@@ -348,7 +348,7 @@ func TestLeaderHintWithClient(t *testing.T) {
 		t,
 		metadataProvider,
 		configProvider,
-		rpc.NewRpcProviderFactory(nil),
+		rpc.NewControllerRPCProviderFactory(nil),
 	)
 	defer coordinatorInstance.Close()
 

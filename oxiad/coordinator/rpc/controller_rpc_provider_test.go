@@ -34,10 +34,10 @@ import (
 // provider fails before sending anything.
 const invalidTarget = "invalid\x7f://target"
 
-func TestRpcProviderCallsReachDataServer(t *testing.T) {
+func TestControllerRPCProviderCallsReachDataServer(t *testing.T) {
 	server := &fakeCoordinationServer{}
 	node := startFakeCoordinationServer(t, server)
-	provider := NewRpcProviderFactory(nil)("instance-0")
+	provider := NewControllerRPCProviderFactory(nil)("instance-0")
 	t.Cleanup(func() { assert.NoError(t, provider.Close()) })
 	ctx := context.Background()
 
@@ -76,8 +76,8 @@ func TestRpcProviderCallsReachDataServer(t *testing.T) {
 	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, healthResponse.Status)
 }
 
-func TestRpcProviderCallsFailOnInvalidTarget(t *testing.T) {
-	provider := NewRpcProvider(nil, "instance-0")
+func TestControllerRPCProviderCallsFailOnInvalidTarget(t *testing.T) {
+	provider := NewControllerRPCProvider(nil, "instance-0")
 	t.Cleanup(func() { assert.NoError(t, provider.Close()) })
 	ctx := context.Background()
 	node := &proto.DataServerIdentity{Internal: invalidTarget}
@@ -102,7 +102,7 @@ func TestRpcProviderCallsFailOnInvalidTarget(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRpcProviderHandshakeFallsBackToGetInfo(t *testing.T) {
+func TestControllerRPCProviderHandshakeFallsBackToGetInfo(t *testing.T) {
 	server := &fakeCoordinationServer{
 		handshake: func(*proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 			return nil, grpcstatus.Error(codes.Unimplemented, "handshake")
@@ -112,7 +112,7 @@ func TestRpcProviderHandshakeFallsBackToGetInfo(t *testing.T) {
 		},
 	}
 	node := startFakeCoordinationServer(t, server)
-	provider := NewRpcProvider(nil, "instance-0")
+	provider := NewControllerRPCProvider(nil, "instance-0")
 	t.Cleanup(func() { assert.NoError(t, provider.Close()) })
 
 	res, err := provider.Handshake(context.Background(), node, &proto.HandshakeRequest{InstanceId: "instance-0"})
@@ -121,7 +121,7 @@ func TestRpcProviderHandshakeFallsBackToGetInfo(t *testing.T) {
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, res.FeaturesSupported)
 }
 
-func TestRpcProviderHandshakeFallbackGetInfoFails(t *testing.T) {
+func TestControllerRPCProviderHandshakeFallbackGetInfoFails(t *testing.T) {
 	server := &fakeCoordinationServer{
 		handshake: func(*proto.HandshakeRequest) (*proto.HandshakeResponse, error) {
 			return nil, grpcstatus.Error(codes.Unimplemented, "handshake")
@@ -131,7 +131,7 @@ func TestRpcProviderHandshakeFallbackGetInfoFails(t *testing.T) {
 		},
 	}
 	node := startFakeCoordinationServer(t, server)
-	provider := NewRpcProvider(nil, "instance-0")
+	provider := NewControllerRPCProvider(nil, "instance-0")
 	t.Cleanup(func() { assert.NoError(t, provider.Close()) })
 
 	res, err := provider.Handshake(context.Background(), node, &proto.HandshakeRequest{InstanceId: "instance-0"})

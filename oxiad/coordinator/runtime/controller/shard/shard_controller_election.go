@@ -42,6 +42,7 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
+	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 )
 
@@ -81,7 +82,7 @@ type Election struct {
 	dataServerSupportedFeaturesSupplier FeaturesSupplier
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       controllerapi.ShardEventListener
-	provider                            rpc.Provider
+	provider                            rpc.ControllerRPCProvider
 	// owned status
 	namespace            string
 	shard                int64
@@ -348,7 +349,7 @@ func (e *Election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	for server, e := range followers {
 		followersMap[server.GetInternal()] = e
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, rpc.DefaultTimeout)
+	ctx, cancel := context.WithTimeout(e.ctx, commonrpc.DefaultRpcTimeout)
 	defer cancel()
 	if _, err := e.provider.BecomeLeader(ctx, leader, &proto.BecomeLeaderRequest{
 		Namespace:         e.namespace,
@@ -1025,7 +1026,7 @@ func NewElection(ctx context.Context, logger *slog.Logger, eventListener control
 	metadataStore coordmetadata.Metadata,
 	dataServerSupportedFeaturesSupplier FeaturesSupplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
-	provider rpc.Provider, namespace string, shard int64,
+	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,
 	changeEnsembleAction *action.ChangeEnsembleAction,
 	leaderElectionLatencyHistogram metric.LatencyHistogram, newTermQuorumLatencyHistogram metric.LatencyHistogram,

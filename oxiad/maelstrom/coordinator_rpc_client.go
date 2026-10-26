@@ -53,7 +53,7 @@ func (m *maelstromCoordinatorRpcProvider) Close() error {
 	return nil
 }
 
-func newRpcProvider(dispatcher *dispatcher) rpc.Provider {
+func newRpcProvider(dispatcher *dispatcher) rpc.ControllerRPCProvider {
 	provider := &maelstromCoordinatorRpcProvider{
 		dispatcher:        dispatcher,
 		assignmentStreams: map[int64]*maelstromShardAssignmentClient{},

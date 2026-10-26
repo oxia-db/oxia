@@ -305,7 +305,7 @@ func (c *coordinator) start(ctx context.Context, dispatcher *dispatcher, metadat
 
 	coordinatorRuntime, err := coordruntime.New( //nolint:contextcheck
 		metadata,
-		func(instanceID string) rpc.Provider {
+		func(instanceID string) rpc.ControllerRPCProvider {
 			return newRpcProvider(dispatcher)
 		},
 	)

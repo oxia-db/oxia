@@ -63,7 +63,7 @@ func TestCoordinator_PinsFeaturesOfDataServerStartedLate(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, coordrpc.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, coordrpc.NewControllerRPCProviderFactory(nil))
 	defer func() {
 		assert.NoError(t, coordinatorInstance.Close())
 	}()

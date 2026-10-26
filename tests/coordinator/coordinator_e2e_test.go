@@ -86,7 +86,7 @@ func TestCoordinatorE2E(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := mock.StatusSnapshot(t, metadata)
@@ -126,7 +126,7 @@ func TestCoordinatorE2E_ShardsRanges(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := mock.StatusSnapshot(t, metadata)
@@ -180,7 +180,7 @@ func TestCoordinator_LeaderFailover(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := mock.StatusSnapshot(t, metadata)
@@ -282,7 +282,7 @@ func TestCoordinator_LeaderFailoverWithOpenClient(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	metadata := coordinatorInstance.Metadata()
 
 	require.Eventually(t, func() bool {
@@ -374,7 +374,7 @@ func TestCoordinator_MultipleNamespaces(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := mock.StatusSnapshot(t, metadata)
@@ -467,7 +467,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := mock.StatusSnapshot(t, metadata)
@@ -517,7 +517,7 @@ func TestCoordinator_DeleteNamespace(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	restartedCoordinator := newCoordinatorInstance(t, metadataProvider, newConfigProvider, rpc2.NewRpcProviderFactory(nil))
+	restartedCoordinator := newCoordinatorInstance(t, metadataProvider, newConfigProvider, rpc2.NewControllerRPCProviderFactory(nil))
 	coordinatorInstance = restartedCoordinator
 
 	metadata = coordinatorInstance.Metadata()
@@ -558,7 +558,7 @@ func TestCoordinator_DynamicallAddNamespace(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := coordinatorInstance.Metadata()
 	status := mock.StatusSnapshot(t, metadata)
@@ -650,7 +650,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	assert.Equal(t, 3, len(c.ListDataServer()))
 
@@ -715,7 +715,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := c.Metadata()
 
@@ -800,7 +800,7 @@ func TestCoordinator_RefreshServerInfo(t *testing.T) {
 		Version: metadatacommon.NotExists,
 	})
 	assert.NoError(t, err)
-	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewRpcProviderFactory(nil))
+	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
 	metadata := c.Metadata()
 	// wait for all shards to be ready

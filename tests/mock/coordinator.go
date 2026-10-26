@@ -40,7 +40,7 @@ func NewCoordinator(t *testing.T, configProvider provider.Provider[*commonproto.
 		assert.NoError(t, metadata.Close())
 		assert.NoError(t, metadataFactory.Close())
 	})
-	coordinatorInstance, err := coordruntime.New(metadata, rpc2.NewRpcProviderFactory(nil))
+	coordinatorInstance, err := coordruntime.New(metadata, rpc2.NewControllerRPCProviderFactory(nil))
 	assert.NoError(t, err)
 	reconciler, err := coordreconciler.New(t.Context(), coordinatorInstance)
 	require.NoError(t, err)

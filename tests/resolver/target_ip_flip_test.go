@@ -84,7 +84,7 @@ func newCoordinatorCluster(t *testing.T, prefix string, serverCount int) *testCl
 		Version: metadatacommon.NotExists,
 	})
 	require.NoError(t, err)
-	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewRpcProviderFactory(nil))
+	cluster.coordinator = newCoordinatorInstance(t, metadataProvider, configProvider, coordinatorrpc.NewControllerRPCProviderFactory(nil))
 
 	require.Eventually(t, func() bool {
 		shard := mock.StatusSnapshot(t, cluster.coordinator.Metadata()).Namespaces[constant.DefaultNamespace].Shards[0]

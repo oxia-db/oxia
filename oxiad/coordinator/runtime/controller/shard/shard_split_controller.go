@@ -46,7 +46,7 @@ type SplitController struct {
 	splitPoint    uint32
 
 	metadata      coordmetadata.Metadata
-	rpcProvider   rpc.Provider
+	rpcProvider   rpc.ControllerRPCProvider
 	eventListener controllerapi.ShardSplitEventListener
 
 	// supportedFeaturesSupplier reports the features supported by each data
@@ -79,7 +79,7 @@ type SplitControllerConfig struct {
 	Namespace     string
 	ParentShardId int64
 	Metadata      coordmetadata.Metadata
-	RpcProvider   rpc.Provider
+	RpcProvider   rpc.ControllerRPCProvider
 	EventListener controllerapi.ShardSplitEventListener
 	// Split is the split metadata of the parent shard: its child shards and
 	// its split point.
