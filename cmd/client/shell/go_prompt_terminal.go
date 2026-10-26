@@ -15,13 +15,22 @@
 package shell
 
 import (
+	"os"
+
 	prompt "github.com/c-bata/go-prompt"
+	"golang.org/x/term"
 )
 
 // goPromptTerminal is the terminal of go-prompt, which completes the commands.
 type goPromptTerminal struct{}
 
 func (goPromptTerminal) Run(prefix string, execute func(line string) (exit bool)) {
+	// coverage-ignore: go-prompt opens /dev/tty before it applies the options
+	fd := int(os.Stdin.Fd())
+	if state, err := term.GetState(fd); err == nil {
+		// coverage-ignore: stdin is a terminal
+		defer func() { _ = term.Restore(fd, state) }()
+	}
 	// coverage-ignore: go-prompt opens /dev/tty before it applies the options
 	exit := false
 	prompt.New(
