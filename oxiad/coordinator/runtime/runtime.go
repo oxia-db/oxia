@@ -38,6 +38,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/autosplit"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
@@ -45,7 +46,6 @@ import (
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/autosplit"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
