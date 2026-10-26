@@ -1168,13 +1168,22 @@ func (l *testLeaderController) Freeze(request *proto.FreezeShardRequest) (*proto
 }
 
 type testSequenceWaiter struct {
-	database.SequenceWaiter
 	ch     chan string
 	closed bool
 }
 
-func (w *testSequenceWaiter) Ch() <-chan string { return w.ch }
-func (w *testSequenceWaiter) Close() error {
+func (w *testSequenceWaiter) Next(ctx context.Context) (string, error) {
+	select {
+	case key, more := <-w.ch:
+		if !more {
+			return "", io.EOF
+		}
+		return key, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (w *testSequenceWaiter) Close() {
 	w.closed = true
-	return nil
 }

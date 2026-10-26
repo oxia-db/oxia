@@ -16,6 +16,8 @@ package database
 
 import (
 	"context"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -23,116 +25,163 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSequencesWaitTracker(t *testing.T) {
+func TestSequenceWaiterTrackerAddSequenceWaiterReturnsTheLastKey(t *testing.T) {
 	swt := NewSequencesWaitTracker()
 
-	w1 := addSequenceWaiter(t, swt, "key-1")
-	w2 := addSequenceWaiter(t, swt, "key-2")
+	w, err := swt.AddSequenceWaiter("key", func() (string, bool, error) { return "key-1", true, nil })
+	require.NoError(t, err)
+	defer w.Close()
 
-	assert.Empty(t, w1.Ch())
-	assert.Empty(t, w2.Ch())
-
-	swt.SequenceUpdated("non-existing", "non-existing-123")
-	assert.Empty(t, w1.Ch())
-	assert.Empty(t, w2.Ch())
-
-	swt.SequenceUpdated("key-1", "key-1-123")
-	x1, err := w1.Receive(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, "key-1-123", x1)
-	assert.Empty(t, w2.Ch())
-
-	swt.SequenceUpdated("key-2", "key-2-456")
-	assert.Empty(t, w1.Ch())
-	x2, err := w2.Receive(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, "key-2-456", x2)
-
-	w3 := addSequenceWaiter(t, swt, "key-1")
-
-	swt.SequenceUpdated("key-1", "key-1-890")
-	x3 := <-w1.Ch()
-	assert.Equal(t, "key-1-890", x3)
-	x4 := <-w3.Ch()
-	assert.Equal(t, "key-1-890", x4)
-	assert.Empty(t, w2.Ch())
-
-	assert.NoError(t, w1.Close())
-
-	swt.SequenceUpdated("key-1", "key-1-234")
-	assert.Empty(t, w1.Ch())
-	x5 := <-w3.Ch()
-	assert.Equal(t, "key-1-234", x5)
-	assert.Empty(t, w2.Ch())
-
-	assert.Empty(t, w3.Ch())
-
-	ch3 := w3.Ch()
-	_ = w3.Close()
-	swt.SequenceUpdated("key-1", "key-1-234")
-	assert.Empty(t, ch3)
-}
-
-func TestSequencesWaitTrackerMultipleClose(t *testing.T) {
-	swt := NewSequencesWaitTracker()
-
-	w1 := addSequenceWaiter(t, swt, "key-1")
-	assert.Empty(t, swt.Close())
-
-	assert.NoError(t, w1.Close())
-}
-
-// A waiter that closes while the tracker closes is closed once.
-func TestSequencesWaitTrackerCloseRacingWaiterClose(t *testing.T) {
-	swt := NewSequencesWaitTracker().(*sequenceWaiterTracker)
-	w := addSequenceWaiter(t, swt, "key-1")
-
-	// The waiter is closing, and waits for the tracker to remove it
-	swt.Lock()
-	closed := make(chan error)
-	go func() { closed <- w.Close() }()
-	assert.Eventually(t, w.closed.Load, 10*time.Second, time.Millisecond)
-
-	// What the tracker does with it, closing
-	w.closeWithoutLock()
-	swt.Unlock()
-	assert.NoError(t, <-closed)
-
-	_, open := <-w.Ch()
-	assert.False(t, open)
-	assert.Empty(t, swt.waiters)
+	assert.Equal(t, "key-1", nextKey(t, w))
+	assertNoNextKey(t, w)
 }
 
 // A commit that the read of the last key misses must not be overridden by the
 // key that the read returns.
-func TestSequencesWaitTrackerAddSequenceWaiterKeepsNewerKey(t *testing.T) {
+func TestSequenceWaiterTrackerAddSequenceWaiterKeepsNewerKey(t *testing.T) {
 	swt := NewSequencesWaitTracker()
 
-	updated := make(chan struct{})
 	w, err := swt.AddSequenceWaiter("key", func() (string, bool, error) {
 		// The commit of key-2 completes while the read returns key-1
-		go func() {
-			swt.SequenceUpdated("key", "key-2")
-			close(updated)
-		}()
-		select {
-		case <-updated:
-		case <-time.After(100 * time.Millisecond):
-		}
+		swt.SequenceUpdated("key", "key-2")
 		return "key-1", true, nil
 	})
 	require.NoError(t, err)
-	<-updated
+	defer w.Close()
 
-	last, err := w.Receive(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, "key-2", last)
-	assert.NoError(t, w.Close())
+	assert.Equal(t, "key-2", nextKey(t, w))
+	assertNoNextKey(t, w)
 }
 
-func addSequenceWaiter(t *testing.T, swt SequenceWaiterTracker, key string) *sequenceWaiter {
+func TestSequenceWaiterTrackerAddSequenceWaiterFailsWhenTheReadFails(t *testing.T) {
+	swt := NewSequencesWaitTracker().(*sequenceWaiterTracker)
+	readErr := errors.New("read failure")
+
+	w, err := swt.AddSequenceWaiter("key", func() (string, bool, error) { return "", false, readErr })
+	assert.ErrorIs(t, err, readErr)
+	assert.Nil(t, w)
+	assert.Empty(t, swt.sequences)
+}
+
+func TestSequenceWaiterTrackerSequenceUpdated(t *testing.T) {
+	swt := NewSequencesWaitTracker()
+	w1 := addSequenceWaiter(t, swt, "key-1")
+	w2 := addSequenceWaiter(t, swt, "key-2")
+	w3 := addSequenceWaiter(t, swt, "key-1")
+
+	swt.SequenceUpdated("non-existing", "non-existing-123")
+	swt.SequenceUpdated("key-1", "key-1-123")
+	assert.Equal(t, "key-1-123", nextKey(t, w1))
+	assert.Equal(t, "key-1-123", nextKey(t, w3))
+	assertNoNextKey(t, w2)
+
+	// An older or the same key is not a new last key
+	swt.SequenceUpdated("key-1", "key-1-100")
+	swt.SequenceUpdated("key-1", "key-1-123")
+	assertNoNextKey(t, w1)
+
+	// Only the last of the keys updated meanwhile is returned
+	swt.SequenceUpdated("key-1", "key-1-456")
+	swt.SequenceUpdated("key-1", "key-1-789")
+	assert.Equal(t, "key-1-789", nextKey(t, w1))
+
+	w1.Close()
+	w2.Close()
+	w3.Close()
+}
+
+func TestSequenceWaiterNextWaitsForANewKey(t *testing.T) {
+	swt := NewSequencesWaitTracker()
+	w := addSequenceWaiter(t, swt, "key")
+	defer w.Close()
+
+	next := make(chan string)
+	go func() {
+		key, err := w.Next(context.Background())
+		assert.NoError(t, err)
+		next <- key
+	}()
+	swt.SequenceUpdated("key", "key-1")
+	assert.Equal(t, "key-1", <-next)
+}
+
+func TestSequenceWaiterNextReturnsWhenTheContextIsDone(t *testing.T) {
+	swt := NewSequencesWaitTracker()
+	w := addSequenceWaiter(t, swt, "key")
+	defer w.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := w.Next(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSequenceWaiterCloseRemovesTheSequenceWithItsLastWaiter(t *testing.T) {
+	swt := NewSequencesWaitTracker().(*sequenceWaiterTracker)
+	w1 := addSequenceWaiter(t, swt, "key")
+	w2 := addSequenceWaiter(t, swt, "key")
+
+	w1.Close()
+	w1.Close()
+	assert.Contains(t, swt.sequences, "key")
+
+	w2.Close()
+	assert.Empty(t, swt.sequences)
+
+	// A key of a sequence without waiters is not kept
+	swt.SequenceUpdated("key", "key-1")
+	w3 := addSequenceWaiter(t, swt, "key")
+	defer w3.Close()
+	assertNoNextKey(t, w3)
+}
+
+func TestSequenceWaiterTrackerCloseEndsTheWaiters(t *testing.T) {
+	swt := NewSequencesWaitTracker()
+	w := addSequenceWaiter(t, swt, "key")
+	swt.SequenceUpdated("key", "key-1")
+
+	swt.Close()
+	_, err := w.Next(context.Background())
+	assert.ErrorIs(t, err, io.EOF)
+	w.Close()
+
+	// A waiter added once the tracker is closed is closed too
+	w = addSequenceWaiter(t, swt, "key")
+	_, err = w.Next(context.Background())
+	assert.ErrorIs(t, err, io.EOF)
+	w.Close()
+}
+
+func addSequenceWaiter(t *testing.T, swt SequenceWaiterTracker, key string) SequenceWaiter {
 	t.Helper()
 	w, err := swt.AddSequenceWaiter(key, func() (string, bool, error) { return "", false, nil })
 	require.NoError(t, err)
 	return w
+}
+
+func nextKey(t *testing.T, w SequenceWaiter) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	key, err := w.Next(ctx)
+	require.NoError(t, err)
+	return key
+}
+
+func assertNoNextKey(t *testing.T, w SequenceWaiter) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := w.Next(ctx)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// dropNextKey drops the last key of the sequence, if there is one.
+func dropNextKey(t *testing.T, w SequenceWaiter) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := w.Next(ctx); err != nil {
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	}
 }

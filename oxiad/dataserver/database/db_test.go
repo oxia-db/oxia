@@ -1641,10 +1641,7 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 
 			sw, err := db.GetSequenceUpdates(test.put.Key)
 			assert.NoError(t, err)
-			select { // Drop the current last key of the sequence
-			case <-sw.Ch():
-			default:
-			}
+			dropNextKey(t, sw)
 
 			// Without the feature, the whole write request is rejected
 			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
@@ -1671,9 +1668,9 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 			assert.EqualValues(t, 2, commitOffset)
 
 			assert.Equal(t, append(keys, "valid"), keyIteratorToSlice(db.List(&proto.ListRequest{})))
-			assert.Empty(t, sw.Ch())
+			assertNoNextKey(t, sw)
 
-			assert.NoError(t, sw.Close())
+			sw.Close()
 			assert.NoError(t, db.Close())
 			assert.NoError(t, factory.Close())
 		})
@@ -1952,7 +1949,7 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	sw, err := db.GetSequenceUpdates("a")
 	assert.NoError(t, err)
 
-	assert.Empty(t, sw.Ch())
+	assertNoNextKey(t, sw)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "a",
@@ -1962,7 +1959,7 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	}}}, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
-	n1 := <-sw.Ch()
+	n1 := nextKey(t, sw)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 3), n1)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1979,17 +1976,17 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Only get notification of the last value
-	n2 := <-sw.Ch()
+	n2 := nextKey(t, sw)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 18), n2)
 
-	assert.Empty(t, sw.Ch())
-	assert.NoError(t, sw.Close())
+	assertNoNextKey(t, sw)
+	sw.Close()
 
 	// Create a new one will get notification of existing last key
 	sw2, err := db.GetSequenceUpdates("a")
 	assert.NoError(t, err)
 
-	n2 = <-sw2.Ch()
+	n2 = nextKey(t, sw2)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 18), n2)
 
 	assert.NoError(t, db.Close())
@@ -2015,7 +2012,7 @@ func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
 		SequenceKeyDelta: []uint64{1, 1},
 	}}}, 0, 0, NoOpCallback)
 	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 1, 1), <-sw.Ch())
+	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 1, 1), nextKey(t, sw))
 
 	for offset, request := range []*proto.WriteRequest{{
 		// Fewer deltas than the parts of the sequence
@@ -2040,10 +2037,10 @@ func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
 	}} {
 		_, err = db.ProcessWrite(request, int64(offset)+1, 0, NoOpCallback)
 		assert.ErrorIs(t, err, ErrWriteRejected)
-		assert.Empty(t, sw.Ch())
+		assertNoNextKey(t, sw)
 	}
 
-	assert.NoError(t, sw.Close())
+	sw.Close()
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
 }
@@ -2879,7 +2876,7 @@ func TestDBGetSequenceUpdatesFailsWhenScanFails(t *testing.T) {
 	sw, err := d.GetSequenceUpdates("a")
 	assert.ErrorIs(t, err, errInjected)
 	assert.Nil(t, sw)
-	assert.Empty(t, d.sequenceWaiterTracker.(*sequenceWaiterTracker).waiters)
+	assert.Empty(t, d.sequenceWaiterTracker.(*sequenceWaiterTracker).sequences)
 }
 
 func TestGetStorageEntryMetadataFailsWhenReleaseFails(t *testing.T) {

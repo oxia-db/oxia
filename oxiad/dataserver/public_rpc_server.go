@@ -550,21 +550,18 @@ func (s *publicRpcServer) GetSequenceUpdates(req *proto.GetSequenceUpdatesReques
 		return constant.IntoGrpcStatusError(err)
 	}
 
-	defer func() {
-		_ = sequenceWaiter.Close()
-	}()
+	defer sequenceWaiter.Close()
 
 	for {
-		select {
-		case newKey, more := <-sequenceWaiter.Ch():
-			if !more {
-				return nil
-			}
-			if err = stream.Send(&proto.GetSequenceUpdatesResponse{HighestSequenceKey: newKey}); err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return ctx.Err()
+		newKey, err := sequenceWaiter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err = stream.Send(&proto.GetSequenceUpdatesResponse{HighestSequenceKey: newKey}); err != nil {
+			return err
 		}
 	}
 }

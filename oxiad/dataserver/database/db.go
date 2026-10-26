@@ -355,8 +355,8 @@ func (d *db) ResetChecksum() {
 }
 
 func (d *db) Close() error {
+	d.sequenceWaiterTracker.Close()
 	return multierr.Combine(
-		d.sequenceWaiterTracker.Close(),
 		d.notificationsTracker.Close(),
 		d.kv.Close(),
 	)
@@ -372,8 +372,8 @@ func (d *db) Stats() *proto.ShardStats {
 }
 
 func (d *db) Delete() error {
+	d.sequenceWaiterTracker.Close()
 	return multierr.Combine(
-		d.sequenceWaiterTracker.Close(),
 		d.notificationsTracker.Close(),
 		d.kv.Delete(),
 	)
@@ -776,29 +776,30 @@ func (d *db) Get(request *proto.GetRequest) (*proto.GetResponse, error) {
 func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 	d.getSequenceUpdatesCounter.Add(1)
 
-	sw, err := d.sequenceWaiterTracker.AddSequenceWaiter(prefixKey, func() (string, bool, error) {
-		it, err := d.kv.KeyRangeScanReverse(
-			fmt.Sprintf("%s-%020d", prefixKey, 0),
-			fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
-			kvstore.NoInternalKeys)
-		if err != nil {
-			return "", false, err
-		}
-		lastKey, found := "", it.Valid()
-		if found {
-			lastKey = it.Key()
-		}
-
-		// The iterator is also invalid when the read failed: Close returns the error
-		if err := it.Close(); err != nil {
-			return "", false, errors.Wrap(err, "failed to read the last key of the sequence")
-		}
-		return lastKey, found, nil
+	return d.sequenceWaiterTracker.AddSequenceWaiter(prefixKey, func() (string, bool, error) {
+		return d.readLastSequenceKey(prefixKey)
 	})
+}
+
+// readLastSequenceKey returns the last key of the sequence, and whether it has one.
+func (d *db) readLastSequenceKey(prefixKey string) (string, bool, error) {
+	it, err := d.kv.KeyRangeScanReverse(
+		fmt.Sprintf("%s-%020d", prefixKey, 0),
+		fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
+		kvstore.NoInternalKeys)
 	if err != nil {
-		return nil, err
+		return "", false, err
 	}
-	return sw, nil
+	lastKey, found := "", it.Valid()
+	if found {
+		lastKey = it.Key()
+	}
+
+	// The iterator is also invalid when the read failed: Close returns the error
+	if err := it.Close(); err != nil {
+		return "", false, errors.Wrap(err, "failed to read the last key of the sequence")
+	}
+	return lastKey, found, nil
 }
 
 type listIterator struct {

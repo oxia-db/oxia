@@ -18,150 +18,143 @@ import (
 	"context"
 	"io"
 	"sync"
-	"sync/atomic"
 
-	"github.com/oxia-db/oxia/common/channel"
+	"github.com/oxia-db/oxia/oxiad/common/watch"
 )
 
 type SequenceWaiter interface {
-	io.Closer
+	// Next waits until the last key of the sequence is newer than the one it
+	// returned before, and returns it. It returns io.EOF once the tracker is
+	// closed.
+	Next(ctx context.Context) (string, error)
 
-	Receive(context.Context) (string, error)
-
-	Ch() <-chan string
+	Close()
 }
 
 type SequenceWaiterTracker interface {
-	io.Closer
-	// AddSequenceWaiter registers a waiter for the sequence, and sends it the last
-	// key that loadFunc returns, unless SequenceUpdated sent it a key during the
-	// read, so the read can't override a newer key. The waiter is registered
-	// before the read, so a commit that the read misses sends its key.
-	AddSequenceWaiter(key string, loadFunc func() (string, bool, error)) (*sequenceWaiter, error)
+	// AddSequenceWaiter registers a waiter for the sequence, and gives it the
+	// last key that loadFunc returns, unless a newer one was already updated.
+	// The waiter is registered before the read, so a commit that the read misses
+	// still updates it.
+	AddSequenceWaiter(key string, loadFunc func() (string, bool, error)) (SequenceWaiter, error)
 	SequenceUpdated(prefixKey string, lastSequenceKey string)
+	Close()
 }
 
-type sequenceWaiterID int64
+// lastSequenceKey is the last key of a sequence that the waiters see, or
+// closed once the tracker is closed.
+type lastSequenceKey struct {
+	key    string
+	closed bool
+}
+
+type sequenceWatch struct {
+	watch   *watch.Watch[lastSequenceKey]
+	waiters int
+}
 
 type sequenceWaiterTracker struct {
-	sync.RWMutex
-	waiters map[string]map[sequenceWaiterID]*sequenceWaiter
-	idGen   atomic.Int64
+	sync.Mutex
+	// sequences holds the last key of each sequence that has waiters. Owner:
+	// the tracker, which creates a sequence's watch with its first waiter,
+	// publishes newer keys, and removes it with its last waiter. Borrowers: the
+	// waiters, which only receive from the watch. Guarded by the tracker's lock.
+	sequences map[string]*sequenceWatch
+	closed    bool
 }
-
-type sequenceWaiter struct {
-	key     string
-	id      sequenceWaiterID
-	och     channel.OverrideChannel[string]
-	tracker *sequenceWaiterTracker
-
-	closed atomic.Bool
-	// updated is set once SequenceUpdated sends the waiter a key
-	updated atomic.Bool
-}
-
-func (sw *sequenceWaiter) Receive(ctx context.Context) (string, error) {
-	return sw.och.Receive(ctx)
-}
-
-func (sw *sequenceWaiter) Ch() <-chan string {
-	return sw.och.Ch()
-}
-
-func (sw *sequenceWaiter) closeWithoutLock() {
-	if !sw.closed.CompareAndSwap(false, true) {
-		return
-	}
-	sw.tracker.removeWithoutLock(sw.key, sw.id)
-	close(sw.och.Ch())
-}
-
-func (sw *sequenceWaiter) Close() error {
-	if !sw.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-	sw.tracker.remove(sw.key, sw.id)
-	close(sw.och.Ch())
-	return nil
-}
-
-// ////////////////////////////////////////////////////////////////////////////
 
 func NewSequencesWaitTracker() SequenceWaiterTracker {
 	return &sequenceWaiterTracker{
-		waiters: map[string]map[sequenceWaiterID]*sequenceWaiter{},
+		sequences: map[string]*sequenceWatch{},
 	}
 }
 
 func (swt *sequenceWaiterTracker) AddSequenceWaiter(key string,
-	loadFunc func() (string, bool, error)) (*sequenceWaiter, error) {
+	loadFunc func() (string, bool, error)) (SequenceWaiter, error) {
 	swt.Lock()
-	im, existing := swt.waiters[key]
-	if !existing {
-		im = map[sequenceWaiterID]*sequenceWaiter{}
-		swt.waiters[key] = im
+	sequence, ok := swt.sequences[key]
+	if !ok {
+		sequence = &sequenceWatch{watch: watch.New(lastSequenceKey{closed: swt.closed})}
+		if !swt.closed {
+			swt.sequences[key] = sequence
+		}
 	}
-
-	id := sequenceWaiterID(swt.idGen.Add(1))
-	sw := &sequenceWaiter{key: key, id: id, och: channel.NewOverrideChannel[string](), tracker: swt}
-	im[id] = sw
+	sequence.waiters++
+	sw := &sequenceWaiter{tracker: swt, key: key, receiver: sequence.watch.Subscribe()}
 	swt.Unlock()
 
-	// Registered first: a commit that the read misses sends its key
 	lastKey, found, err := loadFunc()
 	if err != nil {
-		_ = sw.Close()
+		sw.Close()
 		return nil, err
 	}
 	if found {
-		swt.Lock()
-		// Once SequenceUpdated sends a key, it sends the key of every later
-		// commit too: the waiter gets the read's key, or a newer one, anyway
-		if !sw.updated.Load() && !sw.closed.Load() {
-			sw.och.WriteLast(lastKey)
-		}
-		swt.Unlock()
+		swt.SequenceUpdated(key, lastKey)
 	}
 	return sw, nil
 }
 
-func (swt *sequenceWaiterTracker) removeWithoutLock(key string, id sequenceWaiterID) {
-	// The waiters of the key are gone when the tracker closed first
-	im := swt.waiters[key]
-	delete(im, id)
-	if len(im) == 0 {
-		delete(swt.waiters, key)
-	}
-}
-
-func (swt *sequenceWaiterTracker) remove(key string, id sequenceWaiterID) {
-	swt.Lock()
-	defer swt.Unlock()
-	swt.removeWithoutLock(key, id)
-}
-
-func (swt *sequenceWaiterTracker) SequenceUpdated(prefixKey string, lastSequenceKey string) {
-	swt.RLock()
-	defer swt.RUnlock()
-
-	for _, w := range swt.waiters[prefixKey] {
-		w.updated.Store(true)
-		w.och.WriteLast(lastSequenceKey)
-	}
-}
-
-func (swt *sequenceWaiterTracker) Close() error {
+// SequenceUpdated publishes the last key of a sequence to its waiters, unless
+// they already have a newer one: the keys of a sequence are zero-padded, so
+// they order as strings.
+func (swt *sequenceWaiterTracker) SequenceUpdated(prefixKey string, lastKey string) {
 	swt.Lock()
 	defer swt.Unlock()
 
-	for _, m := range swt.waiters {
-		for _, w := range m {
-			w.closeWithoutLock()
+	if sequence, ok := swt.sequences[prefixKey]; ok && lastKey > sequence.watch.Load().key {
+		sequence.watch.Publish(lastSequenceKey{key: lastKey})
+	}
+}
+
+func (swt *sequenceWaiterTracker) remove(key string) {
+	swt.Lock()
+	defer swt.Unlock()
+
+	if sequence, ok := swt.sequences[key]; ok {
+		sequence.waiters--
+		if sequence.waiters == 0 {
+			delete(swt.sequences, key)
 		}
-
-		clear(m)
 	}
+}
 
-	clear(swt.waiters)
-	return nil
+func (swt *sequenceWaiterTracker) Close() {
+	swt.Lock()
+	defer swt.Unlock()
+
+	swt.closed = true
+	for _, sequence := range swt.sequences {
+		sequence.watch.Publish(lastSequenceKey{key: sequence.watch.Load().key, closed: true})
+	}
+	clear(swt.sequences)
+}
+
+type sequenceWaiter struct {
+	tracker  *sequenceWaiterTracker
+	key      string
+	receiver *watch.Receiver[lastSequenceKey]
+	lastKey  string
+	once     sync.Once
+}
+
+func (sw *sequenceWaiter) Next(ctx context.Context) (string, error) {
+	for {
+		last := sw.receiver.Load()
+		if last.closed {
+			return "", io.EOF
+		}
+		if last.key != sw.lastKey {
+			sw.lastKey = last.key
+			return last.key, nil
+		}
+		select {
+		case <-sw.receiver.Changed():
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+}
+
+func (sw *sequenceWaiter) Close() {
+	sw.once.Do(func() { sw.tracker.remove(sw.key) })
 }

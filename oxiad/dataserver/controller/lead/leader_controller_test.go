@@ -2771,7 +2771,8 @@ func TestLeaderController_GetSequenceUpdates(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	u1 := <-waiter.Ch()
+	u1, err := waiter.Next(ctx)
+	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 6), u1)
 
 	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
@@ -2782,14 +2783,15 @@ func TestLeaderController_GetSequenceUpdates(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	u2 := <-waiter.Ch()
+	u2, err := waiter.Next(ctx)
+	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 11), u2)
-
-	assert.Empty(t, waiter.Ch())
 
 	// When the context is canceled the method should return
 	cancel()
-	assert.NoError(t, waiter.Close())
+	_, err = waiter.Next(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
+	waiter.Close()
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
