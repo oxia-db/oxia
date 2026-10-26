@@ -17,8 +17,8 @@ package coordinator
 import (
 	"testing"
 
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 
 	"github.com/stretchr/testify/assert"

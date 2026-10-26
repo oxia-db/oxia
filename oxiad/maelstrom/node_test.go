@@ -29,8 +29,8 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 

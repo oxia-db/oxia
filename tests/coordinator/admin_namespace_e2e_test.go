@@ -25,9 +25,9 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordserver "github.com/oxia-db/oxia/oxiad/coordinator"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 

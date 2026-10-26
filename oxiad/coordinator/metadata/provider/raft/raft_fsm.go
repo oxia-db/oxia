@@ -24,7 +24,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/failpoint"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 )
 
 type raftOpCmd struct {

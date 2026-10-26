@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 )
 
 func TestStateContainerApplySupportsV0163StatusLog(t *testing.T) {

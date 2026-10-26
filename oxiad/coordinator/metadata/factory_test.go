@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )

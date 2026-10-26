@@ -23,8 +23,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,10 +33,10 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 )
 
 func dataServer(name *string, public, internal string) *proto.DataServerIdentity {

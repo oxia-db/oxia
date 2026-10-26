@@ -21,7 +21,7 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/oxiad/common/cache"
-	metadataconstant "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
+	metadataconstant "github.com/oxia-db/oxia/oxiad/common/metadata"
 )
 
 var ErrCoordinatorLeaderUnavailable = errors.New("coordinator leader unavailable")

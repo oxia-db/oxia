@@ -35,13 +35,13 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
+	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc/rpctest"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/ensemble"
-	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/dataserver"
-	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/shard"
 )
 
 const (

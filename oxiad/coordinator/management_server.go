@@ -26,8 +26,8 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 

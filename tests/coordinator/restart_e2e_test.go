@@ -27,10 +27,10 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
+	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordserver "github.com/oxia-db/oxia/oxiad/coordinator"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common"
-	metadatacodec "github.com/oxia-db/oxia/oxiad/coordinator/metadata/common/codec"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 )

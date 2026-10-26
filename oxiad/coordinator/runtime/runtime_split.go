@@ -24,7 +24,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
-	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/runtime/controller/shard"
+	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 )
 
 // InitiateSplit validates and initiates a shard split. It creates child shards
