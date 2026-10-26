@@ -60,6 +60,8 @@ func init() {
 
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Internal.BindAddress, "internal-addr", "i", fmt.Sprintf("0.0.0.0:%d", constant.DefaultInternalPort), "Internal service bind address")
 	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Public.BindAddress, "public-addr", "p", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Public service bind address")
+	Cmd.Flags().StringVarP(&coordinatorOptions.Server.Public.BindAddress, "admin-addr", "a", fmt.Sprintf("0.0.0.0:%d", constant.DefaultAdminPort), "Deprecated public service bind address")
+	_ = Cmd.Flags().MarkDeprecated("admin-addr", "--admin-addr and its short form -a are deprecated; use --public-addr or -p")
 
 	observability := &coordinatorOptions.Observability
 	Cmd.Flags().StringVarP(&observability.Metric.BindAddress, "metrics-addr", "m", fmt.Sprintf("0.0.0.0:%d", oxiadcommonoption.DefaultMetricsPort), "Metrics service bind address")

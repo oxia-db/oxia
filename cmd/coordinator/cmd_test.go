@@ -407,6 +407,20 @@ metadata:
 	assert.Equal(t, "memory", coordinatorOptions.Metadata.ProviderName)
 }
 
+func TestCoordinatorDeprecatedAdminAddrSetsPublicAddr(t *testing.T) {
+	publicAddr := Cmd.Flags().Lookup("public-addr")
+	original := publicAddr.Value.String()
+	defer func() { require.NoError(t, publicAddr.Value.Set(original)) }()
+
+	require.NoError(t, Cmd.Flags().Parse([]string{"-a", "127.0.0.1:7000"}))
+	assert.Equal(t, "127.0.0.1:7000", publicAddr.Value.String())
+
+	require.NoError(t, Cmd.Flags().Parse([]string{"--admin-addr", "127.0.0.1:7002"}))
+	assert.Equal(t, "127.0.0.1:7002", publicAddr.Value.String())
+
+	assert.NotEmpty(t, Cmd.Flags().Lookup("admin-addr").Deprecated)
+}
+
 func TestCoordinatorRunsUntilItsContextIsDone(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
