@@ -33,10 +33,10 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer"
 )
 
 func dataServer(name *string, public, internal string) *proto.DataServerIdentity {

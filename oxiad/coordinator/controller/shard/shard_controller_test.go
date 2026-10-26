@@ -57,7 +57,7 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/leader"
+	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 )
 
 var namespaceConfig = &proto.Namespace{

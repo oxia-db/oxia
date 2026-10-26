@@ -19,7 +19,7 @@ import (
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
 )
 
 func DefaultShardsRank(params *model.RatioParams) *model.Ratio {

@@ -15,7 +15,7 @@
 package single
 
 import (
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 var _ selector.Selector[*Context, string] = &lowerestLoadSelector{}

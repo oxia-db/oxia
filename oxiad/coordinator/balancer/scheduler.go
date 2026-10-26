@@ -26,11 +26,11 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/state"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/single"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 

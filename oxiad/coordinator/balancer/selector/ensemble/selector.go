@@ -18,8 +18,8 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/single"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
 )
 
 var _ selector.Selector[*Context, []string] = &ensemble{}

@@ -20,8 +20,8 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/state"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/state"
 )
 
 type Context struct {

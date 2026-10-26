@@ -12,22 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ensemble
+package balancer
 
 import (
-	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+	"context"
+	"io"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
 
-type Context struct {
-	Candidates         *linkedhashset.Set[string]
-	CandidatesMetadata map[string]*commonproto.DataServerMetadata
-	AntiAffinities     []*commonproto.AntiAffinity
-	Namespace          string
-	Shard              int64
-	Replicas           int
+type Options struct {
+	context.Context
 
-	LoadRatioSupplier func() *model.Ratio
+	Metadata coordmetadata.Metadata
+
+	LoadBalancerConfig *commonproto.LoadBalancer
+
+	NodeAvailableJudger func(nodeID string) bool
+}
+
+type LoadBalancer interface {
+	io.Closer
+
+	Start()
+
+	Trigger()
+
+	Action() <-chan action.Action
+
+	IsBalanced() bool
+
+	LoadRatioAlgorithm() selector.LoadRatioAlgorithm
 }

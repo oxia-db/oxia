@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	balancerselector "github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
+	balancerselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestFinalSelectorIgnoresCandidateInsertionOrder(t *testing.T) {

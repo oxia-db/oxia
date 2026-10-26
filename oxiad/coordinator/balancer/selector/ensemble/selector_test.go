@@ -22,8 +22,8 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/runtime/balancer/selector/single"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
+	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
 )
 
 func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
