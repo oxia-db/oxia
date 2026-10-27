@@ -18,6 +18,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -87,7 +89,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 	defer m.mu.Unlock()
 
 	if snapshot.Version != m.version {
-		return nil, metadatacommon.ErrBadVersion
+		return nil, errs.ErrMetadataBadVersion
 	}
 
 	m.value = m.codec.Clone(snapshot.Value)

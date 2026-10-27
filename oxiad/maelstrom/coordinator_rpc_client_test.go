@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	pb "google.golang.org/protobuf/proto"
@@ -295,10 +297,10 @@ func TestBaseStreamPanicsOnUnsupportedCalls(t *testing.T) {
 	stream := &BaseStream{}
 	require.NoError(t, stream.CloseSend())
 	require.NoError(t, stream.Context().Err())
-	require.PanicsWithValue(t, ErrNotImplement, func() { _, _ = stream.Header() })
-	require.PanicsWithValue(t, ErrNotImplement, func() { _ = stream.Trailer() })
-	require.PanicsWithValue(t, ErrNotImplement, func() { _ = stream.SendMsg(nil) })
-	require.PanicsWithValue(t, ErrNotImplement, func() { _ = stream.RecvMsg(nil) })
+	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _, _ = stream.Header() })
+	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _ = stream.Trailer() })
+	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _ = stream.SendMsg(nil) })
+	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _ = stream.RecvMsg(nil) })
 }
 
 func TestMaelstromHealthCheckClientWatchStreamsServingUntilClosed(t *testing.T) {

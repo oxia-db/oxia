@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -44,27 +46,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	oxiatime "github.com/oxia-db/oxia/common/time"
-)
-
-var (
-	ErrNotReadyForChangeEnsemble         = errors.New("shard is not ready for change ensemble, please retry later")
-	ErrInvalidChangeEnsemble             = errors.New("invalid change ensemble")
-	ErrFollowerNotCaughtUp               = errors.New("follower not caught up yet")
-	ErrElectionFailed                    = errors.New("the election failed to elect a leader")
-	ErrChangeEnsembleLosesFeatureSupport = errors.New(
-		"change ensemble would remove support for negotiated shard features")
-	ErrChangeEnsembleLosesEntries = errors.New(
-		"change ensemble would lose entries of the removed data servers that may be committed")
-
-	// ErrFeaturesRenegotiation makes the election retry with a new term, so
-	// that it can pin a different feature set than the one it fenced the
-	// ensemble with.
-	ErrFeaturesRenegotiation = errors.New("the term features must be negotiated again")
-
-	// ErrTermFeaturesNotReported is returned when the leader of the shard
-	// doesn't report the features pinned by its term, because it runs a
-	// binary that predates the report.
-	ErrTermFeaturesNotReported = errors.New("the leader doesn't report the features pinned by its term")
 )
 
 type Election struct {
@@ -402,10 +383,10 @@ func (e *Election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 						slog.Int64("leader-head-offset", leaderEntry.Offset),
 						slog.Int64("follower-head-offset", followerHeadOffset),
 					)
-					return ErrFollowerNotCaughtUp
+					return errs.ErrFollowerNotCaughtUp
 				}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
 					switch {
-					case errors.Is(err, ErrFollowerNotCaughtUp):
+					case errors.Is(err, errs.ErrFollowerNotCaughtUp):
 					case errors.Is(err, constant.ErrNodeIsNotMember):
 						e.logger.Info("Follower has not been added by leader yet",
 							slog.Any("server", server),
@@ -595,7 +576,7 @@ func (e *Election) checkRemovedEntries(candidatesStatus map[*proto.DataServerIde
 		slog.Any("removed-data-servers-ahead", ahead),
 		slog.Any("data-servers-not-fenced", missing),
 	)
-	return ErrChangeEnsembleLosesEntries
+	return errs.ErrChangeEnsembleLosesEntries
 }
 
 func isAhead(a *proto.EntryId, b *proto.EntryId) bool {
@@ -903,14 +884,14 @@ func (e *Election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	// failing every election until they are back.
 	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
 		e.requiredFeatures = unionFeatures(e.requiredFeatures, enabled)
-		return fmt.Errorf("%w: features %v are already enabled on the shard", ErrFeaturesRenegotiation, missing)
+		return fmt.Errorf("%w: features %v are already enabled on the shard", errs.ErrFeaturesRenegotiation, missing)
 	}
 
 	// A handshake completed while fencing the ensemble: pin the features that
 	// the whole ensemble supports now, or they would stay disabled until the
 	// next election.
 	if added := feature.Missing(negotiate(features, len(ensemble)), negotiated); len(added) > 0 {
-		return fmt.Errorf("%w: the ensemble now supports features %v", ErrFeaturesRenegotiation, added)
+		return fmt.Errorf("%w: the ensemble now supports features %v", errs.ErrFeaturesRenegotiation, added)
 	}
 	return nil
 }
@@ -995,7 +976,7 @@ func (e *Election) Start() *proto.DataServerIdentity {
 			)
 			return
 		}
-		if errors.Is(err, ErrFeaturesRenegotiation) {
+		if errors.Is(err, errs.ErrFeaturesRenegotiation) {
 			e.logger.Info(
 				"Leader election is retrying to pin a different feature set",
 				slog.Int64("term", term),

@@ -17,11 +17,11 @@ package single
 import (
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	balancerselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestFinalSelectorIgnoresCandidateInsertionOrder(t *testing.T) {
@@ -76,5 +76,5 @@ func TestFinalSelectorAdvancesWithReplicaOrdinal(t *testing.T) {
 func TestFinalSelectorSelectFailsWithoutCandidates(t *testing.T) {
 	_, err := (&finalSelector{}).Select(&Context{Candidates: linkedhashset.New[string]()})
 
-	assert.ErrorIs(t, err, balancerselector.ErrNoFunctioning)
+	assert.ErrorIs(t, err, errs.ErrNoFunctioning)
 }

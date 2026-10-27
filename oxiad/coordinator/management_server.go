@@ -20,13 +20,14 @@ import (
 	"log/slog"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/validation"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
@@ -180,10 +181,10 @@ func (management *ManagementServer) CreateDataServer(_ context.Context, req *pro
 
 	err = runtime.Metadata().CreateDataServer(req.DataServer)
 	if err != nil {
-		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
+		if errors.Is(err, errs.ErrMetadataAlreadyExists) {
 			return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q already exists", req.DataServer.GetNameOrDefault())
 		}
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
+		if errors.Is(err, errs.ErrMetadataBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to create data server %q due to concurrent config update", req.DataServer.GetNameOrDefault())
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to create data server %q: %v", req.DataServer.GetNameOrDefault(), err)
@@ -211,10 +212,10 @@ func (management *ManagementServer) PatchDataServer(_ context.Context, req *prot
 
 	dataServer, err := runtime.Metadata().PatchDataServer(req.DataServer)
 	if err != nil {
-		if errors.Is(err, metadatacommon.ErrNotFound) {
+		if errors.Is(err, errs.ErrMetadataNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer.GetNameOrDefault())
 		}
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
+		if errors.Is(err, errs.ErrMetadataBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to patch data server %q due to concurrent config update", req.DataServer.GetNameOrDefault())
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to patch data server %q: %v", req.DataServer.GetNameOrDefault(), err)
@@ -236,13 +237,13 @@ func (management *ManagementServer) DeleteDataServer(_ context.Context, req *pro
 
 	dataServer, err := runtime.Metadata().DeleteDataServer(req.DataServer)
 	if err != nil {
-		if errors.Is(err, metadatacommon.ErrNotFound) {
+		if errors.Is(err, errs.ErrMetadataNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 		}
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
+		if errors.Is(err, errs.ErrMetadataBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to delete data server %q due to concurrent config update", req.DataServer)
 		}
-		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+		if errors.Is(err, errs.ErrMetadataFailedPrecondition) {
 			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to delete data server %q: %v", req.DataServer, err)
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to delete data server %q: %v", req.DataServer, err)
@@ -316,13 +317,13 @@ func (management *ManagementServer) CreateNamespace(_ context.Context, req *prot
 
 	err = runtime.Metadata().CreateNamespace(req.Namespace)
 	if err != nil {
-		if errors.Is(err, metadatacommon.ErrAlreadyExists) {
+		if errors.Is(err, errs.ErrMetadataAlreadyExists) {
 			return nil, grpcstatus.Errorf(codes.AlreadyExists, "namespace %q already exists", req.Namespace.GetName())
 		}
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
+		if errors.Is(err, errs.ErrMetadataBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to create namespace %q due to concurrent config update", req.Namespace.GetName())
 		}
-		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+		if errors.Is(err, errs.ErrMetadataFailedPrecondition) {
 			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to create namespace %q: %v", req.Namespace.GetName(), err)
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to create namespace %q: %v", req.Namespace.GetName(), err)
@@ -356,13 +357,13 @@ func (management *ManagementServer) PatchNamespace(_ context.Context, req *proto
 
 	namespace, err := runtime.Metadata().PatchNamespace(req.Namespace)
 	if err != nil {
-		if errors.Is(err, metadatacommon.ErrNotFound) {
+		if errors.Is(err, errs.ErrMetadataNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace.GetName())
 		}
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
+		if errors.Is(err, errs.ErrMetadataBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to patch namespace %q due to concurrent config update", req.Namespace.GetName())
 		}
-		if errors.Is(err, metadatacommon.ErrFailedPrecondition) {
+		if errors.Is(err, errs.ErrMetadataFailedPrecondition) {
 			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to patch namespace %q: %v", req.Namespace.GetName(), err)
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to patch namespace %q: %v", req.Namespace.GetName(), err)
@@ -387,10 +388,10 @@ func (management *ManagementServer) DeleteNamespace(_ context.Context, req *prot
 
 	namespace, err := runtime.Metadata().DeleteNamespace(req.Namespace)
 	if err != nil {
-		if errors.Is(err, metadatacommon.ErrNotFound) {
+		if errors.Is(err, errs.ErrMetadataNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "namespace %q not found", req.Namespace)
 		}
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
+		if errors.Is(err, errs.ErrMetadataBadVersion) {
 			return nil, grpcstatus.Errorf(codes.Aborted, "failed to delete namespace %q due to concurrent config update", req.Namespace)
 		}
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to delete namespace %q: %v", req.Namespace, err)

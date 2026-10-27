@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,7 +104,7 @@ func TestManifestSetInstanceIDMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = m.SetInstanceID("instance-2")
-	assert.ErrorIs(t, err, ErrInstanceIDMismatch)
+	assert.ErrorIs(t, err, errs.ErrInstanceIDMismatch)
 	assert.Equal(t, "instance-1", m.GetInstanceID())
 }
 

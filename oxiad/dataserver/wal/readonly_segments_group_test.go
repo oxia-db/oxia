@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -29,7 +31,6 @@ import (
 	"github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/vfs"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 func TestReadOnlySegmentsGroupTrimSegments(t *testing.T) {
@@ -131,7 +132,7 @@ func TestReadOnlySegmentsGroupTrimSegmentsAtCurrentSegmentDeletesAllSegments(t *
 		assert.NoFileExists(t, txnPath(walBasePath, s))
 	}
 	_, err = group.Get(current - 1)
-	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
 
 	group.AddedNewSegment(current)
 	require.NoError(t, group.TrimSegments(current+1, current, func() error { return nil }))
@@ -178,7 +179,7 @@ func TestReadOnlySegmentsGroupGetFailsBeforeFirstSegment(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, group.Close()) })
 
 	_, err = group.Get(-1)
-	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
 }
 
 func TestReadOnlySegmentsGroupGetReleasesSegmentWhenEvictionFails(t *testing.T) {
@@ -243,7 +244,7 @@ func TestReadOnlySegmentsGroupTrimSegmentsReportsUnremovableFiles(t *testing.T) 
 	assert.Error(t, err)
 	assert.NoFileExists(t, c.txnPath)
 	_, err = group.Get(segments[0])
-	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
 }
 
 // A segment that cannot be statted is left on the disk: the trimming goes on

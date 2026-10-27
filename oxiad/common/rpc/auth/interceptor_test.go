@@ -19,6 +19,8 @@ import (
 	"net"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -55,7 +57,7 @@ func TestGrpcAuthenticationDelegatorGetUnaryInterceptorRejectsMissingToken(t *te
 
 	assert.Nil(t, res)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-	assert.Contains(t, status.Convert(err).Message(), ErrEmptyToken.Error())
+	assert.Contains(t, status.Convert(err).Message(), errs.ErrEmptyToken.Error())
 	assert.False(t, handlerCalled)
 }
 
@@ -77,12 +79,12 @@ func TestValidateTokenWithContext(t *testing.T) {
 	t.Run("missing header", func(t *testing.T) {
 		ctx := metadata.NewIncomingContext(peerCtx, metadata.Pairs(":authority", "localhost:6648"))
 		_, err := validateTokenWithContext(ctx, &recordingProvider{})
-		assert.ErrorIs(t, err, ErrEmptyToken)
+		assert.ErrorIs(t, err, errs.ErrEmptyToken)
 	})
 
 	t.Run("no metadata", func(t *testing.T) {
 		_, err := validateTokenWithContext(peerCtx, &recordingProvider{})
-		assert.ErrorIs(t, err, ErrEmptyToken)
+		assert.ErrorIs(t, err, errs.ErrEmptyToken)
 	})
 }
 
@@ -93,7 +95,7 @@ func TestValidateTokenWithContextRejectsMissingPeer(t *testing.T) {
 
 	_, err := validateTokenWithContext(ctx, provider)
 
-	assert.ErrorIs(t, err, ErrMetadataFetchFailed)
+	assert.ErrorIs(t, err, errs.ErrMetadataFetchFailed)
 	assert.Empty(t, provider.token)
 }
 

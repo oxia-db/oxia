@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -157,7 +159,7 @@ func TestStandaloneCorruptedCommittedWalEntry(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	_, err = NewStandalone(NewTestConfig(dir))
-	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestNewStandaloneReleasesWhatItStartedOnError(t *testing.T) {

@@ -18,6 +18,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/pkg/errors"
@@ -31,7 +33,7 @@ import (
 type SnapshotReader interface {
 	io.Closer
 
-	// Get returns the value of a key, or ErrKeyNotFound. Only ComparisonEqual
+	// Get returns the value of a key, or errs.ErrKeyNotFound. Only ComparisonEqual
 	// is supported. The caller closes the value.
 	Get(key string, comparisonType ComparisonType, opts IteratorOpts) (storedKey string, value []byte, closer io.Closer, err error)
 }
@@ -66,7 +68,7 @@ func (r *pebbleSnapshotReader) Get(key string, comparisonType ComparisonType, _ 
 	}
 	value, closer, err := r.db.Get(r.keyEncoder.Encode(key))
 	if errors.Is(err, pebble.ErrNotFound) {
-		return "", nil, nil, ErrKeyNotFound
+		return "", nil, nil, errs.ErrKeyNotFound
 	} else if err != nil {
 		return "", nil, nil, err
 	}

@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +35,6 @@ import (
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -627,7 +628,7 @@ func TestElectionCheckRemovedEntriesReplicationFactor3(t *testing.T) {
 			}
 			err := e.checkRemovedEntries(tt.candidates, tt.removed)
 			if tt.loses {
-				assert.ErrorIs(t, err, ErrChangeEnsembleLosesEntries)
+				assert.ErrorIs(t, err, errs.ErrChangeEnsembleLosesEntries)
 			} else {
 				assert.NoError(t, err)
 			}
@@ -661,7 +662,7 @@ func TestElectionCheckRemovedEntriesReplicationFactor5(t *testing.T) {
 	// s5, s1 and s2 can
 	assert.ErrorIs(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
 		s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
-	}, removed), ErrChangeEnsembleLosesEntries)
+	}, removed), errs.ErrChangeEnsembleLosesEntries)
 }
 
 // The split controller updates the parent while a leader election of the
@@ -851,7 +852,7 @@ func TestElectionSelectNewLeaderFailsWithoutLeader(t *testing.T) {
 	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
 
 	_, _, err := e.selectNewLeader(map[*proto.DataServerIdentity]*proto.EntryId{})
-	assert.ErrorIs(t, err, selector.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNoCandidates)
 }
 
 // The election retries an attempt whose leader can't be selected, or whose

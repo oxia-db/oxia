@@ -18,6 +18,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -45,6 +47,6 @@ func TestOptionsIsEnabled(t *testing.T) {
 func TestNewAuthenticationProviderRejectsUnsupportedProvider(t *testing.T) {
 	provider, err := NewAuthenticationProvider(context.Background(), Options{Provider: "ldap"})
 
-	assert.ErrorIs(t, err, ErrUnsupportedProvider)
+	assert.ErrorIs(t, err, errs.ErrUnsupportedProvider)
 	assert.Nil(t, provider)
 }

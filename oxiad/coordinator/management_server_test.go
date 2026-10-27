@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
@@ -1433,7 +1435,7 @@ func TestManagementServerReturnsMetadataErrors(t *testing.T) {
 				code codes.Code
 			}{
 				{errors.New("metadata unavailable"), codes.Internal},
-				{metadatacommon.ErrBadVersion, test.conflictCode},
+				{errs.ErrMetadataBadVersion, test.conflictCode},
 			} {
 				metadata := &failingMetadata{Metadata: newTestMetadata(t, &proto.ClusterConfiguration{}), err: failure.err}
 				management := newReadyManagementServer(metadata, nil)

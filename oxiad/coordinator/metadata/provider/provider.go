@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"errors"
 	"io"
 
 	gproto "google.golang.org/protobuf/proto"
@@ -23,8 +22,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/cache"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/common/metadata"
 )
-
-var ErrCoordinatorLeaderUnavailable = errors.New("coordinator leader unavailable")
 
 type Versioned[T any] struct {
 	Value   T

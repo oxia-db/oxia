@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -573,7 +575,7 @@ func TestDB_RejectedWrite(t *testing.T) {
 			PartitionKey:     pb.String("s"),
 			SequenceKeyDelta: []uint64{1},
 		}}},
-		cause: ErrMissingSequenceDeltas,
+		cause: errs.ErrMissingSequenceDeltas,
 	}, {
 		// The last key of the prefix is "t-"
 		name: "invalid-sequence-key",
@@ -583,14 +585,14 @@ func TestDB_RejectedWrite(t *testing.T) {
 			PartitionKey:     pb.String("t"),
 			SequenceKeyDelta: []uint64{1},
 		}}},
-		cause: ErrInvalidSequenceKey,
+		cause: errs.ErrInvalidSequenceKey,
 	}, {
 		// Without an end, the range reaches the notification records
 		name: "delete-range-without-end",
 		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
 			StartInclusive: "a",
 		}}},
-		cause: ErrNotificationRecord,
+		cause: errs.ErrNotificationRecord,
 	}} {
 		t.Run(test.name, func(t *testing.T) {
 			newDB := func() DB {
@@ -612,7 +614,7 @@ func TestDB_RejectedWrite(t *testing.T) {
 			checksum := rejecting.ReadChecksum()
 
 			_, err := rejecting.ProcessWrite(test.rejected, 1, 101, NoOpCallback)
-			assert.ErrorIs(t, err, ErrWriteRejected)
+			assert.ErrorIs(t, err, errs.ErrWriteRejected)
 			assert.ErrorIs(t, err, test.cause)
 			commitOffset, err := rejecting.ReadCommitOffset()
 			require.NoError(t, err)
@@ -683,7 +685,7 @@ func TestDB_FailedWriteIsNotRejected(t *testing.T) {
 
 			_, err = db.ProcessWrite(test.request, 1, 0, test.callback)
 			assert.ErrorContains(t, err, test.cause)
-			assert.NotErrorIs(t, err, ErrWriteRejected)
+			assert.NotErrorIs(t, err, errs.ErrWriteRejected)
 
 			commitOffset, err := db.ReadCommitOffset()
 			require.NoError(t, err)
@@ -1325,7 +1327,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		SequenceKeyDelta: []uint64{3},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrMissingPartitionKey)
+	assert.ErrorIs(t, err, errs.ErrMissingPartitionKey)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "a",
@@ -1333,7 +1335,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{0},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrSequenceDeltaIsZero)
+	assert.ErrorIs(t, err, errs.ErrSequenceDeltaIsZero)
 
 	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:               "a",
@@ -1383,7 +1385,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{2},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrMissingSequenceDeltas)
+	assert.ErrorIs(t, err, errs.ErrMissingSequenceDeltas)
 
 	// Put bad existing suffix
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1488,7 +1490,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrSequenceOverflow)
+	assert.ErrorIs(t, err, errs.ErrSequenceOverflow)
 
 	// Seed a small sequence, then a huge delta that would wrap uint64 back onto
 	// an earlier key must be rejected instead of silently overwriting it.
@@ -1507,7 +1509,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrSequenceOverflow)
+	assert.ErrorIs(t, err, errs.ErrSequenceOverflow)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "b",
@@ -1515,7 +1517,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence - 5},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrSequenceOverflow)
+	assert.ErrorIs(t, err, errs.ErrSequenceOverflow)
 
 	// The rejected puts left the tail untouched: a normal delta keeps advancing
 	// from 5, so no earlier entry was clobbered.
@@ -1544,7 +1546,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1, maxSequence},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrSequenceOverflow)
+	assert.ErrorIs(t, err, errs.ErrSequenceOverflow)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:              "c",
@@ -1552,7 +1554,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1, maxSequence - 4},
 	}}}, 0, 0, NoOpCallback)
-	assert.ErrorIs(t, err, ErrSequenceOverflow)
+	assert.ErrorIs(t, err, errs.ErrSequenceOverflow)
 
 	assert.NoError(t, db.Close())
 	assert.NoError(t, factory.Close())
@@ -1595,7 +1597,7 @@ func TestDB_SequenceTailSharedPrefix(t *testing.T) {
 						{Key: prefix, PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
 					}}, 0, 0, NoOpCallback)
 					if err != nil {
-						assert.ErrorIs(t, err, ErrInvalidSequenceKey)
+						assert.ErrorIs(t, err, errs.ErrInvalidSequenceKey)
 						keys = append(keys, "")
 					} else {
 						keys = append(keys, res.Puts[0].GetKey())
@@ -1616,13 +1618,13 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 		put         *proto.PutRequest
 		expectedErr error
 	}{
-		{"missing partition key", &proto.PutRequest{Key: "a", SequenceKeyDelta: []uint64{1}}, ErrMissingPartitionKey},
+		{"missing partition key", &proto.PutRequest{Key: "a", SequenceKeyDelta: []uint64{1}}, errs.ErrMissingPartitionKey},
 		{"first delta is zero", &proto.PutRequest{Key: "a", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{0}},
-			ErrSequenceDeltaIsZero},
+			errs.ErrSequenceDeltaIsZero},
 		{"overflow", &proto.PutRequest{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{2}},
-			ErrSequenceOverflow},
+			errs.ErrSequenceOverflow},
 		{"not a sequence key", &proto.PutRequest{Key: "plain", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
-			ErrInvalidSequenceKey},
+			errs.ErrInvalidSequenceKey},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1651,7 +1653,7 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 				test.put,
 				{Key: "valid", Value: []byte("0")},
 			}}, 1, 0, NoOpCallback)
-			assert.ErrorIs(t, err, ErrWriteRejected)
+			assert.ErrorIs(t, err, errs.ErrWriteRejected)
 			assert.ErrorIs(t, err, test.expectedErr)
 			assert.Equal(t, keys, keyIteratorToSlice(db.List(&proto.ListRequest{})))
 
@@ -1708,8 +1710,8 @@ func TestDB_SequenceKeyMissingDeltas(t *testing.T) {
 
 	// Without the feature, the whole write request is rejected
 	_, err = put(1, 1)
-	assert.ErrorIs(t, err, ErrWriteRejected)
-	assert.ErrorIs(t, err, ErrMissingSequenceDeltas)
+	assert.ErrorIs(t, err, errs.ErrWriteRejected)
+	assert.ErrorIs(t, err, errs.ErrMissingSequenceDeltas)
 
 	db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION)
 	key, err = put(2, 1)
@@ -2073,7 +2075,7 @@ func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
 		}},
 	}} {
 		_, err = db.ProcessWrite(request, int64(offset)+1, 0, NoOpCallback)
-		assert.ErrorIs(t, err, ErrWriteRejected)
+		assert.ErrorIs(t, err, errs.ErrWriteRejected)
 		assert.Empty(t, sw.Ch())
 	}
 
@@ -2805,7 +2807,7 @@ func TestDBProcessWriteFailsWhenRejectedWriteFailsToBeRecorded(t *testing.T) {
 				Key: "a", Value: []byte("v"), SequenceKeyDelta: []uint64{1},
 			}}}, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errInjected)
-			assert.NotErrorIs(t, err, ErrWriteRejected)
+			assert.NotErrorIs(t, err, errs.ErrWriteRejected)
 			assertCommitOffset(t, d, kv, -1)
 		})
 	}
