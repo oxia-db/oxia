@@ -146,7 +146,7 @@ func (*V1) ReadIndex(fs vfs.FS, path string) ([]byte, error) {
 		return nil, errors.Wrapf(err, "failed to close segment index file %s", path)
 	}
 	if len(indexBuf) == 0 {
-		return nil, errors.Wrapf(errs.ErrCorrupted, "index file %s has no entries", path)
+		return nil, errors.Wrapf(errs.ErrDataCorrupted, "index file %s has no entries", path)
 	}
 	return indexBuf, nil
 }

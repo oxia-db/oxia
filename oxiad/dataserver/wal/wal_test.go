@@ -1687,7 +1687,7 @@ func TestFactoryNewWalFailsWhenPrecedingSegmentIsCorrupted(t *testing.T) {
 	corruptPayload(t, c, codec.ReadInt(idx, uint32(len(idx)-4)))
 
 	_, err = f.NewWal(constant.DefaultNamespace, shard, nil)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestFactoryNewWalFailsWhenTrailingSegmentCannotBeDiscarded(t *testing.T) {
