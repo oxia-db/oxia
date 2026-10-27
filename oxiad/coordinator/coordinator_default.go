@@ -16,7 +16,6 @@ package coordinator
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -65,9 +64,6 @@ type coordinator struct {
 
 func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (_ Coordinator, err error) {
 	options := optionsWatch.Load()
-	if options == nil {
-		return nil, errors.New("options must not be nil")
-	}
 	options.WithDefault()
 	if err := options.Validate(); err != nil {
 		return nil, err
@@ -185,15 +181,15 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 			"component": "option-watcher",
 		}, c.bgOptionWatcher)
 	})
-	if leadershipLost != nil {
-		c.wg.Go(func() {
-			process.DoWithLabels(ctx, map[string]string{
-				"component": "leadership-watcher",
-			}, func() {
-				c.bgLeadershipWatcher(leadershipLost)
-			})
+	// A provider that can't lose the leadership returns a nil channel, which
+	// never fires: the watcher then only ends on Close.
+	c.wg.Go(func() {
+		process.DoWithLabels(ctx, map[string]string{
+			"component": "leadership-watcher",
+		}, func() {
+			c.bgLeadershipWatcher(leadershipLost)
 		})
-	}
+	})
 
 	return c, nil
 }

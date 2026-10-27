@@ -766,6 +766,7 @@ func New(
 			if !exist {
 				nsConfig = &proto.Namespace{}
 			}
+			//nolint:contextcheck // the shard controllers own their context
 			c.shardControllers[shard] = shardcontroller.NewController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures,
 				c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)

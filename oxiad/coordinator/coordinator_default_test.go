@@ -38,11 +38,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-func TestNewRejectsNilOptions(t *testing.T) {
-	_, err := New(t.Context(), commonwatch.New[*option.Options](nil))
-	require.ErrorContains(t, err, "options must not be nil")
-}
-
 func TestNewRejectsInvalidOptions(t *testing.T) {
 	options := newTestOptions()
 	options.Metadata.ProviderName = "etcd"
