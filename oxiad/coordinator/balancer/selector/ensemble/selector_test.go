@@ -64,7 +64,7 @@ func TestSelectFewerCandidatesThanReplicas(t *testing.T) {
 		Namespace:  "ns-1",
 		Replicas:   2,
 	})
-	assert.ErrorIs(t, err, errs.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestSelectFailsWhenAntiAffinityUnsatisfied(t *testing.T) {
@@ -90,7 +90,7 @@ func TestSelectFailsWhenReplicasUnsatisfied(t *testing.T) {
 		Replicas:   2,
 	})
 
-	assert.ErrorIs(t, err, errs.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 // fakeSingleSelector returns the selections in order.

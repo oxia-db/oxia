@@ -852,7 +852,7 @@ func TestElectionSelectNewLeaderFailsWithoutLeader(t *testing.T) {
 	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
 
 	_, _, err := e.selectNewLeader(map[*proto.DataServerIdentity]*proto.EntryId{})
-	assert.ErrorIs(t, err, errs.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 // The election retries an attempt whose leader can't be selected, or whose

@@ -500,7 +500,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 	for reader.HasNext() {
 		entry, _, entryCrc, err := reader.ReadNext()
 
-		if errors.Is(err, errs.ErrReaderClosed) {
+		if errors.Is(err, errs.ErrAlreadyClosed) {
 			fc.log.Info("Stopped reading committed entries")
 			return err
 		} else if err != nil {

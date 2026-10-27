@@ -440,7 +440,7 @@ func (m *defaultMetadata) CreateNamespace(namespace *commonproto.Namespace) erro
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for _, existing := range config.GetNamespaces() {
 			if existing.GetName() == name {
-				return nil, errs.ErrAlreadyExists
+				return nil, fmt.Errorf("%w: namespace %q", errs.ErrAlreadyExists, name)
 			}
 		}
 		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
@@ -475,7 +475,7 @@ func (m *defaultMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace
 			updated = namespace
 			return config, nil
 		}
-		return nil, errs.ErrNotFound
+		return nil, fmt.Errorf("%w: namespace %q", errs.ErrNotFound, desiredNamespace.GetName())
 	}); err != nil {
 		return nil, err
 	}
@@ -495,7 +495,7 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 			config.Namespaces = append(config.Namespaces[:i], config.Namespaces[i+1:]...)
 			return config, nil
 		}
-		return nil, errs.ErrNotFound
+		return nil, fmt.Errorf("%w: namespace %q", errs.ErrNotFound, name)
 	}); err != nil {
 		return nil, err
 	}
@@ -508,7 +508,7 @@ func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) e
 
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		if _, exists := config.GetDataServer(name); exists {
-			return nil, errs.ErrAlreadyExists
+			return nil, fmt.Errorf("%w: data server %q", errs.ErrAlreadyExists, name)
 		}
 
 		config.Servers = append(config.Servers, dataServer.GetIdentity())
@@ -556,7 +556,7 @@ func (m *defaultMetadata) PatchDataServer(desireDataServer *commonproto.DataServ
 			}
 			return config, nil
 		}
-		return nil, errs.ErrNotFound
+		return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, desireDataServer.GetNameOrDefault())
 	}); err != nil {
 		return nil, err
 	}
@@ -591,7 +591,7 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 			}
 			return config, nil
 		}
-		return nil, errs.ErrNotFound
+		return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
 	}); err != nil {
 		return nil, err
 	}

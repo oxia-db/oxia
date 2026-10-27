@@ -225,13 +225,13 @@ func (ms *readWriteSegment) LastOffset() int64 {
 // only write past the records it can find in the index, and publish them
 // through lastOffset. It holds the read side of flushLock instead, so that
 // Close does not unmap the segment under the copy, and returns
-// errs.ErrSegmentClosed once the segment is closed. Truncate must not run
+// errs.ErrAlreadyClosed once the segment is closed. Truncate must not run
 // concurrently.
 func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	ms.flushLock.RLock()
 	defer ms.flushLock.RUnlock()
 	if ms.txnMappedFile == nil {
-		return nil, 0, 0, errs.ErrSegmentClosed
+		return nil, 0, 0, errors.Wrap(errs.ErrAlreadyClosed, "segment")
 	}
 	if offset < ms.c.baseOffset || offset > ms.lastOffset.Load() {
 		return nil, 0, 0, errors.Wrap(errs.ErrInvalidArgument, "offset out of bounds")

@@ -383,10 +383,10 @@ func (e *Election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 						slog.Int64("leader-head-offset", leaderEntry.Offset),
 						slog.Int64("follower-head-offset", followerHeadOffset),
 					)
-					return errs.ErrFollowerNotCaughtUp
+					return errors.Wrap(errs.ErrFailedPrecondition, "follower not caught up yet")
 				}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
 					switch {
-					case errors.Is(err, errs.ErrFollowerNotCaughtUp):
+					case errors.Is(err, errs.ErrFailedPrecondition):
 					case errors.Is(err, constant.ErrNodeIsNotMember):
 						e.logger.Info("Follower has not been added by leader yet",
 							slog.Any("server", server),

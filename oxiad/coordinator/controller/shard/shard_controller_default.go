@@ -433,7 +433,7 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 	}
 	pinned, err := s.termFeatures(shardMeta)
 	switch {
-	case errors.Is(err, errs.ErrTermFeaturesNotReported):
+	case errors.Is(err, errs.ErrNotImplemented):
 		// The leader runs an older binary: the election that replaces it when
 		// it restarts with a newer one negotiates the features again
 		s.termFeaturesCheckPending = false
@@ -475,7 +475,7 @@ func (s *controller) termFeatures(shardMeta *proto.ShardMetadata) ([]proto.Featu
 	case status.GetTerm() != shardMeta.GetTerm() || status.GetStatus() != proto.ServingStatus_LEADER:
 		return nil, fmt.Errorf("the leader is in term %d with status %s", status.GetTerm(), status.GetStatus())
 	case status.GetTermFeatures() == nil:
-		return nil, errs.ErrTermFeaturesNotReported
+		return nil, fmt.Errorf("%w: the leader doesn't report the features pinned by its term", errs.ErrNotImplemented)
 	}
 	return status.GetTermFeatures().GetFeatures(), nil
 }
