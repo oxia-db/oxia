@@ -27,6 +27,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/pkg/errors"
 )
@@ -34,15 +36,6 @@ import (
 const (
 	DefaultUserNameCalm         = "sub"
 	AllowedAudienceDefaultValue = ""
-)
-
-var (
-	ErrEmptyIssueURL         = errors.New("empty issue URL")
-	ErrEmptyAllowedAudiences = errors.New("empty allowed audiences")
-	ErrUnknownIssuer         = errors.New("unknown issuer")
-	ErrUserNameNotFound      = errors.New("username not found")
-	ErrForbiddenAudience     = errors.New("forbidden audience")
-	ErrNoPublicKeysFound     = errors.New("no public keys found in file")
 )
 
 // IssuerConfig holds per-issuer OIDC configuration.
@@ -65,19 +58,19 @@ type OIDCOptions struct {
 func (op *OIDCOptions) Validate() error {
 	// Support both old and new formats
 	if len(op.Issuers) == 0 && op.AllowedIssueURLs == "" {
-		return ErrEmptyIssueURL
+		return errs.ErrEmptyIssueURL
 	}
 	// If using legacy format, validate it
 	if op.AllowedIssueURLs != "" && op.AllowedAudiences == "" {
-		return ErrEmptyAllowedAudiences
+		return errs.ErrEmptyAllowedAudiences
 	}
 	// If using new format, validate each issuer config
 	for issuerURL, config := range op.Issuers {
 		if issuerURL == "" {
-			return ErrEmptyIssueURL
+			return errs.ErrEmptyIssueURL
 		}
 		if config.AllowedAudiences == "" {
-			return errors.Wrapf(ErrEmptyAllowedAudiences, "for issuer %s", issuerURL)
+			return errors.Wrapf(errs.ErrEmptyAllowedAudiences, "for issuer %s", issuerURL)
 		}
 	}
 	return nil
@@ -116,7 +109,7 @@ type OIDCProvider struct {
 func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, error) {
 	token, ok := param.(string)
 	if !ok {
-		return "", ErrUnMatchedAuthenticationParamType
+		return "", errs.ErrUnMatchedAuthenticationParamType
 	}
 	now := time.Now()
 	if userName, ok := p.verifiedTokens.get(token, now); ok {
@@ -124,7 +117,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	}
 	tokenParts := strings.Split(token, ".")
 	if len(tokenParts) != 3 {
-		return "", ErrMalformedToken
+		return "", errs.ErrMalformedToken
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(tokenParts[1])
 	if err != nil {
@@ -144,7 +137,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	}
 	oidcProvider, exist := p.providers[issuer]
 	if !exist {
-		return "", ErrUnknownIssuer
+		return "", errs.ErrUnknownIssuer
 	}
 	idToken, err := oidcProvider.verifier.Verify(ctx, token)
 	if err != nil {
@@ -159,7 +152,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 
 	rawMessage, ok := rawClaims[userNameClaim]
 	if !ok {
-		return "", ErrUserNameNotFound
+		return "", errs.ErrUserNameNotFound
 	}
 	var userName string
 	if err = json.Unmarshal(rawMessage, &userName); err != nil {
@@ -181,7 +174,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 		}
 	}
 	if !audienceAllowed {
-		return "", ErrForbiddenAudience
+		return "", errs.ErrForbiddenAudience
 	}
 	p.verifiedTokens.put(token, userName, idToken.Expiry, now)
 	return userName, nil
@@ -241,7 +234,7 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	}
 
 	if len(publicKeys) == 0 {
-		return nil, ErrNoPublicKeysFound
+		return nil, errs.ErrNoPublicKeysFound
 	}
 
 	return publicKeys, nil

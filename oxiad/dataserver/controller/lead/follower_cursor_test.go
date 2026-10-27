@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -777,7 +779,7 @@ func TestNewFollowerCursorFailsWithoutRoomInTheTracker(t *testing.T) {
 	// A replication factor of 1 has no follower
 	fc, err := NewFollowerCursor("f1", 1, constant.DefaultNamespace, 2, rpc.NewMockRpcClient(),
 		NewQuorumAckTracker(1, wal.InvalidOffset, wal.InvalidOffset), w, db, wal.InvalidOffset, false)
-	assert.ErrorIs(t, err, ErrTooManyCursors)
+	assert.ErrorIs(t, err, errs.ErrTooManyCursors)
 	assert.Nil(t, fc)
 }
 

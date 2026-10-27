@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -139,7 +141,7 @@ func TestLeaderController_SplitChildCopiesParent(t *testing.T) {
 	_, err = lc.WriteBlock(ctx, &proto.WriteRequest{Shard: &shard, Puts: []*proto.PutRequest{{
 		Key: "seq", Value: []byte("seq"), PartitionKey: &left[0], SequenceKeyDelta: []uint64{0},
 	}}})
-	assert.ErrorIs(t, err, database.ErrWriteRejected)
+	assert.ErrorIs(t, err, errs.ErrWriteRejected)
 	// A conditional write with the version id the parent returned
 	current, err := readAll(ctx, lc, &proto.ReadRequest{Shard: &shard, Gets: []*proto.GetRequest{{Key: left[1]}}})
 	require.NoError(t, err)
@@ -407,7 +409,7 @@ func TestLeaderController_DeferredSplitFilter(t *testing.T) {
 	exists := func(key string) bool {
 		_, _, closer, err := kv.Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
 		if err != nil {
-			assert.ErrorIs(t, err, kvstore.ErrKeyNotFound)
+			assert.ErrorIs(t, err, errs.ErrKeyNotFound)
 			return false
 		}
 		assert.NoError(t, closer.Close())
@@ -664,7 +666,7 @@ func TestSessionDelete_DeferredSplitFilterNotifications(t *testing.T) {
 			if err == nil {
 				assert.NoError(t, closer.Close())
 			}
-			assert.ErrorIs(t, err, kvstore.ErrKeyNotFound, put.Key)
+			assert.ErrorIs(t, err, errs.ErrKeyNotFound, put.Key)
 		}
 	}
 }

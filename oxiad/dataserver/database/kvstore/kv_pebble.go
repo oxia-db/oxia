@@ -28,6 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/cockroachdb/pebble/v2/sstable"
@@ -689,7 +691,7 @@ func (p *Pebble) Get(key string, comparisonType ComparisonType, itOpts IteratorO
 
 	switch {
 	case errors.Is(err, pebble.ErrNotFound):
-		err = ErrKeyNotFound
+		err = errs.ErrKeyNotFound
 	case err != nil:
 		p.readErrors.Inc()
 	default:
@@ -785,7 +787,7 @@ func (p *Pebble) Seek(key string, comparisonType ComparisonType) (KeyValueIterat
 		if len(k) == 0 {
 			// Nothing sorts below the empty key, and it can't be the upper
 			// bound either (see getLower)
-			return nil, ErrKeyNotFound
+			return nil, errs.ErrKeyNotFound
 		}
 		upper = k
 	default:
@@ -1003,7 +1005,7 @@ func (b *PebbleBatch) Get(key string) ([]byte, io.Closer, error) {
 		b.gotOne = true
 		value, closer, err := b.b.Get(encodedKey)
 		if errors.Is(err, pebble.ErrNotFound) {
-			err = ErrKeyNotFound
+			err = errs.ErrKeyNotFound
 		} else if err != nil {
 			b.p.readErrors.Inc()
 		}
@@ -1028,7 +1030,7 @@ func (b *PebbleBatch) Get(key string) ([]byte, io.Closer, error) {
 			b.p.readErrors.Inc()
 			return nil, nil, err
 		}
-		return nil, nil, ErrKeyNotFound
+		return nil, nil, errs.ErrKeyNotFound
 	}
 	value, err := b.getIter.ValueAndErr()
 	if err != nil {
@@ -1047,7 +1049,7 @@ func (b *PebbleBatch) FindLower(key string) (lowerKey string, err error) {
 	}
 
 	if !it.Last() {
-		return "", closeNotFound(it, ErrKeyNotFound)
+		return "", closeNotFound(it, errs.ErrKeyNotFound)
 	}
 
 	lowerKey = b.p.keyEncoder.Decode(it.Key())
@@ -1237,7 +1239,7 @@ func (p *PebblePrefixIterator) Lookup(key string) ([]byte, error) {
 			p.p.readErrors.Inc()
 			return nil, err
 		}
-		return nil, ErrKeyNotFound
+		return nil, errs.ErrKeyNotFound
 	}
 	value, err := p.lookupIter.ValueAndErr()
 	if err != nil {

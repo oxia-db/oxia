@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -117,7 +119,7 @@ func TestProviderGetLeaderNameUnavailable(t *testing.T) {
 	})
 
 	_, err := p.GetLeaderName()
-	require.True(t, errors.Is(err, metadataprovider.ErrCoordinatorLeaderUnavailable))
+	require.True(t, errors.Is(err, errs.ErrCoordinatorLeaderUnavailable))
 }
 
 // The operators manage the config map of the configuration, e.g. with Helm.
@@ -343,7 +345,7 @@ func TestProviderStoreRejectsCreatingExistingConfigMap(t *testing.T) {
 		Value:   newConfig(2),
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, metadatacommon.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetadataBadVersion)
 }
 
 func TestProviderWaitToBecomeLeaderSignalsLeaseLoss(t *testing.T) {

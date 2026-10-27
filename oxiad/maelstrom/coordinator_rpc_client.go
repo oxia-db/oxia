@@ -16,10 +16,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -30,10 +31,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
-)
-
-var (
-	ErrNotImplement = errors.New("not implement")
 )
 
 type maelstromCoordinatorRpcProvider struct {
@@ -277,11 +274,11 @@ type BaseStream struct {
 }
 
 func (*BaseStream) Header() (metadata.MD, error) {
-	panic(ErrNotImplement)
+	panic(errs.ErrNotImplement)
 }
 
 func (*BaseStream) Trailer() metadata.MD {
-	panic(ErrNotImplement)
+	panic(errs.ErrNotImplement)
 }
 
 func (*BaseStream) CloseSend() error {
@@ -293,19 +290,19 @@ func (*BaseStream) Context() context.Context {
 }
 
 func (*BaseStream) SendMsg(any) error {
-	panic(ErrNotImplement)
+	panic(errs.ErrNotImplement)
 }
 
 func (*BaseStream) RecvMsg(any) error {
-	panic(ErrNotImplement)
+	panic(errs.ErrNotImplement)
 }
 
 func (*maelstromReplicateServerStream) SendHeader(metadata.MD) error {
-	panic(ErrNotImplement)
+	panic(errs.ErrNotImplement)
 }
 
 func (*maelstromReplicateServerStream) SetTrailer(metadata.MD) {
-	panic(ErrNotImplement)
+	panic(errs.ErrNotImplement)
 }
 
 type maelstromHealthCheckClient struct {

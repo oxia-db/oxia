@@ -19,6 +19,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	pb "google.golang.org/protobuf/proto"
 
@@ -354,7 +356,7 @@ func TestApplyLogEntry_RejectedWrite(t *testing.T) {
 
 		_, err := proposal.Apply(leaderDB, database.NoOpCallback)
 		if offset == 1 {
-			assert.ErrorIs(t, err, database.ErrWriteRejected)
+			assert.ErrorIs(t, err, errs.ErrWriteRejected)
 		} else {
 			assert.NoError(t, err)
 		}

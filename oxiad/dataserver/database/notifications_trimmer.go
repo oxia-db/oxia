@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -137,7 +139,7 @@ func (t *notificationsTrimmer) trimNotifications() error {
 	cutoffTime := t.clock.Now().Add(-t.notificationsRetentionTime)
 
 	_, tsFirst, err := t.readFrom(first)
-	if errors.Is(err, kvstore.ErrKeyNotFound) {
+	if errors.Is(err, errs.ErrKeyNotFound) {
 		t.log.Warn(
 			"First notification entry disappeared after range scan",
 			slog.Int64("first-offset", first),
@@ -229,7 +231,7 @@ func (t *notificationsTrimmer) binarySearch(firstOffset, lastOffset int64, cutof
 		// No notification exists in [midProbe, lastOffset]: either the ceiling
 		// lookup found no entry at all or it landed on an offset above our
 		// current upper bound. In both cases we shrink the window and retry.
-		if errors.Is(err, kvstore.ErrKeyNotFound) || (err == nil && actualMid > lastOffset) {
+		if errors.Is(err, errs.ErrKeyNotFound) || (err == nil && actualMid > lastOffset) {
 			lastOffset = midProbe - 1
 			continue
 		}
@@ -255,7 +257,7 @@ func (t *notificationsTrimmer) readFrom(offset int64) (int64, time.Time, error) 
 	defer closer.Close()
 
 	if !strings.HasPrefix(returnedKey, notificationsPrefix+"/") {
-		return constant.I64NegativeOne, time.Time{}, kvstore.ErrKeyNotFound
+		return constant.I64NegativeOne, time.Time{}, errs.ErrKeyNotFound
 	}
 
 	actualOffset, err := parseNotificationKey(returnedKey)

@@ -25,6 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -65,7 +67,7 @@ type FollowerController interface {
 	// WithDatabase runs fn with the directory of the database, under the
 	// controller's read lock, while the database is still the one a
 	// checkpoint of the given generation was taken from; it returns
-	// database.ErrDatabaseReplaced otherwise. A file fn writes next to the
+	// errs.ErrDatabaseReplaced otherwise. A file fn writes next to the
 	// database thus never lands in a database that replaced it.
 	WithDatabase(generation uint64, fn func(dir string) error) error
 	// NewTerm
@@ -498,7 +500,7 @@ func (fc *followerController) processCommittedEntriesLoop(reader wal.Reader, sna
 	for reader.HasNext() {
 		entry, _, entryCrc, err := reader.ReadNext()
 
-		if errors.Is(err, wal.ErrReaderClosed) {
+		if errors.Is(err, errs.ErrReaderClosed) {
 			fc.log.Info("Stopped reading committed entries")
 			return err
 		} else if err != nil {
@@ -927,7 +929,7 @@ func (fc *followerController) WithDatabase(generation uint64, fn func(dir string
 		return constant.ErrResourceUnavailable
 	}
 	if fc.kvFactory.DatabaseGeneration(fc.namespace, fc.shardId) != generation {
-		return database.ErrDatabaseReplaced
+		return errs.ErrDatabaseReplaced
 	}
 	return fn(fc.kvFactory.DatabaseDir(fc.namespace, fc.shardId))
 }

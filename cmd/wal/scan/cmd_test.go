@@ -26,13 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 func TestExecPrintsOperationsAsLogs(t *testing.T) {
@@ -131,7 +132,7 @@ func TestExecRejectsOffsetBeforeFirstEntry(t *testing.T) {
 
 	_, err := runScan(t, "--offset-first", "0")
 
-	assert.ErrorIs(t, err, wal.ErrEntryNotFound)
+	assert.ErrorIs(t, err, errs.ErrEntryNotFound)
 }
 
 func TestExecRejectsUndecodableEntry(t *testing.T) {
@@ -169,7 +170,7 @@ func TestExecRejectsCorruptedEntry(t *testing.T) {
 	logs := captureLogs(t)
 	_, err = runScan(t)
 
-	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	// The entries before the corrupted one were printed
 	assert.NotEmpty(t, decodeLogs(t, logs))
 }

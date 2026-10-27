@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/hashicorp/raft"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -73,7 +75,7 @@ var (
 func (s *kvRaftStore) FirstIndex() (uint64, error) {
 	storedKey, _, closer, err := s.kv.Get(logKeyMin, kvstore.ComparisonCeiling, kvstore.NoInternalKeys)
 	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
+		if errors.Is(err, errs.ErrKeyNotFound) {
 			return 0, nil
 		}
 		return 0, err
@@ -91,7 +93,7 @@ func (s *kvRaftStore) FirstIndex() (uint64, error) {
 func (s *kvRaftStore) LastIndex() (idx uint64, err error) {
 	storedKey, _, closer, err := s.kv.Get(logKeyMax, kvstore.ComparisonFloor, kvstore.NoInternalKeys)
 	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
+		if errors.Is(err, errs.ErrKeyNotFound) {
 			return 0, nil
 		}
 		return 0, err
@@ -174,7 +176,7 @@ func (s *kvRaftStore) Set(key []byte, value []byte) error {
 func (s *kvRaftStore) Get(key []byte) ([]byte, error) {
 	_, value, closer, err := s.kv.Get(string(key), kvstore.ComparisonEqual, kvstore.NoInternalKeys)
 	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
+		if errors.Is(err, errs.ErrKeyNotFound) {
 			return []byte{}, nil
 		}
 		return nil, err

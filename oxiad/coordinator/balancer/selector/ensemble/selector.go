@@ -18,6 +18,8 @@ import (
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
 )
@@ -46,7 +48,7 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		var selectedIdPtr string
 		var err error
 		if selectedIdPtr, err = ensemble.singleServerSelector.Select(sServerContext); err != nil {
-			if errors.Is(err, selector.ErrNoCandidates) {
+			if errors.Is(err, errs.ErrNoCandidates) {
 				// Fewer candidates than replicas, reported by the size check below
 				break
 			}
@@ -60,7 +62,7 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		}
 	}
 	if selected.Size() != context.Replicas {
-		return nil, selector.ErrUnsatisfiedEnsembleReplicas
+		return nil, errs.ErrUnsatisfiedEnsembleReplicas
 	}
 	return esm, nil
 }

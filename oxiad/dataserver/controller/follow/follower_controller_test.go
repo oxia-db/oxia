@@ -31,6 +31,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -1264,7 +1266,7 @@ func TestFollower_RejectGapOnEmptyWal(t *testing.T) {
 
 	// First-ever entry arrives at offset 5: entries 0..4 were lost
 	stream1.AddRequest(createAddRequest(t, 1, 5, map[string]string{"a": "0"}, wal.InvalidOffset))
-	assert.ErrorIs(t, <-errCh, wal.ErrInvalidNextOffset)
+	assert.ErrorIs(t, <-errCh, errs.ErrInvalidNextOffset)
 
 	// The leader reconnects and resends from the beginning: the follower
 	// accepts and acks the contiguous entries
@@ -3332,7 +3334,7 @@ func TestFollowerControllerCheckpointReadsTheDatabase(t *testing.T) {
 		return nil
 	}))
 	assert.ErrorIs(t, fc.WithDatabase(checkpoint.Generation+1, func(string) error { return nil }),
-		database.ErrDatabaseReplaced, "a checkpoint of a database since replaced")
+		errs.ErrDatabaseReplaced, "a checkpoint of a database since replaced")
 
 	require.NoError(t, fc.Close())
 	_, err = fc.Checkpoint()
@@ -3368,7 +3370,7 @@ func TestFollowerControllerNewFollowerControllerAppliesNewTermOptions(t *testing
 	assert.EqualValues(t, 1, fc.Term())
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
 	_, err = fc.(*followerController).db.ReadNextNotifications(context.Background(), 0)
-	assert.ErrorIs(t, err, database.ErrNotificationsDisabled)
+	assert.ErrorIs(t, err, errs.ErrNotificationsDisabled)
 
 	assert.NoError(t, fc.Close())
 }
@@ -3608,7 +3610,7 @@ func TestFollowerControllerStateApplierRetriesWalReadFailures(t *testing.T) {
 	}{
 		{"open", errors.New("open failed"), func(h *walHooks, fault func() error) { h.newReader = fault }},
 		{"read", errors.New("read failed"), func(h *walHooks, fault func() error) { h.readNext = fault }},
-		{"reader-closed", wal.ErrReaderClosed, func(h *walHooks, fault func() error) { h.readNext = fault }},
+		{"reader-closed", errs.ErrReaderClosed, func(h *walHooks, fault func() error) { h.readNext = fault }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			walFactory, kvFactory := newHookFactories(t)

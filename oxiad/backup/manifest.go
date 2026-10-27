@@ -18,10 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/oxia-db/oxia/oxiad/backup/blob"
 )
@@ -29,10 +30,6 @@ import (
 // ManifestFormatVersion is the version of the manifest format that this code
 // writes, and the only one it reads.
 const ManifestFormatVersion = 1
-
-// ErrInvalidManifest is returned for a manifest that doesn't describe a
-// backup this code can restore.
-var ErrInvalidManifest = errors.New("backup: invalid manifest")
 
 // File is a file of the checkpoint that a backup holds, with the key of the
 // object that stores it. An SST is in the shared pool of the shard, any other
@@ -77,22 +74,22 @@ type Manifest struct {
 func (m *Manifest) Validate() error {
 	switch {
 	case m.FormatVersion != ManifestFormatVersion:
-		return fmt.Errorf("%w: format version %d, want %d", ErrInvalidManifest, m.FormatVersion, ManifestFormatVersion)
+		return fmt.Errorf("%w: format version %d, want %d", errs.ErrInvalidManifest, m.FormatVersion, ManifestFormatVersion)
 	case m.Namespace == "" || m.Shard < 0 || m.Lineage == "":
-		return fmt.Errorf("%w: missing namespace, shard or lineage", ErrInvalidManifest)
+		return fmt.Errorf("%w: missing namespace, shard or lineage", errs.ErrInvalidManifest)
 	case m.Range.Min > m.Range.Max:
-		return fmt.Errorf("%w: hash range %s", ErrInvalidManifest, m.Range)
+		return fmt.Errorf("%w: hash range %s", errs.ErrInvalidManifest, m.Range)
 	}
 	id, err := ParseID(m.ID)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidManifest, err)
+		return fmt.Errorf("%w: %w", errs.ErrInvalidManifest, err)
 	}
 	if id.Lineage != m.Lineage {
-		return fmt.Errorf("%w: id %q is not of lineage %q", ErrInvalidManifest, m.ID, m.Lineage)
+		return fmt.Errorf("%w: id %q is not of lineage %q", errs.ErrInvalidManifest, m.ID, m.Lineage)
 	}
 	for _, f := range slices.Concat(m.SSTs, m.Files) {
 		if f.Name == "" || f.Key == "" || f.Size < 0 {
-			return fmt.Errorf("%w: invalid file %+v", ErrInvalidManifest, f)
+			return fmt.Errorf("%w: invalid file %+v", errs.ErrInvalidManifest, f)
 		}
 	}
 	return nil
@@ -187,7 +184,7 @@ func WriteManifest(ctx context.Context, store blob.Store, m *Manifest) error {
 // key the manifest names for itself: the summary of a manifest points back
 // at its key, and the deletions of the cleanup follow it, so a manifest
 // copied under another namespace or shard is invalid there. It returns
-// blob.ErrNotFound when there is none.
+// errs.ErrBlobNotFound when there is none.
 func ReadManifest(ctx context.Context, store blob.Store, key string) (*Manifest, error) {
 	r, err := store.Get(ctx, key)
 	if err != nil {
@@ -196,13 +193,13 @@ func ReadManifest(ctx context.Context, store blob.Store, key string) (*Manifest,
 	defer func() { _ = r.Close() }()
 	m := &Manifest{}
 	if err := json.NewDecoder(r).Decode(m); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidManifest, key, err)
+		return nil, fmt.Errorf("%w: %s: %w", errs.ErrInvalidManifest, key, err)
 	}
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %s", err, key)
 	}
 	if own := m.Summary().ManifestKey(); own != key {
-		return nil, fmt.Errorf("%w: %s describes the backup at %s", ErrInvalidManifest, key, own)
+		return nil, fmt.Errorf("%w: %s describes the backup at %s", errs.ErrInvalidManifest, key, own)
 	}
 	return m, nil
 }

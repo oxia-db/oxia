@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
@@ -1391,7 +1393,7 @@ func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.
 	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
 		sc.requiredFeatures[childId] = unionFeatures(sc.requiredFeatures[childId], enabled)
 		return fmt.Errorf("%w: features %v are already enabled on child shard %d",
-			ErrFeaturesRenegotiation, missing, childId)
+			errs.ErrFeaturesRenegotiation, missing, childId)
 	}
 	return nil
 }

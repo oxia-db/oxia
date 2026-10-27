@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
 var (
@@ -134,7 +136,7 @@ func (m *Memory) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	defer m.mu.RUnlock()
 	object, ok := m.objects[key]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, errs.ErrBlobNotFound
 	}
 	return io.NopCloser(bytes.NewReader(object.data)), nil
 }

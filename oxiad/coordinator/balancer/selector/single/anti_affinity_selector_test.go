@@ -18,12 +18,13 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestSelectNoAntiAffinities(t *testing.T) {
@@ -43,7 +44,7 @@ func TestSelectNoAntiAffinities(t *testing.T) {
 	context.SetSelected(linkedhashset.New[string]())
 
 	_, err := saSelector.Select(context)
-	assert.ErrorIs(t, err, selector.ErrNoFunctioning)
+	assert.ErrorIs(t, err, errs.ErrNoFunctioning)
 }
 
 func TestSelectSatisfiedAntiAffinities(t *testing.T) {
@@ -81,7 +82,7 @@ func TestSelectSatisfiedAntiAffinities(t *testing.T) {
 			context.SetSelected(selected)
 			continue
 		}
-		assert.ErrorIs(t, err, selector.ErrMultipleResult)
+		assert.ErrorIs(t, err, errs.ErrMultipleResult)
 		assert.Empty(t, selectedServer)
 		assert.Equal(t, replicas-idx, context.Candidates.Size())
 
@@ -122,7 +123,7 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 		AntiAffinities:     antiAffinities,
 	}
 	result, err := saSelector.Select(context)
-	assert.ErrorIs(t, err, selector.ErrMultipleResult)
+	assert.ErrorIs(t, err, errs.ErrMultipleResult)
 	assert.Empty(t, result)
 	assert.Equal(t, 6, context.Candidates.Size())
 
@@ -134,7 +135,7 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 	context.SetSelected(selected)
 
 	result, err = saSelector.Select(context)
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnsatisfiedAntiAffinity)
 	assert.Empty(t, result)
 }
 
@@ -162,7 +163,7 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 	}
 	context.SetSelected(selectedServers)
 	result, err := saSelector.Select(context)
-	assert.ErrorIs(t, err, selector.ErrMultipleResult)
+	assert.ErrorIs(t, err, errs.ErrMultipleResult)
 	assert.Empty(t, result)
 	assert.Equal(t, 6, context.Candidates.Size())
 
@@ -174,7 +175,7 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 	context.SetSelected(selectedServers)
 
 	result, err = saSelector.Select(context)
-	assert.ErrorIs(t, err, selector.ErrUnsupportedAntiAffinityMode)
+	assert.ErrorIs(t, err, errs.ErrUnsupportedAntiAffinityMode)
 	assert.Empty(t, result)
 }
 
@@ -207,7 +208,7 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	assert.True(t, selectedServers.Contains("s4"))
 
 	result, err := saSelector.Select(context)
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnsatisfiedAntiAffinity)
 	assert.Empty(t, result)
 }
 
@@ -215,7 +216,7 @@ func selectTimes(t *testing.T, saSelector *serverAntiAffinitiesSelector, context
 	t.Helper()
 	for i := 0; i < times; i++ {
 		if selectedServer, err := saSelector.Select(context); err != nil {
-			if errors.Is(err, selector.ErrMultipleResult) || errors.Is(err, selector.ErrNoFunctioning) {
+			if errors.Is(err, errs.ErrMultipleResult) || errors.Is(err, errs.ErrNoFunctioning) {
 				// assume we will use the first as selected servers
 				_, v := context.Candidates.Find(func(index int, value string) bool {
 					return index == 0

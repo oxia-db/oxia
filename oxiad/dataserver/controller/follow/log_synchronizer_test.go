@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -162,7 +164,7 @@ func TestLogSynchronizer_RejectGapOnEmptyWal(t *testing.T) {
 		CumulativeAcksSupported: true,
 	})
 
-	assert.ErrorIs(t, ls.Sync(), wal.ErrInvalidNextOffset)
+	assert.ErrorIs(t, ls.Sync(), errs.ErrInvalidNextOffset)
 	ls.Close()
 
 	// Nothing was appended and no ack was sent

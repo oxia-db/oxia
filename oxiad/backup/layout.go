@@ -23,13 +23,14 @@ package backup
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"math"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
 const (
@@ -44,9 +45,6 @@ const (
 	backupsDir   = "backups/"
 	separator    = "/"
 )
-
-// ErrInvalidID is returned when a backup ID doesn't parse.
-var ErrInvalidID = errors.New("backup: invalid backup id")
 
 // NewLineage returns a new random lineage: the identity of one database of
 // one replica, which the SST object keys of its backups carry.
@@ -74,11 +72,11 @@ func NewID(t time.Time, lineage string) ID {
 func ParseID(s string) (ID, error) {
 	sep := strings.LastIndexByte(s, '-')
 	if sep <= 0 || sep == len(s)-1 {
-		return ID{}, fmt.Errorf("%w: %q", ErrInvalidID, s)
+		return ID{}, fmt.Errorf("%w: %q", errs.ErrInvalidID, s)
 	}
 	t, err := time.Parse(idTimeLayout, s[:sep])
 	if err != nil {
-		return ID{}, fmt.Errorf("%w: %q: %w", ErrInvalidID, s, err)
+		return ID{}, fmt.Errorf("%w: %q: %w", errs.ErrInvalidID, s, err)
 	}
 	return ID{Time: t, Lineage: s[sep+1:]}, nil
 }

@@ -19,6 +19,8 @@ import (
 	"hash/fnv"
 	"sort"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
@@ -29,7 +31,7 @@ type finalSelector struct{}
 func (*finalSelector) Select(ssContext *Context) (string, error) {
 	candidatesArr := ssContext.Candidates.Values()
 	if len(candidatesArr) == 0 {
-		return "", selector.ErrNoFunctioning
+		return "", errs.ErrNoFunctioning
 	}
 
 	sort.Strings(candidatesArr)

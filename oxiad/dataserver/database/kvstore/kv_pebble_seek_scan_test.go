@@ -20,6 +20,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -93,7 +95,7 @@ func TestPebbleSeek(t *testing.T) {
 					}
 
 					it, err := p.Seek(probe, comparison)
-					if errors.Is(err, ErrKeyNotFound) {
+					if errors.Is(err, errs.ErrKeyNotFound) {
 						assert.Empty(t, expected, "%v %q", comparison, probe)
 						continue
 					}

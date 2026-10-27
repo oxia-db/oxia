@@ -23,10 +23,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 )
 
-// ErrDatabaseReplaced is returned by the WithDatabase of a controller when
-// the database was replaced or deleted since the checkpoint it was given.
-var ErrDatabaseReplaced = errors.New("the database of the shard was replaced")
-
 // Checkpoint is a snapshot of the files of a database, taken by the
 // controller of its shard. Closing it deletes the files. The commit offset
 // and the term are in the files: ReadCheckpoint reads them.

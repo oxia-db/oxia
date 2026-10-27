@@ -16,19 +16,15 @@ package lead
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/constant"
-)
-
-var (
-	ErrTooManyCursors    = errors.New("too many cursors")
-	ErrInvalidHeadOffset = errors.New("invalid head offset")
 )
 
 // QuorumAckTracker
@@ -363,11 +359,11 @@ func (q *quorumAckTracker) NewCursorAcker(ackOffset int64) (CursorAcker, error) 
 	defer q.Unlock()
 
 	if uint32(q.cursorIdxGenerator) >= q.replicationFactor-1 {
-		return nil, ErrTooManyCursors
+		return nil, errs.ErrTooManyCursors
 	}
 
 	if ackOffset > q.headOffset.Load() {
-		return nil, ErrInvalidHeadOffset
+		return nil, errs.ErrInvalidHeadOffset
 	}
 
 	qa := &cursorAcker{

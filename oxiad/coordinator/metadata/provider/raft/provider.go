@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -82,7 +84,7 @@ func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 }
 
 func (*Provider[T]) GetLeaderName() (string, error) {
-	return "", provider.ErrCoordinatorLeaderUnavailable
+	return "", errs.ErrCoordinatorLeaderUnavailable
 }
 
 func (mpr *Provider[T]) Close() error {
@@ -174,7 +176,7 @@ func (mpr *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Version
 		return nil, errors.New("failed to apply new cluster state")
 	}
 	if !applyRes.changeApplied {
-		return nil, metadatacommon.ErrBadVersion
+		return nil, errs.ErrMetadataBadVersion
 	}
 
 	return &provider.Versioned[T]{

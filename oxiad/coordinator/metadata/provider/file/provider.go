@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -222,7 +224,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 	existingVersion := existingSnapshot.Version
 
 	if snapshot.Version != existingVersion {
-		return nil, metadatacommon.ErrBadVersion
+		return nil, errs.ErrMetadataBadVersion
 	}
 
 	newVersion := metadatacommon.NextVersion(existingVersion)

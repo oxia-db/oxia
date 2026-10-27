@@ -21,12 +21,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/oxia-db/oxia/common/commonio"
 )
 
 const filename = "MANIFEST"
-
-var ErrInstanceIDMismatch = errors.New("instance id mismatch")
 
 type Document struct {
 	InstanceID string `json:"instance_id,omitempty"`
@@ -90,7 +90,7 @@ func (m *Manifest) GetInstanceID() string {
 
 // SetInstanceID binds the data server to the instance id, and reports whether
 // this call bound it: binding the bound id again does nothing, and another id
-// fails with ErrInstanceIDMismatch.
+// fails with errs.ErrInstanceIDMismatch.
 func (m *Manifest) SetInstanceID(id string) (bound bool, err error) {
 	if id == "" {
 		return false, errors.New("instance id must not be empty")
@@ -111,6 +111,6 @@ func (m *Manifest) SetInstanceID(id string) (bound bool, err error) {
 	case current.InstanceID == id:
 		return false, nil
 	default:
-		return false, ErrInstanceIDMismatch
+		return false, errs.ErrInstanceIDMismatch
 	}
 }

@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
@@ -87,7 +89,7 @@ type LeaderController interface {
 	// WithDatabase runs fn with the directory of the database, under the
 	// controller's read lock, while the database is still the one a
 	// checkpoint of the given generation was taken from; it returns
-	// database.ErrDatabaseReplaced otherwise. A file fn writes next to the
+	// errs.ErrDatabaseReplaced otherwise. A file fn writes next to the
 	// database thus never lands in a database that replaced it.
 	WithDatabase(generation uint64, fn func(dir string) error) error
 	DeleteShard(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
@@ -1418,7 +1420,7 @@ func (lc *leaderController) applyCommitted(ctx context.Context, w wal.Wal, propo
 // isApplied reports whether the apply of an entry returning err is complete: a
 // rejected request has no effect, but its entry is applied.
 func isApplied(err error) bool {
-	return err == nil || errors.Is(err, database.ErrWriteRejected)
+	return err == nil || errors.Is(err, errs.ErrWriteRejected)
 }
 
 // retryApply applies again the entry at offset, which failed to apply with
@@ -1461,7 +1463,7 @@ func (lc *leaderController) applyFromWal(w wal.Wal, offset int64) (statemachine.
 	defer r.Close()
 
 	if !r.HasNext() {
-		return statemachine.ApplyResponse{}, errors.Wrapf(wal.ErrEntryNotFound, "offset %d", offset)
+		return statemachine.ApplyResponse{}, errors.Wrapf(errs.ErrEntryNotFound, "offset %d", offset)
 	}
 	entry, _, _, err := r.ReadNext()
 	if err != nil {
@@ -1734,7 +1736,7 @@ func (lc *leaderController) WithDatabase(generation uint64, fn func(dir string) 
 		return constant.ErrResourceUnavailable
 	}
 	if lc.kvFactory.DatabaseGeneration(lc.namespace, lc.shardId) != generation {
-		return database.ErrDatabaseReplaced
+		return errs.ErrDatabaseReplaced
 	}
 	return fn(lc.kvFactory.DatabaseDir(lc.namespace, lc.shardId))
 }

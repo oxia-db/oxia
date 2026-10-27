@@ -15,18 +15,7 @@
 package selector
 
 import (
-	"github.com/pkg/errors"
-
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
-)
-
-var (
-	ErrUnsatisfiedEnsembleReplicas = errors.New("selector: unsatisfied ensemble replicas")
-	ErrUnsatisfiedAntiAffinity     = errors.New("selector: unsatisfied anti-affinity")
-	ErrUnsupportedAntiAffinityMode = errors.New("selector: unsupported anti-affinity mode")
-	ErrNoFunctioning               = errors.New("selector: no functioning selection")
-	ErrMultipleResult              = errors.New("selector: multiple results")
-	ErrNoCandidates                = errors.New("selector: no candidates available")
 )
 
 type LoadRatioAlgorithm = func(params *model.RatioParams) *model.Ratio

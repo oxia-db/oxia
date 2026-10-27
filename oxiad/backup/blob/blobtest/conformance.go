@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -38,7 +40,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) blob.Store) {
 	t.Run("GetReturnsNotFoundForMissingKey", func(t *testing.T) {
 		store := newStore(t)
 		_, err := store.Get(t.Context(), "missing")
-		assert.ErrorIs(t, err, blob.ErrNotFound)
+		assert.ErrorIs(t, err, errs.ErrBlobNotFound)
 	})
 	t.Run("PutThenGetReturnsContent", func(t *testing.T) {
 		store := newStore(t)
@@ -122,7 +124,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) blob.Store) {
 		require.NoError(t, store.Put(t.Context(), "b", strings.NewReader("")))
 		require.NoError(t, store.Delete(t.Context(), []string{"a", "missing"}))
 		_, err := store.Get(t.Context(), "a")
-		assert.ErrorIs(t, err, blob.ErrNotFound)
+		assert.ErrorIs(t, err, errs.ErrBlobNotFound)
 		assert.Equal(t, "", string(get(t, store, "b")))
 	})
 	t.Run("DeleteBatchesManyKeys", func(t *testing.T) {

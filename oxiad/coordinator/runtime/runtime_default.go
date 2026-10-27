@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/pkg/errors"
@@ -31,7 +33,6 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/oxiad/common/health"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
@@ -287,7 +288,7 @@ func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Names
 	}
 	if !exists {
 		return fmt.Errorf("%w: namespace %q status disappeared during controller initialization",
-			metadatacommon.ErrConflict, name)
+			errs.ErrMetadataConflict, name)
 	}
 	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
 		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {
