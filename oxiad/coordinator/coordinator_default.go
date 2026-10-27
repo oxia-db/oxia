@@ -197,12 +197,11 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 func (s *coordinator) bgLeadershipWatcher(leadershipLost <-chan struct{}) {
 	select {
 	case <-leadershipLost:
+		// coverage-ignore: terminates the process
+		s.logger.Error("Coordination leadership lost: terminating to avoid a split brain")
+		os.Exit(1)
 	case <-s.ctx.Done():
-		return
 	}
-	// coverage-ignore: terminates the process
-	s.logger.Error("Coordination leadership lost: terminating to avoid a split brain")
-	os.Exit(1)
 }
 
 func (s *coordinator) bgOptionWatcher() {
