@@ -667,7 +667,10 @@ func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.Namesp
 	return result
 }
 
+// New starts a runtime whose controllers stop when ctx is cancelled or the
+// runtime is closed.
 func New(
+	ctx context.Context,
 	metadata coordmetadata.Metadata,
 	rpcProvider rpc.ControllerRPCProviderFactory,
 ) (Runtime, error) {
@@ -706,7 +709,7 @@ func New(
 		assignmentsWatch:      commonwatch.New[*proto.ShardAssignments](nil),
 	}
 
-	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
+	c.ctx, c.ctxCancel = context.WithCancel(ctx)
 
 	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
 		Context:            c.ctx,
@@ -763,6 +766,7 @@ func New(
 			if !exist {
 				nsConfig = &proto.Namespace{}
 			}
+			//nolint:contextcheck // the shard controllers own their context
 			c.shardControllers[shard] = shardcontroller.NewController(ns, shard, nsConfig,
 				shardMetadata, c.metadata, c.findDataServerFeatures,
 				c, c.rpc, shardcontroller.DefaultPeriodicTasksInterval)

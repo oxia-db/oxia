@@ -48,15 +48,30 @@
 //	options.Metadata.ProviderName = option.ProviderFile
 //	options.Metadata.File.Dir = filepath.Join(dataDir, "coordinator")
 //
-//	coord, err := coordinator.New(ctx, options,
-//		coordinator.WithInitialClusterConfiguration(&proto.ClusterConfiguration{
+//	// Bootstrap the cluster configuration on the first start: a restart
+//	// keeps the stored one, with the changes made through the admin API.
+//	configPath := options.Metadata.File.ConfigPath()
+//	if _, err := os.Stat(configPath); errors.Is(err, fs.ErrNotExist) {
+//		config, err := codec.ClusterConfigCodec.MarshalYAML(&proto.ClusterConfiguration{
 //			Namespaces: []*proto.Namespace{{
 //				Name:              constant.DefaultNamespace,
 //				ReplicationFactor: 3,
 //				InitialShardCount: 1,
 //			}},
 //			Servers: identities,
-//		}))
+//		})
+//		if err != nil {
+//			return err
+//		}
+//		if err := os.MkdirAll(options.Metadata.File.Dir, 0o755); err != nil {
+//			return err
+//		}
+//		if err := os.WriteFile(configPath, config, 0o600); err != nil {
+//			return err
+//		}
+//	}
+//
+//	coord, err := coordinator.New(ctx, commonwatch.New(options))
 //	if err != nil {
 //		return err
 //	}
@@ -87,10 +102,9 @@
 // coordinator acquires the metadata leadership; cancel its context to stop
 // waiting.
 //
-// Only the raft and configmap providers can lose the leadership. By default a
-// coordinator that loses it terminates the process; an embedding application
-// sets [WithOnLeadershipLost] instead, and starts a new coordinator to take
-// part in the next election.
+// Only the raft and configmap providers can lose the leadership. A coordinator
+// that loses it terminates the process, so that it can't coordinate alongside
+// the new leader: a restart rejoins the election.
 //
 // # Limitations
 //
@@ -101,6 +115,6 @@
 //     it is loaded, and every metrics endpoint serves the default Prometheus
 //     registry: the servers of one process share one metrics pipeline.
 //   - The log level is package-global, shared by all the servers.
-//   - A failure to serve gRPC or metrics, and a fatal Pebble error, exit the
-//     process.
+//   - A failure to serve gRPC or metrics, a fatal Pebble error, and the loss of
+//     the coordinator's metadata leadership exit the process.
 package coordinator

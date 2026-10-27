@@ -669,6 +669,19 @@ func TestMetadataGetLeaderReturnsConfiguredCoordinator(t *testing.T) {
 	require.Equal(t, "coordinator-0:6651", leader.GetPublicAddress())
 }
 
+// A provider that doesn't know the leader, e.g. raft, fails GetLeader.
+func TestMetadataGetLeaderFailsWhenLeaderUnknown(t *testing.T) {
+	metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
+		Provider: newStatusProvider(),
+		getLeaderName: func() (string, error) {
+			return "", provider.ErrCoordinatorLeaderUnavailable
+		},
+	}, newConfigProvider(), "")
+
+	_, err := metadata.GetLeader()
+	require.ErrorIs(t, err, provider.ErrCoordinatorLeaderUnavailable)
+}
+
 // A status write refused on the version fails, whether the coordinator never
 // led, or is closing.
 func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
@@ -890,6 +903,7 @@ type fakeProvider[T gproto.Message] struct {
 	store              func(provider.Versioned[T]) (metadataconstant.Version, error)
 	reload             func() error
 	waitToBecomeLeader func() (<-chan struct{}, error)
+	getLeaderName      func() (string, error)
 }
 
 func (p fakeProvider[T]) Load() (*provider.Versioned[T], error) {
@@ -918,6 +932,13 @@ func (p fakeProvider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 		return p.waitToBecomeLeader()
 	}
 	return p.Provider.WaitToBecomeLeader()
+}
+
+func (p fakeProvider[T]) GetLeaderName() (string, error) {
+	if p.getLeaderName != nil {
+		return p.getLeaderName()
+	}
+	return p.Provider.GetLeaderName()
 }
 
 // failLoad returns a load that fails with message.

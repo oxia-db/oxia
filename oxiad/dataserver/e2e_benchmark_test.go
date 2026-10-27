@@ -130,7 +130,7 @@ func newE2EBench(b *testing.B) *e2eBench {
 	coordinatorOptions.Observability.Metric.Enabled = &constant.FlagFalse
 	coordinatorOptions.Metadata.ProviderName = metadatacommon.NameFile
 	coordinatorOptions.Metadata.File.Dir = coordinatorDir
-	coord, err := coordinator.NewGrpcServer(context.Background(), commonwatch.New(coordinatorOptions))
+	coord, err := coordinator.New(context.Background(), commonwatch.New(coordinatorOptions))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, coord.Close()) })
 

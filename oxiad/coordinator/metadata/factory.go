@@ -102,38 +102,6 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	return factory, nil
 }
 
-// SeedClusterConfig stores the given cluster configuration if none exists yet.
-// The configuration is validated first, so an invalid one is rejected and
-// nothing is stored. It is a no-op when a configuration is already present,
-// and it tolerates losing the seeding race to another coordinator.
-func (f *Factory) SeedClusterConfig(config *commonproto.ClusterConfiguration) error {
-	if err := config.Validate(); err != nil {
-		return fmt.Errorf("invalid cluster configuration to seed: %w", err)
-	}
-	f.mu.Lock()
-	configProvider := f.configProvider
-	f.mu.Unlock()
-
-	current, err := configProvider.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load the cluster configuration: %w", err)
-	}
-	if current.Version != metadatacommon.NotExists {
-		return nil
-	}
-	if _, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
-		Value:   config,
-		Version: metadatacommon.NotExists,
-	}); err != nil {
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
-			// Another coordinator stored a configuration first.
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
 func (f *Factory) CreateMetadata(ctx context.Context) Metadata {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
@@ -145,8 +113,7 @@ func (f *Factory) CreateMetadata(ctx context.Context) Metadata {
 }
 
 // Close closes the metadata providers. It is safe to call more than once,
-// and concurrently: a coordinator whose start is cancelled closes its factory
-// from the cancellation, to end a pending leadership wait.
+// and concurrently.
 func (f *Factory) Close() error {
 	f.closeOnce.Do(func() {
 		f.closeErr = f.close()

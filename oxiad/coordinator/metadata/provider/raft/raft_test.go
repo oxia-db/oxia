@@ -15,6 +15,7 @@
 package raft
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
@@ -128,10 +129,11 @@ type leadershipResult struct {
 	err  error
 }
 
-func startWaitForLeadership(notifyCh chan bool, shutdownCh chan struct{}, barrier func() error) chan leadershipResult {
+func startWaitForLeadership(ctx context.Context, notifyCh chan bool, shutdownCh chan struct{},
+	barrier func() error) chan leadershipResult {
 	resCh := make(chan leadershipResult, 1)
 	go func() {
-		lost, err := waitForLeadership(notifyCh, shutdownCh, barrier,
+		lost, err := waitForLeadership(ctx, notifyCh, shutdownCh, barrier,
 			slog.New(slog.NewTextHandler(io.Discard, nil)))
 		resCh <- leadershipResult{lost, err}
 	}()
@@ -144,7 +146,7 @@ func TestWaitForLeadership(t *testing.T) {
 	defer close(shutdownCh)
 
 	barriers := atomic.Int32{}
-	resCh := startWaitForLeadership(notifyCh, shutdownCh, func() error {
+	resCh := startWaitForLeadership(t.Context(), notifyCh, shutdownCh, func() error {
 		barriers.Add(1)
 		return nil
 	})
@@ -193,7 +195,7 @@ func TestWaitForLeadershipBarrierFailure(t *testing.T) {
 	// The leadership can be lost again while waiting for the barrier: the
 	// wait must resume instead of serving a stale takeover
 	barriers := atomic.Int32{}
-	resCh := startWaitForLeadership(notifyCh, shutdownCh, func() error {
+	resCh := startWaitForLeadership(t.Context(), notifyCh, shutdownCh, func() error {
 		if barriers.Add(1) == 1 {
 			return errors.New("leadership lost during the barrier")
 		}
@@ -218,10 +220,31 @@ func TestWaitForLeadershipShutdown(t *testing.T) {
 	notifyCh := make(chan bool, 1)
 	shutdownCh := make(chan struct{})
 
-	resCh := startWaitForLeadership(notifyCh, shutdownCh, func() error { return nil })
+	resCh := startWaitForLeadership(t.Context(), notifyCh, shutdownCh, func() error { return nil })
 
 	close(shutdownCh)
 	res := <-resCh
 	require.Error(t, res.err)
 	assert.Nil(t, res.lost)
+}
+
+// A canceled wait returns the context's error, and leaves a consumer on the
+// notification channel, which raft blocks writing to.
+func TestWaitForLeadershipCanceled(t *testing.T) {
+	notifyCh := make(chan bool)
+	shutdownCh := make(chan struct{})
+	defer close(shutdownCh)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	resCh := startWaitForLeadership(ctx, notifyCh, shutdownCh, func() error { return nil })
+
+	cancel()
+	res := <-resCh
+	require.ErrorIs(t, res.err, context.Canceled)
+	assert.Nil(t, res.lost)
+	select {
+	case notifyCh <- true:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "no consumer is left on the notification channel")
+	}
 }

@@ -55,7 +55,7 @@ func newCoordinatorInstance(
 		require.NoError(t, metadata.Close())
 	})
 
-	coordinatorInstance, err := coordruntime.New(metadata, rpcProvider)
+	coordinatorInstance, err := coordruntime.New(t.Context(), metadata, rpcProvider)
 	require.NoError(t, err)
 	reconciler, err := coordreconciler.New(t.Context(), coordinatorInstance)
 	require.NoError(t, err)

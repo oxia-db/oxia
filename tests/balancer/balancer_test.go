@@ -67,7 +67,7 @@ func TestBalancer(t *testing.T) {
 		QuarantineTime:   "1s",
 	}
 
-	coordinatorInstance, err := coordruntime.New(metadata, coordrpc.NewControllerRPCProviderFactory(nil))
+	coordinatorInstance, err := coordruntime.New(t.Context(), metadata, coordrpc.NewControllerRPCProviderFactory(nil))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, coordinatorInstance.Close())

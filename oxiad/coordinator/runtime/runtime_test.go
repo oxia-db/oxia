@@ -94,7 +94,7 @@ func TestRuntimeNewDiscoversFeaturesWhileStartingShardControllers(t *testing.T) 
 		rpcProvider.GetNode(server).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 	}
 
-	r, err := New(metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider })
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -117,7 +117,7 @@ func TestRuntimeNewFailsWithoutInstanceID(t *testing.T) {
 			return "", errors.New("status unavailable")
 		},
 	}
-	_, err := New(metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	_, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
 	require.ErrorContains(t, err, "status unavailable")
 }
 
@@ -148,7 +148,7 @@ func TestRuntimeNewFailsWithoutMetadata(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			metadata := &fakeMetadata{Metadata: newTestMetadata(t, &proto.ClusterConfiguration{})}
 			tc.setup(metadata)
-			_, err := New(metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+			_, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
 			require.ErrorIs(t, err, readErr)
 		})
 	}
@@ -173,7 +173,7 @@ func TestRuntimeNewStartsControllersOfNamespaceMissingFromConfig(t *testing.T) {
 		},
 	}))
 
-	r, err := New(metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -1004,7 +1004,7 @@ func TestRuntimeSubscribeShardAssignmentsWaitsForFirstComputation(t *testing.T) 
 	}))
 
 	rpcProvider := rpctest.NewRpcProvider()
-	r, err := New(metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider })
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 

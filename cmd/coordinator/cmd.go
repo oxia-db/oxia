@@ -15,7 +15,6 @@
 package coordinator
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -141,6 +140,6 @@ func exec(cmd *cobra.Command, _ []string) error {
 			banner.Field{Name: "Internal Endpoint", Value: coordinatorOptions.Server.Internal.BindAddress},
 			banner.MetricsField(&coordinatorOptions.Observability.Metric),
 			banner.PprofField())
-		return coordinator.NewGrpcServer(context.Background(), optionsWatch)
+		return coordinator.New(cmd.Context(), optionsWatch)
 	})
 }

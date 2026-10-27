@@ -15,7 +15,6 @@
 package coordinator
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,6 +32,7 @@ import (
 	coordserver "github.com/oxia-db/oxia/oxiad/coordinator"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 // A restarted coordinator only knows the features of a data server after a
@@ -64,17 +64,17 @@ func TestCoordinator_RestartWithDataServerDown(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(metadataDir, coordoption.DefaultFileConfigName), configData, 0o600))
 
-	startCoordinator := func() (*coordserver.GrpcServer, oxia.AdminClient) {
+	startCoordinator := func() (coordserver.Coordinator, oxia.AdminClient) {
 		options := coordoption.NewDefaultOptions()
 		options.Server.Internal.BindAddress = "127.0.0.1:0"
-		options.Server.Public.BindAddress = "127.0.0.1:0"
+		adminAddr := mock.FreeAddresses(t, 1)[0]
+		options.Server.Public.BindAddress = adminAddr
 		options.Observability.Metric.Enabled = &constant.FlagFalse
 		options.Metadata.ProviderName = metadatacommon.NameFile
 		options.Metadata.File.Dir = metadataDir
 
-		coordinatorServer, err := coordserver.NewGrpcServer(t.Context(), commonwatch.New(options))
+		coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options))
 		require.NoError(t, err)
-		adminAddr := fmt.Sprintf("127.0.0.1:%d", coordinatorServer.PublicPort())
 		adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
 		require.NoError(t, err)
 		return coordinatorServer, adminClient
@@ -165,17 +165,17 @@ func TestCoordinator_RestartKeepsTermPinningAllFeatures(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(metadataDir, coordoption.DefaultFileConfigName), configData, 0o600))
 
-	startCoordinator := func() (*coordserver.GrpcServer, oxia.AdminClient) {
+	startCoordinator := func() (coordserver.Coordinator, oxia.AdminClient) {
 		options := coordoption.NewDefaultOptions()
 		options.Server.Internal.BindAddress = "127.0.0.1:0"
-		options.Server.Public.BindAddress = "127.0.0.1:0"
+		adminAddr := mock.FreeAddresses(t, 1)[0]
+		options.Server.Public.BindAddress = adminAddr
 		options.Observability.Metric.Enabled = &constant.FlagFalse
 		options.Metadata.ProviderName = metadatacommon.NameFile
 		options.Metadata.File.Dir = metadataDir
 
-		coordinatorServer, err := coordserver.NewGrpcServer(t.Context(), commonwatch.New(options))
+		coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options))
 		require.NoError(t, err)
-		adminAddr := fmt.Sprintf("127.0.0.1:%d", coordinatorServer.PublicPort())
 		adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
 		require.NoError(t, err)
 		return coordinatorServer, adminClient
@@ -246,7 +246,7 @@ func TestCoordinator_RestartKeepsTermPinningAllFeatures(t *testing.T) {
 // cluster.yaml was deleted, would reconcile an empty configuration and delete
 // every namespace. It fails to start instead, and once the configuration is
 // restored, it starts with the shard and its data.
-func TestNewGrpcServerRejectsDeletedConfiguration(t *testing.T) {
+func TestNewRejectsDeletedConfiguration(t *testing.T) {
 	s1, sa1 := newServer(t)
 	defer func() {
 		assert.NoError(t, s1.Close())
@@ -262,18 +262,19 @@ func TestNewGrpcServerRejectsDeletedConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, configData, 0o600))
 
-	startCoordinator := func() (*coordserver.GrpcServer, error) {
+	adminAddr := mock.FreeAddresses(t, 1)[0]
+	startCoordinator := func() (coordserver.Coordinator, error) {
 		options := coordoption.NewDefaultOptions()
 		options.Server.Internal.BindAddress = "127.0.0.1:0"
-		options.Server.Public.BindAddress = "127.0.0.1:0"
+		options.Server.Public.BindAddress = adminAddr
 		options.Observability.Metric.Enabled = &constant.FlagFalse
 		options.Metadata.ProviderName = metadatacommon.NameFile
 		options.Metadata.File.Dir = metadataDir
-		return coordserver.NewGrpcServer(t.Context(), commonwatch.New(options))
+		return coordserver.New(t.Context(), commonwatch.New(options))
 	}
-	requireSteadyState := func(coordinatorServer *coordserver.GrpcServer) {
+	requireSteadyState := func() {
 		t.Helper()
-		adminClient, err := oxia.NewAdminClient(fmt.Sprintf("127.0.0.1:%d", coordinatorServer.PublicPort()), nil, nil)
+		adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
 		require.NoError(t, err)
 		defer func() {
 			assert.NoError(t, adminClient.Close())
@@ -288,7 +289,7 @@ func TestNewGrpcServerRejectsDeletedConfiguration(t *testing.T) {
 
 	coordinatorServer, err := startCoordinator()
 	require.NoError(t, err)
-	requireSteadyState(coordinatorServer)
+	requireSteadyState()
 	client, err := oxia.NewSyncClient(sa1.GetPublic(), oxia.WithNamespace(constant.DefaultNamespace))
 	require.NoError(t, err)
 	defer func() {
@@ -311,7 +312,7 @@ func TestNewGrpcServerRejectsDeletedConfiguration(t *testing.T) {
 	defer func() {
 		assert.NoError(t, coordinatorServer.Close())
 	}()
-	requireSteadyState(coordinatorServer)
+	requireSteadyState()
 	_, value, _, err := client.Get(t.Context(), "/key")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("value"), value)

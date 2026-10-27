@@ -78,7 +78,7 @@ func (mpr *Provider[T]) OnApplied(key string, _ []byte, _ int64) {
 }
 
 func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
-	return mpr.raft.waitToBecomeLeader()
+	return mpr.raft.waitToBecomeLeader(mpr.ctx)
 }
 
 func (*Provider[T]) GetLeaderName() (string, error) {
