@@ -22,142 +22,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-func memoryOptions() *option.Options {
-	return &option.Options{
+func TestNewFactoryFromOptionsCreatesMemoryProviders(t *testing.T) {
+	factory, err := New(t.Context(), &option.Options{
 		Metadata: option.MetadataOptions{
 			Name: "coordinator-test",
 			ProviderOptions: option.ProviderOptions{
 				ProviderName: metadatacommon.NameMemory,
 			},
 		},
-	}
-}
-
-func newMemoryFactory(t *testing.T, initialConfig *commonproto.ClusterConfiguration) *Factory {
-	t.Helper()
-
-	factory, err := New(t.Context(), memoryOptions(), initialConfig)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		assert.NoError(t, factory.Close())
 	})
-	return factory
-}
-
-func newFileFactory(t *testing.T, dir string, initialConfig *commonproto.ClusterConfiguration) *Factory {
-	t.Helper()
-
-	factory, err := New(t.Context(), &option.Options{
-		Metadata: option.MetadataOptions{
-			Name: "coordinator-test",
-			ProviderOptions: option.ProviderOptions{
-				ProviderName: metadatacommon.NameFile,
-				File: option.FileMetadata{
-					Dir: dir,
-				},
-			},
-		},
-	}, initialConfig)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		assert.NoError(t, factory.Close())
-	})
-	return factory
-}
-
-func newInitialConfig(namespace string) *commonproto.ClusterConfiguration {
-	return &commonproto.ClusterConfiguration{
-		Namespaces: []*commonproto.Namespace{{
-			Name:              namespace,
-			ReplicationFactor: 1,
-			InitialShardCount: 1,
-		}},
-		Servers: []*commonproto.DataServerIdentity{{
-			Public:   "localhost:6648",
-			Internal: "localhost:6649",
-		}},
-	}
-}
-
-// takeOver creates a metadata of factory that takes the leadership.
-func takeOver(t *testing.T, factory *Factory) Metadata {
-	t.Helper()
-
-	metadata := factory.CreateMetadata(t.Context())
-	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })
-	_, err := metadata.WaitToBecomeLeader()
-	require.NoError(t, err)
-	return metadata
-}
-
-func loadConfig(t *testing.T, factory *Factory) *commonproto.ClusterConfiguration {
-	t.Helper()
-
-	current, err := factory.configProvider.Load()
-	require.NoError(t, err)
-	if current.Version == metadatacommon.NotExists {
-		return nil
-	}
-	return current.Value
-}
-
-// The metadata that takes the leadership stores the initial configuration of
-// the factory.
-func TestNewInitialClusterConfig(t *testing.T) {
-	factory := newMemoryFactory(t, newInitialConfig("test-namespace"))
-
-	takeOver(t, factory)
-
-	current := loadConfig(t, factory)
-	require.NotNil(t, current)
-	require.Len(t, current.Namespaces, 1)
-	assert.Equal(t, "test-namespace", current.Namespaces[0].Name)
-}
-
-// A cluster restarted with an initial configuration keeps the configuration
-// of the previous run, with the namespaces and data servers added to it
-// through the admin API.
-func TestNewInitialClusterConfigDoesNotOverwriteAfterRestart(t *testing.T) {
-	dir := t.TempDir()
-
-	first := newFileFactory(t, dir, newInitialConfig("first"))
-	require.NoError(t, takeOver(t, first).Close())
-	require.NoError(t, first.Close())
-
-	restarted := newFileFactory(t, dir, newInitialConfig("second"))
-	takeOver(t, restarted)
-
-	current := loadConfig(t, restarted)
-	require.NotNil(t, current)
-	require.Len(t, current.Namespaces, 1)
-	assert.Equal(t, "first", current.Namespaces[0].Name)
-}
-
-// An invalid initial configuration is rejected before anything is stored:
-// once stored, it would never be replaced, and a coordinator would fail on it
-// at every start.
-func TestNewRejectsInvalidInitialClusterConfig(t *testing.T) {
-	replicationAboveServers := newInitialConfig("test-namespace")
-	replicationAboveServers.Namespaces[0].ReplicationFactor = 3
-
-	noShards := newInitialConfig("test-namespace")
-	noShards.Namespaces[0].InitialShardCount = 0
-
-	for name, config := range map[string]*commonproto.ClusterConfiguration{
-		"replication above servers":   replicationAboveServers,
-		"no initial shards":           noShards,
-		"coordinator without address": {Coordinators: []*commonproto.Coordinator{{Name: "c1"}}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := New(t.Context(), memoryOptions(), config)
-			require.ErrorContains(t, err, "invalid initial cluster configuration")
-		})
-	}
+	assert.NotNil(t, factory.statusProvider)
+	assert.NotNil(t, factory.configProvider)
+	require.NoError(t, factory.Close())
 }
 
 func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
@@ -173,7 +54,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 				},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 	metadata := factory.CreateMetadata(t.Context())
 	defer func() {
@@ -214,7 +95,7 @@ current-context: test
 				Kubernetes:   option.K8sMetadata{Namespace: "oxia"},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 	assert.NotNil(t, factory.configProvider)
 	assert.NotNil(t, factory.statusProvider)
@@ -238,7 +119,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 				},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 	metadata := factory.CreateMetadata(t.Context())
 	defer func() {
@@ -266,7 +147,7 @@ func TestFactoryOnAppliedForwardsToInterceptor(t *testing.T) {
 }
 
 func TestNewRejectsNilOptions(t *testing.T) {
-	_, err := New(t.Context(), nil, nil)
+	_, err := New(t.Context(), nil)
 	require.ErrorContains(t, err, "options must not be nil")
 }
 
@@ -277,7 +158,7 @@ func TestNewRejectsInvalidLegacyClusterConfigPath(t *testing.T) {
 			Name:            "coordinator-test",
 			ProviderOptions: option.ProviderOptions{ProviderName: metadatacommon.NameFile},
 		},
-	}, nil)
+	})
 	require.ErrorContains(t, err, "must be a file path")
 }
 
@@ -287,7 +168,7 @@ func TestNewRejectsUnknownProvider(t *testing.T) {
 			Name:            "coordinator-test",
 			ProviderOptions: option.ProviderOptions{ProviderName: "etcd"},
 		},
-	}, nil)
+	})
 	require.ErrorContains(t, err, "must be one of")
 }
 
@@ -312,7 +193,7 @@ func TestNewFileProviderFailures(t *testing.T) {
 						File:         fileOptions,
 					},
 				},
-			}, nil)
+			})
 			require.Error(t, err)
 		})
 	}
@@ -339,7 +220,7 @@ current-context: test
 				Kubernetes:   option.K8sMetadata{Namespace: "oxia"},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, factory.Close()) }()
 
@@ -360,7 +241,7 @@ func TestNewConfigMapProviderFailsWithoutKubeconfig(t *testing.T) {
 				Kubernetes:   option.K8sMetadata{Namespace: "oxia"},
 			},
 		},
-	}, nil)
+	})
 	require.Error(t, err)
 }
 
@@ -379,14 +260,14 @@ func TestNewRaftProvider(t *testing.T) {
 		},
 	}
 
-	factory, err := New(t.Context(), options, nil)
+	factory, err := New(t.Context(), options)
 	require.NoError(t, err)
 	assert.NotNil(t, factory.raft)
 	assert.NotNil(t, factory.raftInterceptor, "the config provider follows the applied entries")
 	require.NoError(t, factory.Close())
 
 	options.Metadata.Raft.Address = "invalid-address"
-	_, err = New(t.Context(), options, nil)
+	_, err = New(t.Context(), options)
 	require.ErrorContains(t, err, "failed to create raft metadata provider")
 }
 

@@ -136,7 +136,7 @@ func setupSplitTest(t *testing.T, phase proto.SplitPhase, nsMutators ...func(*pr
 				},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 	metadata := metadataFactory.CreateMetadata(t.Context())
 	_, err = metadata.WaitToBecomeLeader()

@@ -44,10 +44,8 @@ type Factory struct {
 	statusProvider  provider.Provider[*commonproto.ClusterStatus]
 	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
 	coordinatorName string
-	// initialClusterConfig is set by New and never modified afterwards.
-	initialClusterConfig *commonproto.ClusterConfiguration
-	raft                 *raft.Raft
-	raftInterceptor      raft.Interceptor
+	raft            *raft.Raft
+	raftInterceptor raft.Interceptor
 }
 
 func (f *Factory) OnApplied(key string, data []byte, version int64) {
@@ -57,20 +55,9 @@ func (f *Factory) OnApplied(key string, data []byte, version int64) {
 	f.raftInterceptor.OnApplied(key, data, version)
 }
 
-// New creates the metadata providers that options select. A non-nil
-// initialClusterConfig is stored by the metadata that takes the leadership
-// when the cluster has no configuration yet: it is validated here, so an
-// invalid one is never stored.
-func New(ctx context.Context, options *option.Options,
-	initialClusterConfig *commonproto.ClusterConfiguration) (*Factory, error) {
+func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	if options == nil {
 		return nil, errors.New("options must not be nil")
-	}
-	if initialClusterConfig != nil {
-		if err := initialClusterConfig.Validate(); err != nil {
-			return nil, fmt.Errorf("invalid initial cluster configuration: %w", err)
-		}
-		initialClusterConfig = initialClusterConfig.CloneVT()
 	}
 	var err error
 	meta := options.Metadata
@@ -78,8 +65,7 @@ func New(ctx context.Context, options *option.Options,
 		return nil, err
 	}
 	factory := &Factory{
-		coordinatorName:      meta.Name,
-		initialClusterConfig: initialClusterConfig,
+		coordinatorName: meta.Name,
 	}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
@@ -123,7 +109,7 @@ func (f *Factory) CreateMetadata(ctx context.Context) Metadata {
 	coordinatorName := f.coordinatorName
 	f.mu.Unlock()
 
-	return newDefaultMetadata(ctx, statusProvider, configProvider, coordinatorName, f.initialClusterConfig)
+	return newDefaultMetadata(ctx, statusProvider, configProvider, coordinatorName)
 }
 
 // Close closes the metadata providers. It is safe to call more than once,

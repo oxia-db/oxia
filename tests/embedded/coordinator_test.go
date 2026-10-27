@@ -16,8 +16,6 @@ package embedded
 
 import (
 	"context"
-	"net"
-	"os"
 	"testing"
 	"time"
 
@@ -25,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/constant"
-	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordinatoroption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -55,7 +52,7 @@ type startResult struct {
 func startCoordinator(ctx context.Context, options *coordinatoroption.Options) <-chan startResult {
 	started := make(chan startResult, 1)
 	go func() {
-		server, err := coordinator.New(ctx, commonwatch.New(options), nil)
+		server, err := coordinator.New(ctx, commonwatch.New(options))
 		started <- startResult{server: server, err: err}
 	}()
 	return started
@@ -73,39 +70,13 @@ func requireStartReturns(t *testing.T, started <-chan startResult) startResult {
 	}
 }
 
-// An invalid initial cluster configuration fails New before the coordinator
-// binds its ports or touches the metadata.
-func TestCoordinatorRejectsInvalidInitialConfiguration(t *testing.T) {
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, occupied.Close()) })
-
-	dir := t.TempDir()
-	options := newFileCoordinatorOptions("coordinator", dir)
-	options.Server.Public.BindAddress = occupied.Addr().String()
-
-	_, err = coordinator.New(t.Context(), commonwatch.New(options), &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 1,
-		}},
-		Servers: []*proto.DataServerIdentity{{Public: "localhost:6648", Internal: "localhost:6649"}},
-	})
-	require.ErrorContains(t, err, "invalid initial cluster configuration")
-
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	assert.Empty(t, entries, "nothing is written to the metadata directory")
-}
-
 // A standby coordinator blocks in New while another holds the leadership.
 // Cancelling its context ends the wait: New releases what it started and
 // returns the context's error.
 func TestCoordinatorStandbyStartIsCancellable(t *testing.T) {
 	dir := t.TempDir()
 
-	leader, err := coordinator.New(t.Context(), commonwatch.New(newFileCoordinatorOptions("leader", dir)), nil)
+	leader, err := coordinator.New(t.Context(), commonwatch.New(newFileCoordinatorOptions("leader", dir)))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, leader.Close()) })
 

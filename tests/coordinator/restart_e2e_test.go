@@ -73,7 +73,7 @@ func TestCoordinator_RestartWithDataServerDown(t *testing.T) {
 		options.Metadata.ProviderName = metadatacommon.NameFile
 		options.Metadata.File.Dir = metadataDir
 
-		coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options), nil)
+		coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options))
 		require.NoError(t, err)
 		adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
 		require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestCoordinator_RestartKeepsTermPinningAllFeatures(t *testing.T) {
 		options.Metadata.ProviderName = metadatacommon.NameFile
 		options.Metadata.File.Dir = metadataDir
 
-		coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options), nil)
+		coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options))
 		require.NoError(t, err)
 		adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
 		require.NoError(t, err)
@@ -270,7 +270,7 @@ func TestNewRejectsDeletedConfiguration(t *testing.T) {
 		options.Observability.Metric.Enabled = &constant.FlagFalse
 		options.Metadata.ProviderName = metadatacommon.NameFile
 		options.Metadata.File.Dir = metadataDir
-		return coordserver.New(t.Context(), commonwatch.New(options), nil)
+		return coordserver.New(t.Context(), commonwatch.New(options))
 	}
 	requireSteadyState := func() {
 		t.Helper()

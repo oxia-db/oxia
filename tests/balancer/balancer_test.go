@@ -43,7 +43,7 @@ func TestBalancer(t *testing.T) {
 	options := coordoption.NewDefaultOptions()
 	options.Metadata.ProviderName = metadatacommon.NameMemory
 
-	metadataFactory, err := coordmetadata.New(t.Context(), options, nil)
+	metadataFactory, err := coordmetadata.New(t.Context(), options)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, metadataFactory.Close())

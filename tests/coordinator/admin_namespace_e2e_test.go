@@ -43,7 +43,7 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 	options.Metadata.File.Dir = metadataDir
 	options.Metadata.File.ConfigName = "cluster.yaml"
 
-	coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options), nil)
+	coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, coordinatorServer.Close())

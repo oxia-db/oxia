@@ -17,7 +17,10 @@
 package embedded
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -28,6 +31,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordinatoroption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -86,14 +90,23 @@ func startEmbeddedCluster(t *testing.T, dir string, identities []*proto.DataServ
 	options.Metadata.ProviderName = coordinatoroption.ProviderFile
 	options.Metadata.File.Dir = filepath.Join(dir, "coordinator")
 
-	coord, err := coordinator.New(t.Context(), commonwatch.New(options), &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{
-			Name:              constant.DefaultNamespace,
-			ReplicationFactor: 3,
-			InitialShardCount: 2,
-		}},
-		Servers: identities,
-	})
+	// The configuration is written once: a restart keeps the stored one
+	configPath := options.Metadata.File.ConfigPath()
+	if _, err := os.Stat(configPath); errors.Is(err, fs.ErrNotExist) {
+		config, err := metadatacodec.ClusterConfigCodec.MarshalYAML(&proto.ClusterConfiguration{
+			Namespaces: []*proto.Namespace{{
+				Name:              constant.DefaultNamespace,
+				ReplicationFactor: 3,
+				InitialShardCount: 2,
+			}},
+			Servers: identities,
+		})
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(options.Metadata.File.Dir, 0o755))
+		require.NoError(t, os.WriteFile(configPath, config, 0o600))
+	}
+
+	coord, err := coordinator.New(t.Context(), commonwatch.New(options))
 	require.NoError(t, err)
 	cluster.coordinator = coord
 	return cluster

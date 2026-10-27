@@ -17,7 +17,6 @@ package coordinator
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -64,8 +63,7 @@ type coordinator struct {
 	metrics          *metric.PrometheusMetrics
 }
 
-func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options],
-	initialClusterConfig *proto.ClusterConfiguration) (_ Coordinator, err error) {
+func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (_ Coordinator, err error) {
 	options := optionsWatch.Load()
 	if options == nil {
 		return nil, errors.New("options must not be nil")
@@ -73,12 +71,6 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options],
 	options.WithDefault()
 	if err := options.Validate(); err != nil {
 		return nil, err
-	}
-	// Fail fast, before binding the ports and waiting for the leadership.
-	if initialClusterConfig != nil {
-		if err := initialClusterConfig.Validate(); err != nil {
-			return nil, fmt.Errorf("invalid initial cluster configuration: %w", err)
-		}
 	}
 	slog.Info("Starting Oxia coordinator", slog.Any("options", options))
 
@@ -125,7 +117,7 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options],
 		return nil, err
 	}
 
-	metadataFactory, err = coordmetadata.New(ctx, options, initialClusterConfig)
+	metadataFactory, err = coordmetadata.New(ctx, options)
 	if err != nil {
 		return nil, err
 	}

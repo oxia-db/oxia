@@ -262,7 +262,7 @@ func runCoordinator(dispatcher *dispatcher, options *coordoption.Options,
 		}
 	}()
 
-	metadataFactory, err := coordmetadata.New(ctx, options, nil)
+	metadataFactory, err := coordmetadata.New(ctx, options)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create coordinator metadata factory")
 	}

@@ -1118,7 +1118,7 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 				},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 
 	metadata := metadataFactory.CreateMetadata(t.Context())

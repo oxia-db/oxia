@@ -32,20 +32,14 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/security"
 	"github.com/oxia-db/oxia/oxiad/common/logging"
+	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-func TestNewRejectsInvalidInitialClusterConfiguration(t *testing.T) {
-	_, err := New(t.Context(), commonwatch.New(newTestOptions()), &proto.ClusterConfiguration{
-		Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1}},
-	})
-	require.ErrorContains(t, err, "initialShardCount")
-}
-
 func TestNewRejectsNilOptions(t *testing.T) {
-	_, err := New(t.Context(), commonwatch.New[*option.Options](nil), nil)
+	_, err := New(t.Context(), commonwatch.New[*option.Options](nil))
 	require.ErrorContains(t, err, "options must not be nil")
 }
 
@@ -53,7 +47,7 @@ func TestNewRejectsInvalidOptions(t *testing.T) {
 	options := newTestOptions()
 	options.Metadata.ProviderName = "etcd"
 
-	_, err := New(t.Context(), commonwatch.New(options), nil)
+	_, err := New(t.Context(), commonwatch.New(options))
 	require.ErrorContains(t, err, "must be one of")
 }
 
@@ -116,33 +110,11 @@ func TestNewFailsToStart(t *testing.T) {
 			options := newTestOptions()
 			test.modify(options)
 
-			server, err := New(t.Context(), commonwatch.New(options), nil)
+			server, err := New(t.Context(), commonwatch.New(options))
 			require.Error(t, err)
 			assert.Nil(t, server)
 		})
 	}
-}
-
-// An initial configuration that can't be stored fails the start, after the
-// coordinator became the leader.
-func TestNewFailsToInitClusterConfiguration(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
-	readOnly := filepath.Join(t.TempDir(), "read-only")
-	require.NoError(t, os.Mkdir(readOnly, 0o500))
-	options := newTestOptions()
-	options.Metadata.ProviderName = option.ProviderFile
-	options.Metadata.File.StatusName = filepath.Join(t.TempDir(), option.DefaultFileStatusName)
-	options.Metadata.File.ConfigName = filepath.Join(readOnly, option.DefaultFileConfigName)
-
-	server, err := New(t.Context(), commonwatch.New(options),
-		&proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1, InitialShardCount: 1}},
-			Servers:    []*proto.DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
-		})
-	require.ErrorIs(t, err, os.ErrPermission)
-	assert.Nil(t, server)
 }
 
 // A runtime that fails to start fails the start, after the coordinator became
@@ -156,7 +128,7 @@ func TestNewFailsToStartRuntime(t *testing.T) {
 	failpoint.Enable("coordinator.newRuntime", failpointErr)
 	t.Cleanup(func() { failpoint.Disable("coordinator.newRuntime") })
 
-	server, err := New(t.Context(), commonwatch.New(options), nil)
+	server, err := New(t.Context(), commonwatch.New(options))
 	require.ErrorIs(t, err, failpointErr)
 	assert.Nil(t, server)
 }
@@ -173,12 +145,14 @@ func TestNewFailsToReconcileClusterConfiguration(t *testing.T) {
 	options.Metadata.ProviderName = option.ProviderFile
 	options.Metadata.File.StatusName = statusPath
 	options.Metadata.File.ConfigName = filepath.Join(t.TempDir(), option.DefaultFileConfigName)
+	config, err := metadatacodec.ClusterConfigCodec.MarshalYAML(&proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1, InitialShardCount: 1}},
+		Servers:    []*proto.DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(options.Metadata.File.ConfigName, config, 0o600))
 
-	server, err := New(t.Context(), commonwatch.New(options),
-		&proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1, InitialShardCount: 1}},
-			Servers:    []*proto.DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
-		})
+	server, err := New(t.Context(), commonwatch.New(options))
 	require.ErrorIs(t, err, os.ErrPermission)
 	assert.ErrorContains(t, err, "failed to reconcile the cluster configuration")
 	assert.Nil(t, server)
@@ -190,7 +164,7 @@ func TestCoordinatorAppliesLogLevelChanges(t *testing.T) {
 	options := newTestOptions()
 	options.Observability.Log.Level = originalLevel.String()
 	optionsWatch := commonwatch.New(options)
-	server, err := New(t.Context(), optionsWatch, nil)
+	server, err := New(t.Context(), optionsWatch)
 	require.NoError(t, err)
 
 	updated := newTestOptions()
@@ -214,7 +188,7 @@ func TestCoordinatorAppliesLogLevelChanges(t *testing.T) {
 
 // Close releases the coordinator once: closing it again does nothing.
 func TestCoordinatorCloseTwice(t *testing.T) {
-	server, err := New(t.Context(), commonwatch.New(newTestOptions()), nil)
+	server, err := New(t.Context(), commonwatch.New(newTestOptions()))
 	require.NoError(t, err)
 
 	require.NoError(t, server.Close())

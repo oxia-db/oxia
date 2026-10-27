@@ -69,7 +69,7 @@ func TestCoordinator_CloseWhileStatusWritesFail(t *testing.T) {
 	options.Metadata.ProviderName = metadatacommon.NameFile
 	options.Metadata.File.Dir = metadataDir
 
-	coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options), nil)
+	coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options))
 	require.NoError(t, err)
 
 	adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)

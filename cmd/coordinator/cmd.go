@@ -140,6 +140,6 @@ func exec(cmd *cobra.Command, _ []string) error {
 			banner.Field{Name: "Internal Endpoint", Value: coordinatorOptions.Server.Internal.BindAddress},
 			banner.MetricsField(&coordinatorOptions.Observability.Metric),
 			banner.PprofField())
-		return coordinator.New(cmd.Context(), optionsWatch, nil)
+		return coordinator.New(cmd.Context(), optionsWatch)
 	})
 }

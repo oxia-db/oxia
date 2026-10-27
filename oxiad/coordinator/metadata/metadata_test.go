@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -133,81 +132,6 @@ func TestMetadataWaitToBecomeLeaderAcceptsUnconfiguredCluster(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// A takeover stores the initial configuration of a cluster without one.
-func TestMetadataWaitToBecomeLeaderInitializesConfig(t *testing.T) {
-	configProvider := newConfigProvider()
-	metadata := newInitializedTestMetadata(t, newStatusProvider(), configProvider, initialConfig("initial"))
-
-	_, err := metadata.WaitToBecomeLeader()
-	require.NoError(t, err)
-	stored := loaded(t, configProvider).Value
-	require.Len(t, stored.GetNamespaces(), 1)
-	assert.Equal(t, "initial", stored.GetNamespaces()[0].GetName())
-}
-
-// A takeover keeps the configuration that is already stored.
-func TestMetadataWaitToBecomeLeaderKeepsStoredConfig(t *testing.T) {
-	configProvider := newStoredConfigProvider(t, nil)
-	metadata := newInitializedTestMetadata(t, newStatusProvider(), configProvider, initialConfig("initial"))
-
-	_, err := metadata.WaitToBecomeLeader()
-	require.NoError(t, err)
-	stored := loaded(t, configProvider).Value
-	require.Len(t, stored.GetNamespaces(), 1)
-	assert.Equal(t, "default", stored.GetNamespaces()[0].GetName())
-}
-
-// A configuration deleted while the status has namespaces is not replaced by
-// the initial one: reconciling it would delete every other namespace.
-func TestMetadataWaitToBecomeLeaderDoesNotReplaceDeletedConfig(t *testing.T) {
-	configProvider := newConfigProvider()
-	metadata := newInitializedTestMetadata(t, newStoredStatusProvider(t), configProvider, initialConfig("initial"))
-
-	_, err := metadata.WaitToBecomeLeader()
-	require.ErrorContains(t, err, "the cluster configuration is missing")
-	assert.Equal(t, metadataconstant.NotExists, loaded(t, configProvider).Version)
-}
-
-// Another coordinator that stored a configuration first wins; any other
-// failure to store the initial configuration fails the takeover.
-func TestMetadataWaitToBecomeLeaderInitConfigFailures(t *testing.T) {
-	for name, tc := range map[string]struct {
-		loadErr  bool
-		storeErr error
-		expected string
-	}{
-		"bad version": {storeErr: metadataconstant.ErrBadVersion},
-		"store":       {storeErr: errors.New("store failure"), expected: "store failure"},
-		"load":        {loadErr: true, expected: "load failure"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			configProvider := newConfigProvider()
-			var loads atomic.Int32
-			metadata := newInitializedTestMetadata(t, newStatusProvider(), fakeProvider[*commonproto.ClusterConfiguration]{
-				Provider: configProvider,
-				// The takeover loads the configuration to check that it
-				// wasn't deleted before it initializes it
-				load: func() (*provider.Versioned[*commonproto.ClusterConfiguration], error) {
-					if tc.loadErr && loads.Add(1) > 1 {
-						return nil, errors.New("load failure")
-					}
-					return configProvider.Load()
-				},
-				store: func(provider.Versioned[*commonproto.ClusterConfiguration]) (metadataconstant.Version, error) {
-					return metadataconstant.NotExists, tc.storeErr
-				},
-			}, initialConfig("initial"))
-
-			_, err := metadata.WaitToBecomeLeader()
-			if tc.expected == "" {
-				require.NoError(t, err)
-				return
-			}
-			require.ErrorContains(t, err, tc.expected)
-		})
-	}
-}
-
 // newLeaderMetadata returns a metadata that holds the leadership. Closing lost
 // loses it, and once superseded is set, every status write is refused on the
 // version, as when another coordinator took over and wrote the status.
@@ -282,7 +206,7 @@ coordinators:
 				},
 			},
 		},
-	}, nil)
+	})
 	require.NoError(t, err)
 	metadata := factory.CreateMetadata(t.Context())
 	defer func() {
@@ -620,7 +544,7 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	metadata := newDefaultMetadata(ctx, fakeProvider[*commonproto.ClusterStatus]{
 		Provider: statusProvider,
 		store:    failStore("store failed"),
-	}, newConfigProvider(), "", nil)
+	}, newConfigProvider(), "")
 	cancel()
 
 	_, err := metadata.AllocateShardIDs(1)
@@ -754,7 +678,7 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 			store: func(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 				return metadataconstant.NotExists, metadataconstant.ErrBadVersion
 			},
-		}, newConfigProvider(), "", nil)
+		}, newConfigProvider(), "")
 	}
 
 	notLeading := newMetadata(t.Context())
@@ -920,28 +844,9 @@ func newTestMetadata(
 	name string,
 ) Metadata {
 	t.Helper()
-	metadata := newDefaultMetadata(t.Context(), statusProvider, configProvider, name, nil)
+	metadata := newDefaultMetadata(t.Context(), statusProvider, configProvider, name)
 	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
 	return metadata
-}
-
-func newInitializedTestMetadata(
-	t *testing.T,
-	statusProvider provider.Provider[*commonproto.ClusterStatus],
-	configProvider provider.Provider[*commonproto.ClusterConfiguration],
-	initialConfig *commonproto.ClusterConfiguration,
-) Metadata {
-	t.Helper()
-	metadata := newDefaultMetadata(t.Context(), statusProvider, configProvider, "", initialConfig)
-	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
-	return metadata
-}
-
-func initialConfig(namespace string) *commonproto.ClusterConfiguration {
-	return &commonproto.ClusterConfiguration{
-		Namespaces: []*commonproto.Namespace{{Name: namespace, ReplicationFactor: 1, InitialShardCount: 1}},
-		Servers:    []*commonproto.DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
-	}
 }
 
 func newStatusProvider() provider.Provider[*commonproto.ClusterStatus] {

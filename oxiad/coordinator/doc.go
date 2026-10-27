@@ -48,14 +48,30 @@
 //	options.Metadata.ProviderName = option.ProviderFile
 //	options.Metadata.File.Dir = filepath.Join(dataDir, "coordinator")
 //
-//	coord, err := coordinator.New(ctx, commonwatch.New(options), &proto.ClusterConfiguration{
-//		Namespaces: []*proto.Namespace{{
-//			Name:              constant.DefaultNamespace,
-//			ReplicationFactor: 3,
-//			InitialShardCount: 1,
-//		}},
-//		Servers: identities,
-//	})
+//	// Bootstrap the cluster configuration on the first start: a restart
+//	// keeps the stored one, with the changes made through the admin API.
+//	configPath := options.Metadata.File.ConfigPath()
+//	if _, err := os.Stat(configPath); errors.Is(err, fs.ErrNotExist) {
+//		config, err := codec.ClusterConfigCodec.MarshalYAML(&proto.ClusterConfiguration{
+//			Namespaces: []*proto.Namespace{{
+//				Name:              constant.DefaultNamespace,
+//				ReplicationFactor: 3,
+//				InitialShardCount: 1,
+//			}},
+//			Servers: identities,
+//		})
+//		if err != nil {
+//			return err
+//		}
+//		if err := os.MkdirAll(options.Metadata.File.Dir, 0o755); err != nil {
+//			return err
+//		}
+//		if err := os.WriteFile(configPath, config, 0o600); err != nil {
+//			return err
+//		}
+//	}
+//
+//	coord, err := coordinator.New(ctx, commonwatch.New(options))
 //	if err != nil {
 //		return err
 //	}
