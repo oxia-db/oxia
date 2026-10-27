@@ -71,10 +71,10 @@ func TestAsyncClientImpl(t *testing.T) {
 	assert.EqualValues(t, 2, putResultC2.Version.VersionId)
 	assert.EqualValues(t, 1, putResultC2.Version.ModificationsCount)
 
-	listResult := <-client.List(context.Background(), "/y", "/z")
+	listResult := <-client.List(context.Background(), "/y", "/z") //nolint:staticcheck
 	assert.Len(t, listResult.Keys, 0)
 
-	listResult = <-client.List(context.Background(), "/a", "/d")
+	listResult = <-client.List(context.Background(), "/a", "/d") //nolint:staticcheck
 	assert.Equal(t, oxia.ListResult{
 		Keys: []string{"/a", "/c"},
 	}, listResult)
@@ -862,7 +862,7 @@ func TestSyncClientImplListAndRangeScanEndInclusive(t *testing.T) {
 			}
 
 			list := func(start, end string, options ...oxia.ListOption) []string {
-				keys, err := client.List(t.Context(), start, end, options...)
+				keys, err := client.List(t.Context(), start, end, options...) //nolint:staticcheck
 				require.NoError(t, err)
 				return keys
 			}
@@ -934,16 +934,16 @@ func TestSyncClientImpl_PartitionRouting(t *testing.T) {
 	_, _, _ = client.Put(ctx, "g", []byte("6"), oxia.PartitionKey("x"))
 
 	// Listing must yield the same results
-	keys, err := client.List(ctx, "a", "d")
+	keys, err := client.List(ctx, "a", "d") //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c"}, keys)
 
-	keys, err = client.List(ctx, "a", "d", oxia.PartitionKey("x"))
+	keys, err = client.List(ctx, "a", "d", oxia.PartitionKey("x")) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c"}, keys)
 
 	// Searching with wrong partition-key will return empty list
-	keys, err = client.List(ctx, "a", "d", oxia.PartitionKey("wrong-partition-key"))
+	keys, err = client.List(ctx, "a", "d", oxia.PartitionKey("wrong-partition-key")) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{}, keys)
 
@@ -972,14 +972,14 @@ func TestSyncClientImpl_PartitionRouting(t *testing.T) {
 	err = client.DeleteRange(ctx, "c", "e", oxia.PartitionKey("wrong-partition-key"))
 	assert.NoError(t, err)
 
-	keys, err = client.List(ctx, "c", "f")
+	keys, err = client.List(ctx, "c", "f") //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"c", "d", "e"}, keys)
 
 	err = client.DeleteRange(ctx, "c", "e", oxia.PartitionKey("x"))
 	assert.NoError(t, err)
 
-	keys, err = client.List(ctx, "c", "f")
+	keys, err = client.List(ctx, "c", "f") //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"e"}, keys)
 

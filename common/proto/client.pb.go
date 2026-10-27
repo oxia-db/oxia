@@ -2771,14 +2771,14 @@ const file_client_proto_rawDesc = "" +
 	"\vKEY_CREATED\x10\x00\x12\x10\n" +
 	"\fKEY_MODIFIED\x10\x01\x12\x0f\n" +
 	"\vKEY_DELETED\x10\x02\x12\x15\n" +
-	"\x11KEY_RANGE_DELETED\x10\x032\xe9\a\n" +
+	"\x11KEY_RANGE_DELETED\x10\x032\xee\a\n" +
 	"\n" +
 	"OxiaClient\x12f\n" +
 	"\x13GetShardAssignments\x12).io.oxia.proto.v1.ShardAssignmentsRequest\x1a\".io.oxia.proto.v1.ShardAssignments0\x01\x12H\n" +
 	"\x05Write\x12\x1e.io.oxia.proto.v1.WriteRequest\x1a\x1f.io.oxia.proto.v1.WriteResponse\x12R\n" +
 	"\vWriteStream\x12\x1e.io.oxia.proto.v1.WriteRequest\x1a\x1f.io.oxia.proto.v1.WriteResponse(\x010\x01\x12G\n" +
-	"\x04Read\x12\x1d.io.oxia.proto.v1.ReadRequest\x1a\x1e.io.oxia.proto.v1.ReadResponse0\x01\x12G\n" +
-	"\x04List\x12\x1d.io.oxia.proto.v1.ListRequest\x1a\x1e.io.oxia.proto.v1.ListResponse0\x01\x12V\n" +
+	"\x04Read\x12\x1d.io.oxia.proto.v1.ReadRequest\x1a\x1e.io.oxia.proto.v1.ReadResponse0\x01\x12L\n" +
+	"\x04List\x12\x1d.io.oxia.proto.v1.ListRequest\x1a\x1e.io.oxia.proto.v1.ListResponse\"\x03\x88\x02\x010\x01\x12V\n" +
 	"\tRangeScan\x12\".io.oxia.proto.v1.RangeScanRequest\x1a#.io.oxia.proto.v1.RangeScanResponse0\x01\x12q\n" +
 	"\x12GetSequenceUpdates\x12+.io.oxia.proto.v1.GetSequenceUpdatesRequest\x1a,.io.oxia.proto.v1.GetSequenceUpdatesResponse0\x01\x12a\n" +
 	"\x10GetNotifications\x12&.io.oxia.proto.v1.NotificationsRequest\x1a#.io.oxia.proto.v1.NotificationBatch0\x01\x12`\n" +

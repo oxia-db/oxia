@@ -63,7 +63,7 @@ func (l *loggingClientRpc) Read(ctx context.Context, in *proto.ReadRequest, opts
 
 func (l *loggingClientRpc) List(ctx context.Context, in *proto.ListRequest, opts ...grpc.CallOption) (
 	res proto.OxiaClient_ListClient, err error) {
-	if res, err = l.client.List(ctx, in, opts...); err != nil {
+	if res, err = l.client.List(ctx, in, opts...); err != nil { //nolint:staticcheck
 		return nil, err
 	}
 

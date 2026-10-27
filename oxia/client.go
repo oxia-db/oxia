@@ -107,6 +107,8 @@ type AsyncClient interface {
 	// https://oxia-db.github.io/docs/features/oxia-key-sorting
 	// Once ctx is done, the channel is closed, possibly before all the keys and without an error:
 	// check ctx.Err() to tell a partial list.
+	//
+	// Deprecated: use RangeScan, which streams the records with backpressure and can stop early.
 	List(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...ListOption) <-chan ListResult
 
 	// RangeScan perform a scan for existing records with any keys within the specified range.
@@ -181,6 +183,8 @@ type SyncClient interface {
 	// Note: Oxia uses a custom sorting order that treats `/` characters in special way.
 	// Refer to this documentation for the specifics:
 	// https://oxia-db.github.io/docs/features/oxia-key-sorting
+	//
+	// Deprecated: use RangeScan, which streams the records with backpressure and can stop early.
 	List(ctx context.Context, minKeyInclusive string, maxKeyExclusive string, options ...ListOption) (keys []string, err error)
 
 	// RangeScan perform a scan for existing records with any keys within the specified range.

@@ -81,7 +81,7 @@ func TestRejectedWrite_DoesNotBlockFailover(t *testing.T) {
 
 	// A notification record is not a storage entry: deleting one can't be
 	// applied, whatever features the shard has
-	records, err := client.List(t.Context(), "__oxia/notifications/", "__oxia/notifications//",
+	records, err := client.List(t.Context(), "__oxia/notifications/", "__oxia/notifications//", //nolint:staticcheck
 		oxia.ShowInternalKeys(true))
 	require.NoError(t, err)
 	require.NotEmpty(t, records)

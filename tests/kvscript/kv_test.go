@@ -275,7 +275,7 @@ func (r *runner) list(c command) string {
 	if partition := c.partition(); partition != nil {
 		options = append(options, partition)
 	}
-	keys, err := r.client.List(c.ctx, start, end, options...)
+	keys, err := r.client.List(c.ctx, start, end, options...) //nolint:staticcheck
 	if err != nil {
 		return c.domainError(err)
 	}

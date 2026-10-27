@@ -84,7 +84,7 @@ func TestSecondaryIndexSkipUnchanged(t *testing.T) {
 	}
 
 	listIndex := func(indexName string, start, end string) []string {
-		keys, err := client.List(t.Context(), start, end, oxia.UseIndex(indexName))
+		keys, err := client.List(t.Context(), start, end, oxia.UseIndex(indexName)) //nolint:staticcheck
 		require.NoError(t, err)
 		return keys
 	}

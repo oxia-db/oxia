@@ -83,7 +83,7 @@ func TestControlRequestFeatureEnabled(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	keys, err := client.List(context.Background(), "/", "//")
+	keys, err := client.List(context.Background(), "/", "//") //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.EqualValues(t, []string{"/key1", "/key2", "/key3", "/key4", "/key5", "/key6", "/key7"}, keys)
 

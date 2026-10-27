@@ -34,7 +34,7 @@ func (e Executor) list(args []string) error {
 	if err != nil {
 		return err
 	}
-	keys, err := syncClient.List(e.Ctx, minKey, maxKey, options...)
+	keys, err := syncClient.List(e.Ctx, minKey, maxKey, options...) //nolint:staticcheck
 	if err != nil {
 		return err
 	}

@@ -188,7 +188,7 @@ func (p *rpcProvider) ExecuteList(ctx context.Context, request *proto.ListReques
 		if err != nil {
 			return struct{}{}, err
 		}
-		stream, err := client.List(ctx, request)
+		stream, err := client.List(ctx, request) //nolint:staticcheck
 		if err != nil {
 			oxiaErr, _ := constant.FromGrpcError(err)
 			return struct{}{}, oxiaErr
