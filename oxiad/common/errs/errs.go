@@ -26,13 +26,7 @@ var (
 		"change ensemble would remove support for negotiated shard features")
 	ErrChangeEnsembleLosesEntries = errors.New(
 		"change ensemble would lose entries of the removed data servers that may be committed")
-	// ErrFeaturesRenegotiation makes the election retry with a new term, so
-	// that it can pin a different feature set than the one it fenced the
-	// ensemble with.
-	ErrFeaturesRenegotiation = errors.New("the term features must be negotiated again")
-	// ErrTermFeaturesNotReported is returned when the leader of the shard
-	// doesn't report the features pinned by its term, because it runs a
-	// binary that predates the report.
+	ErrFeaturesRenegotiation   = errors.New("the term features must be negotiated again")
 	ErrTermFeaturesNotReported = errors.New("the leader doesn't report the features pinned by its term")
 
 	ErrUnsatisfiedEnsembleReplicas = errors.New("selector: unsatisfied ensemble replicas")
@@ -51,23 +45,16 @@ var (
 	ErrMetadataNotFound           = errors.New("metadata not found")
 	ErrMetadataFailedPrecondition = errors.New("metadata failed precondition")
 
-	ErrBadVersionId          = errors.New("oxia: bad version id")
-	ErrMissingPartitionKey   = errors.New("oxia: sequential key operation requires partition key")
-	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
-	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
-	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
-	ErrInvalidSequenceKey    = errors.New("oxia: sequential key operation found a key that is not part of the sequence")
-	ErrNotificationRecord    = errors.New("oxia: write request reaches a notification record")
-	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
-	// ErrWriteRejected marks a write request that ProcessWrite rejected
-	// because it can't be applied to the database: the request has no effect,
-	// and its log entry is applied.
-	ErrWriteRejected = errors.New("oxia: write request rejected")
-	// ErrDatabaseReplaced is returned by the WithDatabase of a controller when
-	// the database was replaced or deleted since the checkpoint it was given.
-	ErrDatabaseReplaced = errors.New("the database of the shard was replaced")
-	// ErrInvalidSecondaryIndexKey indicates that a key does not use the persisted
-	// secondary index key format.
+	ErrBadVersionId             = errors.New("oxia: bad version id")
+	ErrMissingPartitionKey      = errors.New("oxia: sequential key operation requires partition key")
+	ErrMissingSequenceDeltas    = errors.New("oxia: sequential key operation missing some sequence deltas")
+	ErrSequenceDeltaIsZero      = errors.New("oxia: sequential key operation requires first delta do be > 0")
+	ErrSequenceOverflow         = errors.New("oxia: sequential key operation overflows the sequence")
+	ErrInvalidSequenceKey       = errors.New("oxia: sequential key operation found a key that is not part of the sequence")
+	ErrNotificationRecord       = errors.New("oxia: write request reaches a notification record")
+	ErrNotificationsDisabled    = errors.New("oxia: notifications disabled")
+	ErrWriteRejected            = errors.New("oxia: write request rejected")
+	ErrDatabaseReplaced         = errors.New("the database of the shard was replaced")
 	ErrInvalidSecondaryIndexKey = errors.New("oxia db: failed to parse secondary index key")
 
 	ErrKeyNotFound = errors.New("oxia: key not found")
@@ -102,13 +89,9 @@ var (
 	ErrEmptyToken                       = errors.New("empty token")
 	ErrMalformedToken                   = errors.New("malformed token")
 
-	// ErrInvalidID is returned when a backup ID doesn't parse.
-	ErrInvalidID = errors.New("backup: invalid backup id")
-	// ErrInvalidManifest is returned for a manifest that doesn't describe a
-	// backup this code can restore.
+	ErrInvalidID       = errors.New("backup: invalid backup id")
 	ErrInvalidManifest = errors.New("backup: invalid manifest")
 
-	// ErrBlobNotFound is returned by Get for a key that holds no object.
 	ErrBlobNotFound = errors.New("blob: object not found")
 
 	ErrNotImplement = errors.New("not implement")
