@@ -354,7 +354,7 @@ func TestRuntimeCreateNamespaceRepairsCommittedWrite(t *testing.T) {
 func TestRuntimeCreateNamespaceRepairsAlreadyExistsOnRetry(t *testing.T) {
 	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
 	namespace := &proto.Namespace{Name: "default", InitialShardCount: 1, ReplicationFactor: 1}
-	createErr := fmt.Errorf("competing creation: %w", errs.ErrMetadataAlreadyExists)
+	createErr := fmt.Errorf("competing creation: %w", errs.ErrMetaAlreadyExists)
 	competing := &proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
 		42: {Term: 7, Ensemble: []*proto.DataServerIdentity{server}},
 	}}
@@ -430,7 +430,7 @@ func TestRuntimeCreateNamespaceDoesNotReviveDeletedShards(t *testing.T) {
 			}
 			err := c.CreateNamespace(namespace.Name, namespace)
 			if count == 1 {
-				require.ErrorIs(t, err, errs.ErrMetadataConflict)
+				require.ErrorIs(t, err, errs.ErrMetaConflict)
 				require.Contains(t, err.Error(), namespace.Name)
 			} else {
 				require.NoError(t, err)
@@ -497,7 +497,7 @@ func TestRuntimeCreateNamespaceHandlesStatusErrors(t *testing.T) {
 		name string
 		err  error
 	}{
-		{"already exists", fmt.Errorf("namespace creation: %w", errs.ErrMetadataAlreadyExists)},
+		{"already exists", fmt.Errorf("namespace creation: %w", errs.ErrMetaAlreadyExists)},
 		{"write failed", errors.New("status store unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

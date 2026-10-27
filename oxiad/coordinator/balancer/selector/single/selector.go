@@ -15,8 +15,6 @@
 package single
 
 import (
-	"github.com/pkg/errors"
-
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
@@ -33,9 +31,6 @@ func (s *server) Select(selectorContext *Context) (string, error) {
 	var err error
 	for _, selc := range s.selectors {
 		if serverId, err = selc.Select(selectorContext); err != nil {
-			if errors.Is(err, errs.ErrNoFunctioning) || errors.Is(err, errs.ErrMultipleResult) {
-				continue
-			}
 			return "", err
 		}
 		if serverId != "" {
@@ -43,7 +38,7 @@ func (s *server) Select(selectorContext *Context) (string, error) {
 		}
 	}
 	// Only the final selector picks a server, and it gives up only when no candidate is left
-	return "", errs.ErrNoCandidates
+	return "", errs.ErrBalancerNoCandidates
 }
 
 func NewSelector() selector.Selector[*Context, string] {

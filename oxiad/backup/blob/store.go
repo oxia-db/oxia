@@ -46,7 +46,7 @@ type Store interface {
 	// that a store can size the object and retry a send without buffering
 	// it: a file, or an in-memory reader.
 	Put(ctx context.Context, key string, body io.ReadSeeker) error
-	// Get returns the content of the object at key, or errs.ErrBlobNotFound.
+	// Get returns the content of the object at key, or errs.ErrNotFound.
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
 	// List calls visit for every object whose key starts with prefix, in key
 	// order, and stops at the first error, which it returns.

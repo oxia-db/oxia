@@ -225,21 +225,21 @@ func (ms *readWriteSegment) LastOffset() int64 {
 // only write past the records it can find in the index, and publish them
 // through lastOffset. It holds the read side of flushLock instead, so that
 // Close does not unmap the segment under the copy, and returns
-// errs.ErrSegmentClosed once the segment is closed. Truncate must not run
+// errs.ErrWALSegmentClosed once the segment is closed. Truncate must not run
 // concurrently.
 func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	ms.flushLock.RLock()
 	defer ms.flushLock.RUnlock()
 	if ms.txnMappedFile == nil {
-		return nil, 0, 0, errs.ErrSegmentClosed
+		return nil, 0, 0, errs.ErrWALSegmentClosed
 	}
 	if offset < ms.c.baseOffset || offset > ms.lastOffset.Load() {
-		return nil, 0, 0, errs.ErrOffsetOutOfBounds
+		return nil, 0, 0, errs.ErrWALOffsetOutOfBounds
 	}
 
 	fileReadOffset := fileOffset(*ms.readIdx.Load(), ms.c.baseOffset, offset)
 	if payload, previousCrc, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
-		if errors.Is(err, errs.ErrDataCorrupted) {
+		if errors.Is(err, errs.ErrCorrupted) {
 			return nil, 0, 0, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
 		return nil, 0, 0, err
@@ -256,13 +256,13 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 	defer ms.Unlock()
 
 	if len(data) == 0 {
-		return errs.ErrEmptyPayload
+		return errs.ErrWALEmptyPayload
 	}
 	if !ms.HasSpace(len(data)) {
-		return errs.ErrSegmentFull
+		return errs.ErrWALSegmentFull
 	}
 	if offset != ms.lastOffset.Load()+1 {
-		return errs.ErrInvalidNextOffset
+		return errs.ErrWALInvalidNextOffset
 	}
 
 	fOffset := ms.currentFileOffset
@@ -353,7 +353,7 @@ func (ms *readWriteSegment) Delete() error {
 
 func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	if lastSafeOffset < ms.c.baseOffset || lastSafeOffset > ms.lastOffset.Load() {
-		return errs.ErrOffsetOutOfBounds
+		return errs.ErrWALOffsetOutOfBounds
 	}
 
 	// Write zeroes in the section to clear

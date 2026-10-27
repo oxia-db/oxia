@@ -255,7 +255,7 @@ func TestWalTrimmerDroppedEntries(t *testing.T) {
 
 			// The wal holds the entries from its first offset
 			_, err = w.NewReader(test.firstOffset - 2)
-			assert.ErrorIs(t, err, errs.ErrEntryNotFound)
+			assert.ErrorIs(t, err, errs.ErrNotFound)
 			r, err := w.NewReader(test.firstOffset - 1)
 			require.NoError(t, err)
 			for offset := test.firstOffset; offset <= w.LastOffset(); offset++ {
@@ -493,7 +493,7 @@ func TestTrimmerDoTrimFailsWhenBinarySearchEntryIsTrimmed(t *testing.T) {
 	w.Unlock()
 
 	err := tr.doTrim()
-	assert.ErrorIs(t, err, errs.ErrEntryNotFound)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 	assert.ErrorContains(t, err, "failed to create reader")
 	assert.EqualValues(t, 10, w.FirstOffset())
 }

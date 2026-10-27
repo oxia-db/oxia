@@ -130,7 +130,7 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err != nil {
 		var notFound *types.NoSuchKey
 		if errors.As(err, &notFound) {
-			return nil, errs.ErrBlobNotFound
+			return nil, errs.ErrNotFound
 		}
 		return nil, fmt.Errorf("s3: get %s: %w", key, err)
 	}

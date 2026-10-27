@@ -726,7 +726,7 @@ func invalidReplicationMetadata() []struct {
 }
 
 func notFollower(int64) (follow.FollowerController, error) {
-	return nil, errs.ErrNodeIsNotFollower
+	return nil, errs.ErrShardNotFollower
 }
 
 func notLeader(int64) (lead.LeaderController, error) {

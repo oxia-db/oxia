@@ -498,7 +498,7 @@ func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest, fe
 func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
 	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))
 	if err != nil {
-		if errors.Is(err, errs.ErrKeyNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return proto.Status_SESSION_DOES_NOT_EXIST, nil
 		}
 		return proto.Status_SESSION_DOES_NOT_EXIST, err
@@ -538,7 +538,7 @@ func deleteShadow(batch kvstore.WriteBatch, _ *database.Notifications, key strin
 	if existingEntry != nil && existingEntry.SessionId != nil {
 		existingSessionId := SessionId(*existingEntry.SessionId)
 		err := batch.Delete(ShadowKey(existingSessionId, key))
-		if err != nil && !errors.Is(err, errs.ErrKeyNotFound) {
+		if err != nil && !errors.Is(err, errs.ErrNotFound) {
 			return proto.Status_SESSION_DOES_NOT_EXIST, err
 		}
 	}
@@ -595,7 +595,7 @@ func deleteEphemeralKey(batch kvstore.WriteBatch, notification *database.Notific
 	if indexCleanup || notification.NeedsDeletedRecord() {
 		// The entry of the key goes with it: read it first
 		var err error
-		if se, err = database.GetStorageEntryMetadata(batch, key); err != nil && !errors.Is(err, errs.ErrKeyNotFound) {
+		if se, err = database.GetStorageEntryMetadata(batch, key); err != nil && !errors.Is(err, errs.ErrNotFound) {
 			return err
 		}
 		defer se.ReturnToVTPool()

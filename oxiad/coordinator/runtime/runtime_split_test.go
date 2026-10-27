@@ -677,7 +677,7 @@ func TestRuntimeInitiateSplitRejectsChangeEnsemblePlannedBefore(t *testing.T) {
 
 	r.dispatchAction(swap)
 	_, err = swap.Wait()
-	assert.ErrorIs(t, err, errs.ErrNotReadyForChangeEnsemble)
+	assert.ErrorIs(t, err, errs.ErrShardNotReadyForChangeEnsemble)
 
 	borrowed, _, err = metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)
 	require.NoError(t, err)

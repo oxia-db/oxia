@@ -32,7 +32,7 @@ type leader struct{}
 
 func (*leader) Select(context *Context) (*commonproto.DataServerIdentity, error) {
 	if len(context.Candidates) == 0 {
-		return nil, errs.ErrNoCandidates
+		return nil, errs.ErrBalancerNoCandidates
 	}
 
 	candidates := linkedhashset.New[string]()

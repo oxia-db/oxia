@@ -84,7 +84,7 @@ func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 }
 
 func (*Provider[T]) GetLeaderName() (string, error) {
-	return "", errs.ErrCoordinatorLeaderUnavailable
+	return "", errors.Wrap(errs.ErrUnavailable, "coordinator leader")
 }
 
 func (mpr *Provider[T]) Close() error {
@@ -176,7 +176,7 @@ func (mpr *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Version
 		return nil, errors.New("failed to apply new cluster state")
 	}
 	if !applyRes.changeApplied {
-		return nil, errs.ErrMetadataBadVersion
+		return nil, errs.ErrMetaBadVersion
 	}
 
 	return &provider.Versioned[T]{

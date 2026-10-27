@@ -125,7 +125,7 @@ func (r *readOnlySegmentsGroup) Get(offset int64) (object.RefCount[ReadOnlySegme
 	// Check if we have a segment file on disk
 	baseOffset, found := r.allSegments.Floor(offset)
 	if !found {
-		return nil, errs.ErrOffsetOutOfBounds
+		return nil, errs.ErrWALOffsetOutOfBounds
 	}
 
 	rosegment, err := newReadOnlySegment(r.fs, r.basePath, baseOffset.Key)

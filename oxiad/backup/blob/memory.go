@@ -136,7 +136,7 @@ func (m *Memory) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	defer m.mu.RUnlock()
 	object, ok := m.objects[key]
 	if !ok {
-		return nil, errs.ErrBlobNotFound
+		return nil, errs.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(object.data)), nil
 }

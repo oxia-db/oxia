@@ -55,7 +55,7 @@ func TestV1_BreakingPoint_SizeOverflow(t *testing.T) {
 	binary.BigEndian.PutUint32(buf, math.MaxUint32)
 
 	_, _, _, err := v1.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 }
 
 func TestV1_BreakingPoint_PartialHeader(t *testing.T) {
@@ -65,7 +65,7 @@ func TestV1_BreakingPoint_PartialHeader(t *testing.T) {
 
 	// an offset with fewer than HeaderSize bytes behind it has no readable header
 	_, _, _, err := v1.ReadHeaderWithValidation(buf, uint32(len(buf))-1)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 }
 
 func TestV1_RecoverIndexWithSizeOverflow(t *testing.T) {
@@ -106,7 +106,7 @@ func TestV1_ReadEmptyIndex(t *testing.T) {
 	assert.NoError(t, v1.WriteIndex(vfs.OSFS{}, p, nil))
 
 	_, err := v1.ReadIndex(vfs.OSFS{}, p)
-	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrCorrupted)
 }
 
 func TestV1_RecoverIndex(t *testing.T) {
@@ -140,7 +140,7 @@ func TestV1_RecoverIndex(t *testing.T) {
 
 func TestV1ReadRecordWithValidationRejectsTruncatedHeader(t *testing.T) {
 	_, _, _, err := v1.ReadRecordWithValidation(make([]byte, 2), 0)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 }
 
 func TestV1WriteIndexFailsWhenDirectoryIsMissing(t *testing.T) {

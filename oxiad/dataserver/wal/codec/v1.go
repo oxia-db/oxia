@@ -85,21 +85,21 @@ func (v *V1) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	bufSize := uint64(len(buf))
 	headerEndOffset := uint64(startFileOffset) + uint64(v.HeaderSize)
 	if headerEndOffset > bufSize {
-		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrOffsetOutOfBounds,
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrWALOffsetOutOfBounds,
 			"expected header end offset: %d. actual buf size: %d ", headerEndOffset, bufSize)
 	}
 
 	payloadSize = ReadInt(buf, startFileOffset)
 	// It shouldn't happen when normal reading
 	if payloadSize == 0 {
-		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrEmptyPayload, "unexpected empty payload")
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrWALEmptyPayload, "unexpected empty payload")
 	}
 	expectSize := uint64(payloadSize) + uint64(v.HeaderSize)
 	// overflow checking
 	actualBufSize := bufSize - uint64(startFileOffset)
 	if expectSize > actualBufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(errs.ErrOffsetOutOfBounds,
+			errors.Wrapf(errs.ErrWALOffsetOutOfBounds,
 				"expected record size: %d. actual remaining buf size: %d ", expectSize, actualBufSize)
 	}
 	return payloadSize, previousCrc, payloadCrc, nil
@@ -146,7 +146,7 @@ func (*V1) ReadIndex(fs vfs.FS, path string) ([]byte, error) {
 		return nil, errors.Wrapf(err, "failed to close segment index file %s", path)
 	}
 	if len(indexBuf) == 0 {
-		return nil, errors.Wrapf(errs.ErrDataCorrupted, "index file %s has no entries", path)
+		return nil, errors.Wrapf(errs.ErrCorrupted, "index file %s has no entries", path)
 	}
 	return indexBuf, nil
 }

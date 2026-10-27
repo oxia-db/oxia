@@ -161,7 +161,7 @@ func TestPebbleGetPastInternalRegionHierarchical(t *testing.T) {
 	putAll(t, kv, "a", "__oxia/notifications/0001", "__oxia/notifications/0002")
 
 	_, _, _, err = kv.Get("b", ComparisonCeiling, NoInternalKeys)
-	assert.ErrorIs(t, err, errs.ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 
 	found, err := getKey(t, kv, "b", ComparisonCeiling, ShowInternalKeys)
 	assert.NoError(t, err)
@@ -259,7 +259,7 @@ func BenchmarkPebbleGetCeilingPastUserKeys(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, _, _, err := kv.Get("b", ComparisonCeiling, NoInternalKeys)
-				if err != nil && !errors.Is(err, errs.ErrKeyNotFound) {
+				if err != nil && !errors.Is(err, errs.ErrNotFound) {
 					b.Fatal(err)
 				}
 			}

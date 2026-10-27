@@ -180,7 +180,7 @@ func TestAppend(t *testing.T) {
 		Offset: int64(88),
 		Value:  []byte("E"),
 	})
-	assert.ErrorIs(t, err, errs.ErrInvalidNextOffset)
+	assert.ErrorIs(t, err, errs.ErrWALInvalidNextOffset)
 
 	err = w.Close()
 	assert.NoError(t, err)
@@ -505,7 +505,7 @@ func TestTrim(t *testing.T) {
 
 	// Test reading a trimmed offset
 	r, err = w.NewReader(48)
-	assert.ErrorIs(t, err, errs.ErrEntryNotFound)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 	assert.Nil(t, r)
 
 	assert.NoError(t, w.Close())
@@ -609,7 +609,7 @@ func TestReaderReadNext(t *testing.T) {
 		Value:  []byte("entry-99"),
 	}, entry)
 	entry2, _, _, err := reader.ReadNext()
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 	assert.Nil(t, entry2)
 
 	assert.NoError(t, reader.Close())
@@ -1524,7 +1524,7 @@ func TestWalReadAtIndexRetriesSegmentClosedByRollover(t *testing.T) {
 			// The sync round closes the rolled-over segment
 			require.NoError(t, w.Sync(context.Background()))
 			_, _, _, err := segment.Read(50)
-			require.ErrorIs(t, err, errs.ErrSegmentClosed)
+			require.ErrorIs(t, err, errs.ErrWALSegmentClosed)
 
 			release()
 			if entry := <-readDone; assert.NotNil(t, entry) {
@@ -1687,7 +1687,7 @@ func TestFactoryNewWalFailsWhenPrecedingSegmentIsCorrupted(t *testing.T) {
 	corruptPayload(t, c, codec.ReadInt(idx, uint32(len(idx)-4)))
 
 	_, err = f.NewWal(constant.DefaultNamespace, shard, nil)
-	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrCorrupted)
 }
 
 func TestFactoryNewWalFailsWhenTrailingSegmentCannotBeDiscarded(t *testing.T) {
@@ -1765,7 +1765,7 @@ func TestWalAppendRejectsNegativeOffset(t *testing.T) {
 func TestWalAppendRejectsEmptyEntry(t *testing.T) {
 	f, w := createWal(t)
 
-	assert.ErrorIs(t, w.AppendAsync(&proto.LogEntry{}), errs.ErrEmptyPayload)
+	assert.ErrorIs(t, w.AppendAsync(&proto.LogEntry{}), errs.ErrWALEmptyPayload)
 	assert.EqualValues(t, InvalidOffset, w.LastOffset())
 
 	assert.NoError(t, w.Close())
@@ -1794,7 +1794,7 @@ func TestWalAppendRejectsEntryLargerThanSegment(t *testing.T) {
 	appendEntries(t, w, 1, 0, 0, "v")
 
 	err := w.Append(&proto.LogEntry{Term: 1, Offset: 1, Value: make([]byte, 256)})
-	assert.ErrorIs(t, err, errs.ErrSegmentFull)
+	assert.ErrorIs(t, err, errs.ErrWALSegmentFull)
 	assert.EqualValues(t, 0, w.LastOffset())
 
 	assert.NoError(t, w.Close())
@@ -1823,7 +1823,7 @@ func TestWalAppendAndSyncReportsAppendFailure(t *testing.T) {
 	w.AppendAndSync(&proto.LogEntry{Term: 1, Offset: 5, Value: []byte("v")}, func(_ uint32, err error) {
 		done <- err
 	})
-	assert.ErrorIs(t, <-done, errs.ErrInvalidNextOffset)
+	assert.ErrorIs(t, <-done, errs.ErrWALInvalidNextOffset)
 	assert.EqualValues(t, 0, w.LastOffset())
 
 	assert.NoError(t, w.Close())
@@ -1836,7 +1836,7 @@ func TestWalAppendAsyncWithPreviousCrcRejectsWrongOffset(t *testing.T) {
 	previousCrc := uint32(1)
 
 	crc, err := w.AppendAsyncWithPreviousCrc(&proto.LogEntry{Term: 1, Offset: 5, Value: []byte("v")}, &previousCrc)
-	assert.ErrorIs(t, err, errs.ErrInvalidNextOffset)
+	assert.ErrorIs(t, err, errs.ErrWALInvalidNextOffset)
 	assert.Zero(t, crc)
 	assert.EqualValues(t, 0, w.LastOffset())
 
@@ -1910,7 +1910,7 @@ func TestWalTruncateLogRejectsOffsetPastLastEntry(t *testing.T) {
 	appendEntries(t, w, 1, 0, 9, "v")
 
 	_, err := w.TruncateLog(20)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 	assert.EqualValues(t, 9, w.LastOffset())
 
 	assert.NoError(t, w.Close())
@@ -1996,7 +1996,7 @@ func TestReaderReadNextFailsWhenClosed(t *testing.T) {
 
 		assert.False(t, r.HasNext())
 		_, _, _, err = r.ReadNext()
-		assert.ErrorIs(t, err, errs.ErrReaderClosed)
+		assert.ErrorIs(t, err, errs.ErrWALReaderClosed)
 	}
 
 	assert.NoError(t, w.Close())
@@ -2009,7 +2009,7 @@ func TestReverseReaderReadNextFailsOnEmptyWal(t *testing.T) {
 	r, err := w.NewReverseReader()
 	require.NoError(t, err)
 	_, _, _, err = r.ReadNext()
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 	assert.NoError(t, r.Close())
 
 	assert.NoError(t, w.Close())

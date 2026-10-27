@@ -1393,7 +1393,7 @@ func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.
 	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
 		sc.requiredFeatures[childId] = unionFeatures(sc.requiredFeatures[childId], enabled)
 		return fmt.Errorf("%w: features %v are already enabled on child shard %d",
-			errs.ErrFeaturesRenegotiation, missing, childId)
+			errs.ErrShardFeaturesRenegotiation, missing, childId)
 	}
 	return nil
 }

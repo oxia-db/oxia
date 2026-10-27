@@ -57,7 +57,7 @@ func TestGrpcAuthenticationDelegatorGetUnaryInterceptorRejectsMissingToken(t *te
 
 	assert.Nil(t, res)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-	assert.Contains(t, status.Convert(err).Message(), errs.ErrEmptyToken.Error())
+	assert.Contains(t, status.Convert(err).Message(), errs.ErrUnauthenticated.Error())
 	assert.False(t, handlerCalled)
 }
 
@@ -79,12 +79,12 @@ func TestValidateTokenWithContext(t *testing.T) {
 	t.Run("missing header", func(t *testing.T) {
 		ctx := metadata.NewIncomingContext(peerCtx, metadata.Pairs(":authority", "localhost:6648"))
 		_, err := validateTokenWithContext(ctx, &recordingProvider{})
-		assert.ErrorIs(t, err, errs.ErrEmptyToken)
+		assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 	})
 
 	t.Run("no metadata", func(t *testing.T) {
 		_, err := validateTokenWithContext(peerCtx, &recordingProvider{})
-		assert.ErrorIs(t, err, errs.ErrEmptyToken)
+		assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 	})
 }
 
@@ -95,7 +95,7 @@ func TestValidateTokenWithContextRejectsMissingPeer(t *testing.T) {
 
 	_, err := validateTokenWithContext(ctx, provider)
 
-	assert.ErrorIs(t, err, errs.ErrMetadataFetchFailed)
+	assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 	assert.Empty(t, provider.token)
 }
 

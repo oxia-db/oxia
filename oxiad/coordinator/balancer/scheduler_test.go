@@ -264,11 +264,11 @@ func (m *mockMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.
 	}), true, nil
 }
 
-// alwaysErrorSelector is a selector that always returns ErrUnsatisfiedAntiAffinity.
+// alwaysErrorSelector is a selector that always returns errs.ErrBalancerUnsatisfiedAntiAffinity.
 type alwaysErrorSelector struct{}
 
 func (*alwaysErrorSelector) Select(_ *single.Context) (string, error) {
-	return "", errs.ErrUnsatisfiedAntiAffinity
+	return "", errs.ErrBalancerUnsatisfiedAntiAffinity
 }
 
 func newTestBalancer(
@@ -530,7 +530,7 @@ type selectRecordingSelector struct {
 
 func (s *selectRecordingSelector) Select(_ *single.Context) (string, error) {
 	s.called = true
-	return "", errs.ErrUnsatisfiedAntiAffinity
+	return "", errs.ErrBalancerUnsatisfiedAntiAffinity
 }
 
 type contextRecordingSelector struct {
@@ -541,7 +541,7 @@ type contextRecordingSelector struct {
 func (s *contextRecordingSelector) Select(ctx *single.Context) (string, error) {
 	s.namespace = ctx.Namespace
 	s.shard = ctx.Shard
-	return "", errs.ErrUnsatisfiedAntiAffinity
+	return "", errs.ErrBalancerUnsatisfiedAntiAffinity
 }
 
 func TestSwapShardSkipsRF1Namespace(t *testing.T) {
@@ -668,7 +668,7 @@ func TestSwapShardPassesNamespaceAndShardToSelector(t *testing.T) {
 		candidates,
 		candidatesMetadata,
 	)
-	assert.ErrorIs(t, err, errs.ErrUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrBalancerUnsatisfiedAntiAffinity)
 
 	assert.Equal(t, "ns-1", sel.namespace)
 	assert.EqualValues(t, 42, sel.shard)

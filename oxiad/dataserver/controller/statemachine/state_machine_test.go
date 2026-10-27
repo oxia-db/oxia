@@ -356,7 +356,7 @@ func TestApplyLogEntry_RejectedWrite(t *testing.T) {
 
 		_, err := proposal.Apply(leaderDB, database.NoOpCallback)
 		if offset == 1 {
-			assert.ErrorIs(t, err, errs.ErrWriteRejected)
+			assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 		} else {
 			assert.NoError(t, err)
 		}

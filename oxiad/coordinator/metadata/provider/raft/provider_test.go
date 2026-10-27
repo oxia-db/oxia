@@ -113,7 +113,7 @@ func TestProviderGetLeaderNameUnavailable(t *testing.T) {
 	defer func() { require.NoError(t, p.Close()) }()
 
 	_, err := p.GetLeaderName()
-	require.ErrorIs(t, err, errs.ErrCoordinatorLeaderUnavailable)
+	require.ErrorIs(t, err, errs.ErrUnavailable)
 }
 
 func TestProviderStoreFailsOnFollower(t *testing.T) {
@@ -145,7 +145,7 @@ func TestProviderStoreOnLeader(t *testing.T) {
 		Value:   &commonproto.ClusterStatus{InstanceId: "stale"},
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, errs.ErrMetadataBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 
 	// Undecodable values are refused before reaching raft
 	_, err = p.Store(provider.Versioned[*commonproto.ClusterStatus]{

@@ -107,7 +107,7 @@ func TestPebbleReadWriteOpsMetrics(t *testing.T) {
 		assert.NoError(t, closer.Close())
 	}
 	_, _, _, err = kv.Get("non-existing", ComparisonEqual, NoInternalKeys)
-	assert.ErrorIs(t, err, errs.ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 
 	assert.EqualValues(t, 3, readCounter("oxia_server_kv_write_ops")-writesBefore)
 	assert.EqualValues(t, 5, readCounter("oxia_server_kv_read_ops")-readsBefore)

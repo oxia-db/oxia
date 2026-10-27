@@ -53,11 +53,11 @@ func TestReadOnlySegment(t *testing.T) {
 
 	data, _, _, err := ro.Read(100)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 
 	data, _, _, err = ro.Read(-1)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 
 	assert.NoError(t, ro.Close())
 }
@@ -95,7 +95,7 @@ func TestRO_auto_recover_empty_index(t *testing.T) {
 }
 
 // A segment whose txn file holds no entries cannot be opened for reads: it
-// must fail with errs.ErrEmptySegment (it used to panic with a slice out of
+// must fail with errs.ErrWALEmptySegment (it used to panic with a slice out of
 // bounds), regardless of whether an index file is present.
 func TestRO_EmptySegment(t *testing.T) {
 	path := t.TempDir()
@@ -110,7 +110,7 @@ func TestRO_EmptySegment(t *testing.T) {
 
 	ro, err := newReadOnlySegment(vfs.OSFS{}, path, 0)
 	assert.Nil(t, ro)
-	assert.ErrorIs(t, err, errs.ErrEmptySegment)
+	assert.ErrorIs(t, err, errs.ErrWALEmptySegment)
 }
 
 func TestRO_auto_recover_broken_index(t *testing.T) {
@@ -147,11 +147,11 @@ func TestRO_auto_recover_broken_index(t *testing.T) {
 
 	data, _, _, err := ro.Read(100)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 
 	data, _, _, err = ro.Read(-1)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrWALOffsetOutOfBounds)
 
 	assert.NoError(t, ro.Close())
 }
@@ -216,7 +216,7 @@ func TestReadOnlySegmentNewFailsWhenIndexRebuildFindsCorruption(t *testing.T) {
 	corruptPayload(t, c, offsets[1])
 
 	_, err := newReadOnlySegment(vfs.OSFS{}, dir, 0)
-	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrCorrupted)
 	assert.ErrorContains(t, err, "failed to rebuild segment index file")
 }
 
@@ -248,7 +248,7 @@ func TestReadOnlySegmentNewFailsWhenLastRecordIsCorrupted(t *testing.T) {
 	corruptPayload(t, c, offsets[2])
 
 	_, err := newReadOnlySegment(vfs.OSFS{}, dir, 0)
-	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrCorrupted)
 }
 
 func TestReadOnlySegmentReadReportsCorruptedRecord(t *testing.T) {
@@ -261,7 +261,7 @@ func TestReadOnlySegmentReadReportsCorruptedRecord(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, ro.Close()) })
 
 	_, _, _, err = ro.Read(1)
-	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrCorrupted)
 	assert.ErrorContains(t, err, "entryOffset: 1")
 }
 
@@ -280,7 +280,7 @@ func TestReadOnlySegmentReadReportsEmptyRecord(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, ro.Close()) })
 
 	_, _, _, err = ro.Read(1)
-	assert.ErrorIs(t, err, errs.ErrEmptyPayload)
+	assert.ErrorIs(t, err, errs.ErrWALEmptyPayload)
 }
 
 // writeSegment writes a closed segment of 1KB at base offset 0 holding the

@@ -95,7 +95,7 @@ func TestPebbleSeek(t *testing.T) {
 					}
 
 					it, err := p.Seek(probe, comparison)
-					if errors.Is(err, errs.ErrKeyNotFound) {
+					if errors.Is(err, errs.ErrNotFound) {
 						assert.Empty(t, expected, "%v %q", comparison, probe)
 						continue
 					}
