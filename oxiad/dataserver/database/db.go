@@ -666,15 +666,11 @@ func (d *db) processWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 // retrying the request can't succeed, and every replica applying it to the
 // same state rejects it the same way.
 func isRejectedWrite(err error) bool {
-	return errors.Is(err, errs.ErrDBMissingPartitionKey) ||
-		errors.Is(err, errs.ErrDBMissingSequenceDeltas) ||
-		errors.Is(err, errs.ErrDBSequenceDeltaIsZero) ||
-		errors.Is(err, errs.ErrDBSequenceOverflow) ||
-		errors.Is(err, errs.ErrDBInvalidSequenceKey) ||
+	return errors.Is(err, errs.ErrInvalidSequentialPut) ||
 		// E.g. a DeleteRange without an end, with the natural key sorting.
 		// Each replica trims the notification records on its own: the
 		// request is only rejected where some are left.
-		errors.Is(err, errs.ErrDBNotificationRecord)
+		errors.Is(err, errs.ErrNotificationRecord)
 }
 
 // deserializeFailure returns the failure to deserialize the value of key,
@@ -687,7 +683,7 @@ func deserializeFailure(key string, err error, closeErr error) error {
 	case closeErr != nil:
 		return multierr.Append(err, closeErr)
 	case strings.HasPrefix(key, notificationsPrefix+"/"):
-		return fmt.Errorf("%w: %w", errs.ErrDBNotificationRecord, err)
+		return fmt.Errorf("%w: %w", errs.ErrNotificationRecord, err)
 	default:
 		return err
 	}
@@ -718,7 +714,7 @@ func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) erro
 		slog.Int64("offset", commitOffset),
 		slog.Any("error", cause),
 	)
-	return fmt.Errorf("%w: %w", errs.ErrDBWriteRejected, cause)
+	return fmt.Errorf("%w: %w", errs.ErrWriteRejected, cause)
 }
 
 func (d *db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
@@ -1157,10 +1153,10 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	}
 
 	switch {
-	case errors.Is(err, errs.ErrDBBadVersionId):
+	case errors.Is(err, errs.ErrBadVersion):
 		pr.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
-	case isInvalidSequentialPut(err) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
+	case errors.Is(err, errs.ErrInvalidSequentialPut) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
 		// Only this put fails, instead of the whole write request with its
 		// other operations
 		pr.Status = proto.Status_INVALID_ARGUMENT
@@ -1278,7 +1274,7 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 	}
 
 	switch {
-	case errors.Is(err, errs.ErrDBBadVersionId):
+	case errors.Is(err, errs.ErrBadVersion):
 		res.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
 	case err != nil:
@@ -1538,14 +1534,14 @@ func (d *db) checkExpectedVersionId(batch kvstore.WriteBatch, key string, expect
 				return nil, nil //nolint:nilnil
 			}
 
-			return nil, errs.ErrDBBadVersionId
+			return nil, errs.ErrBadVersion
 		}
 		return nil, err
 	}
 
 	if expectedVersionId != nil && se.VersionId != *expectedVersionId {
 		se.ReturnToVTPool()
-		return nil, errs.ErrDBBadVersionId
+		return nil, errs.ErrBadVersion
 	}
 
 	return se, nil
@@ -1588,7 +1584,7 @@ func Deserialize(value []byte, se *proto.StorageEntry) error {
 
 func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error) {
 	if !d.notificationsEnabled.Load() {
-		return nil, errs.ErrDBNotificationsDisabled
+		return nil, errors.Wrap(errs.ErrUnavailable, "notifications disabled")
 	}
 	batches, err := d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
 	if err != nil {

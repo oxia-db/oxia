@@ -135,7 +135,7 @@ func TestSelectUnsatisfiedAntiAffinitiesStrict(t *testing.T) {
 	context.SetSelected(selected)
 
 	result, err = saSelector.Select(context)
-	assert.ErrorIs(t, err, errs.ErrBalancerUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 	assert.Empty(t, result)
 }
 
@@ -175,7 +175,7 @@ func TestSelectUnsatisfiedAntiAffinitiesRelax(t *testing.T) {
 	context.SetSelected(selectedServers)
 
 	result, err = saSelector.Select(context)
-	assert.ErrorIs(t, err, errs.ErrUnsupported)
+	assert.ErrorIs(t, err, errs.ErrNotImplemented)
 	assert.Empty(t, result)
 }
 
@@ -208,7 +208,7 @@ func TestSelectMultipleAntiAffinitiesSatisfied(t *testing.T) {
 	assert.True(t, selectedServers.Contains("s4"))
 
 	result, err := saSelector.Select(context)
-	assert.ErrorIs(t, err, errs.ErrBalancerUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 	assert.Empty(t, result)
 }
 

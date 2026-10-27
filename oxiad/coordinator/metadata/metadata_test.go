@@ -52,7 +52,7 @@ func TestMetadataWaitToBecomeLeaderReloadsMetadata(t *testing.T) {
 		// The snapshot is outdated until reloaded
 		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 			if statusReloads.Load() == 0 {
-				return metadataconstant.NotExists, errs.ErrMetaBadVersion
+				return metadataconstant.NotExists, errs.ErrBadVersion
 			}
 			return statusProvider.Store(snapshot)
 		},
@@ -150,7 +150,7 @@ func newLeaderMetadata(t *testing.T) (metadata Metadata, lost chan struct{}, sup
 		},
 		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 			if superseded.Load() {
-				return metadataconstant.NotExists, errs.ErrMetaBadVersion
+				return metadataconstant.NotExists, errs.ErrBadVersion
 			}
 			return statusProvider.Store(snapshot)
 		},
@@ -171,7 +171,7 @@ func TestMetadataStatusWriteAfterLeadershipLossFails(t *testing.T) {
 	superseded.Store(true)
 
 	_, err := metadata.AllocateShardIDs(1)
-	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+	require.ErrorIs(t, err, errs.ErrBadVersion)
 }
 
 // A new leader can write the status before this coordinator learns that it
@@ -184,7 +184,7 @@ func TestMetadataStatusVersionConflictWhileLeadingFails(t *testing.T) {
 
 	require.NotPanics(t, func() {
 		_, err := metadata.AllocateShardIDs(1)
-		require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+		require.ErrorIs(t, err, errs.ErrBadVersion)
 	})
 }
 
@@ -236,7 +236,7 @@ func TestMetadataCreateNamespaceStatusAlreadyExists(t *testing.T) {
 	require.NoError(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{ReplicationFactor: 3}))
 	version := loaded(t, statusProvider).Version
 	err := metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{ReplicationFactor: 1})
-	require.ErrorIs(t, err, errs.ErrMetaAlreadyExists)
+	require.ErrorIs(t, err, errs.ErrAlreadyExists)
 	require.Contains(t, err.Error(), "default")
 	require.Equal(t, version, loaded(t, statusProvider).Version)
 	status, exists, err := metadata.GetNamespaceStatus("default")
@@ -262,7 +262,7 @@ func TestMetadataCreateNamespaceStatusReturnsWriteError(t *testing.T) {
 
 	err := metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{ReplicationFactor: 3})
 	require.ErrorIs(t, err, storeErr)
-	require.NotErrorIs(t, err, errs.ErrMetaAlreadyExists)
+	require.NotErrorIs(t, err, errs.ErrAlreadyExists)
 	require.Equal(t, 1, writes)
 	_, exists, err := metadata.GetNamespaceStatus("default")
 	require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestMetadataCreateNamespaceStatusReturnsErrorAfterCommit(t *testing.T) {
 	require.EqualValues(t, 3, saved.UnsafeBorrow().ReplicationFactor)
 	require.NotEqual(t, metadataconstant.NotExists, loaded(t, statusProvider).Version)
 
-	require.ErrorIs(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{}), errs.ErrMetaAlreadyExists)
+	require.ErrorIs(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{}), errs.ErrAlreadyExists)
 	require.Equal(t, 1, writes)
 }
 
@@ -691,7 +691,7 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 		return newDefaultMetadata(ctx, fakeProvider[*commonproto.ClusterStatus]{
 			Provider: newStatusProvider(),
 			store: func(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
-				return metadataconstant.NotExists, errs.ErrMetaBadVersion
+				return metadataconstant.NotExists, errs.ErrBadVersion
 			},
 		}, newConfigProvider(), "")
 	}
@@ -699,13 +699,13 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 	notLeading := newMetadata(t.Context())
 	defer func() { require.NoError(t, notLeading.Close()) }()
 	_, err := notLeading.AllocateShardIDs(1)
-	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+	require.ErrorIs(t, err, errs.ErrBadVersion)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	closing := newMetadata(ctx)
 	cancel()
 	_, err = closing.AllocateShardIDs(1)
-	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+	require.ErrorIs(t, err, errs.ErrBadVersion)
 	require.NoError(t, closing.Close())
 }
 

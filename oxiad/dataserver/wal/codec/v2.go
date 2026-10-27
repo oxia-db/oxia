@@ -96,7 +96,7 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	headerEndOffset := uint64(startFileOffset) + uint64(v.HeaderSize)
 	if headerEndOffset > bufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(errs.ErrWALOffsetOutOfBounds, "expected header end offset: %d. actual buf size: %d ",
+			errors.Wrapf(errs.ErrInvalidArgument, "offset out of bounds: expected header end offset: %d. actual buf size: %d ",
 				headerEndOffset, bufSize)
 	}
 
@@ -106,7 +106,7 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 
 	// It shouldn't happen when normal reading
 	if payloadSize == 0 {
-		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrWALEmptyPayload, "unexpected empty payload")
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrEmptyPayload, "unexpected empty payload")
 	}
 
 	expectSize := uint64(payloadSize) + uint64(v.HeaderSize)
@@ -114,8 +114,8 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	actualBufSize := bufSize - uint64(startFileOffset)
 	if expectSize > actualBufSize {
 		return payloadSize, previousCrc, payloadCrc,
-			errors.Wrapf(errs.ErrWALOffsetOutOfBounds,
-				"expected record size: %d. actual remaining buf size: %d ", expectSize, actualBufSize)
+			errors.Wrapf(errs.ErrInvalidArgument,
+				"offset out of bounds: expected record size: %d. actual remaining buf size: %d ", expectSize, actualBufSize)
 	}
 
 	previousCrc = ReadInt(buf, startFileOffset+headerOffset)
@@ -214,7 +214,7 @@ func (v *V2) RecoverIndex(buf []byte, startFileOffset uint32, baseEntryOffset in
 		var payloadCrc uint32
 		var err error
 		if payloadSize, _, payloadCrc, err = v.ReadHeaderWithValidation(buf, newFileOffset); err != nil {
-			if errors.Is(err, errs.ErrWALEmptyPayload) {
+			if errors.Is(err, errs.ErrEmptyPayload) {
 				// we might read the end of the segment.
 				break
 			}

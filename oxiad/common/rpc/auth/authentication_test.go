@@ -47,6 +47,6 @@ func TestOptionsIsEnabled(t *testing.T) {
 func TestNewAuthenticationProviderRejectsUnsupportedProvider(t *testing.T) {
 	provider, err := NewAuthenticationProvider(context.Background(), Options{Provider: "ldap"})
 
-	assert.ErrorIs(t, err, errs.ErrUnsupported)
+	assert.ErrorIs(t, err, errs.ErrNotImplemented)
 	assert.Nil(t, provider)
 }

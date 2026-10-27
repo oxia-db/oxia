@@ -86,7 +86,7 @@ func (r *forwardReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, e
 	defer r.Unlock()
 
 	if r.closed {
-		return nil, 0, 0, errs.ErrWALReaderClosed
+		return nil, 0, 0, errs.ErrReaderClosed
 	}
 
 	index := r.nextOffset
@@ -112,7 +112,7 @@ func (r *forwardReader) HasNext() bool {
 
 func (r *reverseReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
 	if r.closed {
-		return nil, 0, 0, errs.ErrWALReaderClosed
+		return nil, 0, 0, errs.ErrReaderClosed
 	}
 
 	entry, previousCrc, entryCrc, err = r.wal.readAtIndex(r.nextOffset)

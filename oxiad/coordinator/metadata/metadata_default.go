@@ -89,7 +89,7 @@ func (m *defaultMetadata) computeStatus(fn func(*commonproto.ClusterStatus, meta
 		Value:   next,
 		Version: current.Version,
 	})
-	if errors.Is(err, errs.ErrMetaBadVersion) {
+	if errors.Is(err, errs.ErrBadVersion) {
 		// Another coordinator wrote the status. The version check refused
 		// this write, so nothing is lost: the write fails, and its caller
 		// retries over the fresh state, or stops once this coordinator learns
@@ -270,7 +270,7 @@ func (m *defaultMetadata) CreateNamespaceStatus(namespace string, status *common
 			clusterStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
 		}
 		if _, exists := clusterStatus.Namespaces[namespace]; exists {
-			return clusterStatus, false, fmt.Errorf("%w: namespace %q", errs.ErrMetaAlreadyExists, namespace)
+			return clusterStatus, false, fmt.Errorf("%w: namespace %q", errs.ErrAlreadyExists, namespace)
 		}
 		clusterStatus.Namespaces[namespace] = status
 		return clusterStatus, true, nil
@@ -440,12 +440,12 @@ func (m *defaultMetadata) CreateNamespace(namespace *commonproto.Namespace) erro
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for _, existing := range config.GetNamespaces() {
 			if existing.GetName() == name {
-				return nil, errs.ErrMetaAlreadyExists
+				return nil, errs.ErrAlreadyExists
 			}
 		}
 		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
 			return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-				errs.ErrMetaFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
+				errs.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
 		}
 
 		config.Namespaces = append(config.Namespaces, namespace)
@@ -463,7 +463,7 @@ func (m *defaultMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace
 			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
 				if replicationFactor > uint32(len(config.GetServers())) {
 					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-						errs.ErrMetaFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
+						errs.ErrFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
 				}
 				namespace.ReplicationFactor = replicationFactor
 			}
@@ -508,7 +508,7 @@ func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) e
 
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		if _, exists := config.GetDataServer(name); exists {
-			return nil, errs.ErrMetaAlreadyExists
+			return nil, errs.ErrAlreadyExists
 		}
 
 		config.Servers = append(config.Servers, dataServer.GetIdentity())
@@ -578,7 +578,7 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 			for _, namespace := range config.GetNamespaces() {
 				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
 					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
-						errs.ErrMetaFailedPrecondition,
+						errs.ErrFailedPrecondition,
 						name,
 						namespace.GetName(),
 						namespace.GetReplicationFactor(),

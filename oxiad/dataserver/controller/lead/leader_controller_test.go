@@ -1529,8 +1529,8 @@ func TestLeaderController_RejectedWrite(t *testing.T) {
 	assert.Equal(t, "s-00000000000000000001-00000000000000000001", results[1].GetKey())
 
 	_, err = lc.WriteBlock(context.Background(), sequentialPut(1))
-	assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
-	assert.ErrorIs(t, err, errs.ErrDBMissingSequenceDeltas)
+	assert.ErrorIs(t, err, errs.ErrWriteRejected)
+	assert.ErrorIs(t, err, errs.ErrInvalidSequentialPut)
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, commitOffset)
@@ -3579,7 +3579,7 @@ func TestLeaderControllerCheckpointHoldsTheCommitOffsetAndTerm(t *testing.T) {
 		return nil
 	}))
 	assert.ErrorIs(t, lc.WithDatabase(checkpoint.Generation+1, func(string) error { return nil }),
-		errs.ErrDBReplaced, "a checkpoint of a database since replaced")
+		errs.ErrUnavailable, "a checkpoint of a database since replaced")
 
 	require.NoError(t, lc.Close())
 	_, err = lc.Checkpoint()
@@ -4022,7 +4022,7 @@ func TestLeaderControllerBecomeLeaderRejectsMoreFollowersThanTheReplicationFacto
 			"f2": constant2.InvalidEntryId,
 		},
 	})
-	assert.ErrorIs(t, err, errs.ErrShardTooManyCursors)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 }
 
 // A new leader deletes the ephemeral records of the sessions that are gone,

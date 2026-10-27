@@ -15,6 +15,7 @@
 package wal
 
 import (
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -125,7 +126,7 @@ func (r *readOnlySegmentsGroup) Get(offset int64) (object.RefCount[ReadOnlySegme
 	// Check if we have a segment file on disk
 	baseOffset, found := r.allSegments.Floor(offset)
 	if !found {
-		return nil, errs.ErrWALOffsetOutOfBounds
+		return nil, fmt.Errorf("%w: offset out of bounds", errs.ErrInvalidArgument)
 	}
 
 	rosegment, err := newReadOnlySegment(r.fs, r.basePath, baseOffset.Key)

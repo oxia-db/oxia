@@ -176,7 +176,7 @@ func (mpr *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Version
 		return nil, errors.New("failed to apply new cluster state")
 	}
 	if !applyRes.changeApplied {
-		return nil, errs.ErrMetaBadVersion
+		return nil, errs.ErrBadVersion
 	}
 
 	return &provider.Versioned[T]{

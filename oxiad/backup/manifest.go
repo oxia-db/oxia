@@ -74,22 +74,22 @@ type Manifest struct {
 func (m *Manifest) Validate() error {
 	switch {
 	case m.FormatVersion != ManifestFormatVersion:
-		return fmt.Errorf("%w: format version %d, want %d", errs.ErrBackupInvalidManifest, m.FormatVersion, ManifestFormatVersion)
+		return fmt.Errorf("%w: invalid backup manifest: format version %d, want %d", errs.ErrInvalidArgument, m.FormatVersion, ManifestFormatVersion)
 	case m.Namespace == "" || m.Shard < 0 || m.Lineage == "":
-		return fmt.Errorf("%w: missing namespace, shard or lineage", errs.ErrBackupInvalidManifest)
+		return fmt.Errorf("%w: invalid backup manifest: missing namespace, shard or lineage", errs.ErrInvalidArgument)
 	case m.Range.Min > m.Range.Max:
-		return fmt.Errorf("%w: hash range %s", errs.ErrBackupInvalidManifest, m.Range)
+		return fmt.Errorf("%w: invalid backup manifest: hash range %s", errs.ErrInvalidArgument, m.Range)
 	}
 	id, err := ParseID(m.ID)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errs.ErrBackupInvalidManifest, err)
+		return fmt.Errorf("%w: invalid backup manifest: %w", errs.ErrInvalidArgument, err)
 	}
 	if id.Lineage != m.Lineage {
-		return fmt.Errorf("%w: id %q is not of lineage %q", errs.ErrBackupInvalidManifest, m.ID, m.Lineage)
+		return fmt.Errorf("%w: invalid backup manifest: id %q is not of lineage %q", errs.ErrInvalidArgument, m.ID, m.Lineage)
 	}
 	for _, f := range slices.Concat(m.SSTs, m.Files) {
 		if f.Name == "" || f.Key == "" || f.Size < 0 {
-			return fmt.Errorf("%w: invalid file %+v", errs.ErrBackupInvalidManifest, f)
+			return fmt.Errorf("%w: invalid backup manifest: invalid file %+v", errs.ErrInvalidArgument, f)
 		}
 	}
 	return nil
@@ -193,13 +193,13 @@ func ReadManifest(ctx context.Context, store blob.Store, key string) (*Manifest,
 	defer func() { _ = r.Close() }()
 	m := &Manifest{}
 	if err := json.NewDecoder(r).Decode(m); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", errs.ErrBackupInvalidManifest, key, err)
+		return nil, fmt.Errorf("%w: invalid backup manifest: %s: %w", errs.ErrInvalidArgument, key, err)
 	}
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %s", err, key)
 	}
 	if own := m.Summary().ManifestKey(); own != key {
-		return nil, fmt.Errorf("%w: %s describes the backup at %s", errs.ErrBackupInvalidManifest, key, own)
+		return nil, fmt.Errorf("%w: invalid backup manifest: %s describes the backup at %s", errs.ErrInvalidArgument, key, own)
 	}
 	return m, nil
 }

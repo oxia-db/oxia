@@ -779,7 +779,7 @@ func TestNewFollowerCursorFailsWithoutRoomInTheTracker(t *testing.T) {
 	// A replication factor of 1 has no follower
 	fc, err := NewFollowerCursor("f1", 1, constant.DefaultNamespace, 2, rpc.NewMockRpcClient(),
 		NewQuorumAckTracker(1, wal.InvalidOffset, wal.InvalidOffset), w, db, wal.InvalidOffset, false)
-	assert.ErrorIs(t, err, errs.ErrShardTooManyCursors)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	assert.Nil(t, fc)
 }
 

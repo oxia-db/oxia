@@ -363,7 +363,7 @@ func TestNamespaceReconcilerReconcileReturnsCreationError(t *testing.T) {
 
 func TestNamespaceReconcilerReconcileReturnsAlreadyExistsForRetry(t *testing.T) {
 	base := namespaceRuntimeForErrors("existing", "healthy")
-	createErr := fmt.Errorf("namespace creation: %w", errs.ErrMetaAlreadyExists)
+	createErr := fmt.Errorf("namespace creation: %w", errs.ErrAlreadyExists)
 	runtime := &failingNamespaceRuntime{
 		Runtime: base,
 		failures: map[string]error{
@@ -475,7 +475,7 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	}
 
 	if _, exists := cloned.Namespaces[name]; exists {
-		return errs.ErrMetaAlreadyExists
+		return errs.ErrAlreadyExists
 	}
 
 	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus)
@@ -724,7 +724,7 @@ func (m *mockNamespaceRuntime) initShardControllers(name string) error {
 		return err
 	}
 	if !exists {
-		return errs.ErrMetaConflict
+		return errs.ErrUnavailable
 	}
 	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
 		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {

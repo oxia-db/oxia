@@ -16,6 +16,7 @@ package lead
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -359,11 +360,11 @@ func (q *quorumAckTracker) NewCursorAcker(ackOffset int64) (CursorAcker, error) 
 	defer q.Unlock()
 
 	if uint32(q.cursorIdxGenerator) >= q.replicationFactor-1 {
-		return nil, errs.ErrShardTooManyCursors
+		return nil, fmt.Errorf("%w: too many cursors", errs.ErrInvalidArgument)
 	}
 
 	if ackOffset > q.headOffset.Load() {
-		return nil, errs.ErrShardInvalidHeadOffset
+		return nil, fmt.Errorf("%w: invalid head offset", errs.ErrInvalidArgument)
 	}
 
 	qa := &cursorAcker{

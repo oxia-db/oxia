@@ -345,7 +345,7 @@ func TestProviderStoreRejectsCreatingExistingConfigMap(t *testing.T) {
 		Value:   newConfig(2),
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+	require.ErrorIs(t, err, errs.ErrBadVersion)
 }
 
 func TestProviderWaitToBecomeLeaderSignalsLeaseLoss(t *testing.T) {
