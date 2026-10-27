@@ -58,19 +58,19 @@ type OIDCOptions struct {
 func (op *OIDCOptions) Validate() error {
 	// Support both old and new formats
 	if len(op.Issuers) == 0 && op.AllowedIssueURLs == "" {
-		return errors.Wrap(errs.ErrInvalidConfig, "empty issuer URL")
+		return errors.Wrap(errs.ErrInvalidArgument, "empty issuer URL")
 	}
 	// If using legacy format, validate it
 	if op.AllowedIssueURLs != "" && op.AllowedAudiences == "" {
-		return errors.Wrap(errs.ErrInvalidConfig, "empty allowed audiences")
+		return errors.Wrap(errs.ErrInvalidArgument, "empty allowed audiences")
 	}
 	// If using new format, validate each issuer config
 	for issuerURL, config := range op.Issuers {
 		if issuerURL == "" {
-			return errors.Wrap(errs.ErrInvalidConfig, "empty issuer URL")
+			return errors.Wrap(errs.ErrInvalidArgument, "empty issuer URL")
 		}
 		if config.AllowedAudiences == "" {
-			return errors.Wrapf(errs.ErrInvalidConfig, "empty allowed audiences for issuer %s", issuerURL)
+			return errors.Wrapf(errs.ErrInvalidArgument, "empty allowed audiences for issuer %s", issuerURL)
 		}
 	}
 	return nil
@@ -109,7 +109,7 @@ type OIDCProvider struct {
 func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, error) {
 	token, ok := param.(string)
 	if !ok {
-		return "", errors.Wrap(errs.ErrInvalidConfig, "unmatched authentication parameter type")
+		return "", errors.Wrap(errs.ErrInvalidArgument, "unmatched authentication parameter type")
 	}
 	now := time.Now()
 	if userName, ok := p.verifiedTokens.get(token, now); ok {
@@ -234,7 +234,7 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	}
 
 	if len(publicKeys) == 0 {
-		return nil, errors.Wrap(errs.ErrInvalidConfig, "no public keys found in file")
+		return nil, errors.Wrap(errs.ErrInvalidArgument, "no public keys found in file")
 	}
 
 	return publicKeys, nil

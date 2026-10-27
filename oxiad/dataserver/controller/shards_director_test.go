@@ -243,7 +243,7 @@ func TestShardsDirectorGetOrCreateFollowerInvalidNamespace(t *testing.T) {
 	assert.Nil(t, fc)
 
 	_, err = sd.GetFollower(1)
-	assert.ErrorIs(t, err, errs.ErrShardNotFollower)
+	assert.ErrorIs(t, err, errs.ErrNotFollower)
 }
 
 func TestShardsDirectorDeleteShardLeaderError(t *testing.T) {
@@ -309,7 +309,7 @@ func TestShardsDirectorDeleteShardNotHosted(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = sd.GetFollower(shard)
-	assert.ErrorIs(t, err, errs.ErrShardNotFollower)
+	assert.ErrorIs(t, err, errs.ErrNotFollower)
 
 	// The shard starts over empty
 	lc, err = sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)

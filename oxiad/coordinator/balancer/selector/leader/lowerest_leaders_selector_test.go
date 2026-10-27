@@ -32,7 +32,7 @@ func TestSelect_NoCandidates(t *testing.T) {
 		Candidates: []*proto.DataServerIdentity{},
 		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
-	assert.ErrorIs(t, err, errs.ErrBalancerNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNoCandidates)
 }
 
 func TestSelect_NilCandidates(t *testing.T) {
@@ -42,7 +42,7 @@ func TestSelect_NilCandidates(t *testing.T) {
 		Candidates: nil,
 		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
-	assert.ErrorIs(t, err, errs.ErrBalancerNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNoCandidates)
 }
 
 func TestSelect_SingleCandidate(t *testing.T) {

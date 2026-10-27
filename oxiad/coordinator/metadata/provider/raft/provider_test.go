@@ -145,7 +145,7 @@ func TestProviderStoreOnLeader(t *testing.T) {
 		Value:   &commonproto.ClusterStatus{InstanceId: "stale"},
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+	require.ErrorIs(t, err, errs.ErrBadVersion)
 
 	// Undecodable values are refused before reaching raft
 	_, err = p.Store(provider.Versioned[*commonproto.ClusterStatus]{

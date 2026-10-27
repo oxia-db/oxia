@@ -225,16 +225,16 @@ func (ms *readWriteSegment) LastOffset() int64 {
 // only write past the records it can find in the index, and publish them
 // through lastOffset. It holds the read side of flushLock instead, so that
 // Close does not unmap the segment under the copy, and returns
-// errs.ErrWALSegmentClosed once the segment is closed. Truncate must not run
+// errs.ErrSegmentClosed once the segment is closed. Truncate must not run
 // concurrently.
 func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	ms.flushLock.RLock()
 	defer ms.flushLock.RUnlock()
 	if ms.txnMappedFile == nil {
-		return nil, 0, 0, errs.ErrWALSegmentClosed
+		return nil, 0, 0, errs.ErrSegmentClosed
 	}
 	if offset < ms.c.baseOffset || offset > ms.lastOffset.Load() {
-		return nil, 0, 0, errs.ErrWALOffsetOutOfBounds
+		return nil, 0, 0, errors.Wrap(errs.ErrInvalidArgument, "offset out of bounds")
 	}
 
 	fileReadOffset := fileOffset(*ms.readIdx.Load(), ms.c.baseOffset, offset)
@@ -256,13 +256,13 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 	defer ms.Unlock()
 
 	if len(data) == 0 {
-		return errs.ErrWALEmptyPayload
+		return errs.ErrEmptyPayload
 	}
 	if !ms.HasSpace(len(data)) {
-		return errs.ErrWALSegmentFull
+		return errs.ErrSegmentFull
 	}
 	if offset != ms.lastOffset.Load()+1 {
-		return errs.ErrWALInvalidNextOffset
+		return errors.Wrap(errs.ErrInvalidArgument, "invalid next offset in wal")
 	}
 
 	fOffset := ms.currentFileOffset
@@ -353,7 +353,7 @@ func (ms *readWriteSegment) Delete() error {
 
 func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	if lastSafeOffset < ms.c.baseOffset || lastSafeOffset > ms.lastOffset.Load() {
-		return errs.ErrWALOffsetOutOfBounds
+		return errors.Wrap(errs.ErrInvalidArgument, "offset out of bounds")
 	}
 
 	// Write zeroes in the section to clear

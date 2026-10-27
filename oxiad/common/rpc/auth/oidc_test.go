@@ -120,7 +120,7 @@ func TestOIDCOptions_Validate(t *testing.T) {
 func TestOIDCOptionsValidateRejectsEmptyIssuerKey(t *testing.T) {
 	options := OIDCOptions{Issuers: map[string]IssuerConfig{"": {AllowedAudiences: "audience"}}}
 
-	assert.ErrorIs(t, options.Validate(), errs.ErrInvalidConfig)
+	assert.ErrorIs(t, options.Validate(), errs.ErrInvalidArgument)
 }
 
 // TestOIDCOptions_WithDefault tests default value application.
@@ -296,7 +296,7 @@ func TestNewOIDCProviderRejectsInvalidJSON(t *testing.T) {
 func TestNewOIDCProviderRejectsInvalidOptions(t *testing.T) {
 	provider, err := NewOIDCProvider(context.Background(), "{}")
 
-	assert.ErrorIs(t, err, errs.ErrInvalidConfig)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	assert.Nil(t, provider)
 }
 
@@ -472,7 +472,7 @@ func TestOIDCProvider_Authenticate_Errors(t *testing.T) {
 
 	t.Run("invalid token type", func(t *testing.T) {
 		_, err := provider.Authenticate(context.Background(), 123)
-		assert.ErrorIs(t, err, errs.ErrInvalidConfig)
+		assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	})
 
 	t.Run("malformed token", func(t *testing.T) {
@@ -742,7 +742,7 @@ func TestLoadPublicKeysFromFile(t *testing.T) {
 		tempFile.Close()
 
 		_, err = loadPublicKeysFromFile(tempFile.Name())
-		assert.ErrorIs(t, err, errs.ErrInvalidConfig)
+		assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	})
 }
 

@@ -597,7 +597,7 @@ func TestNewControllerDoesNotElectFinalizingSplitParent(t *testing.T) {
 	electionAction := action.NewElectionAction(shard)
 	sc.Dispatch(electionAction)
 	_, err := requireElectionCompleted(t, electionAction)
-	assert.ErrorIs(t, err, errs.ErrShardElectionFailed)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 
 	for _, s := range []*proto.DataServerIdentity{s1, s2, s3} {
 		assert.Empty(t, rpc.GetNode(s).NewTermRequests)
@@ -888,7 +888,7 @@ func TestControllerDispatchChangeEnsembleWithLeaderElectionFailure(t *testing.T)
 			if err == nil {
 				return nil
 			}
-			if !errors.Is(err, errs.ErrShardNotReadyForChangeEnsemble) {
+			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -987,7 +987,7 @@ func TestControllerDispatchChangeEnsembleDoesNotFailIfRemoveFails(t *testing.T) 
 			if err == nil {
 				return nil
 			}
-			if !errors.Is(err, errs.ErrShardNotReadyForChangeEnsemble) {
+			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -1188,7 +1188,7 @@ func TestControllerDispatchChangeEnsembleWaitsForNewEnsembleQuorum(t *testing.T)
 			a := action.NewChangeEnsembleAction(shard, s2, s3)
 			sc.Dispatch(a)
 			_, err := a.Wait()
-			if !errors.Is(err, errs.ErrShardNotReadyForChangeEnsemble) {
+			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -1269,7 +1269,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 			a := action.NewChangeEnsembleAction(shard, s2, s4)
 			sc.Dispatch(a)
 			_, err := a.Wait()
-			if !errors.Is(err, errs.ErrShardNotReadyForChangeEnsemble) {
+			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -1305,7 +1305,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrShardChangeEnsembleLosesEntries)
+	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrInvalidArgument)
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.Equal(t, proto.ShardStatusSteadyState, metaSnap.GetStatusOrDefault())
 	assert.EqualValues(t, 4, metaSnap.Term)
@@ -1362,7 +1362,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedLeader(t *testing.T)
 			a := action.NewChangeEnsembleAction(shard, s1, s4)
 			sc.Dispatch(a)
 			_, err := a.Wait()
-			if !errors.Is(err, errs.ErrShardNotReadyForChangeEnsemble) {
+			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -1396,7 +1396,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedLeader(t *testing.T)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrShardChangeEnsembleLosesEntries)
+	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrInvalidArgument)
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.Equal(t, proto.ShardStatusSteadyState, metaSnap.GetStatusOrDefault())
 	assert.EqualValues(t, 4, metaSnap.Term)
@@ -1453,7 +1453,7 @@ func TestControllerDispatchChangeEnsembleNotAbortedAfterBecomeLeader(t *testing.
 			a := action.NewChangeEnsembleAction(shard, s2, s4)
 			sc.Dispatch(a)
 			_, err := a.Wait()
-			if !errors.Is(err, errs.ErrShardNotReadyForChangeEnsemble) {
+			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -1677,7 +1677,7 @@ func TestControllerDispatchChangeEnsembleRejectsFeatureSupportRegression(t *test
 
 	select {
 	case err := <-waitResult:
-		assert.ErrorIs(t, err, errs.ErrShardChangeEnsembleLosesFeatureSupport)
+		assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for change ensemble to be rejected")
 	}
@@ -1733,7 +1733,7 @@ func TestControllerValidateChangeEnsembleFeaturesRejectsMissingFeatureInfo(t *te
 
 			shardMeta, _ := testShardMetadata(s.metadataStore, constant.DefaultNamespace, shard)
 			err := s.validateChangeEnsembleFeatures(shardMeta, action.NewChangeEnsembleAction(shard, s1, s4))
-			assert.ErrorIs(t, err, errs.ErrShardNotReadyForChangeEnsemble)
+			assert.ErrorIs(t, err, errs.ErrUnavailable)
 		})
 	}
 }
@@ -1778,7 +1778,7 @@ func TestControllerValidateChangeEnsembleFeaturesRejectsInvalidAction(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := s.validateChangeEnsembleFeatures(shardMeta, action.NewChangeEnsembleAction(shard, tt.from, tt.to))
-			assert.ErrorIs(t, err, errs.ErrShardInvalidChangeEnsemble)
+			assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 		})
 	}
 
@@ -1811,7 +1811,7 @@ func TestControllerValidateChangeEnsembleFeaturesRejectsSplitShard(t *testing.T)
 
 			shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, test.shard)
 			err := s.validateChangeEnsembleFeatures(shardMeta, action.NewChangeEnsembleAction(test.shard, test.from, spare))
-			assert.ErrorIs(t, err, errs.ErrShardNotReadyForChangeEnsemble)
+			assert.ErrorIs(t, err, errs.ErrUnavailable)
 		})
 	}
 }
@@ -1868,7 +1868,7 @@ func TestControllerDispatchChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	close(election.release)
 
 	_, err := swap.Wait()
-	assert.ErrorIs(t, err, errs.ErrShardNotReadyForChangeEnsemble)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
 	assert.NotNil(t, parent.GetSplit())
 	assert.Equal(t, proto.ShardStatusSteadyState, parent.GetStatus())

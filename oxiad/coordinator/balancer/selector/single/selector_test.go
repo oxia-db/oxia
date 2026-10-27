@@ -38,7 +38,7 @@ func TestServerSelectReturnsUnsatisfiedAntiAffinity(t *testing.T) {
 
 	_, err := NewSelector().Select(context)
 
-	assert.ErrorIs(t, err, errs.ErrBalancerUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 }
 
 func TestSelectorSelectNoCandidates(t *testing.T) {
@@ -46,5 +46,5 @@ func TestSelectorSelectNoCandidates(t *testing.T) {
 		Candidates: linkedhashset.New[string](),
 		Namespace:  "ns-1",
 	})
-	assert.ErrorIs(t, err, errs.ErrBalancerNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNoCandidates)
 }

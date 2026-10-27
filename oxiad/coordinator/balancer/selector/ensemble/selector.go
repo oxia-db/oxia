@@ -48,7 +48,7 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		var selectedIdPtr string
 		var err error
 		if selectedIdPtr, err = ensemble.singleServerSelector.Select(sServerContext); err != nil {
-			if errors.Is(err, errs.ErrBalancerNoCandidates) {
+			if errors.Is(err, errs.ErrNoCandidates) {
 				// Fewer candidates than replicas, reported by the size check below
 				break
 			}
@@ -62,7 +62,7 @@ func (ensemble *ensemble) Select(context *Context) ([]string, error) {
 		}
 	}
 	if selected.Size() != context.Replicas {
-		return nil, errs.ErrBalancerNoCandidates
+		return nil, errs.ErrNoCandidates
 	}
 	return esm, nil
 }

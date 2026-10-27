@@ -110,7 +110,7 @@ func TestProvider(t *testing.T) {
 				Value:   status,
 				Version: "",
 			})
-			assert.ErrorIs(t, err, errs.ErrMetaBadVersion)
+			assert.ErrorIs(t, err, errs.ErrBadVersion)
 
 			newVersion, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
 				Value:   status,
@@ -379,7 +379,7 @@ func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
 
 	// A write with the version from before the failed one is rejected.
 	_, err = p.Store(provider.Versioned[*proto.ClusterStatus]{Value: &proto.ClusterStatus{InstanceId: "stale"}, Version: before})
-	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
+	require.ErrorIs(t, err, errs.ErrBadVersion)
 
 	require.NoError(t, setInstanceID("next"))
 	require.Equal(t, "next", loaded(t, p).Value.GetInstanceId())
@@ -416,7 +416,7 @@ func TestProviderConcurrentStores(t *testing.T) {
 							Value:   snapshot.Value,
 							Version: snapshot.Version,
 						})
-						if errors.Is(err, errs.ErrMetaBadVersion) {
+						if errors.Is(err, errs.ErrBadVersion) {
 							// Lost the race: reload and retry
 							continue
 						}

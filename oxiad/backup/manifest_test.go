@@ -48,7 +48,7 @@ func TestManifestValidate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := newManifest("orders", 12, "abcd", time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC))
 			modify(m)
-			assert.ErrorIs(t, m.Validate(), errs.ErrBackupInvalidManifest)
+			assert.ErrorIs(t, m.Validate(), errs.ErrInvalidArgument)
 		})
 	}
 }
@@ -85,7 +85,7 @@ func TestWriteManifestRejectsInvalidManifest(t *testing.T) {
 	store := blob.NewMemory()
 	m := newManifest("orders", 12, "abcd", time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC))
 	m.Lineage = ""
-	assert.ErrorIs(t, WriteManifest(t.Context(), store, m), errs.ErrBackupInvalidManifest)
+	assert.ErrorIs(t, WriteManifest(t.Context(), store, m), errs.ErrInvalidArgument)
 	assert.Empty(t, store.Keys())
 }
 
@@ -95,10 +95,10 @@ func TestReadManifestReportsMissingAndCorruptManifests(t *testing.T) {
 	assert.ErrorIs(t, err, errs.ErrNotFound)
 	require.NoError(t, store.Put(t.Context(), "corrupt.json", strings.NewReader("{not json")))
 	_, err = ReadManifest(t.Context(), store, "corrupt.json")
-	assert.ErrorIs(t, err, errs.ErrBackupInvalidManifest)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	require.NoError(t, store.Put(t.Context(), "wrong.json", strings.NewReader(`{"format_version": 99}`)))
 	_, err = ReadManifest(t.Context(), store, "wrong.json")
-	assert.ErrorIs(t, err, errs.ErrBackupInvalidManifest)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 }
 
 func TestListManifestsReturnsBackupsOfShardOldestFirst(t *testing.T) {
@@ -186,9 +186,9 @@ func TestReadManifestRejectsAManifestStoredUnderAnotherKey(t *testing.T) {
 	require.NoError(t, store.Put(t.Context(), copied, bytes.NewReader(data)))
 
 	_, err = ReadManifest(t.Context(), store, copied)
-	assert.ErrorIs(t, err, errs.ErrBackupInvalidManifest)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	_, err = ListManifests(t.Context(), store, ShardPath{Namespace: "orders-copy", Shard: 12})
-	assert.ErrorIs(t, err, errs.ErrBackupInvalidManifest)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	own, err := ReadManifest(t.Context(), store, m.Summary().ManifestKey())
 	require.NoError(t, err)
 	assert.Equal(t, m.ID, own.ID)

@@ -164,7 +164,7 @@ func TestQuorumAckTrackerMaxCursors(t *testing.T) {
 	assert.NotNil(t, c2)
 
 	c3, err := at.NewCursorAcker(wal.InvalidOffset)
-	assert.ErrorIs(t, err, errs.ErrShardTooManyCursors)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 	assert.Nil(t, c3)
 }
 
@@ -251,7 +251,7 @@ func TestQuorumAckTracker_AddingCursors_RF3(t *testing.T) {
 
 	c, err := at.NewCursorAcker(11)
 	assert.Nil(t, c)
-	assert.ErrorIs(t, err, errs.ErrShardInvalidHeadOffset)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 
 	c1, err := at.NewCursorAcker(7)
 	assert.NotNil(t, c1)
@@ -276,7 +276,7 @@ func TestQuorumAckTracker_AddingCursors_RF5(t *testing.T) {
 
 	c, err := at.NewCursorAcker(11)
 	assert.Nil(t, c)
-	assert.ErrorIs(t, err, errs.ErrShardInvalidHeadOffset)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 
 	c1, err := at.NewCursorAcker(7)
 	assert.NotNil(t, c1)

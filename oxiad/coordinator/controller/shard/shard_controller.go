@@ -94,16 +94,16 @@ type Controller interface {
 	//
 	//   - *action.ElectionAction elects a new leader of the shard, e.g. to move
 	//     the leadership. It completes with the name of the new leader, and
-	//     fails with errs.ErrShardElectionFailed if the election ended without
+	//     fails with errs.ErrUnavailable if the election ended without
 	//     electing one, e.g. because a newer election replaced it, and with
 	//     constant.ErrResourceUnavailable if the queue was full or the
 	//     controller is closing.
 	//   - *action.ChangeEnsembleAction replaces a member of the ensemble of the
-	//     shard with a new election. It fails with errs.ErrShardInvalidChangeEnsemble if
+	//     shard with a new election. It fails with errs.ErrInvalidArgument if
 	//     the replaced member isn't in the ensemble, or the new one already is;
-	//     errs.ErrShardNotReadyForChangeEnsemble while the followers of the current
+	//     errs.ErrUnavailable while the followers of the current
 	//     leader catch up, the shard is part of a split, or the features of a
-	//     member aren't known yet; errs.ErrShardChangeEnsembleLosesFeatureSupport if the
+	//     member aren't known yet; errs.ErrInvalidArgument if the
 	//     new ensemble doesn't support the features that the current one
 	//     negotiated; and constant.ErrResourceUnavailable while the controller
 	//     is closing.

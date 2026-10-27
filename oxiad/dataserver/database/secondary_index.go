@@ -33,7 +33,7 @@ const (
 func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string, err error) {
 	entry, found := strings.CutPrefix(key, idxKeyPrefix+"/")
 	if !found {
-		return "", "", errs.ErrDBInvalidSecondaryIndexKey
+		return "", "", errs.ErrInvalidSecondaryIndexKey
 	}
 
 	// The index name and the secondary key are stored as the client supplied
@@ -44,7 +44,7 @@ func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string,
 	indexNameEnd := strings.IndexByte(entry, '/')
 	separator := strings.LastIndex(entry, idxSeparator)
 	if indexNameEnd < 0 || separator < indexNameEnd {
-		return "", "", errs.ErrDBInvalidSecondaryIndexKey
+		return "", "", errs.ErrInvalidSecondaryIndexKey
 	}
 
 	primaryKey, err = url.PathUnescape(entry[separator+1:])
