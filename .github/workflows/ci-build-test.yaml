@@ -38,7 +38,7 @@ jobs:
 
   build:
     name: Build & Test
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     permissions:
       contents: read
     steps:
@@ -128,7 +128,7 @@ jobs:
   chaos-mesh:
     name: Run chaos-mesh
     if: github.event_name == 'pull_request'
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     permissions:
       contents: read # for actions/checkout to fetch code
       security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
@@ -202,7 +202,7 @@ jobs:
   maelstrom:
     name: Maelstrom
     if: github.event_name == 'pull_request'
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     permissions:
       contents: read
       actions: write

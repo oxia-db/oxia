@@ -32,7 +32,7 @@ env:
 jobs:
   publish:
     name: Publish ${{ matrix.channel }} image
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     permissions:
       contents: read
     strategy:

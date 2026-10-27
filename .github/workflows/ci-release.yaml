@@ -33,7 +33,7 @@ jobs:
   # Build and test to ensure release is stable
   build-test:
     name: Build & Test
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     permissions:
       contents: read
     steps:
@@ -78,7 +78,7 @@ jobs:
   # Build cross-platform binaries
   build-binaries:
     name: Build Binaries
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     needs: build-test
     permissions:
       contents: write
@@ -128,7 +128,7 @@ jobs:
   # Build and publish Docker image
   publish-docker:
     name: Publish Docker Image
-    runs-on: cncf-ubuntu-8-32-x86
+    runs-on: cncf-ubuntu-16-64-x86
     needs: build-test
     permissions:
       contents: read
