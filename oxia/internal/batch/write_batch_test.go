@@ -231,7 +231,10 @@ func TestWriteBatchResponseCountMismatch(t *testing.T) {
 	// longer line up with the request. Before the length check the delete loop
 	// indexed past the end of response.Deletes and panicked the client; now the
 	// batch fails and every callback sees the error.
-	execute := func(context.Context, *proto.WriteRequest) (*proto.WriteResponse, error) {
+	execute := func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+		if _, err := prepare(); err != nil {
+			return nil, err
+		}
 		return &proto.WriteResponse{
 			Puts:    []*proto.PutResponse{{Status: proto.Status_OK}},
 			Deletes: nil,
