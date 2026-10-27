@@ -15,6 +15,7 @@
 package database
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -33,7 +34,7 @@ const (
 func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string, err error) {
 	entry, found := strings.CutPrefix(key, idxKeyPrefix+"/")
 	if !found {
-		return "", "", errs.ErrInvalidSecondaryIndexKey
+		return "", "", fmt.Errorf("%w: secondary index key %q", errs.ErrCorrupted, key)
 	}
 
 	// The index name and the secondary key are stored as the client supplied
@@ -44,7 +45,7 @@ func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string,
 	indexNameEnd := strings.IndexByte(entry, '/')
 	separator := strings.LastIndex(entry, idxSeparator)
 	if indexNameEnd < 0 || separator < indexNameEnd {
-		return "", "", errs.ErrInvalidSecondaryIndexKey
+		return "", "", fmt.Errorf("%w: secondary index key %q", errs.ErrCorrupted, key)
 	}
 
 	primaryKey, err = url.PathUnescape(entry[separator+1:])

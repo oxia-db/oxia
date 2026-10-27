@@ -268,7 +268,7 @@ func (t *wal) readRecord(index int64) (val []byte, previousCrc uint32, entryCrc 
 	}
 
 	val, previousCrc, entryCrc, err = t.readFromSegment(index)
-	if errors.Is(err, errs.ErrSegmentClosed) {
+	if errors.Is(err, errs.ErrAlreadyClosed) {
 		// A rollover closed the read-write segment after it got picked, once
 		// it had moved to the read-only group: read it from there
 		val, previousCrc, entryCrc, err = t.readFromSegment(index)
@@ -306,7 +306,7 @@ func (t *wal) readFromSegment(index int64) (val []byte, previousCrc uint32, entr
 	}
 
 	if val, previousCrc, entryCrc, err = segment.Read(index); err != nil {
-		if !errors.Is(err, errs.ErrSegmentClosed) {
+		if !errors.Is(err, errs.ErrAlreadyClosed) {
 			t.readErrors.Inc()
 		}
 		return nil, 0, 0, err

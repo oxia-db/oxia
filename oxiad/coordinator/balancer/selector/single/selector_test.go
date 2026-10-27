@@ -46,5 +46,5 @@ func TestSelectorSelectNoCandidates(t *testing.T) {
 		Candidates: linkedhashset.New[string](),
 		Namespace:  "ns-1",
 	})
-	assert.ErrorIs(t, err, errs.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }

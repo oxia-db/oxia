@@ -38,7 +38,7 @@ func (s *server) Select(selectorContext *Context) (string, error) {
 		}
 	}
 	// Only the final selector picks a server, and it gives up only when no candidate is left
-	return "", errs.ErrNoCandidates
+	return "", errs.ErrNotFound
 }
 
 func NewSelector() selector.Selector[*Context, string] {

@@ -1524,7 +1524,7 @@ func TestWalReadAtIndexRetriesSegmentClosedByRollover(t *testing.T) {
 			// The sync round closes the rolled-over segment
 			require.NoError(t, w.Sync(context.Background()))
 			_, _, _, err := segment.Read(50)
-			require.ErrorIs(t, err, errs.ErrSegmentClosed)
+			require.ErrorIs(t, err, errs.ErrAlreadyClosed)
 
 			release()
 			if entry := <-readDone; assert.NotNil(t, entry) {
@@ -1996,7 +1996,7 @@ func TestReaderReadNextFailsWhenClosed(t *testing.T) {
 
 		assert.False(t, r.HasNext())
 		_, _, _, err = r.ReadNext()
-		assert.ErrorIs(t, err, errs.ErrReaderClosed)
+		assert.ErrorIs(t, err, errs.ErrAlreadyClosed)
 	}
 
 	assert.NoError(t, w.Close())

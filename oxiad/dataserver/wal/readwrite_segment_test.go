@@ -594,7 +594,7 @@ func TestReadWriteSegmentReadConcurrentWithAppendAndClose(t *testing.T) {
 	assert.NoError(t, <-closeDone)
 
 	_, _, _, err = rw.Read(1)
-	assert.ErrorIs(t, err, errs.ErrSegmentClosed)
+	assert.ErrorIs(t, err, errs.ErrAlreadyClosed)
 }
 
 func TestReadWriteSegmentNewFailsWhenWalDirectoryCannotBeCreated(t *testing.T) {

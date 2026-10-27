@@ -17,6 +17,8 @@ package wal
 import (
 	"sync"
 
+	"github.com/pkg/errors"
+
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -86,7 +88,7 @@ func (r *forwardReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, e
 	defer r.Unlock()
 
 	if r.closed {
-		return nil, 0, 0, errs.ErrReaderClosed
+		return nil, 0, 0, errors.Wrap(errs.ErrAlreadyClosed, "reader")
 	}
 
 	index := r.nextOffset
@@ -112,7 +114,7 @@ func (r *forwardReader) HasNext() bool {
 
 func (r *reverseReader) ReadNext() (entry *proto.LogEntry, previousCrc uint32, entryCrc uint32, err error) {
 	if r.closed {
-		return nil, 0, 0, errs.ErrReaderClosed
+		return nil, 0, 0, errors.Wrap(errs.ErrAlreadyClosed, "reader")
 	}
 
 	entry, previousCrc, entryCrc, err = r.wal.readAtIndex(r.nextOffset)

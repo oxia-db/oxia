@@ -3610,7 +3610,7 @@ func TestFollowerControllerStateApplierRetriesWalReadFailures(t *testing.T) {
 	}{
 		{"open", errors.New("open failed"), func(h *walHooks, fault func() error) { h.newReader = fault }},
 		{"read", errors.New("read failed"), func(h *walHooks, fault func() error) { h.readNext = fault }},
-		{"reader-closed", errs.ErrReaderClosed, func(h *walHooks, fault func() error) { h.readNext = fault }},
+		{"reader-closed", errs.ErrAlreadyClosed, func(h *walHooks, fault func() error) { h.readNext = fault }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			walFactory, kvFactory := newHookFactories(t)
