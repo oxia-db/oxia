@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package errs holds the sentinel errors of the Oxia servers, which callers match with errors.Is.
+// Package errs holds the internal errors of the Oxia servers. The errors that reach the clients are in
+// common/constant.
 package errs
 
 import "errors"

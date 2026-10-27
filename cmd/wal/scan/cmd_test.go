@@ -170,7 +170,7 @@ func TestExecRejectsCorruptedEntry(t *testing.T) {
 	logs := captureLogs(t)
 	_, err = runScan(t)
 
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	// The entries before the corrupted one were printed
 	assert.NotEmpty(t, decodeLogs(t, logs))
 }
