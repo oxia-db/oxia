@@ -95,7 +95,7 @@ func newReadOnlySegment(fs vfs.FS, basePath string, baseOffset int64) (ReadOnlyS
 		// A missing index file is expected when the process crashed between a
 		// rollover and the sync round that closes the rolled-over segment:
 		// rebuild it from the txn file, like for a corrupted one
-		if !errors.Is(err, errs.ErrDataCorrupted) && !errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(err, errs.ErrCorrupted) && !errors.Is(err, os.ErrNotExist) {
 			return nil, multierr.Combine(
 				errors.Wrapf(err, "failed to decode segment index file %s", ms.c.idxPath),
 				ms.c.fs.Unmap(&ms.txnMappedFile),
@@ -127,7 +127,7 @@ func newReadOnlySegment(fs vfs.FS, basePath string, baseOffset int64) (ReadOnlyS
 		// content, if ever written, was lost by a crash before being synced
 		// and acknowledged
 		return nil, multierr.Combine(
-			errors.Wrapf(errs.ErrEmptySegment, "segment file %s", ms.c.txnPath),
+			errors.Wrapf(errs.ErrWALEmptySegment, "segment file %s", ms.c.txnPath),
 			ms.c.fs.Unmap(&ms.txnMappedFile),
 			ms.txnFile.Close())
 	}
@@ -156,11 +156,11 @@ func (ms *readOnlySegment) LastOffset() int64 {
 
 func (ms *readOnlySegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	if offset < ms.c.baseOffset || offset > ms.lastOffset {
-		return nil, 0, 0, errs.ErrOffsetOutOfBounds
+		return nil, 0, 0, errs.ErrWALOffsetOutOfBounds
 	}
 	fileReadOffset := fileOffset(ms.idx, ms.c.baseOffset, offset)
 	if payload, previousCrc, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
-		if errors.Is(err, errs.ErrDataCorrupted) {
+		if errors.Is(err, errs.ErrCorrupted) {
 			return nil, 0, 0, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
 		return nil, 0, 0, err

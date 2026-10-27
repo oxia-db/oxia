@@ -628,7 +628,7 @@ func TestElectionCheckRemovedEntriesReplicationFactor3(t *testing.T) {
 			}
 			err := e.checkRemovedEntries(tt.candidates, tt.removed)
 			if tt.loses {
-				assert.ErrorIs(t, err, errs.ErrChangeEnsembleLosesEntries)
+				assert.ErrorIs(t, err, errs.ErrShardChangeEnsembleLosesEntries)
 			} else {
 				assert.NoError(t, err)
 			}
@@ -662,7 +662,7 @@ func TestElectionCheckRemovedEntriesReplicationFactor5(t *testing.T) {
 	// s5, s1 and s2 can
 	assert.ErrorIs(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
 		s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
-	}, removed), errs.ErrChangeEnsembleLosesEntries)
+	}, removed), errs.ErrShardChangeEnsembleLosesEntries)
 }
 
 // The split controller updates the parent while a leader election of the
@@ -852,7 +852,7 @@ func TestElectionSelectNewLeaderFailsWithoutLeader(t *testing.T) {
 	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
 
 	_, _, err := e.selectNewLeader(map[*proto.DataServerIdentity]*proto.EntryId{})
-	assert.ErrorIs(t, err, errs.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrBalancerNoCandidates)
 }
 
 // The election retries an attempt whose leader can't be selected, or whose

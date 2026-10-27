@@ -90,7 +90,7 @@ func (m *Manifest) GetInstanceID() string {
 
 // SetInstanceID binds the data server to the instance id, and reports whether
 // this call bound it: binding the bound id again does nothing, and another id
-// fails with errs.ErrInstanceIDMismatch.
+// fails with errs.ErrManifestInstanceIDMismatch.
 func (m *Manifest) SetInstanceID(id string) (bound bool, err error) {
 	if id == "" {
 		return false, errors.New("instance id must not be empty")
@@ -111,6 +111,6 @@ func (m *Manifest) SetInstanceID(id string) (bound bool, err error) {
 	case current.InstanceID == id:
 		return false, nil
 	default:
-		return false, errs.ErrInstanceIDMismatch
+		return false, errs.ErrManifestInstanceIDMismatch
 	}
 }

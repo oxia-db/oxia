@@ -274,11 +274,11 @@ type BaseStream struct {
 }
 
 func (*BaseStream) Header() (metadata.MD, error) {
-	panic(errs.ErrNotImplement)
+	panic(errs.ErrNotImplemented)
 }
 
 func (*BaseStream) Trailer() metadata.MD {
-	panic(errs.ErrNotImplement)
+	panic(errs.ErrNotImplemented)
 }
 
 func (*BaseStream) CloseSend() error {
@@ -290,19 +290,19 @@ func (*BaseStream) Context() context.Context {
 }
 
 func (*BaseStream) SendMsg(any) error {
-	panic(errs.ErrNotImplement)
+	panic(errs.ErrNotImplemented)
 }
 
 func (*BaseStream) RecvMsg(any) error {
-	panic(errs.ErrNotImplement)
+	panic(errs.ErrNotImplemented)
 }
 
 func (*maelstromReplicateServerStream) SendHeader(metadata.MD) error {
-	panic(errs.ErrNotImplement)
+	panic(errs.ErrNotImplemented)
 }
 
 func (*maelstromReplicateServerStream) SetTrailer(metadata.MD) {
-	panic(errs.ErrNotImplement)
+	panic(errs.ErrNotImplemented)
 }
 
 type maelstromHealthCheckClient struct {

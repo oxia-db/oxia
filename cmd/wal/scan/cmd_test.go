@@ -132,7 +132,7 @@ func TestExecRejectsOffsetBeforeFirstEntry(t *testing.T) {
 
 	_, err := runScan(t, "--offset-first", "0")
 
-	assert.ErrorIs(t, err, errs.ErrEntryNotFound)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestExecRejectsUndecodableEntry(t *testing.T) {
@@ -170,7 +170,7 @@ func TestExecRejectsCorruptedEntry(t *testing.T) {
 	logs := captureLogs(t)
 	_, err = runScan(t)
 
-	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrCorrupted)
 	// The entries before the corrupted one were printed
 	assert.NotEmpty(t, decodeLogs(t, logs))
 }

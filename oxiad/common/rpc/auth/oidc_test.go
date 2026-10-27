@@ -120,7 +120,7 @@ func TestOIDCOptions_Validate(t *testing.T) {
 func TestOIDCOptionsValidateRejectsEmptyIssuerKey(t *testing.T) {
 	options := OIDCOptions{Issuers: map[string]IssuerConfig{"": {AllowedAudiences: "audience"}}}
 
-	assert.ErrorIs(t, options.Validate(), errs.ErrEmptyIssueURL)
+	assert.ErrorIs(t, options.Validate(), errs.ErrInvalidConfig)
 }
 
 // TestOIDCOptions_WithDefault tests default value application.
@@ -296,7 +296,7 @@ func TestNewOIDCProviderRejectsInvalidJSON(t *testing.T) {
 func TestNewOIDCProviderRejectsInvalidOptions(t *testing.T) {
 	provider, err := NewOIDCProvider(context.Background(), "{}")
 
-	assert.ErrorIs(t, err, errs.ErrEmptyIssueURL)
+	assert.ErrorIs(t, err, errs.ErrInvalidConfig)
 	assert.Nil(t, provider)
 }
 
@@ -448,7 +448,7 @@ func TestOIDCProvider_Authenticate_PerIssuer(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = provider.Authenticate(context.Background(), token)
-		assert.ErrorIs(t, err, errs.ErrForbiddenAudience)
+		assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 	})
 }
 
@@ -472,12 +472,12 @@ func TestOIDCProvider_Authenticate_Errors(t *testing.T) {
 
 	t.Run("invalid token type", func(t *testing.T) {
 		_, err := provider.Authenticate(context.Background(), 123)
-		assert.ErrorIs(t, err, errs.ErrUnMatchedAuthenticationParamType)
+		assert.ErrorIs(t, err, errs.ErrInvalidConfig)
 	})
 
 	t.Run("malformed token", func(t *testing.T) {
 		_, err := provider.Authenticate(context.Background(), "invalid-token")
-		assert.ErrorIs(t, err, errs.ErrMalformedToken)
+		assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 	})
 
 	t.Run("unknown issuer", func(t *testing.T) {
@@ -495,7 +495,7 @@ func TestOIDCProvider_Authenticate_Errors(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = provider.Authenticate(context.Background(), signedToken)
-		assert.ErrorIs(t, err, errs.ErrUnknownIssuer)
+		assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 	})
 }
 
@@ -541,7 +541,7 @@ func TestOIDCProviderAuthenticateRejectsMissingUserNameClaim(t *testing.T) {
 
 	_, err = provider.Authenticate(context.Background(), token)
 
-	assert.ErrorIs(t, err, errs.ErrUserNameNotFound)
+	assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 }
 
 func TestOIDCProviderAuthenticateRejectsNonStringUserName(t *testing.T) {
@@ -630,7 +630,7 @@ func TestOIDCProvider_Authenticate_Cache(t *testing.T) {
 		token := signToken("other-audience", time.Now().Add(time.Hour))
 		for range 2 {
 			_, err := provider.Authenticate(context.Background(), token)
-			assert.ErrorIs(t, err, errs.ErrForbiddenAudience)
+			assert.ErrorIs(t, err, errs.ErrUnauthenticated)
 		}
 		assert.EqualValues(t, 2, keySet.verifications.Load())
 	})
@@ -742,7 +742,7 @@ func TestLoadPublicKeysFromFile(t *testing.T) {
 		tempFile.Close()
 
 		_, err = loadPublicKeysFromFile(tempFile.Name())
-		assert.ErrorIs(t, err, errs.ErrNoPublicKeysFound)
+		assert.ErrorIs(t, err, errs.ErrInvalidConfig)
 	})
 }
 

@@ -82,7 +82,7 @@ func TestGrpcServerStartRejectsUnsupportedAuthProvider(t *testing.T) {
 	s, err := Default.StartGrpcServer("test", "127.0.0.1:0",
 		func(grpc.ServiceRegistrar) { registered = true }, nil, &auth.Options{Provider: "ldap"}, nil)
 
-	require.ErrorIs(t, err, errs.ErrUnsupportedProvider)
+	require.ErrorIs(t, err, errs.ErrUnsupported)
 	require.Nil(t, s)
 	require.False(t, registered)
 }

@@ -132,7 +132,7 @@ func (m mockWriteBatch) Delete(key string) error {
 func (m mockWriteBatch) Get(key string) ([]byte, io.Closer, error) {
 	val, found := m[key]
 	if !found {
-		return nil, nil, errs.ErrKeyNotFound
+		return nil, nil, errs.ErrNotFound
 	}
 	switch v := val.(type) {
 	case error:
@@ -168,7 +168,7 @@ func (m mockWriteBatch) KeyRangeScan(lowerBound, upperBound string) (kvstore.Key
 }
 
 func (m mockWriteBatch) RangeScan(_, _ string) (kvstore.KeyValueIterator, error) {
-	return nil, errs.ErrKeyNotFound
+	return nil, errs.ErrNotFound
 }
 
 func (m mockWriteBatch) RangeOverlaps(_, _ string) (internalKeys, regularKeys bool) {

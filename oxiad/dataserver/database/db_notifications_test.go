@@ -434,7 +434,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 	}, 0, t0, NoOpCallback)
 
 	notifications, err := readNotifications(context.Background(), db, 0)
-	assert.Error(t, errs.ErrNotificationsDisabled, err)
+	assert.Error(t, errs.ErrDBNotificationsDisabled, err)
 	assert.Nil(t, notifications)
 
 	assert.NoError(t, db.Close())
@@ -517,7 +517,7 @@ func TestDB_DeleteRangeNotificationRecords(t *testing.T) {
 					DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
 				}, 3, now(), NoOpCallback)
 				if !enabled {
-					assert.ErrorIs(t, err, errs.ErrNotificationRecord)
+					assert.ErrorIs(t, err, errs.ErrDBNotificationRecord)
 					assert.EqualValues(t, 0, firstNotification(t, db))
 				} else {
 					require.NoError(t, err)
@@ -711,7 +711,7 @@ func TestDB_DeleteRangeWithoutEnd(t *testing.T) {
 						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
 						expectedKeys = []string{"a"}
 					case keySorting == proto.KeySortingType_NATURAL:
-						assert.ErrorIs(t, err, errs.ErrNotificationRecord)
+						assert.ErrorIs(t, err, errs.ErrDBNotificationRecord)
 					default:
 						require.NoError(t, err)
 						assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
@@ -868,7 +868,7 @@ func TestDB_NotificationsDeleteRangeInternalKeys(t *testing.T) {
 						require.NotNil(t, nb)
 						assert.Empty(t, nb.Notifications)
 					case !enabled && test.readsRecords && !trimmed:
-						assert.ErrorIs(t, err, errs.ErrNotificationRecord)
+						assert.ErrorIs(t, err, errs.ErrDBNotificationRecord)
 						assert.Nil(t, nb)
 					default:
 						require.NoError(t, err)

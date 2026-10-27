@@ -359,11 +359,11 @@ func (q *quorumAckTracker) NewCursorAcker(ackOffset int64) (CursorAcker, error) 
 	defer q.Unlock()
 
 	if uint32(q.cursorIdxGenerator) >= q.replicationFactor-1 {
-		return nil, errs.ErrTooManyCursors
+		return nil, errs.ErrShardTooManyCursors
 	}
 
 	if ackOffset > q.headOffset.Load() {
-		return nil, errs.ErrInvalidHeadOffset
+		return nil, errs.ErrShardInvalidHeadOffset
 	}
 
 	qa := &cursorAcker{

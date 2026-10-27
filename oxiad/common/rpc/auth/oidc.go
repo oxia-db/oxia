@@ -58,19 +58,19 @@ type OIDCOptions struct {
 func (op *OIDCOptions) Validate() error {
 	// Support both old and new formats
 	if len(op.Issuers) == 0 && op.AllowedIssueURLs == "" {
-		return errs.ErrEmptyIssueURL
+		return errors.Wrap(errs.ErrInvalidConfig, "empty issuer URL")
 	}
 	// If using legacy format, validate it
 	if op.AllowedIssueURLs != "" && op.AllowedAudiences == "" {
-		return errs.ErrEmptyAllowedAudiences
+		return errors.Wrap(errs.ErrInvalidConfig, "empty allowed audiences")
 	}
 	// If using new format, validate each issuer config
 	for issuerURL, config := range op.Issuers {
 		if issuerURL == "" {
-			return errs.ErrEmptyIssueURL
+			return errors.Wrap(errs.ErrInvalidConfig, "empty issuer URL")
 		}
 		if config.AllowedAudiences == "" {
-			return errors.Wrapf(errs.ErrEmptyAllowedAudiences, "for issuer %s", issuerURL)
+			return errors.Wrapf(errs.ErrInvalidConfig, "empty allowed audiences for issuer %s", issuerURL)
 		}
 	}
 	return nil
@@ -109,7 +109,7 @@ type OIDCProvider struct {
 func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, error) {
 	token, ok := param.(string)
 	if !ok {
-		return "", errs.ErrUnMatchedAuthenticationParamType
+		return "", errors.Wrap(errs.ErrInvalidConfig, "unmatched authentication parameter type")
 	}
 	now := time.Now()
 	if userName, ok := p.verifiedTokens.get(token, now); ok {
@@ -117,7 +117,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	}
 	tokenParts := strings.Split(token, ".")
 	if len(tokenParts) != 3 {
-		return "", errs.ErrMalformedToken
+		return "", errors.Wrap(errs.ErrUnauthenticated, "malformed token")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(tokenParts[1])
 	if err != nil {
@@ -137,7 +137,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	}
 	oidcProvider, exist := p.providers[issuer]
 	if !exist {
-		return "", errs.ErrUnknownIssuer
+		return "", errors.Wrap(errs.ErrUnauthenticated, "unknown issuer")
 	}
 	idToken, err := oidcProvider.verifier.Verify(ctx, token)
 	if err != nil {
@@ -152,7 +152,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 
 	rawMessage, ok := rawClaims[userNameClaim]
 	if !ok {
-		return "", errs.ErrUserNameNotFound
+		return "", errors.Wrap(errs.ErrUnauthenticated, "username not found")
 	}
 	var userName string
 	if err = json.Unmarshal(rawMessage, &userName); err != nil {
@@ -174,7 +174,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 		}
 	}
 	if !audienceAllowed {
-		return "", errs.ErrForbiddenAudience
+		return "", errors.Wrap(errs.ErrUnauthenticated, "forbidden audience")
 	}
 	p.verifiedTokens.put(token, userName, idToken.Expiry, now)
 	return userName, nil
@@ -234,7 +234,7 @@ func loadPublicKeysFromFile(filePath string) ([]crypto.PublicKey, error) {
 	}
 
 	if len(publicKeys) == 0 {
-		return nil, errs.ErrNoPublicKeysFound
+		return nil, errors.Wrap(errs.ErrInvalidConfig, "no public keys found in file")
 	}
 
 	return publicKeys, nil

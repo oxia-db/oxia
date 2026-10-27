@@ -72,11 +72,11 @@ func NewID(t time.Time, lineage string) ID {
 func ParseID(s string) (ID, error) {
 	sep := strings.LastIndexByte(s, '-')
 	if sep <= 0 || sep == len(s)-1 {
-		return ID{}, fmt.Errorf("%w: %q", errs.ErrInvalidID, s)
+		return ID{}, fmt.Errorf("%w: %q", errs.ErrBackupInvalidID, s)
 	}
 	t, err := time.Parse(idTimeLayout, s[:sep])
 	if err != nil {
-		return ID{}, fmt.Errorf("%w: %q: %w", errs.ErrInvalidID, s, err)
+		return ID{}, fmt.Errorf("%w: %q: %w", errs.ErrBackupInvalidID, s, err)
 	}
 	return ID{Time: t, Lineage: s[sep+1:]}, nil
 }

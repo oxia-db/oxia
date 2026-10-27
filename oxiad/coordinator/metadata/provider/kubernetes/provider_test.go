@@ -119,7 +119,7 @@ func TestProviderGetLeaderNameUnavailable(t *testing.T) {
 	})
 
 	_, err := p.GetLeaderName()
-	require.True(t, errors.Is(err, errs.ErrCoordinatorLeaderUnavailable))
+	require.True(t, errors.Is(err, errs.ErrUnavailable))
 }
 
 // The operators manage the config map of the configuration, e.g. with Helm.
@@ -345,7 +345,7 @@ func TestProviderStoreRejectsCreatingExistingConfigMap(t *testing.T) {
 		Value:   newConfig(2),
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, errs.ErrMetadataBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 }
 
 func TestProviderWaitToBecomeLeaderSignalsLeaseLoss(t *testing.T) {

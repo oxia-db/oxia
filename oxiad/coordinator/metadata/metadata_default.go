@@ -89,7 +89,7 @@ func (m *defaultMetadata) computeStatus(fn func(*commonproto.ClusterStatus, meta
 		Value:   next,
 		Version: current.Version,
 	})
-	if errors.Is(err, errs.ErrMetadataBadVersion) {
+	if errors.Is(err, errs.ErrMetaBadVersion) {
 		// Another coordinator wrote the status. The version check refused
 		// this write, so nothing is lost: the write fails, and its caller
 		// retries over the fresh state, or stops once this coordinator learns
@@ -270,7 +270,7 @@ func (m *defaultMetadata) CreateNamespaceStatus(namespace string, status *common
 			clusterStatus.Namespaces = map[string]*commonproto.NamespaceStatus{}
 		}
 		if _, exists := clusterStatus.Namespaces[namespace]; exists {
-			return clusterStatus, false, fmt.Errorf("%w: namespace %q", errs.ErrMetadataAlreadyExists, namespace)
+			return clusterStatus, false, fmt.Errorf("%w: namespace %q", errs.ErrMetaAlreadyExists, namespace)
 		}
 		clusterStatus.Namespaces[namespace] = status
 		return clusterStatus, true, nil
@@ -318,7 +318,7 @@ func (m *defaultMetadata) PatchNamespaceStatus(
 		return err
 	}
 	if !namespaceExists {
-		return fmt.Errorf("%w: namespace %q", errs.ErrMetadataNotFound, namespace)
+		return fmt.Errorf("%w: namespace %q", errs.ErrNotFound, namespace)
 	}
 	return nil
 }
@@ -392,7 +392,7 @@ func (m *defaultMetadata) UpdateShardStatus(namespace string, shard int64, shard
 		return err
 	}
 	if !shardExists {
-		return fmt.Errorf("%w: shard %d of namespace %q", errs.ErrMetadataNotFound, shard, namespace)
+		return fmt.Errorf("%w: shard %d of namespace %q", errs.ErrNotFound, shard, namespace)
 	}
 	return nil
 }
@@ -440,12 +440,12 @@ func (m *defaultMetadata) CreateNamespace(namespace *commonproto.Namespace) erro
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for _, existing := range config.GetNamespaces() {
 			if existing.GetName() == name {
-				return nil, errs.ErrMetadataAlreadyExists
+				return nil, errs.ErrMetaAlreadyExists
 			}
 		}
 		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
 			return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-				errs.ErrMetadataFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
+				errs.ErrMetaFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
 		}
 
 		config.Namespaces = append(config.Namespaces, namespace)
@@ -463,7 +463,7 @@ func (m *defaultMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace
 			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
 				if replicationFactor > uint32(len(config.GetServers())) {
 					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-						errs.ErrMetadataFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
+						errs.ErrMetaFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
 				}
 				namespace.ReplicationFactor = replicationFactor
 			}
@@ -475,7 +475,7 @@ func (m *defaultMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace
 			updated = namespace
 			return config, nil
 		}
-		return nil, errs.ErrMetadataNotFound
+		return nil, errs.ErrNotFound
 	}); err != nil {
 		return nil, err
 	}
@@ -495,7 +495,7 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 			config.Namespaces = append(config.Namespaces[:i], config.Namespaces[i+1:]...)
 			return config, nil
 		}
-		return nil, errs.ErrMetadataNotFound
+		return nil, errs.ErrNotFound
 	}); err != nil {
 		return nil, err
 	}
@@ -508,7 +508,7 @@ func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) e
 
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		if _, exists := config.GetDataServer(name); exists {
-			return nil, errs.ErrMetadataAlreadyExists
+			return nil, errs.ErrMetaAlreadyExists
 		}
 
 		config.Servers = append(config.Servers, dataServer.GetIdentity())
@@ -556,7 +556,7 @@ func (m *defaultMetadata) PatchDataServer(desireDataServer *commonproto.DataServ
 			}
 			return config, nil
 		}
-		return nil, errs.ErrMetadataNotFound
+		return nil, errs.ErrNotFound
 	}); err != nil {
 		return nil, err
 	}
@@ -578,7 +578,7 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 			for _, namespace := range config.GetNamespaces() {
 				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
 					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
-						errs.ErrMetadataFailedPrecondition,
+						errs.ErrMetaFailedPrecondition,
 						name,
 						namespace.GetName(),
 						namespace.GetReplicationFactor(),
@@ -591,7 +591,7 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 			}
 			return config, nil
 		}
-		return nil, errs.ErrMetadataNotFound
+		return nil, errs.ErrNotFound
 	}); err != nil {
 		return nil, err
 	}

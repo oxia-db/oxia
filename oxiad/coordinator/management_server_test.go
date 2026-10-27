@@ -1435,7 +1435,7 @@ func TestManagementServerReturnsMetadataErrors(t *testing.T) {
 				code codes.Code
 			}{
 				{errors.New("metadata unavailable"), codes.Internal},
-				{errs.ErrMetadataBadVersion, test.conflictCode},
+				{errs.ErrMetaBadVersion, test.conflictCode},
 			} {
 				metadata := &failingMetadata{Metadata: newTestMetadata(t, &proto.ClusterConfiguration{}), err: failure.err}
 				management := newReadyManagementServer(metadata, nil)

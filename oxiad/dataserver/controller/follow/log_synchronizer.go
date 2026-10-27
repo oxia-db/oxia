@@ -203,7 +203,7 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 	// not have.
 	if req.Entry.Offset != lastAppendedOffset+1 {
 		return fmt.Errorf("entry %d can not immediately follow %d: %w",
-			req.Entry.Offset, lastAppendedOffset, errs.ErrInvalidNextOffset)
+			req.Entry.Offset, lastAppendedOffset, errs.ErrWALInvalidNextOffset)
 	}
 
 	// Append the entry asynchronously, passing the previous CRC from the leader.

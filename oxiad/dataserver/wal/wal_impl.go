@@ -268,7 +268,7 @@ func (t *wal) readRecord(index int64) (val []byte, previousCrc uint32, entryCrc 
 	}
 
 	val, previousCrc, entryCrc, err = t.readFromSegment(index)
-	if errors.Is(err, errs.ErrSegmentClosed) {
+	if errors.Is(err, errs.ErrWALSegmentClosed) {
 		// A rollover closed the read-write segment after it got picked, once
 		// it had moved to the read-only group: read it from there
 		val, previousCrc, entryCrc, err = t.readFromSegment(index)
@@ -306,7 +306,7 @@ func (t *wal) readFromSegment(index int64) (val []byte, previousCrc uint32, entr
 	}
 
 	if val, previousCrc, entryCrc, err = segment.Read(index); err != nil {
-		if !errors.Is(err, errs.ErrSegmentClosed) {
+		if !errors.Is(err, errs.ErrWALSegmentClosed) {
 			t.readErrors.Inc()
 		}
 		return nil, 0, 0, err
@@ -479,7 +479,7 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 	}
 
 	if err = t.currentSegment.Append(entry.Offset, val); err != nil {
-		if !errors.Is(err, errs.ErrSegmentFull) {
+		if !errors.Is(err, errs.ErrWALSegmentFull) {
 			t.writeErrors.Inc()
 			return err
 		}
@@ -716,7 +716,7 @@ func (t *wal) checkNextOffset(nextOffset int64) error {
 	expectedOffset := lastAppendedOffset + 1
 
 	if lastAppendedOffset != InvalidOffset && nextOffset != expectedOffset {
-		return errors.Wrapf(errs.ErrInvalidNextOffset,
+		return errors.Wrapf(errs.ErrWALInvalidNextOffset,
 			"%d can not immediately follow %d", nextOffset, lastAppendedOffset)
 	}
 	return nil
@@ -879,7 +879,7 @@ func (t *wal) recoverWal() error {
 		if lastCrc, err = t.readOnlySegments.GetLastCrc(lastSegment); err == nil {
 			break
 		}
-		if !errors.Is(err, errs.ErrEmptySegment) {
+		if !errors.Is(err, errs.ErrWALEmptySegment) {
 			return err
 		}
 		// The segment preceding lastSegment has no recoverable entries: its

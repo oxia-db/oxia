@@ -164,7 +164,7 @@ func TestLogSynchronizer_RejectGapOnEmptyWal(t *testing.T) {
 		CumulativeAcksSupported: true,
 	})
 
-	assert.ErrorIs(t, ls.Sync(), errs.ErrInvalidNextOffset)
+	assert.ErrorIs(t, ls.Sync(), errs.ErrWALInvalidNextOffset)
 	ls.Close()
 
 	// Nothing was appended and no ack was sent

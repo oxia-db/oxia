@@ -16,6 +16,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
@@ -58,6 +59,6 @@ func NewAuthenticationProvider(ctx context.Context, options Options) (Authentica
 	case ProviderOIDC:
 		return NewOIDCProvider(ctx, options.ProviderParams)
 	default:
-		return nil, errs.ErrUnsupportedProvider
+		return nil, fmt.Errorf("%w: authentication provider", errs.ErrUnsupported)
 	}
 }

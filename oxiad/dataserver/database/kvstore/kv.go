@@ -113,7 +113,7 @@ type PrefixIterator interface {
 	KeyIterator
 
 	// Lookup returns the value of key, wherever it sorts, at the point in time
-	// of the iterator, or errs.ErrKeyNotFound. It doesn't move the iterator. The
+	// of the iterator, or errs.ErrNotFound. It doesn't move the iterator. The
 	// value is only valid until the next Lookup, and until the iterator is
 	// closed.
 	Lookup(key string) ([]byte, error)

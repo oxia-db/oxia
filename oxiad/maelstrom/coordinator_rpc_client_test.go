@@ -297,10 +297,10 @@ func TestBaseStreamPanicsOnUnsupportedCalls(t *testing.T) {
 	stream := &BaseStream{}
 	require.NoError(t, stream.CloseSend())
 	require.NoError(t, stream.Context().Err())
-	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _, _ = stream.Header() })
-	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _ = stream.Trailer() })
-	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _ = stream.SendMsg(nil) })
-	require.PanicsWithValue(t, errs.ErrNotImplement, func() { _ = stream.RecvMsg(nil) })
+	require.PanicsWithValue(t, errs.ErrNotImplemented, func() { _, _ = stream.Header() })
+	require.PanicsWithValue(t, errs.ErrNotImplemented, func() { _ = stream.Trailer() })
+	require.PanicsWithValue(t, errs.ErrNotImplemented, func() { _ = stream.SendMsg(nil) })
+	require.PanicsWithValue(t, errs.ErrNotImplemented, func() { _ = stream.RecvMsg(nil) })
 }
 
 func TestMaelstromHealthCheckClientWatchStreamsServingUntilClosed(t *testing.T) {

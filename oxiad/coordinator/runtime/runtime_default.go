@@ -288,7 +288,7 @@ func (c *runtime) initShardControllers(name string, namespaceConfig *proto.Names
 	}
 	if !exists {
 		return fmt.Errorf("%w: namespace %q status disappeared during controller initialization",
-			errs.ErrMetadataConflict, name)
+			errs.ErrMetaConflict, name)
 	}
 	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
 		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {

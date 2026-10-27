@@ -104,7 +104,7 @@ func TestManifestSetInstanceIDMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = m.SetInstanceID("instance-2")
-	assert.ErrorIs(t, err, errs.ErrInstanceIDMismatch)
+	assert.ErrorIs(t, err, errs.ErrManifestInstanceIDMismatch)
 	assert.Equal(t, "instance-1", m.GetInstanceID())
 }
 

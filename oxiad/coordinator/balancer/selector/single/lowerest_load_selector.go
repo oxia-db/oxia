@@ -15,7 +15,6 @@
 package single
 
 import (
-	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
@@ -25,11 +24,11 @@ type lowerestLoadSelector struct{}
 
 func (*lowerestLoadSelector) Select(ssContext *Context) (string, error) {
 	if ssContext.LoadRatioSupplier == nil {
-		return "", errs.ErrNoFunctioning
+		return "", nil
 	}
 	loadRatios := ssContext.LoadRatioSupplier()
 	if loadRatios == nil {
-		return "", errs.ErrNoFunctioning
+		return "", nil
 	}
 	for iter := loadRatios.NodeIterator(); iter.Next(); {
 		nodeRatio := iter.Value()
@@ -38,5 +37,5 @@ func (*lowerestLoadSelector) Select(ssContext *Context) (string, error) {
 			return lowerLoad, nil
 		}
 	}
-	return "", errs.ErrNoFunctioning
+	return "", nil
 }
