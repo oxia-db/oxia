@@ -69,6 +69,29 @@ func TestProviderCacheFollowsAppliedEntries(t *testing.T) {
 	require.Equal(t, "second", loadedValue(t, p).GetInstanceId())
 }
 
+// An entry applied to another document doesn't reload the cache.
+func TestProviderOnAppliedIgnoresOtherDocuments(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := &Raft{logger: logger, sc: newStateContainer(logger, nil)}
+	p := NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	defer func() { require.NoError(t, p.Close()) }()
+
+	p.OnApplied(metadatacodec.ClusterConfigCodec.GetKey(), nil, 0)
+	assert.Empty(t, p.changes)
+}
+
+func TestProviderSubscribe(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := &Raft{logger: logger, sc: newStateContainer(logger, nil)}
+	p := NewProvider(t.Context(), r, metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled)
+	defer func() { require.NoError(t, p.Close()) }()
+
+	subscription := p.Subscribe()
+	current, err := subscription.Get()
+	require.NoError(t, err)
+	assert.Equal(t, metadatacommon.NotExists, current.Version)
+}
+
 func TestProviderLoadLatestPanicsOnUndecodableState(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	r := &Raft{logger: logger, sc: newStateContainer(logger, nil)}

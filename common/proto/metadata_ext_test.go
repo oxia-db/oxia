@@ -129,6 +129,11 @@ func TestClusterConfigurationGetCoordinator(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestClusterConfigurationValidateRejectsNil(t *testing.T) {
+	var config *ClusterConfiguration
+	require.ErrorContains(t, config.Validate(), "must not be nil")
+}
+
 func TestClusterConfigurationValidateNamespaces(t *testing.T) {
 	servers := []*DataServerIdentity{{Internal: "server-0"}}
 	for _, tc := range []struct {
