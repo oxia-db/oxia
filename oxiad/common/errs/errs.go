@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // Package errs holds the internal errors of the Oxia servers. The errors that reach the clients are in
-// common/constant.
+// common/constant: when a client must tell an internal error apart, the server translates it into a public one
+// where it answers the client.
 //
 // To report a failure, return the common error of its category with the detail wrapped, e.g.
 // fmt.Errorf("%w: namespace %q", errs.ErrNotFound, name). If no common error fits, add one.
