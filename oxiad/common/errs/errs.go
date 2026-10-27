@@ -14,6 +14,14 @@
 
 // Package errs holds the internal errors of the Oxia servers. The errors that reach the clients are in
 // common/constant.
+//
+// To report a failure, return the common error of its category with the detail wrapped, e.g.
+// fmt.Errorf("%w: namespace %q", errs.ErrNotFound, name). If no common error fits, add one.
+//
+// Add a special error only when a caller must tell the failure apart, to react to it on its own: define it on top
+// of the common error of its category, e.g. fmt.Errorf("%w: segment full", ErrFailedPrecondition), and prefix its
+// name with its component, e.g. ErrWAL. A caller matching the common error also matches the special errors on top
+// of it, so check that none of them reaches such a caller by mistake.
 package errs
 
 import (
@@ -22,7 +30,7 @@ import (
 )
 
 var (
-	// The common errors, returned with the detail wrapped, e.g. fmt.Errorf("%w: namespace %q", ErrNotFound, name).
+	// The common errors.
 	ErrAlreadyClosed      = errors.New("already closed")
 	ErrAlreadyExists      = errors.New("already exists")
 	ErrBadVersion         = errors.New("bad version")
@@ -33,7 +41,7 @@ var (
 	ErrNotImplemented     = errors.New("not implemented")
 	ErrUnauthenticated    = errors.New("unauthenticated")
 	ErrUnavailable        = errors.New("unavailable")
-	// The special errors, which a caller tells apart to react to that failure on its own.
+	// The special errors.
 	ErrWALEmptyPayload            = fmt.Errorf("%w: empty payload", ErrInvalidArgument)
 	ErrWALEmptySegment            = fmt.Errorf("%w: empty segment", ErrNotFound)
 	ErrWALSegmentFull             = fmt.Errorf("%w: segment full", ErrFailedPrecondition)
