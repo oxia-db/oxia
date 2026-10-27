@@ -15,6 +15,7 @@
 package raft
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
@@ -168,15 +169,16 @@ const leadershipBarrierTimeout = 30 * time.Second
 // waitToBecomeLeader blocks until this node becomes the raft leader, then
 // waits for the FSM to catch up with all the committed entries (barrier), so
 // that the first reads after a takeover are not stale. The returned channel
-// is closed if the leadership is subsequently lost.
-func (r *Raft) waitToBecomeLeader() (<-chan struct{}, error) {
-	return waitForLeadership(r.notifyCh, r.shutdownCh, func() error {
+// is closed if the leadership is subsequently lost. The wait ends when ctx is
+// canceled.
+func (r *Raft) waitToBecomeLeader(ctx context.Context) (<-chan struct{}, error) {
+	return waitForLeadership(ctx, r.notifyCh, r.shutdownCh, func() error {
 		return r.node.Barrier(leadershipBarrierTimeout).Error()
 	}, r.logger)
 }
 
-func waitForLeadership(notifyCh <-chan bool, shutdownCh <-chan struct{}, barrier func() error,
-	logger *slog.Logger) (<-chan struct{}, error) {
+func waitForLeadership(ctx context.Context, notifyCh <-chan bool, shutdownCh <-chan struct{},
+	barrier func() error, logger *slog.Logger) (<-chan struct{}, error) {
 	for {
 		select {
 		case isLeader := <-notifyCh:
@@ -197,6 +199,12 @@ func waitForLeadership(notifyCh <-chan bool, shutdownCh <-chan struct{}, barrier
 
 		case <-shutdownCh:
 			return nil, errors.New("raft provider closed while waiting for leadership")
+
+		case <-ctx.Done():
+			// raft blocks writing to the notification channel: it must keep a
+			// consumer, whose loss nobody waits for.
+			go drainLeadershipNotifications(notifyCh, shutdownCh, make(chan struct{}))
+			return nil, ctx.Err()
 		}
 	}
 }

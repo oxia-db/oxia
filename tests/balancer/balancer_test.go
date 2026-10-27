@@ -43,7 +43,7 @@ func TestBalancer(t *testing.T) {
 	options := coordoption.NewDefaultOptions()
 	options.Metadata.ProviderName = metadatacommon.NameMemory
 
-	metadataFactory, err := coordmetadata.New(t.Context(), options)
+	metadataFactory, err := coordmetadata.New(t.Context(), options, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, metadataFactory.Close())
@@ -67,7 +67,7 @@ func TestBalancer(t *testing.T) {
 		QuarantineTime:   "1s",
 	}
 
-	coordinatorInstance, err := coordruntime.New(metadata, coordrpc.NewControllerRPCProviderFactory(nil))
+	coordinatorInstance, err := coordruntime.New(t.Context(), metadata, coordrpc.NewControllerRPCProviderFactory(nil))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, coordinatorInstance.Close())

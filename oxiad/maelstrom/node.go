@@ -262,7 +262,7 @@ func runCoordinator(dispatcher *dispatcher, options *coordoption.Options,
 		}
 	}()
 
-	metadataFactory, err := coordmetadata.New(ctx, options)
+	metadataFactory, err := coordmetadata.New(ctx, options, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create coordinator metadata factory")
 	}
@@ -303,7 +303,8 @@ func (c *coordinator) start(ctx context.Context, dispatcher *dispatcher, metadat
 		}
 	}
 
-	coordinatorRuntime, err := coordruntime.New( //nolint:contextcheck
+	coordinatorRuntime, err := coordruntime.New(
+		ctx,
 		metadata,
 		func(instanceID string) rpc.ControllerRPCProvider {
 			return newRpcProvider(dispatcher)

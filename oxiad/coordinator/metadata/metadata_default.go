@@ -45,6 +45,10 @@ type defaultMetadata struct {
 	configProvider provider.Provider[*commonproto.ClusterConfiguration]
 	configLock     sync.Mutex
 
+	// initialConfig is stored on the takeover of a cluster without a
+	// configuration, if not nil. It is never modified.
+	initialConfig *commonproto.ClusterConfiguration
+
 	statusProvider provider.Provider[*commonproto.ClusterStatus]
 	statusLock     sync.Mutex
 	// leadershipLost is the channel WaitToBecomeLeader returned: closed once
@@ -57,6 +61,7 @@ func newDefaultMetadata(
 	statusProvider provider.Provider[*commonproto.ClusterStatus],
 	configProvider provider.Provider[*commonproto.ClusterConfiguration],
 	name string,
+	initialConfig *commonproto.ClusterConfiguration,
 ) Metadata {
 	metadataCtx, cancel := context.WithCancel(ctx)
 	m := &defaultMetadata{
@@ -65,6 +70,7 @@ func newDefaultMetadata(
 		ctx:            metadataCtx,
 		cancel:         cancel,
 		configProvider: configProvider,
+		initialConfig:  initialConfig,
 		statusProvider: statusProvider,
 	}
 	return m
@@ -223,6 +229,9 @@ func (m *defaultMetadata) WaitToBecomeLeader() (<-chan struct{}, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("failed to initialize the instance id: %w", err)
 	}
+	if err := m.initConfig(); err != nil {
+		return nil, fmt.Errorf("failed to initialize the cluster configuration: %w", err)
+	}
 	return leadershipLost, nil
 }
 
@@ -246,6 +255,32 @@ func (m *defaultMetadata) checkConfigNotDeleted() error {
 	if len(status.Value.GetNamespaces()) > 0 {
 		return errors.New("the cluster configuration is missing, but the cluster status has namespaces: " +
 			"restore the configuration")
+	}
+	return nil
+}
+
+// initConfig stores the initial configuration if the cluster has none yet. It
+// runs after checkConfigNotDeleted, so that a configuration deleted while the
+// status has namespaces is not replaced. Another coordinator that stored a
+// configuration first wins.
+func (m *defaultMetadata) initConfig() error {
+	if m.initialConfig == nil {
+		return nil
+	}
+	m.configLock.Lock()
+	defer m.configLock.Unlock()
+	current, err := m.configProvider.Load()
+	if err != nil {
+		return err
+	}
+	if current.Version != metadatacommon.NotExists {
+		return nil
+	}
+	if _, err := m.configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
+		Value:   m.initialConfig.CloneVT(),
+		Version: metadatacommon.NotExists,
+	}); err != nil && !errors.Is(err, metadatacommon.ErrBadVersion) {
+		return err
 	}
 	return nil
 }

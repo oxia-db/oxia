@@ -28,6 +28,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
+	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	coordinatoroption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
@@ -40,7 +41,7 @@ import (
 // provider, every server with its metrics on an ephemeral port.
 type embeddedCluster struct {
 	dataServers []*dataserver.Server
-	coordinator *coordinator.GrpcServer
+	coordinator coordinator.Coordinator
 	identities  []*proto.DataServerIdentity
 }
 
@@ -85,15 +86,14 @@ func startEmbeddedCluster(t *testing.T, dir string, identities []*proto.DataServ
 	options.Metadata.ProviderName = coordinatoroption.ProviderFile
 	options.Metadata.File.Dir = filepath.Join(dir, "coordinator")
 
-	coord, err := coordinator.New(t.Context(), options,
-		coordinator.WithInitialClusterConfiguration(&proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{
-				Name:              constant.DefaultNamespace,
-				ReplicationFactor: 3,
-				InitialShardCount: 2,
-			}},
-			Servers: identities,
-		}))
+	coord, err := coordinator.New(t.Context(), commonwatch.New(options), &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{
+			Name:              constant.DefaultNamespace,
+			ReplicationFactor: 3,
+			InitialShardCount: 2,
+		}},
+		Servers: identities,
+	})
 	require.NoError(t, err)
 	cluster.coordinator = coord
 	return cluster
@@ -144,8 +144,6 @@ func TestEmbeddedCluster(t *testing.T) {
 	t.Cleanup(func() {
 		assert.NoError(t, cluster.Close())
 	})
-	assert.NotZero(t, cluster.coordinator.PublicPort())
-	assert.NotZero(t, cluster.coordinator.InternalPort())
 
 	client := newClient(t, cluster.identities[0].Public)
 	putKeys(t, client)

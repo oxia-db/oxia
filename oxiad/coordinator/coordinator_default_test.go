@@ -26,8 +26,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/failpoint"
@@ -36,48 +34,18 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/logging"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-func TestServerOptions(t *testing.T) {
-	so := newServerOptions(nil)
-	assert.Nil(t, so.onLeadershipLost, "no handler selects the default")
-	assert.Nil(t, so.initialClusterConfig)
-	require.NoError(t, so.validate())
-
-	config := &proto.ClusterConfiguration{}
-	called := false
-	so = newServerOptions([]ServerOption{
-		WithOnLeadershipLost(func() { called = true }),
-		WithInitialClusterConfiguration(config),
+func TestNewRejectsInvalidInitialClusterConfiguration(t *testing.T) {
+	_, err := New(t.Context(), commonwatch.New(newTestOptions()), &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1}},
 	})
-
-	so.onLeadershipLost()
-	assert.True(t, called)
-	assert.Same(t, config, so.initialClusterConfig)
-	require.NoError(t, so.validate())
-}
-
-// A nil option is ignored and a nil leadership-loss handler keeps the default:
-// neither can leave the coordinator with a nil to call.
-func TestServerOptionsNilSafe(t *testing.T) {
-	so := newServerOptions([]ServerOption{nil, WithOnLeadershipLost(nil)})
-	assert.Nil(t, so.onLeadershipLost, "a nil handler selects the default")
-	assert.Nil(t, so.initialClusterConfig)
-}
-
-func TestServerOptionsRejectInvalidInitialClusterConfiguration(t *testing.T) {
-	so := newServerOptions([]ServerOption{
-		WithInitialClusterConfiguration(&proto.ClusterConfiguration{
-			Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1}},
-		}),
-	})
-	require.ErrorContains(t, so.validate(), "initialShardCount")
+	require.ErrorContains(t, err, "initialShardCount")
 }
 
 func TestNewRejectsNilOptions(t *testing.T) {
-	_, err := New(t.Context(), nil)
+	_, err := New(t.Context(), commonwatch.New[*option.Options](nil), nil)
 	require.ErrorContains(t, err, "options must not be nil")
 }
 
@@ -85,13 +53,13 @@ func TestNewRejectsInvalidOptions(t *testing.T) {
 	options := newTestOptions()
 	options.Metadata.ProviderName = "etcd"
 
-	_, err := New(t.Context(), options)
+	_, err := New(t.Context(), commonwatch.New(options), nil)
 	require.ErrorContains(t, err, "must be one of")
 }
 
-// NewGrpcServer doesn't validate the options, which a watch supplies: each
-// part that fails to start fails it, and releases what it started before.
-func TestNewGrpcServerFailsToStart(t *testing.T) {
+// Each part that fails to start fails New, which releases what it started
+// before.
+func TestNewFailsToStart(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, occupied.Close()) })
@@ -148,16 +116,16 @@ func TestNewGrpcServerFailsToStart(t *testing.T) {
 			options := newTestOptions()
 			test.modify(options)
 
-			server, err := NewGrpcServer(t.Context(), commonwatch.New(options))
+			server, err := New(t.Context(), commonwatch.New(options), nil)
 			require.Error(t, err)
 			assert.Nil(t, server)
 		})
 	}
 }
 
-// A configuration to seed that can't be stored fails the start, after the
+// An initial configuration that can't be stored fails the start, after the
 // coordinator became the leader.
-func TestNewGrpcServerFailsToSeedClusterConfiguration(t *testing.T) {
+func TestNewFailsToInitClusterConfiguration(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
@@ -168,35 +136,34 @@ func TestNewGrpcServerFailsToSeedClusterConfiguration(t *testing.T) {
 	options.Metadata.File.StatusName = filepath.Join(t.TempDir(), option.DefaultFileStatusName)
 	options.Metadata.File.ConfigName = filepath.Join(readOnly, option.DefaultFileConfigName)
 
-	server, err := NewGrpcServer(t.Context(), commonwatch.New(options),
-		WithInitialClusterConfiguration(&proto.ClusterConfiguration{
+	server, err := New(t.Context(), commonwatch.New(options),
+		&proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1, InitialShardCount: 1}},
 			Servers:    []*proto.DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
-		}))
+		})
 	require.ErrorIs(t, err, os.ErrPermission)
 	assert.Nil(t, server)
 }
 
 // A runtime that fails to start fails the start, after the coordinator became
 // the leader.
-func TestNewGrpcServerFailsToStartRuntime(t *testing.T) {
+func TestNewFailsToStartRuntime(t *testing.T) {
 	if !failpoint.Enabled {
 		t.Skip("needs failpoints: disabled by the disable_trap tag")
 	}
 	failpointErr := errors.New("failpoint")
 	options := newTestOptions()
-	failpoints := failpoint.New(map[string]func() error{
-		"newGrpcServer.newRuntime": func() error { return failpointErr },
-	})
+	failpoint.Enable("coordinator.newRuntime", failpointErr)
+	t.Cleanup(func() { failpoint.Disable("coordinator.newRuntime") })
 
-	server, err := newGrpcServer(t.Context(), commonwatch.New(options), failpoints)
+	server, err := New(t.Context(), commonwatch.New(options), nil)
 	require.ErrorIs(t, err, failpointErr)
 	assert.Nil(t, server)
 }
 
 // A cluster configuration that can't be reconciled fails the start, after the
 // coordinator became the leader.
-func TestNewGrpcServerFailsToReconcileClusterConfiguration(t *testing.T) {
+func TestNewFailsToReconcileClusterConfiguration(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores file permissions")
 	}
@@ -207,26 +174,24 @@ func TestNewGrpcServerFailsToReconcileClusterConfiguration(t *testing.T) {
 	options.Metadata.File.StatusName = statusPath
 	options.Metadata.File.ConfigName = filepath.Join(t.TempDir(), option.DefaultFileConfigName)
 
-	server, err := NewGrpcServer(t.Context(), commonwatch.New(options),
-		WithInitialClusterConfiguration(&proto.ClusterConfiguration{
+	server, err := New(t.Context(), commonwatch.New(options),
+		&proto.ClusterConfiguration{
 			Namespaces: []*proto.Namespace{{Name: "default", ReplicationFactor: 1, InitialShardCount: 1}},
 			Servers:    []*proto.DataServerIdentity{{Public: "s1:6648", Internal: "s1:6649"}},
-		}))
+		})
 	require.ErrorIs(t, err, os.ErrPermission)
 	assert.ErrorContains(t, err, "failed to reconcile the cluster configuration")
 	assert.Nil(t, server)
 }
 
-func TestGrpcServerAppliesLogLevelChanges(t *testing.T) {
+func TestCoordinatorAppliesLogLevelChanges(t *testing.T) {
 	logging.ConfigureLogger()
 	originalLevel := logging.LogLevel
 	options := newTestOptions()
 	options.Observability.Log.Level = originalLevel.String()
 	optionsWatch := commonwatch.New(options)
-	server, err := NewGrpcServer(t.Context(), optionsWatch)
+	server, err := New(t.Context(), optionsWatch, nil)
 	require.NoError(t, err)
-	assert.NotZero(t, server.InternalPort())
-	assert.NotZero(t, server.PublicPort())
 
 	updated := newTestOptions()
 	updated.Observability.Log.Level = slog.LevelDebug.String()
@@ -247,60 +212,21 @@ func TestGrpcServerAppliesLogLevelChanges(t *testing.T) {
 	logging.ReconfigureLogger(&commonoption.LogOptions{Level: originalLevel.String()})
 }
 
-func TestGrpcServerWatchLeadershipEndsOnClose(t *testing.T) {
+// Close releases the coordinator once: closing it again does nothing.
+func TestCoordinatorCloseTwice(t *testing.T) {
+	server, err := New(t.Context(), commonwatch.New(newTestOptions()), nil)
+	require.NoError(t, err)
+
+	require.NoError(t, server.Close())
+	require.NoError(t, server.Close())
+}
+
+func TestCoordinatorBgLeadershipWatcherEndsOnClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	server := &GrpcServer{ctx: ctx, logger: slog.Default()}
-	called := false
+	server := &coordinator{ctx: ctx, logger: slog.Default()}
 
-	server.watchLeadership(make(chan struct{}), func() { called = true })
-	assert.False(t, called)
-}
-
-// Without a handler, a leadership loss terminates the process.
-func TestGrpcServerWatchLeadershipTerminatesWithoutHandler(t *testing.T) {
-	terminated := false
-	original := onLeadershipLost
-	onLeadershipLost = func() { terminated = true }
-	t.Cleanup(func() { onLeadershipLost = original })
-	lost := make(chan struct{})
-	close(lost)
-	server := &GrpcServer{ctx: t.Context(), logger: slog.Default()}
-
-	server.watchLeadership(lost, nil)
-	assert.True(t, terminated)
-}
-
-// A coordinator that fails to stop part of its coordination still stops the
-// rest before the handler is called.
-func TestGrpcServerWatchLeadershipStopsCoordinatingDespiteCloseFailure(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	factory, err := coordmetadata.New(ctx, newTestOptions())
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, factory.Close()) })
-	metadata := factory.CreateMetadata(ctx)
-	closeErr := errors.New("close failure")
-	server := &GrpcServer{
-		ctx:          ctx,
-		ctxCancel:    cancel,
-		logger:       slog.Default(),
-		healthServer: health.NewServer(),
-		management:   newManagementServer(metadata),
-		reconciler:   &fakeReconciler{closeErr: closeErr},
-		runtime:      &testRuntime{},
-		metadata:     metadata,
-	}
-	lost := make(chan struct{})
-	close(lost)
-	called := false
-
-	server.watchLeadership(lost, func() { called = true })
-	assert.True(t, called)
-	require.ErrorIs(t, server.stopCoordinating(), closeErr)
-	require.ErrorIs(t, ctx.Err(), context.Canceled)
-	checked, err := server.healthServer.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, checked.GetStatus())
+	server.bgLeadershipWatcher(make(chan struct{}))
 }
 
 // newTestOptions returns the options of a coordinator on the memory metadata,
@@ -313,16 +239,4 @@ func newTestOptions() *option.Options {
 	options.Metadata.Name = "coordinator-test"
 	options.Metadata.ProviderName = option.ProviderMemory
 	return options
-}
-
-type fakeReconciler struct {
-	closeErr error
-}
-
-func (r *fakeReconciler) Close() error {
-	return r.closeErr
-}
-
-func (*fakeReconciler) Reconcile(context.Context, *proto.ClusterConfiguration) error {
-	return nil
 }

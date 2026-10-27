@@ -300,7 +300,7 @@ type fakeMetadata struct {
 
 func newFakeMetadata(t *testing.T) *fakeMetadata {
 	t.Helper()
-	factory, err := coordmetadata.New(t.Context(), memoryOptions())
+	factory, err := coordmetadata.New(t.Context(), memoryOptions(), nil)
 	require.NoError(t, err)
 	metadata := factory.CreateMetadata(t.Context())
 	t.Cleanup(func() {

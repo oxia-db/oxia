@@ -15,7 +15,6 @@
 package metadata
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,21 +24,24 @@ import (
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
-	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
-func newMemoryFactory(t *testing.T) *Factory {
-	t.Helper()
-
-	factory, err := New(t.Context(), &option.Options{
+func memoryOptions() *option.Options {
+	return &option.Options{
 		Metadata: option.MetadataOptions{
 			Name: "coordinator-test",
 			ProviderOptions: option.ProviderOptions{
 				ProviderName: metadatacommon.NameMemory,
 			},
 		},
-	})
+	}
+}
+
+func newMemoryFactory(t *testing.T, initialConfig *commonproto.ClusterConfiguration) *Factory {
+	t.Helper()
+
+	factory, err := New(t.Context(), memoryOptions(), initialConfig)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, factory.Close())
@@ -47,7 +49,7 @@ func newMemoryFactory(t *testing.T) *Factory {
 	return factory
 }
 
-func newFileFactory(t *testing.T, dir string) *Factory {
+func newFileFactory(t *testing.T, dir string, initialConfig *commonproto.ClusterConfiguration) *Factory {
 	t.Helper()
 
 	factory, err := New(t.Context(), &option.Options{
@@ -60,7 +62,7 @@ func newFileFactory(t *testing.T, dir string) *Factory {
 				},
 			},
 		},
-	})
+	}, initialConfig)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, factory.Close())
@@ -68,7 +70,7 @@ func newFileFactory(t *testing.T, dir string) *Factory {
 	return factory
 }
 
-func newSeedConfig(namespace string) *commonproto.ClusterConfiguration {
+func newInitialConfig(namespace string) *commonproto.ClusterConfiguration {
 	return &commonproto.ClusterConfiguration{
 		Namespaces: []*commonproto.Namespace{{
 			Name:              namespace,
@@ -82,6 +84,17 @@ func newSeedConfig(namespace string) *commonproto.ClusterConfiguration {
 	}
 }
 
+// takeOver creates a metadata of factory that takes the leadership.
+func takeOver(t *testing.T, factory *Factory) Metadata {
+	t.Helper()
+
+	metadata := factory.CreateMetadata(t.Context())
+	t.Cleanup(func() { assert.NoError(t, metadata.Close()) })
+	_, err := metadata.WaitToBecomeLeader()
+	require.NoError(t, err)
+	return metadata
+}
+
 func loadConfig(t *testing.T, factory *Factory) *commonproto.ClusterConfiguration {
 	t.Helper()
 
@@ -93,41 +106,31 @@ func loadConfig(t *testing.T, factory *Factory) *commonproto.ClusterConfiguratio
 	return current.Value
 }
 
-func TestSeedClusterConfig(t *testing.T) {
-	factory := newMemoryFactory(t)
+// The metadata that takes the leadership stores the initial configuration of
+// the factory.
+func TestNewInitialClusterConfig(t *testing.T) {
+	factory := newMemoryFactory(t, newInitialConfig("test-namespace"))
 
-	require.NoError(t, factory.SeedClusterConfig(newSeedConfig("test-namespace")))
-
-	seeded := loadConfig(t, factory)
-	require.NotNil(t, seeded)
-	require.Len(t, seeded.Namespaces, 1)
-	assert.Equal(t, "test-namespace", seeded.Namespaces[0].Name)
-}
-
-func TestSeedClusterConfigDoesNotOverwrite(t *testing.T) {
-	factory := newMemoryFactory(t)
-
-	require.NoError(t, factory.SeedClusterConfig(newSeedConfig("first")))
-	require.NoError(t, factory.SeedClusterConfig(newSeedConfig("second")))
+	takeOver(t, factory)
 
 	current := loadConfig(t, factory)
 	require.NotNil(t, current)
 	require.Len(t, current.Namespaces, 1)
-	assert.Equal(t, "first", current.Namespaces[0].Name)
+	assert.Equal(t, "test-namespace", current.Namespaces[0].Name)
 }
 
-// An embedded coordinator seeds its configuration at every start. A restart
-// must keep the configuration of the previous run, with the namespaces and
-// data servers added to it through the admin API.
-func TestFactorySeedClusterConfigDoesNotOverwriteAfterRestart(t *testing.T) {
+// A cluster restarted with an initial configuration keeps the configuration
+// of the previous run, with the namespaces and data servers added to it
+// through the admin API.
+func TestNewInitialClusterConfigDoesNotOverwriteAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 
-	first := newFileFactory(t, dir)
-	require.NoError(t, first.SeedClusterConfig(newSeedConfig("first")))
+	first := newFileFactory(t, dir, newInitialConfig("first"))
+	require.NoError(t, takeOver(t, first).Close())
 	require.NoError(t, first.Close())
 
-	restarted := newFileFactory(t, dir)
-	require.NoError(t, restarted.SeedClusterConfig(newSeedConfig("second")))
+	restarted := newFileFactory(t, dir, newInitialConfig("second"))
+	takeOver(t, restarted)
 
 	current := loadConfig(t, restarted)
 	require.NotNil(t, current)
@@ -135,27 +138,24 @@ func TestFactorySeedClusterConfigDoesNotOverwriteAfterRestart(t *testing.T) {
 	assert.Equal(t, "first", current.Namespaces[0].Name)
 }
 
-// An invalid configuration is rejected before anything is stored: once stored,
-// it would never be replaced by a later seed, and a coordinator would fail on
-// it at every start.
-func TestSeedClusterConfigRejectsInvalid(t *testing.T) {
-	replicationAboveServers := newSeedConfig("test-namespace")
+// An invalid initial configuration is rejected before anything is stored:
+// once stored, it would never be replaced, and a coordinator would fail on it
+// at every start.
+func TestNewRejectsInvalidInitialClusterConfig(t *testing.T) {
+	replicationAboveServers := newInitialConfig("test-namespace")
 	replicationAboveServers.Namespaces[0].ReplicationFactor = 3
 
-	noShards := newSeedConfig("test-namespace")
+	noShards := newInitialConfig("test-namespace")
 	noShards.Namespaces[0].InitialShardCount = 0
 
 	for name, config := range map[string]*commonproto.ClusterConfiguration{
-		"nil":                         nil,
 		"replication above servers":   replicationAboveServers,
 		"no initial shards":           noShards,
 		"coordinator without address": {Coordinators: []*commonproto.Coordinator{{Name: "c1"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			factory := newMemoryFactory(t)
-
-			require.Error(t, factory.SeedClusterConfig(config))
-			assert.Nil(t, loadConfig(t, factory))
+			_, err := New(t.Context(), memoryOptions(), config)
+			require.ErrorContains(t, err, "invalid initial cluster configuration")
 		})
 	}
 }
@@ -173,7 +173,7 @@ func TestNewFactoryFromOptionsLoadsFileClusterConfig(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	metadata := factory.CreateMetadata(t.Context())
 	defer func() {
@@ -214,7 +214,7 @@ current-context: test
 				Kubernetes:   option.K8sMetadata{Namespace: "oxia"},
 			},
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, factory.configProvider)
 	assert.NotNil(t, factory.statusProvider)
@@ -238,7 +238,7 @@ func TestNewFactoryFromOptionsMergesLegacyClusterConfigPath(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	metadata := factory.CreateMetadata(t.Context())
 	defer func() {
@@ -266,7 +266,7 @@ func TestFactoryOnAppliedForwardsToInterceptor(t *testing.T) {
 }
 
 func TestNewRejectsNilOptions(t *testing.T) {
-	_, err := New(t.Context(), nil)
+	_, err := New(t.Context(), nil, nil)
 	require.ErrorContains(t, err, "options must not be nil")
 }
 
@@ -277,7 +277,7 @@ func TestNewRejectsInvalidLegacyClusterConfigPath(t *testing.T) {
 			Name:            "coordinator-test",
 			ProviderOptions: option.ProviderOptions{ProviderName: metadatacommon.NameFile},
 		},
-	})
+	}, nil)
 	require.ErrorContains(t, err, "must be a file path")
 }
 
@@ -287,7 +287,7 @@ func TestNewRejectsUnknownProvider(t *testing.T) {
 			Name:            "coordinator-test",
 			ProviderOptions: option.ProviderOptions{ProviderName: "etcd"},
 		},
-	})
+	}, nil)
 	require.ErrorContains(t, err, "must be one of")
 }
 
@@ -312,7 +312,7 @@ func TestNewFileProviderFailures(t *testing.T) {
 						File:         fileOptions,
 					},
 				},
-			})
+			}, nil)
 			require.Error(t, err)
 		})
 	}
@@ -339,7 +339,7 @@ current-context: test
 				Kubernetes:   option.K8sMetadata{Namespace: "oxia"},
 			},
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, factory.Close()) }()
 
@@ -360,7 +360,7 @@ func TestNewConfigMapProviderFailsWithoutKubeconfig(t *testing.T) {
 				Kubernetes:   option.K8sMetadata{Namespace: "oxia"},
 			},
 		},
-	})
+	}, nil)
 	require.Error(t, err)
 }
 
@@ -379,53 +379,15 @@ func TestNewRaftProvider(t *testing.T) {
 		},
 	}
 
-	factory, err := New(t.Context(), options)
+	factory, err := New(t.Context(), options, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, factory.raft)
 	assert.NotNil(t, factory.raftInterceptor, "the config provider follows the applied entries")
 	require.NoError(t, factory.Close())
 
 	options.Metadata.Raft.Address = "invalid-address"
-	_, err = New(t.Context(), options)
+	_, err = New(t.Context(), options, nil)
 	require.ErrorContains(t, err, "failed to create raft metadata provider")
-}
-
-func TestFactorySeedClusterConfigReturnsLoadError(t *testing.T) {
-	factory := newMemoryFactory(t)
-	factory.configProvider = fakeProvider[*commonproto.ClusterConfiguration]{
-		Provider: factory.configProvider,
-		load:     failLoad[*commonproto.ClusterConfiguration]("load failure"),
-	}
-
-	require.ErrorContains(t, factory.SeedClusterConfig(newSeedConfig("test-namespace")), "load failure")
-}
-
-func TestFactorySeedClusterConfigStoreFailures(t *testing.T) {
-	for name, tc := range map[string]struct {
-		storeErr error
-		expected string
-	}{
-		// Another coordinator seeded its configuration first
-		"bad version": {storeErr: metadatacommon.ErrBadVersion},
-		"other":       {storeErr: errors.New("store failure"), expected: "store failure"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			factory := newMemoryFactory(t)
-			factory.configProvider = fakeProvider[*commonproto.ClusterConfiguration]{
-				Provider: factory.configProvider,
-				store: func(provider.Versioned[*commonproto.ClusterConfiguration]) (metadatacommon.Version, error) {
-					return metadatacommon.NotExists, tc.storeErr
-				},
-			}
-
-			err := factory.SeedClusterConfig(newSeedConfig("test-namespace"))
-			if tc.expected == "" {
-				require.NoError(t, err)
-				return
-			}
-			require.ErrorContains(t, err, tc.expected)
-		})
-	}
 }
 
 type recordingInterceptor struct {

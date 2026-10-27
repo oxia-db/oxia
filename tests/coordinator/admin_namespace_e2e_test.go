@@ -15,7 +15,6 @@
 package coordinator
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	coordserver "github.com/oxia-db/oxia/oxiad/coordinator"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+	"github.com/oxia-db/oxia/tests/mock"
 )
 
 func TestAdminNamespaceCreateAndGet(t *testing.T) {
@@ -36,19 +36,19 @@ func TestAdminNamespaceCreateAndGet(t *testing.T) {
 
 	options := coordoption.NewDefaultOptions()
 	options.Server.Internal.BindAddress = "127.0.0.1:0"
-	options.Server.Public.BindAddress = "127.0.0.1:0"
+	adminAddr := mock.FreeAddresses(t, 1)[0]
+	options.Server.Public.BindAddress = adminAddr
 	options.Observability.Metric.Enabled = &constant.FlagFalse
 	options.Metadata.ProviderName = metadatacommon.NameFile
 	options.Metadata.File.Dir = metadataDir
 	options.Metadata.File.ConfigName = "cluster.yaml"
 
-	coordinatorServer, err := coordserver.NewGrpcServer(t.Context(), commonwatch.New(options))
+	coordinatorServer, err := coordserver.New(t.Context(), commonwatch.New(options), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, coordinatorServer.Close())
 	})
 
-	adminAddr := fmt.Sprintf("127.0.0.1:%d", coordinatorServer.PublicPort())
 	client, err := oxia.NewAdminClient(adminAddr, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {

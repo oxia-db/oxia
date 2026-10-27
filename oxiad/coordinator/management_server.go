@@ -31,40 +31,35 @@ import (
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
-var _ proto.OxiaAdminServer = (*managementServer)(nil)
+var _ proto.OxiaAdminServer = (*ManagementServer)(nil)
 
-type managementServer struct {
+// ManagementServer serves the admin API of the coordinator. Until it is given a
+// runtime, it answers as a coordinator that is not the leader, redirecting to
+// the leader when it is known.
+type ManagementServer struct {
 	proto.UnimplementedOxiaAdminServer
 
 	metadata coordmetadata.Metadata
 	runtime  atomic.Value
-	stopped  atomic.Bool
 }
 
-func (management *managementServer) setRuntime(runtime coordruntime.Runtime) {
+func (management *ManagementServer) setRuntime(runtime coordruntime.Runtime) {
 	if runtime == nil {
 		return
 	}
 	management.runtime.Store(runtime)
 }
 
-// stop makes the admin API answer as a coordinator that is not the leader,
-// redirecting to the leader when it is known: for a coordinator that lost the
-// leadership.
-func (management *managementServer) stop() {
-	management.stopped.Store(true)
-}
-
-func (management *managementServer) getRuntime() (coordruntime.Runtime, error) {
+func (management *ManagementServer) getRuntime() (coordruntime.Runtime, error) {
 	metadata := management.metadata
 	runtime, runtimeLoaded := management.runtime.Load().(coordruntime.Runtime)
-	if metadata == nil || !runtimeLoaded || management.stopped.Load() {
+	if metadata == nil || !runtimeLoaded {
 		return nil, management.redirectError()
 	}
 	return runtime, nil
 }
 
-func (management *managementServer) redirectError() error {
+func (management *ManagementServer) redirectError() error {
 	metadata := management.metadata
 	if metadata == nil {
 		return constant.IntoGrpcStatusError(constant.ErrNotInitialized)
@@ -90,7 +85,7 @@ func (management *managementServer) redirectError() error {
 	return constant.IntoGrpcStatusError(constant.ErrNodeIsNotLeader, constant.WithCoordinatorLeaderHint(leader))
 }
 
-func (management *managementServer) ListDataServers(_ context.Context, _ *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
+func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.ListDataServersRequest) (*proto.ListDataServersResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -133,7 +128,7 @@ func (management *managementServer) ListDataServers(_ context.Context, _ *proto.
 	return &proto.ListDataServersResponse{DataServers: views}, nil
 }
 
-func (management *managementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
+func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -162,7 +157,7 @@ func (management *managementServer) GetDataServer(_ context.Context, req *proto.
 	}, nil
 }
 
-func (management *managementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
+func (management *ManagementServer) CreateDataServer(_ context.Context, req *proto.CreateDataServerRequest) (*proto.CreateDataServerResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -199,7 +194,7 @@ func (management *managementServer) CreateDataServer(_ context.Context, req *pro
 	}, nil
 }
 
-func (management *managementServer) PatchDataServer(_ context.Context, req *proto.PatchDataServerRequest) (*proto.PatchDataServerResponse, error) {
+func (management *ManagementServer) PatchDataServer(_ context.Context, req *proto.PatchDataServerRequest) (*proto.PatchDataServerResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -230,7 +225,7 @@ func (management *managementServer) PatchDataServer(_ context.Context, req *prot
 	}, nil
 }
 
-func (management *managementServer) DeleteDataServer(_ context.Context, req *proto.DeleteDataServerRequest) (*proto.DeleteDataServerResponse, error) {
+func (management *ManagementServer) DeleteDataServer(_ context.Context, req *proto.DeleteDataServerRequest) (*proto.DeleteDataServerResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -258,7 +253,7 @@ func (management *managementServer) DeleteDataServer(_ context.Context, req *pro
 	}, nil
 }
 
-func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
+func (management *ManagementServer) ListNamespaces(_ context.Context, _ *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -291,7 +286,7 @@ func (management *managementServer) ListNamespaces(_ context.Context, _ *proto.L
 	}, nil
 }
 
-func (management *managementServer) CreateNamespace(_ context.Context, req *proto.CreateNamespaceRequest) (*proto.CreateNamespaceResponse, error) {
+func (management *ManagementServer) CreateNamespace(_ context.Context, req *proto.CreateNamespaceRequest) (*proto.CreateNamespaceResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -338,7 +333,7 @@ func (management *managementServer) CreateNamespace(_ context.Context, req *prot
 	}, nil
 }
 
-func (management *managementServer) PatchNamespace(_ context.Context, req *proto.PatchNamespaceRequest) (*proto.PatchNamespaceResponse, error) {
+func (management *ManagementServer) PatchNamespace(_ context.Context, req *proto.PatchNamespaceRequest) (*proto.PatchNamespaceResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -378,7 +373,7 @@ func (management *managementServer) PatchNamespace(_ context.Context, req *proto
 	}, nil
 }
 
-func (management *managementServer) DeleteNamespace(_ context.Context, req *proto.DeleteNamespaceRequest) (*proto.DeleteNamespaceResponse, error) {
+func (management *ManagementServer) DeleteNamespace(_ context.Context, req *proto.DeleteNamespaceRequest) (*proto.DeleteNamespaceResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -406,7 +401,7 @@ func (management *managementServer) DeleteNamespace(_ context.Context, req *prot
 	}, nil
 }
 
-func (management *managementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
+func (management *ManagementServer) GetNamespace(_ context.Context, req *proto.GetNamespaceRequest) (*proto.GetNamespaceResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -441,7 +436,7 @@ func (management *managementServer) GetNamespace(_ context.Context, req *proto.G
 	}, nil
 }
 
-func (management *managementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
+func (management *ManagementServer) SplitShard(_ context.Context, req *proto.SplitShardRequest) (*proto.SplitShardResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -464,8 +459,10 @@ func (management *managementServer) SplitShard(_ context.Context, req *proto.Spl
 	}, nil
 }
 
-func newManagementServer(metadata coordmetadata.Metadata) *managementServer {
-	return &managementServer{
+// NewManagementServer returns a management server that reads the cluster from
+// metadata.
+func NewManagementServer(metadata coordmetadata.Metadata) *ManagementServer {
+	return &ManagementServer{
 		metadata: metadata,
 	}
 }

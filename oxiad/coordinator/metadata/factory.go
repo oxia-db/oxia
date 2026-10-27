@@ -44,8 +44,10 @@ type Factory struct {
 	statusProvider  provider.Provider[*commonproto.ClusterStatus]
 	configProvider  provider.Provider[*commonproto.ClusterConfiguration]
 	coordinatorName string
-	raft            *raft.Raft
-	raftInterceptor raft.Interceptor
+	// initialClusterConfig is set by New and never modified afterwards.
+	initialClusterConfig *commonproto.ClusterConfiguration
+	raft                 *raft.Raft
+	raftInterceptor      raft.Interceptor
 }
 
 func (f *Factory) OnApplied(key string, data []byte, version int64) {
@@ -55,9 +57,20 @@ func (f *Factory) OnApplied(key string, data []byte, version int64) {
 	f.raftInterceptor.OnApplied(key, data, version)
 }
 
-func New(ctx context.Context, options *option.Options) (*Factory, error) {
+// New creates the metadata providers that options select. A non-nil
+// initialClusterConfig is stored by the metadata that takes the leadership
+// when the cluster has no configuration yet: it is validated here, so an
+// invalid one is never stored.
+func New(ctx context.Context, options *option.Options,
+	initialClusterConfig *commonproto.ClusterConfiguration) (*Factory, error) {
 	if options == nil {
 		return nil, errors.New("options must not be nil")
+	}
+	if initialClusterConfig != nil {
+		if err := initialClusterConfig.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid initial cluster configuration: %w", err)
+		}
+		initialClusterConfig = initialClusterConfig.CloneVT()
 	}
 	var err error
 	meta := options.Metadata
@@ -65,7 +78,8 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 		return nil, err
 	}
 	factory := &Factory{
-		coordinatorName: meta.Name,
+		coordinatorName:      meta.Name,
+		initialClusterConfig: initialClusterConfig,
 	}
 	switch meta.ProviderName {
 	case metadatacommon.NameMemory:
@@ -102,38 +116,6 @@ func New(ctx context.Context, options *option.Options) (*Factory, error) {
 	return factory, nil
 }
 
-// SeedClusterConfig stores the given cluster configuration if none exists yet.
-// The configuration is validated first, so an invalid one is rejected and
-// nothing is stored. It is a no-op when a configuration is already present,
-// and it tolerates losing the seeding race to another coordinator.
-func (f *Factory) SeedClusterConfig(config *commonproto.ClusterConfiguration) error {
-	if err := config.Validate(); err != nil {
-		return fmt.Errorf("invalid cluster configuration to seed: %w", err)
-	}
-	f.mu.Lock()
-	configProvider := f.configProvider
-	f.mu.Unlock()
-
-	current, err := configProvider.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load the cluster configuration: %w", err)
-	}
-	if current.Version != metadatacommon.NotExists {
-		return nil
-	}
-	if _, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
-		Value:   config,
-		Version: metadatacommon.NotExists,
-	}); err != nil {
-		if errors.Is(err, metadatacommon.ErrBadVersion) {
-			// Another coordinator stored a configuration first.
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
 func (f *Factory) CreateMetadata(ctx context.Context) Metadata {
 	f.mu.Lock()
 	statusProvider := f.statusProvider
@@ -141,12 +123,11 @@ func (f *Factory) CreateMetadata(ctx context.Context) Metadata {
 	coordinatorName := f.coordinatorName
 	f.mu.Unlock()
 
-	return newDefaultMetadata(ctx, statusProvider, configProvider, coordinatorName)
+	return newDefaultMetadata(ctx, statusProvider, configProvider, coordinatorName, f.initialClusterConfig)
 }
 
 // Close closes the metadata providers. It is safe to call more than once,
-// and concurrently: a coordinator whose start is cancelled closes its factory
-// from the cancellation, to end a pending leadership wait.
+// and concurrently.
 func (f *Factory) Close() error {
 	f.closeOnce.Do(func() {
 		f.closeErr = f.close()

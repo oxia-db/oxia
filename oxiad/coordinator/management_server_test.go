@@ -133,7 +133,7 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 				},
 			},
 		},
-	})
+	}, nil)
 	require.NoError(t, err)
 	metadata := metadataFactory.CreateMetadata(t.Context())
 	_, err = metadata.WaitToBecomeLeader()
@@ -148,17 +148,17 @@ func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmeta
 func newReadyManagementServer(
 	metadata coordmetadata.Metadata,
 	runtime coordruntime.Runtime,
-) *managementServer {
+) *ManagementServer {
 	if runtime == nil {
 		runtime = &testRuntime{metadata: metadata}
 	}
-	management := newManagementServer(metadata)
+	management := NewManagementServer(metadata)
 	management.setRuntime(runtime)
 	return management
 }
 
 func TestManagementServerRedirectsRequestsToCoordinatorLeader(t *testing.T) {
-	management := newManagementServer(&testLeaderMetadata{
+	management := NewManagementServer(&testLeaderMetadata{
 		info: &proto.Coordinator{
 			Name:          "coordinator-1",
 			PublicAddress: "coordinator-1.example.com:6651",
@@ -267,7 +267,7 @@ func TestManagementServerRedirectsRequestsToCoordinatorLeader(t *testing.T) {
 }
 
 func TestManagementServerReturnsUnavailableWithoutLeader(t *testing.T) {
-	management := newManagementServer(&testLeaderMetadata{
+	management := NewManagementServer(&testLeaderMetadata{
 		err: errors.New("lease not found"),
 	})
 
@@ -281,7 +281,7 @@ func TestManagementServerReturnsUnavailableWithoutLeader(t *testing.T) {
 }
 
 func TestManagementServerReturnsUnavailableWhenLocalLeaderIsNotReady(t *testing.T) {
-	management := newManagementServer(&testLeaderMetadata{
+	management := NewManagementServer(&testLeaderMetadata{
 		info: &proto.Coordinator{
 			Name:          "coordinator-0",
 			PublicAddress: "coordinator-0.example.com:6651",
@@ -305,7 +305,7 @@ func TestManagementServerServesAfterShardSplitterReady(t *testing.T) {
 	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
 		Namespaces: []*proto.Namespace{{Name: "ns-1"}},
 	})
-	management := newManagementServer(metadata)
+	management := NewManagementServer(metadata)
 	management.setRuntime(&testRuntime{metadata: metadata})
 
 	res, err := management.ListNamespaces(t.Context(), &proto.ListNamespacesRequest{})
@@ -315,7 +315,7 @@ func TestManagementServerServesAfterShardSplitterReady(t *testing.T) {
 }
 
 func TestManagementServerReturnsUnavailableBeforeRuntimeReady(t *testing.T) {
-	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}))
+	management := NewManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}))
 
 	_, err := management.SplitShard(t.Context(), &proto.SplitShardRequest{})
 	require.Error(t, err)
@@ -1327,7 +1327,7 @@ func TestManagementServerDeleteDataServerFailedPrecondition(t *testing.T) {
 }
 
 func TestManagementServerSetRuntimeIgnoresNil(t *testing.T) {
-	management := newManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}))
+	management := NewManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}))
 	management.setRuntime(nil)
 
 	_, err := management.ListNamespaces(t.Context(), &proto.ListNamespacesRequest{})
@@ -1357,7 +1357,7 @@ func TestManagementServerRedirectError(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			management := newManagementServer(test.metadata)
+			management := NewManagementServer(test.metadata)
 
 			_, err := management.ListNamespaces(t.Context(), &proto.ListNamespacesRequest{})
 			oxiaErr, metadata := constant.FromGrpcError(err)
@@ -1375,54 +1375,54 @@ func TestManagementServerReturnsMetadataErrors(t *testing.T) {
 	for _, test := range []struct {
 		name         string
 		conflictCode codes.Code
-		call         func(management *managementServer) error
+		call         func(management *ManagementServer) error
 	}{
-		{"ListDataServers", codes.Internal, func(management *managementServer) error {
+		{"ListDataServers", codes.Internal, func(management *ManagementServer) error {
 			_, err := management.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
 			return err
 		}},
-		{"GetDataServer", codes.Internal, func(management *managementServer) error {
+		{"GetDataServer", codes.Internal, func(management *ManagementServer) error {
 			_, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: serverName})
 			return err
 		}},
-		{"CreateDataServer", codes.Aborted, func(management *managementServer) error {
+		{"CreateDataServer", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
 				DataServer: &proto.DataServer{Identity: dataServer(&serverName, "public-1", "internal-1")},
 			})
 			return err
 		}},
-		{"PatchDataServer", codes.Aborted, func(management *managementServer) error {
+		{"PatchDataServer", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.PatchDataServer(context.Background(), &proto.PatchDataServerRequest{
 				DataServer: &proto.DataServer{Identity: dataServer(&serverName, "public-1", "internal-1")},
 			})
 			return err
 		}},
-		{"DeleteDataServer", codes.Aborted, func(management *managementServer) error {
+		{"DeleteDataServer", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.DeleteDataServer(context.Background(),
 				&proto.DeleteDataServerRequest{DataServer: serverName})
 			return err
 		}},
-		{"ListNamespaces", codes.Internal, func(management *managementServer) error {
+		{"ListNamespaces", codes.Internal, func(management *ManagementServer) error {
 			_, err := management.ListNamespaces(context.Background(), &proto.ListNamespacesRequest{})
 			return err
 		}},
-		{"CreateNamespace", codes.Aborted, func(management *managementServer) error {
+		{"CreateNamespace", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.CreateNamespace(context.Background(), &proto.CreateNamespaceRequest{
 				Namespace: &proto.Namespace{Name: "ns-1", InitialShardCount: 1, ReplicationFactor: 1, KeySorting: "natural"},
 			})
 			return err
 		}},
-		{"PatchNamespace", codes.Aborted, func(management *managementServer) error {
+		{"PatchNamespace", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.PatchNamespace(context.Background(), &proto.PatchNamespaceRequest{
 				Namespace: &proto.Namespace{Name: "ns-1", ReplicationFactor: 1},
 			})
 			return err
 		}},
-		{"DeleteNamespace", codes.Aborted, func(management *managementServer) error {
+		{"DeleteNamespace", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.DeleteNamespace(context.Background(), &proto.DeleteNamespaceRequest{Namespace: "ns-1"})
 			return err
 		}},
-		{"GetNamespace", codes.Internal, func(management *managementServer) error {
+		{"GetNamespace", codes.Internal, func(management *ManagementServer) error {
 			_, err := management.GetNamespace(context.Background(), &proto.GetNamespaceRequest{Namespace: "ns-1"})
 			return err
 		}},
