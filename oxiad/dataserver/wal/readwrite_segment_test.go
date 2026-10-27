@@ -310,7 +310,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 
 	// recover the rw segment
 	_, err = newReadWriteSegment(vfs.OSFS{}, dir, 0, 1024, 0, commitOffsetProvider)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 // The recovery discards a corrupted record past the commit offset along with
@@ -670,7 +670,7 @@ func TestReadWriteSegmentReadReportsCorruptedRecord(t *testing.T) {
 	rwSegment.txnMappedFile[payloadOffset] ^= 0xff
 
 	_, _, _, err = rw.Read(0)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	assert.ErrorContains(t, err, "entryOffset: 0")
 }
 
@@ -773,7 +773,7 @@ func TestReadWriteSegmentTruncateFailsOnCorruptedRecord(t *testing.T) {
 	payloadOffset := fileOffset(rwSegment.writingIdx, 0, 0) + rwSegment.c.codec.GetHeaderSize()
 	rwSegment.txnMappedFile[payloadOffset] ^= 0xff
 
-	assert.ErrorIs(t, rw.Truncate(0), errs.ErrCorrupted)
+	assert.ErrorIs(t, rw.Truncate(0), errs.ErrDataCorrupted)
 	assert.EqualValues(t, 1, rw.LastOffset())
 }
 

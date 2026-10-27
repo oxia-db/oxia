@@ -21,7 +21,7 @@ var (
 	ErrAlreadyClosed         = errors.New("already closed")
 	ErrAlreadyExists         = errors.New("already exists")
 	ErrBadVersion            = errors.New("bad version")
-	ErrCorrupted             = errors.New("corrupted")
+	ErrDataCorrupted         = errors.New("data corrupted")
 	ErrFailedPrecondition    = errors.New("failed precondition")
 	ErrInvalidArgument       = errors.New("invalid argument")
 	ErrNotFound              = errors.New("not found")

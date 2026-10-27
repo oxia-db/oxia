@@ -239,7 +239,7 @@ func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint
 
 	fileReadOffset := fileOffset(*ms.readIdx.Load(), ms.c.baseOffset, offset)
 	if payload, previousCrc, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {
-		if errors.Is(err, errs.ErrCorrupted) {
+		if errors.Is(err, errs.ErrDataCorrupted) {
 			return nil, 0, 0, errors.Wrapf(err, "read record failed. entryOffset: %d", offset)
 		}
 		return nil, 0, 0, err

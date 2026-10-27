@@ -216,7 +216,7 @@ func TestReadOnlySegmentNewFailsWhenIndexRebuildFindsCorruption(t *testing.T) {
 	corruptPayload(t, c, offsets[1])
 
 	_, err := newReadOnlySegment(vfs.OSFS{}, dir, 0)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	assert.ErrorContains(t, err, "failed to rebuild segment index file")
 }
 
@@ -248,7 +248,7 @@ func TestReadOnlySegmentNewFailsWhenLastRecordIsCorrupted(t *testing.T) {
 	corruptPayload(t, c, offsets[2])
 
 	_, err := newReadOnlySegment(vfs.OSFS{}, dir, 0)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestReadOnlySegmentReadReportsCorruptedRecord(t *testing.T) {
@@ -261,7 +261,7 @@ func TestReadOnlySegmentReadReportsCorruptedRecord(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, ro.Close()) })
 
 	_, _, _, err = ro.Read(1)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	assert.ErrorContains(t, err, "entryOffset: 1")
 }
 

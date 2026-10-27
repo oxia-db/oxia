@@ -3370,7 +3370,7 @@ func TestLeaderController_WalRecoveryWithCorruptedEntry(t *testing.T) {
 	// A corrupted entry that the database already applied fails the recovery
 	corruptWalEntry(t, walDir, shard, 1)
 	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	assert.Nil(t, lc)
 
 	// A leaked database would still hold the Pebble lock and fail the re-open

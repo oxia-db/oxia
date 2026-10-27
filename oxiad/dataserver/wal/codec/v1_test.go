@@ -106,7 +106,7 @@ func TestV1_ReadEmptyIndex(t *testing.T) {
 	assert.NoError(t, v1.WriteIndex(vfs.OSFS{}, p, nil))
 
 	_, err := v1.ReadIndex(vfs.OSFS{}, p)
-	assert.ErrorIs(t, err, errs.ErrCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV1_RecoverIndex(t *testing.T) {

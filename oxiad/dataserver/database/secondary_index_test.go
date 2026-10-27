@@ -92,7 +92,7 @@ func TestParseSecondaryIndexKeyRejectsMalformedKey(t *testing.T) {
 		constant.InternalKeyPrefix + "session/index/secondary" + idxSeparator + "primary",
 	} {
 		_, _, err := ParseSecondaryIndexKey(key)
-		assert.ErrorIs(t, err, errs.ErrCorrupted, key)
+		assert.ErrorIs(t, err, errs.ErrDataCorrupted, key)
 	}
 
 	_, _, err := ParseSecondaryIndexKey(idxKeyPrefix + "/index/secondary" + idxSeparator + "%zz")

@@ -453,7 +453,7 @@ func secondaryIndexGet(req *proto.GetRequest, db database.DB) (*proto.GetRespons
 	defer func() { _ = it.Close() }()
 
 	primaryKey, secondaryKey, err := doSecondaryGet(db, it, indexPrefix, req)
-	if err != nil && !errors.Is(err, errs.ErrCorrupted) {
+	if err != nil && !errors.Is(err, errs.ErrDataCorrupted) {
 		return nil, err
 	}
 
@@ -502,7 +502,7 @@ func doSecondaryGet(db database.DB, it kvstore.KeyIterator, indexPrefix string, 
 	for it.Valid() {
 		itKey := it.Key()
 		primaryKey, secondaryKey, err = database.ParseSecondaryIndexKey(itKey)
-		if err != nil && !errors.Is(err, errs.ErrCorrupted) {
+		if err != nil && !errors.Is(err, errs.ErrDataCorrupted) {
 			return "", "", err
 		}
 
