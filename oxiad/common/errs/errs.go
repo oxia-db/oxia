@@ -17,7 +17,6 @@ package errs
 
 import "errors"
 
-// Shard controller.
 var (
 	ErrNotReadyForChangeEnsemble         = errors.New("shard is not ready for change ensemble, please retry later")
 	ErrInvalidChangeEnsemble             = errors.New("invalid change ensemble")
@@ -35,35 +34,23 @@ var (
 	// doesn't report the features pinned by its term, because it runs a
 	// binary that predates the report.
 	ErrTermFeaturesNotReported = errors.New("the leader doesn't report the features pinned by its term")
-)
 
-// Ensemble selector.
-var (
 	ErrUnsatisfiedEnsembleReplicas = errors.New("selector: unsatisfied ensemble replicas")
 	ErrUnsatisfiedAntiAffinity     = errors.New("selector: unsatisfied anti-affinity")
 	ErrUnsupportedAntiAffinityMode = errors.New("selector: unsupported anti-affinity mode")
 	ErrNoFunctioning               = errors.New("selector: no functioning selection")
 	ErrMultipleResult              = errors.New("selector: multiple results")
 	ErrNoCandidates                = errors.New("selector: no candidates available")
-)
 
-// Coordinator metadata provider.
-var (
 	ErrCoordinatorLeaderUnavailable = errors.New("coordinator leader unavailable")
-)
 
-// Metadata.
-var (
 	ErrMetadataNotInitialized     = errors.New("metadata not initialized")
 	ErrMetadataBadVersion         = errors.New("metadata bad version")
 	ErrMetadataConflict           = errors.New("metadata conflict")
 	ErrMetadataAlreadyExists      = errors.New("metadata already exists")
 	ErrMetadataNotFound           = errors.New("metadata not found")
 	ErrMetadataFailedPrecondition = errors.New("metadata failed precondition")
-)
 
-// Database.
-var (
 	ErrBadVersionId          = errors.New("oxia: bad version id")
 	ErrMissingPartitionKey   = errors.New("oxia: sequential key operation requires partition key")
 	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
@@ -82,48 +69,27 @@ var (
 	// ErrInvalidSecondaryIndexKey indicates that a key does not use the persisted
 	// secondary index key format.
 	ErrInvalidSecondaryIndexKey = errors.New("oxia db: failed to parse secondary index key")
-)
 
-// Key-value store.
-var (
 	ErrKeyNotFound = errors.New("oxia: key not found")
-)
 
-// Data server manifest.
-var (
 	ErrInstanceIDMismatch = errors.New("instance id mismatch")
-)
 
-// Write-ahead log.
-var (
 	ErrEntryNotFound     = errors.New("oxia: entry not found")
 	ErrReaderClosed      = errors.New("oxia: reader already closed")
 	ErrInvalidNextOffset = errors.New("oxia: invalid next offset in wal")
 	ErrSegmentFull       = errors.New("oxia: current segment is full")
 	ErrEmptySegment      = errors.New("oxia: segment has no entries")
 	ErrSegmentClosed     = errors.New("oxia: segment is closed")
-)
 
-// Write-ahead log codec.
-var (
 	ErrOffsetOutOfBounds = errors.New("oxia: offset out of bounds")
 	ErrEmptyPayload      = errors.New("oxia: empty payload")
 	ErrDataCorrupted     = errors.New("oxia: data corrupted")
-)
 
-// Shards director.
-var (
 	ErrNodeIsNotFollower = errors.New("oxia: node is not follower")
-)
 
-// Quorum ack tracker.
-var (
 	ErrTooManyCursors    = errors.New("too many cursors")
 	ErrInvalidHeadOffset = errors.New("invalid head offset")
-)
 
-// Authentication.
-var (
 	ErrMetadataFetchFailed              = errors.New("metadata fetch failed")
 	ErrEmptyIssueURL                    = errors.New("empty issue URL")
 	ErrEmptyAllowedAudiences            = errors.New("empty allowed audiences")
@@ -135,24 +101,15 @@ var (
 	ErrUnMatchedAuthenticationParamType = errors.New("unmatched authentication parameter type")
 	ErrEmptyToken                       = errors.New("empty token")
 	ErrMalformedToken                   = errors.New("malformed token")
-)
 
-// Backup.
-var (
 	// ErrInvalidID is returned when a backup ID doesn't parse.
 	ErrInvalidID = errors.New("backup: invalid backup id")
 	// ErrInvalidManifest is returned for a manifest that doesn't describe a
 	// backup this code can restore.
 	ErrInvalidManifest = errors.New("backup: invalid manifest")
-)
 
-// Backup blob store.
-var (
 	// ErrBlobNotFound is returned by Get for a key that holds no object.
 	ErrBlobNotFound = errors.New("blob: object not found")
-)
 
-// Maelstrom.
-var (
 	ErrNotImplement = errors.New("not implement")
 )
