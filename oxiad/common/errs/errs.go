@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package errs holds the internal errors of the Oxia servers. The errors that reach the clients are in
-// common/constant.
+// Package errs holds the common internal errors of the Oxia servers. A module defines the errors that its
+// callers tell apart by wrapping one of them, e.g. fmt.Errorf("%w: segment full", errs.ErrFailedPrecondition).
+// The errors that reach the clients are in common/constant.
 package errs
 
 import "errors"
 
 var (
-	// The common errors, returned with the detail wrapped, e.g. fmt.Errorf("%w: namespace %q", ErrNotFound, name).
 	ErrAlreadyClosed      = errors.New("already closed")
 	ErrAlreadyExists      = errors.New("already exists")
 	ErrBadVersion         = errors.New("bad version")
@@ -30,12 +30,4 @@ var (
 	ErrNotImplemented     = errors.New("not implemented")
 	ErrUnauthenticated    = errors.New("unauthenticated")
 	ErrUnavailable        = errors.New("unavailable")
-	// The special errors, which a caller tells apart to react to that failure on its own.
-	ErrEmptyPayload          = errors.New("empty payload")
-	ErrEmptySegment          = errors.New("segment has no entries")
-	ErrFeaturesRenegotiation = errors.New("the term features must be negotiated again")
-	ErrInvalidSequentialPut  = errors.New("invalid sequential put")
-	ErrNotificationRecord    = errors.New("write request reaches a notification record")
-	ErrSegmentFull           = errors.New("current segment is full")
-	ErrWriteRejected         = errors.New("write request rejected")
 )

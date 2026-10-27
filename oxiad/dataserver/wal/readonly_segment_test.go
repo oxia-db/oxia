@@ -95,7 +95,7 @@ func TestRO_auto_recover_empty_index(t *testing.T) {
 }
 
 // A segment whose txn file holds no entries cannot be opened for reads: it
-// must fail with errs.ErrEmptySegment (it used to panic with a slice out of
+// must fail with ErrEmptySegment (it used to panic with a slice out of
 // bounds), regardless of whether an index file is present.
 func TestRO_EmptySegment(t *testing.T) {
 	path := t.TempDir()
@@ -110,7 +110,7 @@ func TestRO_EmptySegment(t *testing.T) {
 
 	ro, err := newReadOnlySegment(vfs.OSFS{}, path, 0)
 	assert.Nil(t, ro)
-	assert.ErrorIs(t, err, errs.ErrEmptySegment)
+	assert.ErrorIs(t, err, ErrEmptySegment)
 }
 
 func TestRO_auto_recover_broken_index(t *testing.T) {
@@ -280,7 +280,7 @@ func TestReadOnlySegmentReadReportsEmptyRecord(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, ro.Close()) })
 
 	_, _, _, err = ro.Read(1)
-	assert.ErrorIs(t, err, errs.ErrEmptyPayload)
+	assert.ErrorIs(t, err, codec.ErrEmptyPayload)
 }
 
 // writeSegment writes a closed segment of 1KB at base offset 0 holding the

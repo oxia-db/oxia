@@ -16,11 +16,15 @@ package codec
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"sync"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/vfs"
 )
+
+var ErrEmptyPayload = fmt.Errorf("%w: empty payload", errs.ErrInvalidArgument)
 
 type Metadata struct {
 	TxnExtension  string

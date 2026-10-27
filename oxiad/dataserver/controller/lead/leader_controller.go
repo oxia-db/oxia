@@ -1420,7 +1420,7 @@ func (lc *leaderController) applyCommitted(ctx context.Context, w wal.Wal, propo
 // isApplied reports whether the apply of an entry returning err is complete: a
 // rejected request has no effect, but its entry is applied.
 func isApplied(err error) bool {
-	return err == nil || errors.Is(err, errs.ErrWriteRejected)
+	return err == nil || errors.Is(err, database.ErrWriteRejected)
 }
 
 // retryApply applies again the entry at offset, which failed to apply with

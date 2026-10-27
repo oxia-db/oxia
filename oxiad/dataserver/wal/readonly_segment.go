@@ -127,7 +127,7 @@ func newReadOnlySegment(fs vfs.FS, basePath string, baseOffset int64) (ReadOnlyS
 		// content, if ever written, was lost by a crash before being synced
 		// and acknowledged
 		return nil, multierr.Combine(
-			errors.Wrapf(errs.ErrEmptySegment, "segment file %s", ms.c.txnPath),
+			errors.Wrapf(ErrEmptySegment, "segment file %s", ms.c.txnPath),
 			ms.c.fs.Unmap(&ms.txnMappedFile),
 			ms.txnFile.Close())
 	}

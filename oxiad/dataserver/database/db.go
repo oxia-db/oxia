@@ -48,6 +48,12 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+var (
+	ErrInvalidSequentialPut = fmt.Errorf("%w: invalid sequential put", errs.ErrInvalidArgument)
+	ErrNotificationRecord   = fmt.Errorf("%w: notification record", errs.ErrInvalidArgument)
+	ErrWriteRejected        = fmt.Errorf("%w: write rejected", errs.ErrFailedPrecondition)
+)
+
 const (
 	commitOffsetKey        = constant.InternalKeyPrefix + "commit-offset"
 	commitLastVersionIdKey = constant.InternalKeyPrefix + "last-version-id"
@@ -666,11 +672,11 @@ func (d *db) processWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 // retrying the request can't succeed, and every replica applying it to the
 // same state rejects it the same way.
 func isRejectedWrite(err error) bool {
-	return errors.Is(err, errs.ErrInvalidSequentialPut) ||
+	return errors.Is(err, ErrInvalidSequentialPut) ||
 		// E.g. a DeleteRange without an end, with the natural key sorting.
 		// Each replica trims the notification records on its own: the
 		// request is only rejected where some are left.
-		errors.Is(err, errs.ErrNotificationRecord)
+		errors.Is(err, ErrNotificationRecord)
 }
 
 // deserializeFailure returns the failure to deserialize the value of key,
@@ -683,7 +689,7 @@ func deserializeFailure(key string, err error, closeErr error) error {
 	case closeErr != nil:
 		return multierr.Append(err, closeErr)
 	case strings.HasPrefix(key, notificationsPrefix+"/"):
-		return fmt.Errorf("%w: %w", errs.ErrNotificationRecord, err)
+		return fmt.Errorf("%w: %w", ErrNotificationRecord, err)
 	default:
 		return err
 	}
@@ -714,7 +720,7 @@ func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) erro
 		slog.Int64("offset", commitOffset),
 		slog.Any("error", cause),
 	)
-	return fmt.Errorf("%w: %w", errs.ErrWriteRejected, cause)
+	return fmt.Errorf("%w: %w", ErrWriteRejected, cause)
 }
 
 func (d *db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
@@ -1160,7 +1166,7 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	case errors.Is(err, errs.ErrBadVersion):
 		pr.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
-	case errors.Is(err, errs.ErrInvalidSequentialPut) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
+	case errors.Is(err, ErrInvalidSequentialPut) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
 		// Only this put fails, instead of the whole write request with its
 		// other operations
 		pr.Status = proto.Status_INVALID_ARGUMENT

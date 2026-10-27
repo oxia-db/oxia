@@ -385,7 +385,7 @@ func TestSegmentAppendShouldNotPanic(t *testing.T) {
 	}
 
 	err = rw.Append(51, fmt.Appendf(nil, "entry-%d", 51))
-	assert.ErrorIs(t, err, errs.ErrSegmentFull)
+	assert.ErrorIs(t, err, ErrSegmentFull)
 }
 
 // Appends, reads and flushes run concurrently by design: the flusher (WAL sync
@@ -684,7 +684,7 @@ func TestReadWriteSegmentReadReportsEmptyRecord(t *testing.T) {
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fileOffset(rwSegment.writingIdx, 0, 0):], 0)
 
 	_, _, _, err = rw.Read(0)
-	assert.ErrorIs(t, err, errs.ErrEmptyPayload)
+	assert.ErrorIs(t, err, codec.ErrEmptyPayload)
 }
 
 func TestReadWriteSegmentAppendRejectsEmptyPayload(t *testing.T) {
@@ -692,7 +692,7 @@ func TestReadWriteSegmentAppendRejectsEmptyPayload(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, rw.Close()) })
 
-	assert.ErrorIs(t, rw.Append(0, nil), errs.ErrEmptyPayload)
+	assert.ErrorIs(t, rw.Append(0, nil), codec.ErrEmptyPayload)
 	assert.EqualValues(t, InvalidOffset, rw.LastOffset())
 }
 
