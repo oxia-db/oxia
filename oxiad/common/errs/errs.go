@@ -19,16 +19,18 @@ package errs
 import "errors"
 
 var (
-	ErrAlreadyClosed         = errors.New("already closed")
-	ErrAlreadyExists         = errors.New("already exists")
-	ErrBadVersion            = errors.New("bad version")
-	ErrDataCorrupted         = errors.New("data corrupted")
-	ErrFailedPrecondition    = errors.New("failed precondition")
-	ErrInvalidArgument       = errors.New("invalid argument")
-	ErrNotFound              = errors.New("not found")
-	ErrNotImplemented        = errors.New("not implemented")
-	ErrUnauthenticated       = errors.New("unauthenticated")
-	ErrUnavailable           = errors.New("unavailable")
+	// The common errors, returned with the detail wrapped, e.g. fmt.Errorf("%w: namespace %q", ErrNotFound, name).
+	ErrAlreadyClosed      = errors.New("already closed")
+	ErrAlreadyExists      = errors.New("already exists")
+	ErrBadVersion         = errors.New("bad version")
+	ErrDataCorrupted      = errors.New("data corrupted")
+	ErrFailedPrecondition = errors.New("failed precondition")
+	ErrInvalidArgument    = errors.New("invalid argument")
+	ErrNotFound           = errors.New("not found")
+	ErrNotImplemented     = errors.New("not implemented")
+	ErrUnauthenticated    = errors.New("unauthenticated")
+	ErrUnavailable        = errors.New("unavailable")
+	// The special errors, which a caller tells apart to react to that failure on its own.
 	ErrEmptyPayload          = errors.New("empty payload")
 	ErrEmptySegment          = errors.New("segment has no entries")
 	ErrFeaturesRenegotiation = errors.New("the term features must be negotiated again")
