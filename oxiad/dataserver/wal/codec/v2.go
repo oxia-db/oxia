@@ -106,7 +106,7 @@ func (v *V2) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 
 	// It shouldn't happen when normal reading
 	if payloadSize == 0 {
-		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrEmptyPayload, "unexpected empty payload")
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrWALEmptyPayload, "unexpected empty payload")
 	}
 
 	expectSize := uint64(payloadSize) + uint64(v.HeaderSize)
@@ -214,7 +214,7 @@ func (v *V2) RecoverIndex(buf []byte, startFileOffset uint32, baseEntryOffset in
 		var payloadCrc uint32
 		var err error
 		if payloadSize, _, payloadCrc, err = v.ReadHeaderWithValidation(buf, newFileOffset); err != nil {
-			if errors.Is(err, ErrEmptyPayload) {
+			if errors.Is(err, errs.ErrWALEmptyPayload) {
 				// we might read the end of the segment.
 				break
 			}

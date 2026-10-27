@@ -141,7 +141,7 @@ func TestLeaderController_SplitChildCopiesParent(t *testing.T) {
 	_, err = lc.WriteBlock(ctx, &proto.WriteRequest{Shard: &shard, Puts: []*proto.PutRequest{{
 		Key: "seq", Value: []byte("seq"), PartitionKey: &left[0], SequenceKeyDelta: []uint64{0},
 	}}})
-	assert.ErrorIs(t, err, database.ErrWriteRejected)
+	assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 	// A conditional write with the version id the parent returned
 	current, err := readAll(ctx, lc, &proto.ReadRequest{Shard: &shard, Gets: []*proto.GetRequest{{Key: left[1]}}})
 	require.NoError(t, err)

@@ -1765,7 +1765,7 @@ func TestWalAppendRejectsNegativeOffset(t *testing.T) {
 func TestWalAppendRejectsEmptyEntry(t *testing.T) {
 	f, w := createWal(t)
 
-	assert.ErrorIs(t, w.AppendAsync(&proto.LogEntry{}), codec.ErrEmptyPayload)
+	assert.ErrorIs(t, w.AppendAsync(&proto.LogEntry{}), errs.ErrWALEmptyPayload)
 	assert.EqualValues(t, InvalidOffset, w.LastOffset())
 
 	assert.NoError(t, w.Close())
@@ -1794,7 +1794,7 @@ func TestWalAppendRejectsEntryLargerThanSegment(t *testing.T) {
 	appendEntries(t, w, 1, 0, 0, "v")
 
 	err := w.Append(&proto.LogEntry{Term: 1, Offset: 1, Value: make([]byte, 256)})
-	assert.ErrorIs(t, err, ErrSegmentFull)
+	assert.ErrorIs(t, err, errs.ErrWALSegmentFull)
 	assert.EqualValues(t, 0, w.LastOffset())
 
 	assert.NoError(t, w.Close())

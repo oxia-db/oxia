@@ -48,8 +48,6 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 )
 
-var ErrFeaturesRenegotiation = fmt.Errorf("%w: features changed", errs.ErrFailedPrecondition)
-
 type Election struct {
 	logger    *slog.Logger
 	ctx       context.Context
@@ -886,14 +884,14 @@ func (e *Election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	// failing every election until they are back.
 	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
 		e.requiredFeatures = unionFeatures(e.requiredFeatures, enabled)
-		return fmt.Errorf("%w: features %v are already enabled on the shard", ErrFeaturesRenegotiation, missing)
+		return fmt.Errorf("%w: features %v are already enabled on the shard", errs.ErrShardFeaturesRenegotiation, missing)
 	}
 
 	// A handshake completed while fencing the ensemble: pin the features that
 	// the whole ensemble supports now, or they would stay disabled until the
 	// next election.
 	if added := feature.Missing(negotiate(features, len(ensemble)), negotiated); len(added) > 0 {
-		return fmt.Errorf("%w: the ensemble now supports features %v", ErrFeaturesRenegotiation, added)
+		return fmt.Errorf("%w: the ensemble now supports features %v", errs.ErrShardFeaturesRenegotiation, added)
 	}
 	return nil
 }
@@ -978,7 +976,7 @@ func (e *Election) Start() *proto.DataServerIdentity {
 			)
 			return
 		}
-		if errors.Is(err, ErrFeaturesRenegotiation) {
+		if errors.Is(err, errs.ErrShardFeaturesRenegotiation) {
 			e.logger.Info(
 				"Leader election is retrying to pin a different feature set",
 				slog.Int64("term", term),

@@ -1529,8 +1529,8 @@ func TestLeaderController_RejectedWrite(t *testing.T) {
 	assert.Equal(t, "s-00000000000000000001-00000000000000000001", results[1].GetKey())
 
 	_, err = lc.WriteBlock(context.Background(), sequentialPut(1))
-	assert.ErrorIs(t, err, database.ErrWriteRejected)
-	assert.ErrorIs(t, err, database.ErrInvalidSequentialPut)
+	assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
+	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialPut)
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, commitOffset)

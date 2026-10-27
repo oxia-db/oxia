@@ -479,7 +479,7 @@ func (t *wal) appendAsync0(entry *proto.LogEntry, previousCrc *uint32) error {
 	}
 
 	if err = t.currentSegment.Append(entry.Offset, val); err != nil {
-		if !errors.Is(err, ErrSegmentFull) {
+		if !errors.Is(err, errs.ErrWALSegmentFull) {
 			t.writeErrors.Inc()
 			return err
 		}
@@ -879,7 +879,7 @@ func (t *wal) recoverWal() error {
 		if lastCrc, err = t.readOnlySegments.GetLastCrc(lastSegment); err == nil {
 			break
 		}
-		if !errors.Is(err, ErrEmptySegment) {
+		if !errors.Is(err, errs.ErrWALEmptySegment) {
 			return err
 		}
 		// The segment preceding lastSegment has no recoverable entries: its

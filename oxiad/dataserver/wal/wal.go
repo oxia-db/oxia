@@ -16,20 +16,13 @@ package wal
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"time"
 
 	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/common/proto"
 	time2 "github.com/oxia-db/oxia/common/time"
-	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/vfs"
-)
-
-var (
-	ErrEmptySegment = fmt.Errorf("%w: empty segment", errs.ErrNotFound)
-	ErrSegmentFull  = fmt.Errorf("%w: segment full", errs.ErrFailedPrecondition)
 )
 
 var (

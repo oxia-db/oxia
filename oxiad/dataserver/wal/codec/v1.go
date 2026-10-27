@@ -92,7 +92,7 @@ func (v *V1) ReadHeaderWithValidation(buf []byte, startFileOffset uint32) (paylo
 	payloadSize = ReadInt(buf, startFileOffset)
 	// It shouldn't happen when normal reading
 	if payloadSize == 0 {
-		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(ErrEmptyPayload, "unexpected empty payload")
+		return payloadSize, previousCrc, payloadCrc, errors.Wrapf(errs.ErrWALEmptyPayload, "unexpected empty payload")
 	}
 	expectSize := uint64(payloadSize) + uint64(v.HeaderSize)
 	// overflow checking

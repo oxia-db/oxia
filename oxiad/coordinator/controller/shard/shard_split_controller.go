@@ -29,6 +29,7 @@ import (
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -1391,7 +1392,7 @@ func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.
 	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
 		sc.requiredFeatures[childId] = unionFeatures(sc.requiredFeatures[childId], enabled)
 		return fmt.Errorf("%w: features %v are already enabled on child shard %d",
-			ErrFeaturesRenegotiation, missing, childId)
+			errs.ErrShardFeaturesRenegotiation, missing, childId)
 	}
 	return nil
 }

@@ -256,10 +256,10 @@ func (ms *readWriteSegment) Append(offset int64, data []byte) error {
 	defer ms.Unlock()
 
 	if len(data) == 0 {
-		return codec.ErrEmptyPayload
+		return errs.ErrWALEmptyPayload
 	}
 	if !ms.HasSpace(len(data)) {
-		return ErrSegmentFull
+		return errs.ErrWALSegmentFull
 	}
 	if offset != ms.lastOffset.Load()+1 {
 		return errors.Wrap(errs.ErrInvalidArgument, "invalid next offset in wal")

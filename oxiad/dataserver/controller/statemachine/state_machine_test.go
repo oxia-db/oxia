@@ -25,6 +25,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -354,7 +355,7 @@ func TestApplyLogEntry_RejectedWrite(t *testing.T) {
 
 		_, err := proposal.Apply(leaderDB, database.NoOpCallback)
 		if offset == 1 {
-			assert.ErrorIs(t, err, database.ErrWriteRejected)
+			assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 		} else {
 			assert.NoError(t, err)
 		}
