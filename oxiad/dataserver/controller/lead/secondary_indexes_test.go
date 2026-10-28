@@ -317,6 +317,53 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+func TestSecondaryIndexRangeScanWithoutValues(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	walFactory := newTestWalFactory(t)
+
+	lc, _ := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
+	_, _ = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	_, _ = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	defer func() {
+		assert.NoError(t, lc.Close())
+		assert.NoError(t, kvFactory.Close())
+		assert.NoError(t, walFactory.Close())
+	}()
+
+	_, err := lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts: []*proto.PutRequest{
+			{Key: "/a", Value: []byte("0"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "my-idx", SecondaryKey: "1"}}},
+			{Key: "/b", Value: []byte("1"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "my-idx", SecondaryKey: "0"}}},
+		},
+	})
+	require.NoError(t, err)
+
+	results, err := scanAll(context.Background(), lc, &proto.RangeScanRequest{
+		Shard:              &shard,
+		StartInclusive:     "0",
+		EndExclusive:       "2",
+		SecondaryIndexName: pb.String("my-idx"),
+		IncludeValues:      new(false),
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.Equal(t, "/b", results[0].GetKey())
+	assert.Equal(t, pb.String("0"), results[0].SecondaryIndexKey)
+	assert.Nil(t, results[0].Value)
+	assert.NotNil(t, results[0].Version)
+	assert.Equal(t, "/a", results[1].GetKey())
+	assert.Equal(t, pb.String("1"), results[1].SecondaryIndexKey)
+	assert.Nil(t, results[1].Value)
+	assert.NotNil(t, results[1].Version)
+}
+
 // An index range scan reads the records as they were when it started, like the
 // entries of the index: a record deleted since, or moved to another secondary
 // key, comes as it was, with its entry.

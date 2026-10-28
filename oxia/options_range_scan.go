@@ -16,6 +16,7 @@ package oxia
 
 type rangeScanOptions struct {
 	listOptions
+	includeValue bool
 }
 
 // RangeScanOption represents an option for the [SyncClient.RangeScan] operation.
@@ -24,7 +25,7 @@ type RangeScanOption interface {
 }
 
 func newRangeScanOptions(opts []RangeScanOption) *rangeScanOptions {
-	rangeScanOpts := &rangeScanOptions{}
+	rangeScanOpts := &rangeScanOptions{includeValue: true}
 	for _, opt := range opts {
 		opt.applyRangeScan(rangeScanOpts)
 	}

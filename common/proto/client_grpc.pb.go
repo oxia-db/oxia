@@ -99,8 +99,8 @@ type OxiaClientClient interface {
 	// Clients should send an equivalent request to all respective shards,
 	// unless a particular partition key was specified.
 	//
-	// Use RangeScan instead. The servers keep serving List for the clients
-	// that use it.
+	// Use RangeScan with include_values = false instead. The servers keep serving List for
+	// the clients that use it.
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListResponse], error)
 	// *
 	// Requests all the records between a range of keys.
@@ -347,8 +347,8 @@ type OxiaClientServer interface {
 	// Clients should send an equivalent request to all respective shards,
 	// unless a particular partition key was specified.
 	//
-	// Use RangeScan instead. The servers keep serving List for the clients
-	// that use it.
+	// Use RangeScan with include_values = false instead. The servers keep serving List for
+	// the clients that use it.
 	List(*ListRequest, grpc.ServerStreamingServer[ListResponse]) error
 	// *
 	// Requests all the records between a range of keys.

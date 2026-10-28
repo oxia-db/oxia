@@ -568,6 +568,10 @@ func (m *RangeScanRequest) CloneVT() *RangeScanRequest {
 		tmpVal := *rhs
 		r.SecondaryIndexName = &tmpVal
 	}
+	if rhs := m.IncludeValues; rhs != nil {
+		tmpVal := *rhs
+		r.IncludeValues = &tmpVal
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -1603,6 +1607,9 @@ func (this *RangeScanRequest) EqualVT(that *RangeScanRequest) bool {
 		return false
 	}
 	if this.EndInclusive != that.EndInclusive {
+		return false
+	}
+	if p, q := this.IncludeValues, that.IncludeValues; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -3169,6 +3176,16 @@ func (m *RangeScanRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.IncludeValues != nil {
+		i--
+		if *m.IncludeValues {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.EndInclusive {
 		i--
 		if m.EndInclusive {
@@ -4368,6 +4385,9 @@ func (m *RangeScanRequest) SizeVT() (n int) {
 		n += 2
 	}
 	if m.EndInclusive {
+		n += 2
+	}
+	if m.IncludeValues != nil {
 		n += 2
 	}
 	n += len(m.unknownFields)
@@ -7698,6 +7718,27 @@ func (m *RangeScanRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.EndInclusive = bool(v != 0)
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeValues", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			b := bool(v != 0)
+			m.IncludeValues = &b
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -12284,6 +12325,27 @@ func (m *RangeScanRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 				}
 			}
 			m.EndInclusive = bool(v != 0)
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeValues", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			b := bool(v != 0)
+			m.IncludeValues = &b
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

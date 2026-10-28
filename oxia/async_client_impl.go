@@ -607,7 +607,7 @@ func (c *clientImpl) List(ctx context.Context, minKeyInclusive string, maxKeyExc
 // rangeScanFromShard passes each record of the shard to onResult, with its
 // secondary key when the scan uses an index, or the error of the scan.
 func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive string, maxKeyExclusive string,
-	opts *listOptions, shardId int64, onResult func(result GetResult, secondaryIndexKey *string)) {
+	opts *rangeScanOptions, shardId int64, onResult func(result GetResult, secondaryIndexKey *string)) {
 	request := &proto.RangeScanRequest{
 		Shard:               &shardId,
 		StartInclusive:      minKeyInclusive,
@@ -615,6 +615,9 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		SecondaryIndexName:  opts.secondaryIndexName,
 		IncludeInternalKeys: opts.showInternalKeys,
 		EndInclusive:        opts.endInclusive,
+	}
+	if !opts.includeValue {
+		request.IncludeValues = new(false)
 	}
 
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
@@ -628,6 +631,9 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		}
 		responded = true
 		for _, record := range response.Records {
+			if !opts.includeValue {
+				record.Value = nil
+			}
 			onResult(toGetResult(record, "", nil), record.SecondaryIndexKey)
 		}
 		return nil
@@ -648,7 +654,7 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 		// If the partition key is specified, we only need to make the request to one shard
 		shardId := c.getShardForKey("", opts)
 		go func() {
-			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, &opts.listOptions, shardId,
+			c.rangeScanFromShard(ctx, minKeyInclusive, maxKeyExclusive, opts, shardId,
 				func(result GetResult, _ *string) { outCh <- result })
 			close(outCh)
 		}()
@@ -663,7 +669,7 @@ func (c *clientImpl) RangeScan(ctx context.Context, minKeyInclusive string, maxK
 			ch := make(chan rangeScanResult)
 			channels[i] = ch
 			go func() {
-				c.rangeScanFromShard(scanCtx, minKeyInclusive, maxKeyExclusive, &opts.listOptions, shardIdPtr,
+				c.rangeScanFromShard(scanCtx, minKeyInclusive, maxKeyExclusive, opts, shardIdPtr,
 					func(result GetResult, secondaryIndexKey *string) {
 						ch <- rangeScanResult{result, secondaryIndexKey}
 					})

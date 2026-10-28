@@ -372,7 +372,7 @@ func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db database
 		return nil, err
 	}
 
-	it := &secondaryIndexRangeIterator{listIt: listIt}
+	it := &secondaryIndexRangeIterator{listIt: listIt, includeValue: req.IncludeValues == nil || *req.IncludeValues}
 	it.readRecord()
 	return it, nil
 }
@@ -383,7 +383,8 @@ func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db database
 // a record, which the session ends left behind without
 // FEATURE_EPHEMERAL_SECONDARY_INDEX_CLEANUP.
 type secondaryIndexRangeIterator struct {
-	listIt *secondaryIndexListIterator
+	listIt       *secondaryIndexListIterator
+	includeValue bool
 	// The record of the entry that the iterator is on, or the error of its read
 	record *proto.GetResponse
 	err    error
@@ -416,7 +417,7 @@ func (it *secondaryIndexRangeIterator) Value() (*proto.GetResponse, error) {
 func (it *secondaryIndexRangeIterator) readRecord() bool {
 	for ; it.listIt.Valid(); it.listIt.Next() {
 		primaryKey, secondaryKey := it.listIt.keys()
-		it.record, it.err = it.listIt.it.Record(primaryKey, true)
+		it.record, it.err = it.listIt.it.Record(primaryKey, it.includeValue)
 		if it.err != nil {
 			return true
 		}
