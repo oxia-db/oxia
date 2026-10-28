@@ -519,9 +519,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 		case e.changeEnsemble != nil && current.Split != nil:
 			return false, fmt.Errorf("%w: the shard is part of a split", errs.ErrShardNotElectable)
 		}
-		if current.GetStatusOrDefault() != proto.ShardStatusDeleting {
-			current.Status = e.meta.Status
-		}
+		current.Status = e.meta.Status
 		current.Term = e.meta.Term
 		current.Leader = e.meta.Leader
 		current.Ensemble = e.meta.Ensemble
