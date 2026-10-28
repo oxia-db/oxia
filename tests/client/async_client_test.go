@@ -1098,6 +1098,52 @@ func TestSyncClientImpl_RangeScan(t *testing.T) {
 	assert.NoError(t, standaloneServer.Close())
 }
 
+func TestSyncClientImplRangeScanKeysOnly(t *testing.T) {
+	config := dataserver.NewTestConfig(t.TempDir())
+	config.NumShards = 3
+	standaloneServer, err := dataserver.NewStandalone(config)
+	require.NoError(t, err)
+	defer func() {
+		assert.NoError(t, standaloneServer.Close())
+	}()
+
+	client, err := oxia.NewSyncClient(standaloneServer.ServiceAddr())
+	require.NoError(t, err)
+	defer func() {
+		assert.NoError(t, client.Close())
+	}()
+
+	ctx := context.Background()
+	versions := map[string]oxia.Version{}
+	for i, key := range []string{"a", "b", "c"} {
+		_, version, err := client.Put(ctx, key, []byte(key), oxia.SecondaryIndex("idx", fmt.Sprint(2-i)))
+		require.NoError(t, err)
+		versions[key] = version
+	}
+
+	for _, test := range []struct {
+		name     string
+		start    string
+		end      string
+		options  []oxia.RangeScanOption
+		expected []string
+	}{
+		{"primary", "a", "d", nil, []string{"a", "b", "c"}},
+		{"index", "0", "3", []oxia.RangeScanOption{oxia.UseIndex("idx")}, []string{"c", "b", "a"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var keys []string
+			for result := range client.RangeScan(ctx, test.start, test.end, append(test.options, oxia.KeysOnly())...) {
+				require.NoError(t, result.Err)
+				assert.Nil(t, result.Value)
+				assert.Equal(t, versions[result.Key].VersionId, result.Version.VersionId)
+				keys = append(keys, result.Key)
+			}
+			assert.Equal(t, test.expected, keys)
+		})
+	}
+}
+
 func TestSyncClientImpl_RangeScanOnPartition(t *testing.T) {
 	config := dataserver.NewTestConfig(t.TempDir())
 	// Test with multiple shards to ensure correctness across shards

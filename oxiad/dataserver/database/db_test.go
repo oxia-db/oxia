@@ -1800,6 +1800,40 @@ func TestDBRangeScan(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+func TestDBRangeScanKeysOnly(t *testing.T) {
+	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
+	require.NoError(t, err)
+	defer func() {
+		assert.NoError(t, db.Close())
+		assert.NoError(t, factory.Close())
+	}()
+
+	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+		{Key: "a", Value: []byte("0")},
+		{Key: "b", Value: []byte("1")},
+	}}, wal.InvalidOffset, now(), NoOpCallback)
+	require.NoError(t, err)
+
+	it, err := db.RangeScan(&proto.RangeScanRequest{StartInclusive: "a", EndExclusive: "c", KeysOnly: true})
+	require.NoError(t, err)
+	var records []*proto.GetResponse
+	for ; it.Valid(); it.Next() {
+		record, err := it.Value()
+		require.NoError(t, err)
+		records = append(records, record)
+	}
+	require.NoError(t, it.Close())
+
+	require.Len(t, records, 2)
+	for i, key := range []string{"a", "b"} {
+		assert.Equal(t, key, records[i].GetKey())
+		assert.Nil(t, records[i].Value)
+		assert.Equal(t, int64(i), records[i].GetVersion().GetVersionId())
+	}
+}
+
 func TestDb_versionId(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)

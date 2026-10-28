@@ -679,8 +679,30 @@ func TestAsyncClientRangeScanEndInclusive(t *testing.T) {
 	}
 }
 
+// An older server ignores keys_only and sends the values: the client drops them.
+func TestAsyncClientRangeScanKeysOnlyDropsValues(t *testing.T) {
+	executor := &staticExecutor{keys: map[int64][]string{1: {"a"}, 2: {"b"}}}
+	client := newScanTestClient(executor, 1, 2)
+
+	var results []GetResult
+	for result := range client.RangeScan(context.Background(), "a", "z", KeysOnly()) {
+		require.NoError(t, result.Err)
+		results = append(results, result)
+	}
+	require.Len(t, results, 2)
+	assert.Equal(t, "a", results[0].Key)
+	assert.Nil(t, results[0].Value)
+	assert.Equal(t, "b", results[1].Key)
+	assert.Nil(t, results[1].Value)
+
+	for result := range client.RangeScan(context.Background(), "a", "z") {
+		require.NoError(t, result.Err)
+		assert.Equal(t, []byte(result.Key), result.Value)
+	}
+}
+
 // staticExecutor answers the lists and the range scans of each shard with its
-// keys, one per response, then with its error, if it has one. It sends the
+// keys, one per response, with the key as the value of a record, then with its error, if it has one. It sends the
 // keys whatever the context, like a stream whose responses were already
 // received.
 type staticExecutor struct {
@@ -713,7 +735,7 @@ func (e *staticExecutor) ExecuteRangeScan(ctx context.Context, request *proto.Ra
 	for _, keys := range responses {
 		var records []*proto.GetResponse
 		for _, key := range keys {
-			records = append(records, &proto.GetResponse{Key: new(key), Version: &proto.Version{}})
+			records = append(records, &proto.GetResponse{Key: new(key), Value: []byte(key), Version: &proto.Version{}})
 		}
 		response := &proto.RangeScanResponse{Records: records, EndInclusive: endInclusive}
 		if err := rangeScanResponseConsumer(response); err != nil {
