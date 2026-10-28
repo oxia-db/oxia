@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
 func TestIsSupported(t *testing.T) {
@@ -194,4 +195,11 @@ func TestNoOpSupplierReturnsNoFeatures(t *testing.T) {
 	result = NoOpSupplier([]*proto.DataServerIdentity{server})
 	assert.Contains(t, result, server.GetNameOrDefault())
 	assert.Empty(t, result[server.GetNameOrDefault()])
+}
+
+func TestEnabledErrorMatchesFeaturesChanged(t *testing.T) {
+	err := &EnabledError{Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}}
+
+	assert.ErrorIs(t, err, errs.ErrShardFeaturesChanged)
+	assert.ErrorContains(t, err, "FEATURE_DB_CHECKSUM")
 }

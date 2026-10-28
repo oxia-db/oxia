@@ -150,22 +150,18 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 		ChildShardIds: []int64{leftChildId, rightChildId},
 		SplitPoint:    sp,
 	}
-	var parentErr error
-	if err := c.metadata.PatchNamespaceStatus(namespace, func(status *proto.NamespaceStatus) bool {
+	if err := c.metadata.PatchNamespaceStatus(namespace, func(status *proto.NamespaceStatus) (bool, error) {
 		shards := status.Shards
 		parent := shards[parentShardId]
-		if parentErr = validateSplitParent(namespace, parentShardId, parent); parentErr != nil {
-			return false
+		if err := validateSplitParent(namespace, parentShardId, parent); err != nil {
+			return false, err
 		}
 		// Create split metadata for parent
 		parent.Split = pb.CloneOf(parentSplit)
 		maps.Copy(shards, children)
-		return true
+		return true, nil
 	}); err != nil {
 		return 0, 0, errors.Wrap(err, "failed to persist the split")
-	}
-	if parentErr != nil {
-		return 0, 0, parentErr
 	}
 
 	c.logger.Info("Split initiated",

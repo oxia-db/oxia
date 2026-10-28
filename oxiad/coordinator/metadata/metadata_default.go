@@ -303,17 +303,23 @@ func (m *defaultMetadata) GetNamespaceStatus(namespace string) (commonobject.Bor
 
 func (m *defaultMetadata) PatchNamespaceStatus(
 	namespace string,
-	modify func(status *commonproto.NamespaceStatus) bool,
+	modify func(status *commonproto.NamespaceStatus) (bool, error),
 ) error {
 	namespaceExists := true
 	if err := m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
 		ns, exist := clusterStatus.Namespaces[namespace]
 		namespaceExists = exist
-		updated := exist && modify(ns)
-		if updated && len(ns.Shards) == 0 {
+		if !exist {
+			return clusterStatus, false, nil
+		}
+		updated, err := modify(ns)
+		if err != nil || !updated {
+			return clusterStatus, false, err
+		}
+		if len(ns.Shards) == 0 {
 			delete(clusterStatus.Namespaces, namespace)
 		}
-		return clusterStatus, updated, nil
+		return clusterStatus, true, nil
 	}); err != nil {
 		return err
 	}
@@ -369,6 +375,18 @@ func (m *defaultMetadata) GetShardStatus(namespace string, shard int64) (commono
 		return commonobject.Borrowed[*commonproto.ShardMetadata]{}, false, nil
 	}
 	return commonobject.Borrow(shardStatus), true, nil
+}
+
+func (m *defaultMetadata) PatchShardStatus(namespace string, shard int64,
+	modify func(shardMetadata *commonproto.ShardMetadata) (bool, error)) error {
+	return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		current, exists := clusterStatus.Namespaces[namespace].GetShards()[shard]
+		if !exists {
+			return clusterStatus, false, fmt.Errorf("%w: shard %d of namespace %q", errs.ErrNotFound, shard, namespace)
+		}
+		updated, err := modify(current)
+		return clusterStatus, updated, err
+	})
 }
 
 func (m *defaultMetadata) UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) error {

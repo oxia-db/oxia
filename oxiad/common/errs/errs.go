@@ -54,6 +54,7 @@ var (
 	ErrDBInvalidSystemRecord  = fmt.Errorf("%w: invalid system record", ErrInvalidArgument)
 	ErrDBWriteRejected        = fmt.Errorf("%w: write rejected", ErrFailedPrecondition)
 	ErrShardFeaturesChanged   = fmt.Errorf("%w: features changed", ErrFailedPrecondition)
+	ErrShardNotElectable      = fmt.Errorf("%w: not electable", ErrFailedPrecondition)
 	ErrShardNotMember         = fmt.Errorf("%w: not member", ErrNotFound)
 	ErrMetaBadVersion         = fmt.Errorf("%w: metadata bad version", ErrConflict)
 )

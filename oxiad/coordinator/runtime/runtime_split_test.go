@@ -352,7 +352,7 @@ func TestRuntimeRestartInProgressSplitsResumesPastPointOfNoReturn(t *testing.T) 
 
 	// The previous coordinator elected the child leaders at the parent's term,
 	// then moved the split past the point of no return
-	require.NoError(t, r.metadata.PatchNamespaceStatus(constant.DefaultNamespace, func(status *proto.NamespaceStatus) bool {
+	require.NoError(t, r.metadata.PatchNamespaceStatus(constant.DefaultNamespace, func(status *proto.NamespaceStatus) (bool, error) {
 		shards := status.Shards
 		parent := shards[splitParentShard]
 		parent.Term = splitParentTerm + 1
@@ -366,7 +366,7 @@ func TestRuntimeRestartInProgressSplitsResumesPastPointOfNoReturn(t *testing.T) 
 			child.Leader = leader
 			child.Split.Phase = proto.SplitPhaseFinalize
 		}
-		return true
+		return true, nil
 	}))
 
 	// The split controller fences the parent and re-elects the children, then
@@ -744,7 +744,7 @@ func TestRuntimeInitiateSplitFailsWithoutChanges(t *testing.T) {
 			r.ensembleSelector = failingEnsembleSelector{succeeding: 1, calls: new(0)}
 		}, err: "failed to select ensemble for right child"},
 		{name: "status write failed", setup: func(_ *runtime, m *fakeMetadata) {
-			m.patchNamespaceStatus = func(string, func(*proto.NamespaceStatus) bool) error { return metadataErr }
+			m.patchNamespaceStatus = func(string, func(*proto.NamespaceStatus) (bool, error)) error { return metadataErr }
 		}, err: "failed to persist the split"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

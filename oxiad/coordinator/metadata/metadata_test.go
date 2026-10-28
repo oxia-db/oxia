@@ -336,10 +336,10 @@ func TestMetadataPatchNamespaceStatusDeletesEmptiedNamespace(t *testing.T) {
 	newNamespaceStatus := func() *commonproto.NamespaceStatus {
 		return &commonproto.NamespaceStatus{Shards: map[int64]*commonproto.ShardMetadata{0: {}, 1: {}}}
 	}
-	deleteShard := func(shard int64) func(*commonproto.NamespaceStatus) bool {
-		return func(status *commonproto.NamespaceStatus) bool {
+	deleteShard := func(shard int64) func(*commonproto.NamespaceStatus) (bool, error) {
+		return func(status *commonproto.NamespaceStatus) (bool, error) {
 			delete(status.Shards, shard)
-			return true
+			return true, nil
 		}
 	}
 	require.NoError(t, metadata.CreateNamespaceStatus("default", newNamespaceStatus()))
@@ -380,12 +380,12 @@ func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
 
 	// Several shards are updated in a namespace that exists, and nothing is
 	// stored when the update returns false
-	require.ErrorIs(t, metadata.PatchNamespaceStatus("other", func(*commonproto.NamespaceStatus) bool {
-		return true
+	require.ErrorIs(t, metadata.PatchNamespaceStatus("other", func(*commonproto.NamespaceStatus) (bool, error) {
+		return true, nil
 	}), errs.ErrNotFound)
-	require.NoError(t, metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) bool {
+	require.NoError(t, metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) (bool, error) {
 		status.Shards[0].Term = 3
-		return false
+		return false, nil
 	}))
 	shard, _, err = metadata.GetShardStatus("default", 0)
 	require.NoError(t, err)
@@ -508,9 +508,9 @@ func TestMetadataStatusWritesReturnWriteError(t *testing.T) {
 			return metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2})
 		}},
 		{"PatchNamespaceStatus", func(metadata Metadata) error {
-			return metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) bool {
+			return metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) (bool, error) {
 				status.Shards[0].Term = 2
-				return true
+				return true, nil
 			})
 		}},
 		{"DeleteShardStatus", func(metadata Metadata) error {
@@ -554,9 +554,9 @@ func TestMetadataStatusWritersGiveUpOnceCanceled(t *testing.T) {
 	require.Error(t, metadata.CreateNamespaceStatus("other", &commonproto.NamespaceStatus{}))
 	require.Nil(t, metadata.DeleteNamespaceStatus("default").UnsafeBorrow())
 	require.Error(t, metadata.UpdateShardStatus("default", 0, &commonproto.ShardMetadata{Term: 2}))
-	require.Error(t, metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) bool {
+	require.Error(t, metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) (bool, error) {
 		status.Shards[0].Term = 2
-		return true
+		return true, nil
 	}))
 	require.Error(t, metadata.DeleteShardStatus("default", 0))
 

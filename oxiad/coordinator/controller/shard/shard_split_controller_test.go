@@ -39,7 +39,6 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
-	"github.com/oxia-db/oxia/oxiad/coordinator/controller/shard/election"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -759,8 +758,15 @@ func (m *writeObservingMetadata) UpdateShardStatus(namespace string, shard int64
 	return err
 }
 
-func (m *writeObservingMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+func (m *writeObservingMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 	err := m.Metadata.PatchNamespaceStatus(namespace, modify)
+	m.afterWrite()
+	return err
+}
+
+func (m *writeObservingMetadata) PatchShardStatus(namespace string, shard int64,
+	modify func(*proto.ShardMetadata) (bool, error)) error {
+	err := m.Metadata.PatchShardStatus(namespace, shard, modify)
 	m.afterWrite()
 	return err
 }
@@ -1687,7 +1693,7 @@ type patchFailingMetadata struct {
 	failures atomic.Int32
 }
 
-func (m *patchFailingMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+func (m *patchFailingMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 	if m.failures.Add(-1) >= 0 {
 		return errors.New("store unavailable")
 	}
@@ -2272,8 +2278,13 @@ func (m *holdingMetadata) UpdateShardStatus(namespace string, shard int64, shard
 	return m.write(func() error { return m.Metadata.UpdateShardStatus(namespace, shard, shardMetadata) })
 }
 
-func (m *holdingMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+func (m *holdingMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 	return m.write(func() error { return m.Metadata.PatchNamespaceStatus(namespace, modify) })
+}
+
+func (m *holdingMetadata) PatchShardStatus(namespace string, shard int64,
+	modify func(*proto.ShardMetadata) (bool, error)) error {
+	return m.write(func() error { return m.Metadata.PatchShardStatus(namespace, shard, modify) })
 }
 
 // requireClosed waits for the channel to be closed.
@@ -2339,7 +2350,7 @@ func TestSplitController_ParentElectionAfterPointOfNoReturn(t *testing.T) {
 	// ...and makes its first status update once Finalize fenced the parent
 	split := newHoldingMetadata(metadata, func() bool {
 		parent, _ := testShardMetadata(metadata, constant.DefaultNamespace, 0)
-		return election.IsFinalizingSplitParent(parent)
+		return isFinalizingSplitParent(parent)
 	})
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -2356,7 +2367,7 @@ func TestSplitController_ParentElectionAfterPointOfNoReturn(t *testing.T) {
 	requireClosed(t, holding.written, "the holding's first status update")
 
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
-	assert.True(t, election.IsFinalizingSplitParent(parent), "split metadata: %v", parent.GetSplit())
+	assert.True(t, isFinalizingSplitParent(parent), "split metadata: %v", parent.GetSplit())
 	assert.Equal(t, proto.ShardStatusElection, parent.GetStatus())
 	assert.EqualValues(t, 6, parent.GetTerm())
 
@@ -3106,7 +3117,7 @@ func TestSplitControllerRunFinalizeReturnsDetachError(t *testing.T) {
 	var patches atomic.Int32
 	failing := &hookedMetadata{
 		Metadata: metadata,
-		patchNamespaceStatus: func(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+		patchNamespaceStatus: func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 			// The children's new terms are written first, then their detachment
 			if patches.Add(1) == 3 {
 				return errors.New("store unavailable")
@@ -3410,4 +3421,11 @@ func assertSplitAborted(t *testing.T, metadata coordmetadata.Metadata, listener 
 	default:
 		assert.Fail(t, "the split abort was not notified")
 	}
+}
+
+// isFinalizingSplitParent reports whether a shard is the parent of a split past
+// the point of no return.
+func isFinalizingSplitParent(meta *proto.ShardMetadata) bool {
+	split := meta.GetSplit()
+	return len(split.GetChildShardIds()) > 0 && split.GetPhaseOrDefault() == proto.SplitPhaseFinalize
 }

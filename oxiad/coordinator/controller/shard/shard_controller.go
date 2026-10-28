@@ -91,8 +91,9 @@ type Controller interface {
 	//     leader catch up, the shard is part of a split, or the features of a
 	//     member aren't known yet; errs.ErrInvalidArgument if the
 	//     new ensemble doesn't support the features that the current one
-	//     negotiated; and constant.ErrResourceUnavailable while the controller
-	//     is closing.
+	//     negotiated; constant.ErrResourceUnavailable while the controller
+	//     is closing; and with the error of its election otherwise. The change
+	//     is tried once.
 	//
 	// It doesn't wait for the action, only for room in the queue of the
 	// changes of the ensemble.

@@ -18,9 +18,11 @@
 package feature
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
 type Checker interface {
@@ -144,4 +146,18 @@ func NoOpSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Fe
 // support.
 func NegotiateDataServers(dataServers []*proto.DataServerIdentity, supplier Supplier) []proto.Feature {
 	return Negotiate(supplier(dataServers), len(dataServers))
+}
+
+// EnabledError reports features enabled on a shard that its term didn't pin:
+// the next term must pin them.
+type EnabledError struct {
+	Features []proto.Feature
+}
+
+func (e *EnabledError) Error() string {
+	return fmt.Sprintf("%v: features %v are already enabled on the shard", errs.ErrShardFeaturesChanged, e.Features)
+}
+
+func (*EnabledError) Unwrap() error {
+	return errs.ErrShardFeaturesChanged
 }

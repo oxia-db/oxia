@@ -287,7 +287,7 @@ func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) error {
 			slog.String("phase", newPhase.String()))
 		return nil
 	}
-	return sc.metadata.PatchNamespaceStatus(sc.namespace, func(status *proto.NamespaceStatus) bool {
+	return sc.metadata.PatchNamespaceStatus(sc.namespace, func(status *proto.NamespaceStatus) (bool, error) {
 		shards := status.Shards
 		changed := false
 		for _, shardId := range []int64{sc.parentShardId, sc.leftChildId, sc.rightChildId} {
@@ -296,7 +296,7 @@ func (sc *SplitController) updatePhase(newPhase proto.SplitPhase) error {
 				changed = true
 			}
 		}
-		return changed
+		return changed, nil
 	})
 }
 
@@ -776,7 +776,7 @@ func (sc *SplitController) runCutover() error {
 // then has stored a new term: the leader it elects accepts writes that the
 // children never receive, so the split must not complete. A leader election
 // makes the same check the other way, in the update that starts it (see
-// Election.persistNewTerm). passPointOfNoReturn reports whether the split
+// newTerm in the election package). passPointOfNoReturn reports whether the split
 // passed the point of no return.
 func (sc *SplitController) passPointOfNoReturn(frozenLeader *proto.DataServerIdentity, frozenTerm int64) (bool, error) {
 	setFinalizePhase := func(meta *proto.ShardMetadata) {
@@ -995,7 +995,7 @@ func (sc *SplitController) removeSplit() error {
 			slog.String("namespace", sc.namespace))
 		return nil
 	}
-	return sc.metadata.PatchNamespaceStatus(sc.namespace, func(status *proto.NamespaceStatus) bool {
+	return sc.metadata.PatchNamespaceStatus(sc.namespace, func(status *proto.NamespaceStatus) (bool, error) {
 		shards := status.Shards
 		changed := false
 		for _, childId := range []int64{sc.leftChildId, sc.rightChildId} {
@@ -1008,7 +1008,7 @@ func (sc *SplitController) removeSplit() error {
 			parent.Split = nil
 			changed = true
 		}
-		return changed
+		return changed, nil
 	})
 }
 
@@ -1090,24 +1090,24 @@ func (sc *SplitController) updateShardsMetaIf(
 	}
 	var notFound error
 	applied := false
-	err = sc.metadata.PatchNamespaceStatus(sc.namespace, func(status *proto.NamespaceStatus) bool {
+	err = sc.metadata.PatchNamespaceStatus(sc.namespace, func(status *proto.NamespaceStatus) (bool, error) {
 		shards := status.Shards
 		notFound = nil
 		applied = false
 		for shardId := range updates {
 			if _, exists := shards[shardId]; !exists {
 				notFound = errors.Errorf("shard %d not found while updating shards metadata", shardId)
-				return false
+				return false, nil
 			}
 		}
 		if precondition != nil && !precondition(shards) {
-			return false
+			return false, nil
 		}
 		for shardId, fn := range updates {
 			fn(shards[shardId])
 		}
 		applied = true
-		return true
+		return true, nil
 	})
 	if err != nil {
 		return false, err

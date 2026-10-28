@@ -539,11 +539,28 @@ func (m *mockNamespaceMetadata) UpdateShardStatus(namespace string, shard int64,
 	return nil
 }
 
-func (m *mockNamespaceMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+func (m *mockNamespaceMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
 	ns, exists := cloned.GetNamespaces()[namespace]
-	if !exists || !modify(ns) {
+	if !exists {
 		return nil
+	}
+	if updated, err := modify(ns); err != nil || !updated {
+		return err
+	}
+	m.status = cloned
+	return nil
+}
+
+func (m *mockNamespaceMetadata) PatchShardStatus(namespace string, shard int64,
+	modify func(*proto.ShardMetadata) (bool, error)) error {
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	shardMetadata, exists := cloned.GetNamespaces()[namespace].GetShards()[shard]
+	if !exists {
+		return nil
+	}
+	if updated, err := modify(shardMetadata); err != nil || !updated {
+		return err
 	}
 	m.status = cloned
 	return nil

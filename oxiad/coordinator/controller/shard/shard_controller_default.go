@@ -57,19 +57,19 @@ const (
 var _ Controller = &controller{}
 
 type controller struct {
-	ctx                                 context.Context
-	ctxCancel                           context.CancelFunc
-	wg                                  sync.WaitGroup
-	logger                              *slog.Logger
-	namespace                           string
-	shard                               int64
-	namespaceConfig                     *proto.Namespace
-	periodicTasksInterval               time.Duration
-	rpc                                 rpc.ControllerRPCProvider
-	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
-	eventListener                       controllerapi.ShardEventListener
-	metadataStore                       coordmetadata.Metadata
-	dataServerSupportedFeaturesSupplier featurepkg.Supplier
+	ctx                   context.Context
+	ctxCancel             context.CancelFunc
+	wg                    sync.WaitGroup
+	logger                *slog.Logger
+	namespace             string
+	shard                 int64
+	namespaceConfig       *proto.Namespace
+	periodicTasksInterval time.Duration
+	rpc                   rpc.ControllerRPCProvider
+	leaderSelector        selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
+	eventListener         controllerapi.ShardEventListener
+	metadataStore         coordmetadata.Metadata
+	featureSupplier       featurepkg.Supplier
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
@@ -136,26 +136,26 @@ func NewController(
 	nc *proto.Namespace,
 	shardMetadata *proto.ShardMetadata,
 	metadataStore coordmetadata.Metadata,
-	dataServerSupportedFeaturesSupplier featurepkg.Supplier,
+	featureSupplier featurepkg.Supplier,
 	eventListener controllerapi.ShardEventListener,
 	rpcProvider rpc.ControllerRPCProvider,
 	periodTasksInterval time.Duration) Controller {
 	labels := metric.LabelsForShard(namespace, shard)
 	s := &controller{
-		namespace:                           namespace,
-		shard:                               shard,
-		namespaceConfig:                     nc,
-		rpc:                                 rpcProvider,
-		metadataStore:                       metadataStore,
-		dataServerSupportedFeaturesSupplier: dataServerSupportedFeaturesSupplier,
-		eventListener:                       eventListener,
-		leaderSelector:                      leaderselector.NewSelector(),
-		electionOp:                          make(chan *action.ElectionAction, chanBufferSize),
-		deleteOp:                            make(chan any, chanBufferSize),
-		dataServerFailureOp:                 make(chan *proto.DataServerIdentity, chanBufferSize),
-		changeEnsembleOp:                    make(chan *action.ChangeEnsembleAction, chanBufferSize),
-		discoveredDataServers:               make(map[string]*proto.DataServerIdentity),
-		featuresDiscoveredOp:                make(chan any, 1),
+		namespace:             namespace,
+		shard:                 shard,
+		namespaceConfig:       nc,
+		rpc:                   rpcProvider,
+		metadataStore:         metadataStore,
+		featureSupplier:       featureSupplier,
+		eventListener:         eventListener,
+		leaderSelector:        leaderselector.NewSelector(),
+		electionOp:            make(chan *action.ElectionAction, chanBufferSize),
+		deleteOp:              make(chan any, chanBufferSize),
+		dataServerFailureOp:   make(chan *proto.DataServerIdentity, chanBufferSize),
+		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
+		featuresDiscoveredOp:  make(chan any, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -258,7 +258,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
-		_, _ = s.electLeader(initShardMeta, nil)
+		_, _ = s.electLeaderWithRetries(initShardMeta)
 	default:
 		s.logger.Info(
 			"There is already a data server marked as leader on the shard, verifying",
@@ -266,7 +266,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		)
 
 		if !s.verifyCurrentEnsemble(initShardMeta) {
-			_, _ = s.electLeader(initShardMeta, nil)
+			_, _ = s.electLeaderWithRetries(initShardMeta)
 		} else {
 			s.Refresh()
 		}
@@ -365,7 +365,7 @@ func (s *controller) handleDataServerFailureWithRetries(failedDataServer *proto.
 			"Detected failure on shard leader",
 			slog.Any("leader", failedDataServer.GetNameOrDefault()),
 		)
-		_, _ = s.electLeader(shardMeta, nil)
+		_, _ = s.electLeaderWithRetries(shardMeta)
 	}
 }
 
@@ -420,7 +420,7 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 		return
 	}
 	ensemble := shardMeta.Ensemble
-	supported := featurepkg.Negotiate(s.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble))
+	supported := featurepkg.Negotiate(s.featureSupplier(ensemble), len(ensemble))
 	if len(supported) == 0 {
 		// e.g. the features of a member are not known yet
 		s.termFeaturesCheckPending = false
@@ -452,7 +452,7 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 		slog.Any("pinned-features", pinned),
 		slog.Any("features", features),
 	)
-	_, _ = s.electLeader(shardMeta, nil)
+	_, _ = s.electLeaderWithRetries(shardMeta)
 }
 
 // termFeatures returns the features pinned by the current term of the shard,
@@ -527,7 +527,7 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	// until the split ends. Checking it before the election that changes the
 	// ensemble keeps the current election of the shard running; the election
 	// checks it again, in the status update that starts it, in case a split
-	// started since (see Election.persistNewTerm).
+	// started since (see newTerm in the election package).
 	if shardMeta.Split != nil {
 		return fmt.Errorf("%w: shard is not ready for change ensemble: the shard is part of a split", errs.ErrUnavailable)
 	}
@@ -554,13 +554,13 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	}
 	targetEnsemble = append(targetEnsemble, changeEnsembleAction.To)
 
-	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
+	currentFeatures := s.featureSupplier(shardMeta.Ensemble)
 	if len(currentFeatures) != ensembleSize {
 		return fmt.Errorf("%w: shard is not ready for change ensemble: found feature info for %d of %d current ensemble data servers",
 			errs.ErrUnavailable, len(currentFeatures), ensembleSize)
 	}
 	requiredFeatures := featurepkg.Negotiate(currentFeatures, ensembleSize)
-	targetFeatureInfo := s.dataServerSupportedFeaturesSupplier(targetEnsemble)
+	targetFeatureInfo := s.featureSupplier(targetEnsemble)
 	if len(targetFeatureInfo) != len(targetEnsemble) {
 		return fmt.Errorf("%w: shard is not ready for change ensemble: found feature info for %d of %d target ensemble data servers",
 			errs.ErrUnavailable, len(targetFeatureInfo), len(targetEnsemble))
@@ -599,7 +599,7 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-	leader, err := s.electLeader(shardMeta, nil)
+	leader, err := s.electLeaderWithRetries(shardMeta)
 	if err != nil {
 		electionAction.Error(errors.Wrap(errs.ErrUnavailable, "the election failed to elect a leader"))
 		return
@@ -607,22 +607,77 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 	electionAction.Done(leader.GetNameOrDefault())
 }
 
+// electLeaderWithRetries elects a leader with a new election for each attempt,
+// each from the stored shard status.
+func (s *controller) electLeaderWithRetries(shardMeta *proto.ShardMetadata) (*proto.DataServerIdentity, error) {
+	var requiredFeatures []proto.Feature
+	retry := false
+	return backoff.RetryNotifyWithData(func() (*proto.DataServerIdentity, error) {
+		if retry {
+			current, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, fmt.Errorf("%w: shard %d", errs.ErrNotFound, s.shard)
+			}
+			shardMeta = current.UnsafeBorrow()
+		}
+		retry = true
+		leader, err := s.electLeader(shardMeta, nil, requiredFeatures)
+		var enabled *featurepkg.EnabledError
+		switch {
+		case errors.As(err, &enabled):
+			requiredFeatures = featurepkg.Union(requiredFeatures, enabled.Features)
+		case errors.Is(err, errs.ErrShardNotElectable):
+			s.logger.Info("Stopping the election", slog.Any("reason", err))
+			return nil, backoff.Permanent(err)
+		default:
+		}
+		return leader, err
+	}, oxiatime.NewBackOff(s.ctx), func(err error, duration time.Duration) {
+		s.failedLeaderElectionsCounter.Inc()
+		term := shardMeta.GetTerm()
+		switch {
+		case errors.Is(err, constant.ErrNotInitialized):
+			s.logger.Debug(
+				"Leader election is waiting for data server initialization",
+				slog.Int64("term", term),
+				slog.Duration("retry-after", duration),
+			)
+		case errors.Is(err, errs.ErrShardFeaturesChanged):
+			s.logger.Info(
+				"Leader election is retrying to pin a different feature set",
+				slog.Int64("term", term),
+				slog.String("reason", err.Error()),
+				slog.Duration("retry-after", duration),
+			)
+		default:
+			s.logger.Warn(
+				"Leader election has failed, retrying later",
+				slog.Int64("term", term),
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		}
+	})
+}
+
 // electLeader starts a new election of the shard, with its current metadata,
 // in place of the current one.
 func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction) (*proto.DataServerIdentity, error) {
+	changeEnsembleAction *action.ChangeEnsembleAction, requiredFeatures []proto.Feature) (*proto.DataServerIdentity, error) {
 	// stop the current term election
 	if s.currentElection != nil {
 		s.currentElection.Cancel()
 	}
 
 	s.currentElection = election.New(s.ctx, s.logger, s.eventListener,
-		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
-		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction,
+		s.metadataStore, s.featureSupplier, s.leaderSelector,
+		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, requiredFeatures,
 		s.leaderElectionLatencyHistogram,
 		s.newTermQuorumLatencyHistogram,
-		s.becomeLeaderLatencyHistogram,
-		s.failedLeaderElectionsCounter)
+		s.becomeLeaderLatencyHistogram)
 	return s.currentElection.Start()
 }
 
@@ -711,6 +766,10 @@ func (s *controller) Close() error {
 		// NOTE: we must wait the run goroutine to exit, otherwise
 		// the controller maybe running after close is returned.
 		s.wg.Wait()
+		// The event loop is gone: stop its election and its background tasks
+		if s.currentElection != nil {
+			s.currentElection.Cancel()
+		}
 
 	drainPendingOps:
 		for {
@@ -753,21 +812,22 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	leader, err := s.electLeader(shardMeta, changeEnsembleAction)
-	if leader == nil {
-		// The election stopped without changing the ensemble, e.g. because a
-		// split of the shard started after the validation above. The shard is
-		// as ready for a change of its ensemble as it was before this one: drop
-		// the election, which never elected a leader for its followers to catch
-		// up with, or it rejects the next changes as not ready.
+	if _, err := s.electLeader(shardMeta, changeEnsembleAction, nil); err != nil {
+		s.logger.Warn(
+			"Failed to change the ensemble",
+			slog.Any("from", changeEnsembleAction.From),
+			slog.Any("to", changeEnsembleAction.To),
+			slog.Any("error", err),
+		)
+		// Drop it, or it rejects the next changes as not ready
 		s.currentElection.Cancel()
 		s.currentElection = nil
-		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
-			errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble")))
-		return
-	}
-	if err != nil {
 		changeEnsembleAction.Error(err)
+		// A shard that can't be elected keeps its leader
+		if !errors.Is(err, errs.ErrShardNotElectable) &&
+			!channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard)) {
+			s.logger.Debug("Discarding the election after the failed change ensemble because queue is full")
+		}
 		return
 	}
 	changeEnsembleAction.Done(nil)
@@ -854,16 +914,16 @@ func (s *controller) handlePendingDeleteShard(shardMeta *proto.ShardMetadata) er
 	}
 
 	// Best-effort: if this is not persisted, the pending deletes are retried
-	_ = s.metadataStore.PatchNamespaceStatus(s.namespace, func(status *proto.NamespaceStatus) bool {
+	_ = s.metadataStore.PatchNamespaceStatus(s.namespace, func(status *proto.NamespaceStatus) (bool, error) {
 		shards := status.Shards
 		current, exists := shards[s.shard]
 		if !exists {
-			return false
+			return false, nil
 		}
 		pending := len(current.PendingDeleteShardNodes)
 		current.PendingDeleteShardNodes = slices.DeleteFunc(current.PendingDeleteShardNodes,
 			func(ds *proto.DataServerIdentity) bool { return deleted[ds.GetNameOrDefault()] })
-		return len(current.PendingDeleteShardNodes) < pending
+		return len(current.PendingDeleteShardNodes) < pending, nil
 	})
 	return nil
 }
