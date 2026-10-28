@@ -18,13 +18,19 @@ import (
 	"io"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller/shard/election"
 )
 
-// FeaturesSupplier returns the features that each data server supports, by
-// name, as their handshakes reported them.
-type FeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
+// FeaturesSupplier returns the features that each data server supports.
+type FeaturesSupplier = election.FeaturesSupplier
+
+// NegotiateFeatures returns the features that all the given data servers support.
+func NegotiateFeatures(dataServers []*proto.DataServerIdentity, supplier FeaturesSupplier) []proto.Feature {
+	return feature.Negotiate(supplier(dataServers), len(dataServers))
+}
 
 // NoOpFeaturesSupplier reports no features for any data server.
 func NoOpFeaturesSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {

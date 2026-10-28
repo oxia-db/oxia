@@ -273,14 +273,6 @@ func (sc *SplitController) currentPhase() (proto.SplitPhase, bool, error) {
 	return parentMeta.UnsafeBorrow().Split.GetPhaseOrDefault(), true, nil
 }
 
-// isFinalizingSplitParent reports whether a shard is the parent of a split past
-// the point of no return. Such a parent must never be elected again: the split
-// can only complete, and the parent is then deleted.
-func isFinalizingSplitParent(meta *proto.ShardMetadata) bool {
-	split := meta.GetSplit()
-	return len(split.GetChildShardIds()) > 0 && split.GetPhaseOrDefault() == proto.SplitPhaseFinalize
-}
-
 // updatePhase atomically updates the split phase on both parent and children,
 // on their current metadata. A failed write is returned, and the step that
 // updates the phase is retried.
@@ -484,7 +476,7 @@ func (sc *SplitController) addChildObservers(childId int64, parentLeader *proto.
 	// yet counting as supporting none, so that the parent leader refuses the
 	// child if they don't cover the features enabled on the parent: before the
 	// parent is frozen, the split can still be aborted.
-	childFeatures := negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
+	childFeatures := feature.Negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble))
 
 	for _, member := range childMeta.Ensemble {
 		_, err := sc.rpcProvider.AddFollower(sc.ctx, parentLeader, &proto.AddFollowerRequest{
@@ -1181,7 +1173,7 @@ func (sc *SplitController) fenceEnsemble(
 			continue
 		}
 		results[r.server] = r.response.GetHeadEntryId()
-		enabledFeatures = unionFeatures(enabledFeatures, r.response.GetFeaturesEnabled())
+		enabledFeatures = feature.Union(enabledFeatures, r.response.GetFeaturesEnabled())
 	}
 
 	// Require majority
@@ -1294,8 +1286,8 @@ func (sc *SplitController) reelectChild(ctx context.Context, childId int64) erro
 	// covers them: the child leader refuses to lead otherwise. The features
 	// that an earlier attempt found already enabled on the child are pinned
 	// as well (see checkChildFeatures).
-	negotiatedFeatures := unionFeatures(
-		negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble)),
+	negotiatedFeatures := feature.Union(
+		feature.Negotiate(sc.supportedFeaturesSupplier(childMeta.Ensemble), len(childMeta.Ensemble)),
 		sc.requiredFeatures[childId])
 
 	// Record the new term before fencing with it, so that every attempt uses
@@ -1379,8 +1371,8 @@ func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.
 	for dataServer := range fenced {
 		participants = append(participants, dataServer)
 	}
-	supported := negotiate(sc.supportedFeaturesSupplier(participants), len(participants))
-	if missing := feature.Missing(unionFeatures(negotiated, enabled), supported); len(missing) > 0 {
+	supported := feature.Negotiate(sc.supportedFeaturesSupplier(participants), len(participants))
+	if missing := feature.Missing(feature.Union(negotiated, enabled), supported); len(missing) > 0 {
 		return errors.Wrapf(constant.ErrUnsupportedFeatures,
 			"the ensemble of child shard %d does not support features %v already enabled on it", childId, missing)
 	}
@@ -1390,7 +1382,7 @@ func (sc *SplitController) checkChildFeatures(childId int64, negotiated []proto.
 	// enabled features even if those members' support is unknown, instead of
 	// failing every attempt until they are back.
 	if missing := feature.Missing(enabled, negotiated); len(missing) > 0 {
-		sc.requiredFeatures[childId] = unionFeatures(sc.requiredFeatures[childId], enabled)
+		sc.requiredFeatures[childId] = feature.Union(sc.requiredFeatures[childId], enabled)
 		return fmt.Errorf("%w: features %v are already enabled on child shard %d",
 			errs.ErrShardFeaturesChanged, missing, childId)
 	}
