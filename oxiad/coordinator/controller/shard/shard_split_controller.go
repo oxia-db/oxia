@@ -52,7 +52,7 @@ type SplitController struct {
 
 	// supportedFeaturesSupplier reports the features supported by each data
 	// server, used to negotiate the feature set of the children's clean terms.
-	supportedFeaturesSupplier FeaturesSupplier
+	supportedFeaturesSupplier feature.Supplier
 
 	// requiredFeatures are, for each child, the features that an earlier
 	// attempt to re-elect it found already enabled on it, which the next
@@ -89,7 +89,7 @@ type SplitControllerConfig struct {
 	// SupportedFeaturesSupplier reports the features supported by each data
 	// server. Optional: when nil, no features are negotiated for the
 	// children's clean terms.
-	SupportedFeaturesSupplier FeaturesSupplier
+	SupportedFeaturesSupplier feature.Supplier
 
 	// SplitTimeout is the maximum duration of the split up to the point of no
 	// return. If the split does not reach it within this time, it is aborted;
@@ -108,7 +108,7 @@ type SplitControllerConfig struct {
 func NewSplitController(cfg SplitControllerConfig) *SplitController {
 	supportedFeaturesSupplier := cfg.SupportedFeaturesSupplier
 	if supportedFeaturesSupplier == nil {
-		supportedFeaturesSupplier = NoOpFeaturesSupplier
+		supportedFeaturesSupplier = feature.NoOpSupplier
 	}
 	sc := &SplitController{
 		namespace:                 cfg.Namespace,

@@ -28,6 +28,7 @@ import (
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -824,7 +825,7 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	e := New(t.Context(), slog.Default(), nil, metadata, noOpFeaturesSupplier, leaderselector.NewSelector(),
+	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 		rpc, constant.DefaultNamespace, shard, shardMeta, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
@@ -1022,13 +1023,4 @@ func (statusWriteFailingMetadata) UpdateShardStatus(string, int64, *proto.ShardM
 
 func (statusWriteFailingMetadata) PatchNamespaceStatus(string, func(*proto.NamespaceStatus) bool) error {
 	return context.Canceled
-}
-
-// noOpFeaturesSupplier reports no features for any data server.
-func noOpFeaturesSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
-	features := make(map[string][]proto.Feature, len(dataServers))
-	for _, dataServer := range dataServers {
-		features[dataServer.GetNameOrDefault()] = []proto.Feature{}
-	}
-	return features
 }

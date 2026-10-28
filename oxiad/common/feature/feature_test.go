@@ -184,3 +184,14 @@ func TestNegotiateSecondaryIndexValidationRequiresFullUpgrade(t *testing.T) {
 	result = Negotiate(nodeFeatures, 3)
 	assert.Contains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
 }
+
+func TestNoOpSupplierReturnsNoFeatures(t *testing.T) {
+	result := NoOpSupplier(nil)
+	assert.NotNil(t, result)
+	assert.Empty(t, result)
+
+	server := &proto.DataServerIdentity{Internal: "node1", Public: "node1"}
+	result = NoOpSupplier([]*proto.DataServerIdentity{server})
+	assert.Contains(t, result, server.GetNameOrDefault())
+	assert.Empty(t, result[server.GetNameOrDefault()])
+}

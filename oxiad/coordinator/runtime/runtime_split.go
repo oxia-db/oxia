@@ -78,7 +78,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	// can't complete if the ensemble of a child doesn't support them (see
 	// SplitController.addChildObservers): select them among the data servers
 	// that support the features of the parent's ensemble.
-	parentFeatures := shardcontroller.NegotiateFeatures(parentMeta.Ensemble, c.findDataServerFeaturesLocked)
+	parentFeatures := feature.NegotiateDataServers(parentMeta.Ensemble, c.findDataServerFeaturesLocked)
 	supportsParentFeatures := func(dataServer *proto.DataServerIdentity) bool {
 		supported := c.findDataServerFeaturesLocked([]*proto.DataServerIdentity{dataServer})[dataServer.GetNameOrDefault()]
 		return len(feature.Missing(parentFeatures, supported)) == 0

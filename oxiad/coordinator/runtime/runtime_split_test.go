@@ -652,7 +652,7 @@ func TestRuntimeInitiateSplitRejectsChangeEnsemblePlannedBefore(t *testing.T) {
 	require.NoError(t, err)
 	parentController := shardcontroller.NewController(constant.DefaultNamespace, splitParentShard,
 		nsConfig, borrowed.UnsafeBorrow(), metadata,
-		shardcontroller.NoOpFeaturesSupplier, r, rpc, time.Hour)
+		feature.NoOpSupplier, r, rpc, time.Hour)
 	t.Cleanup(func() {
 		assert.NoError(t, parentController.Close())
 	})

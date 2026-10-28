@@ -66,7 +66,7 @@ type election struct {
 	failedLeaderElectionsCounter   metric.Counter
 	// borrowed resource
 	metadataStore                       coordmetadata.Metadata
-	dataServerSupportedFeaturesSupplier FeaturesSupplier
+	dataServerSupportedFeaturesSupplier feature.Supplier
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       controllerapi.ShardEventListener
 	provider                            rpc.ControllerRPCProvider
@@ -949,7 +949,7 @@ func (e *election) Cancel() {
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
 	metadataStore coordmetadata.Metadata,
-	dataServerSupportedFeaturesSupplier FeaturesSupplier,
+	dataServerSupportedFeaturesSupplier feature.Supplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,

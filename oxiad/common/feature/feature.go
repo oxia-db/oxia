@@ -126,3 +126,22 @@ func Negotiate(nodeFeatures map[string][]proto.Feature, candidates int) []proto.
 
 	return negotiated
 }
+
+// Supplier returns the features that each data server supports, by name, as
+// their handshakes reported them.
+type Supplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
+
+// NoOpSupplier reports no features for any data server.
+func NoOpSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+	features := make(map[string][]proto.Feature, len(dataServers))
+	for _, dataServer := range dataServers {
+		features[dataServer.GetNameOrDefault()] = []proto.Feature{}
+	}
+	return features
+}
+
+// NegotiateDataServers returns the features that all the given data servers
+// support.
+func NegotiateDataServers(dataServers []*proto.DataServerIdentity, supplier Supplier) []proto.Feature {
+	return Negotiate(supplier(dataServers), len(dataServers))
+}

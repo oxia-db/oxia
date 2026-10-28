@@ -18,10 +18,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// FeaturesSupplier returns the features that each data server supports, by
-// name, as their handshakes reported them.
-type FeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
-
 // Election elects the leader of a shard for a new term. An election is used
 // once: it starts from the shard status it was created with, runs a single
 // time, and updates the shard status as it goes. The shard controller creates

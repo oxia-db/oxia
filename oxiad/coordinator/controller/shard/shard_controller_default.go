@@ -69,7 +69,7 @@ type controller struct {
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       controllerapi.ShardEventListener
 	metadataStore                       coordmetadata.Metadata
-	dataServerSupportedFeaturesSupplier FeaturesSupplier
+	dataServerSupportedFeaturesSupplier featurepkg.Supplier
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
@@ -136,7 +136,7 @@ func NewController(
 	nc *proto.Namespace,
 	shardMetadata *proto.ShardMetadata,
 	metadataStore coordmetadata.Metadata,
-	dataServerSupportedFeaturesSupplier FeaturesSupplier,
+	dataServerSupportedFeaturesSupplier featurepkg.Supplier,
 	eventListener controllerapi.ShardEventListener,
 	rpcProvider rpc.ControllerRPCProvider,
 	periodTasksInterval time.Duration) Controller {
