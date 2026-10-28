@@ -61,8 +61,8 @@ func TestShellExecutesClientCommands(t *testing.T) {
 	var emptyGetOptions []oxia.GetOption
 	var emptyDeleteOptions []oxia.DeleteOption
 	var emptyDeleteRangeOptions []oxia.DeleteRangeOption
-	var emptyListOptions []oxia.ListOption
 	var emptyRangeScanOptions []oxia.RangeScanOption
+	listOptions := []oxia.RangeScanOption{oxia.IncludeValue(false)}
 
 	rangeResults := make(chan oxia.GetResult, 2)
 	rangeResults <- oxia.GetResult{Key: "a", Value: []byte("value-a")}
@@ -73,7 +73,8 @@ func TestShellExecutesClientCommands(t *testing.T) {
 	common.MockedClient.On("Get", "k", emptyGetOptions).Return("k", []byte("hello world"), oxia.Version{}, nil)
 	common.MockedClient.On("Delete", "k", emptyDeleteOptions).Return(nil)
 	common.MockedClient.On("DeleteRange", "a", "z", emptyDeleteRangeOptions).Return(nil)
-	common.MockedClient.On("List", "a", "z", emptyListOptions).Return([]string{"a", "b"}, nil)
+	common.MockedClient.On("RangeScan", "a", "z", listOptions).Return(
+		scanResults(oxia.GetResult{Key: "a"}, oxia.GetResult{Key: "b"}))
 	common.MockedClient.On("RangeScan", "a", "z", emptyRangeScanOptions).Return(rangeResults)
 	common.MockedClient.On("Close").Return(nil)
 
@@ -181,7 +182,8 @@ func TestShellExecutesClientCommandsWithOptions(t *testing.T) {
 	deleteRangeOptions := []oxia.DeleteRangeOption{
 		oxia.PartitionKey("pk"),
 	}
-	listOptions := []oxia.ListOption{
+	listOptions := []oxia.RangeScanOption{
+		oxia.IncludeValue(false),
 		oxia.PartitionKey("pk"),
 		oxia.UseIndex("idx"),
 		oxia.ShowInternalKeys(true),
@@ -200,7 +202,7 @@ func TestShellExecutesClientCommandsWithOptions(t *testing.T) {
 	common.MockedClient.On("Put", "k", []byte("value with spaces"), putOptions).Return("k", oxia.Version{}, nil)
 	common.MockedClient.On("Delete", "k", deleteOptions).Return(nil)
 	common.MockedClient.On("DeleteRange", "a", "z", deleteRangeOptions).Return(nil)
-	common.MockedClient.On("List", "a", "z", listOptions).Return([]string{"a"}, nil)
+	common.MockedClient.On("RangeScan", "a", "z", listOptions).Return(scanResults(oxia.GetResult{Key: "a"}))
 	common.MockedClient.On("RangeScan", "a", "z", rangeScanOptions).Return(rangeResults)
 	common.MockedClient.On("Close").Return(nil)
 
@@ -561,4 +563,13 @@ func dataServerConfig(name string, public string, internal string, labels map[st
 			Labels: labels,
 		},
 	}
+}
+
+func scanResults(results ...oxia.GetResult) chan oxia.GetResult {
+	ch := make(chan oxia.GetResult, len(results))
+	for _, result := range results {
+		ch <- result
+	}
+	close(ch)
+	return ch
 }

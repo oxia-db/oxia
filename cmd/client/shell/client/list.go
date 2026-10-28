@@ -34,15 +34,16 @@ func (e Executor) list(args []string) error {
 	if err != nil {
 		return err
 	}
-	keys, err := syncClient.List(e.Ctx, minKey, maxKey, options...) //nolint:staticcheck
-	if err != nil {
-		return err
+	for result := range syncClient.RangeScan(e.Ctx, minKey, maxKey, options...) {
+		if result.Err != nil {
+			return result.Err
+		}
+		common.WriteOutput(e.Out, result.Key)
 	}
-	common.WriteOutput(e.Out, keys)
 	return nil
 }
 
-func parseListCommand(args []string) (options []oxia.ListOption, minKey string, maxKey string, err error) {
+func parseListCommand(args []string) (options []oxia.RangeScanOption, minKey string, maxKey string, err error) {
 	flags := pflag.NewFlagSet("list", pflag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
@@ -80,6 +81,7 @@ func parseListCommand(args []string) (options []oxia.ListOption, minKey string, 
 		return nil, "", "", errors.New("usage: list [flags] [MIN_KEY [MAX_KEY]]")
 	}
 
+	options = []oxia.RangeScanOption{oxia.IncludeValue(false)}
 	if partitionKey != "" {
 		options = append(options, oxia.PartitionKey(partitionKey))
 	}

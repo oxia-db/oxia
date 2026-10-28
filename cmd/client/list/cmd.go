@@ -65,7 +65,7 @@ func exec(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var options []oxia.RangeScanOption
+	options := []oxia.RangeScanOption{oxia.IncludeValue(false)}
 
 	if Config.secondaryIndex != "" {
 		options = append(options, oxia.UseIndex(Config.secondaryIndex))

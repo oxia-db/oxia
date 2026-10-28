@@ -40,7 +40,7 @@ func runCmd(cmd *cobra.Command, args string, stdin string) (string, error) {
 }
 
 func TestList_exec(t *testing.T) {
-	var emptyOptions []oxia.RangeScanOption
+	emptyOptions := []oxia.RangeScanOption{oxia.IncludeValue(false)}
 
 	for _, test := range []struct {
 		name               string
@@ -51,10 +51,10 @@ func TestList_exec(t *testing.T) {
 		{"short", "-s a -e c", []any{"a", "c", emptyOptions}},
 		{"range-no-min", "--key-max c", []any{"", "c", emptyOptions}},
 		{"range-no-max", "--key-min a", []any{"a", "", emptyOptions}},
-		{"partition-key", "-s a -e c -p xyz", []any{"a", "c", []oxia.RangeScanOption{oxia.PartitionKey("xyz")}}},
-		{"index", "-s a -e c --index idx", []any{"a", "c", []oxia.RangeScanOption{oxia.UseIndex("idx")}}},
+		{"partition-key", "-s a -e c -p xyz", []any{"a", "c", []oxia.RangeScanOption{oxia.IncludeValue(false), oxia.PartitionKey("xyz")}}},
+		{"index", "-s a -e c --index idx", []any{"a", "c", []oxia.RangeScanOption{oxia.IncludeValue(false), oxia.UseIndex("idx")}}},
 		{"internal-keys", "-s a -e c --internal-keys", []any{"a", "c",
-			[]oxia.RangeScanOption{oxia.ShowInternalKeys(true)}}},
+			[]oxia.RangeScanOption{oxia.IncludeValue(false), oxia.ShowInternalKeys(true)}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			common.MockedClient = common.NewMockClient()
@@ -80,8 +80,7 @@ func TestListExecReturnsScanError(t *testing.T) {
 	ch <- oxia.GetResult{Key: "a"}
 	ch <- oxia.GetResult{Err: errors.New("scan failed")}
 	close(ch)
-	var emptyOptions []oxia.RangeScanOption
-	common.MockedClient.On("RangeScan", "a", "c", emptyOptions).Return(ch)
+	common.MockedClient.On("RangeScan", "a", "c", []oxia.RangeScanOption{oxia.IncludeValue(false)}).Return(ch)
 
 	out, err := runCmd(Cmd, "--key-min a --key-max c", "")
 	assert.ErrorContains(t, err, "scan failed")

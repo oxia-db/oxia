@@ -26,8 +26,7 @@ import (
 
 func TestExecutorListUsesPositionalMinKey(t *testing.T) {
 	mockClient := common.NewMockClient()
-	var emptyOptions []oxia.ListOption
-	mockClient.On("List", "b", "", emptyOptions).Return([]string{"b", "c"}, nil)
+	mockClient.On("RangeScan", "b", "", listOptions).Return(scanResults(oxia.GetResult{Key: "b"}, oxia.GetResult{Key: "c"}))
 	executor, out := newTestExecutor(mockClient)
 
 	require.NoError(t, executor.Execute([]string{"list", "b"}))
@@ -38,12 +37,12 @@ func TestExecutorListUsesPositionalMinKey(t *testing.T) {
 
 func TestExecutorListReturnsClientError(t *testing.T) {
 	mockClient := common.NewMockClient()
-	var emptyOptions []oxia.ListOption
-	mockClient.On("List", "a", "z", emptyOptions).Return([]string(nil), errTest)
+	mockClient.On("RangeScan", "a", "z", listOptions).Return(
+		scanResults(oxia.GetResult{Key: "a"}, oxia.GetResult{Err: errTest}))
 	executor, out := newTestExecutor(mockClient)
 
 	assert.ErrorIs(t, executor.Execute([]string{"list", "a", "z"}), errTest)
-	assert.Empty(t, out.String())
+	assert.Equal(t, "a\n", out.String())
 }
 
 func TestExecutorListRejectsInvalidArgs(t *testing.T) {
@@ -58,3 +57,5 @@ func TestExecutorListRejectsInvalidArgs(t *testing.T) {
 	}
 	assert.Empty(t, out.String())
 }
+
+var listOptions = []oxia.RangeScanOption{oxia.IncludeValue(false)}
