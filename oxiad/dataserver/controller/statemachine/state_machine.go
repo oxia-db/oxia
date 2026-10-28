@@ -18,6 +18,7 @@ import (
 	"errors"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
@@ -75,7 +76,7 @@ func ApplyLogEntry(db database.DB, entry *proto.LogEntry, updateOperationCallbac
 			}
 			// A rejected request has no effect, as on the leader, which answered
 			// the client with the error: the entry is applied all the same
-			if err != nil && !errors.Is(err, database.ErrWriteRejected) {
+			if err != nil && !errors.Is(err, errs.ErrDBWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}
@@ -122,7 +123,7 @@ func ApplyLogEntryWithSplitFilter(
 				filtered = &proto.WriteRequest{Shard: writeRequest.Shard}
 			}
 			if _, err := db.ProcessWrite(filtered, entry.Offset, entry.Timestamp, updateOperationCallback); err != nil &&
-				!errors.Is(err, database.ErrWriteRejected) {
+				!errors.Is(err, errs.ErrDBWriteRejected) {
 				return ApplyResponse{}, err
 			}
 		}

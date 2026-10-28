@@ -15,10 +15,11 @@
 package database
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/oxia-db/oxia/common/constant"
 )
@@ -28,16 +29,12 @@ const (
 	idxSeparator = "\x01"
 )
 
-// ErrInvalidSecondaryIndexKey indicates that a key does not use the persisted
-// secondary index key format.
-var ErrInvalidSecondaryIndexKey = errors.New("oxia db: failed to parse secondary index key")
-
 // ParseSecondaryIndexKey extracts the primary and secondary keys from a
 // persisted secondary index entry.
 func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string, err error) {
 	entry, found := strings.CutPrefix(key, idxKeyPrefix+"/")
 	if !found {
-		return "", "", ErrInvalidSecondaryIndexKey
+		return "", "", fmt.Errorf("%w: %q", errs.ErrDBInvalidSecondaryKey, key)
 	}
 
 	// The index name and the secondary key are stored as the client supplied
@@ -48,7 +45,7 @@ func ParseSecondaryIndexKey(key string) (primaryKey string, secondaryKey string,
 	indexNameEnd := strings.IndexByte(entry, '/')
 	separator := strings.LastIndex(entry, idxSeparator)
 	if indexNameEnd < 0 || separator < indexNameEnd {
-		return "", "", ErrInvalidSecondaryIndexKey
+		return "", "", fmt.Errorf("%w: %q", errs.ErrDBInvalidSecondaryKey, key)
 	}
 
 	primaryKey, err = url.PathUnescape(entry[separator+1:])

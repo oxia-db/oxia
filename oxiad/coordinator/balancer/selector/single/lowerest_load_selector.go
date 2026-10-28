@@ -24,11 +24,11 @@ type lowerestLoadSelector struct{}
 
 func (*lowerestLoadSelector) Select(ssContext *Context) (string, error) {
 	if ssContext.LoadRatioSupplier == nil {
-		return "", selector.ErrNoFunctioning
+		return "", nil
 	}
 	loadRatios := ssContext.LoadRatioSupplier()
 	if loadRatios == nil {
-		return "", selector.ErrNoFunctioning
+		return "", nil
 	}
 	for iter := loadRatios.NodeIterator(); iter.Next(); {
 		nodeRatio := iter.Value()
@@ -37,5 +37,5 @@ func (*lowerestLoadSelector) Select(ssContext *Context) (string, error) {
 			return lowerLoad, nil
 		}
 	}
-	return "", selector.ErrNoFunctioning
+	return "", nil
 }

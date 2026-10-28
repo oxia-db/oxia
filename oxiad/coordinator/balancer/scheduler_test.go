@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
@@ -262,11 +264,11 @@ func (m *mockMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.
 	}), true, nil
 }
 
-// alwaysErrorSelector is a selector that always returns ErrUnsatisfiedAntiAffinity.
+// alwaysErrorSelector is a selector that always returns errs.ErrUnavailable.
 type alwaysErrorSelector struct{}
 
 func (*alwaysErrorSelector) Select(_ *single.Context) (string, error) {
-	return "", selector.ErrUnsatisfiedAntiAffinity
+	return "", errs.ErrUnavailable
 }
 
 func newTestBalancer(
@@ -528,7 +530,7 @@ type selectRecordingSelector struct {
 
 func (s *selectRecordingSelector) Select(_ *single.Context) (string, error) {
 	s.called = true
-	return "", selector.ErrUnsatisfiedAntiAffinity
+	return "", errs.ErrUnavailable
 }
 
 type contextRecordingSelector struct {
@@ -539,7 +541,7 @@ type contextRecordingSelector struct {
 func (s *contextRecordingSelector) Select(ctx *single.Context) (string, error) {
 	s.namespace = ctx.Namespace
 	s.shard = ctx.Shard
-	return "", selector.ErrUnsatisfiedAntiAffinity
+	return "", errs.ErrUnavailable
 }
 
 func TestSwapShardSkipsRF1Namespace(t *testing.T) {
@@ -666,7 +668,7 @@ func TestSwapShardPassesNamespaceAndShardToSelector(t *testing.T) {
 		candidates,
 		candidatesMetadata,
 	)
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 
 	assert.Equal(t, "ns-1", sel.namespace)
 	assert.EqualValues(t, 42, sel.shard)

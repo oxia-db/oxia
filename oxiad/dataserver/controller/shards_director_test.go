@@ -19,6 +19,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -241,7 +243,7 @@ func TestShardsDirectorGetOrCreateFollowerInvalidNamespace(t *testing.T) {
 	assert.Nil(t, fc)
 
 	_, err = sd.GetFollower(1)
-	assert.ErrorIs(t, err, ErrNodeIsNotFollower)
+	assert.ErrorIs(t, err, errs.ErrShardNotMember)
 }
 
 func TestShardsDirectorDeleteShardLeaderError(t *testing.T) {
@@ -307,7 +309,7 @@ func TestShardsDirectorDeleteShardNotHosted(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = sd.GetFollower(shard)
-	assert.ErrorIs(t, err, ErrNodeIsNotFollower)
+	assert.ErrorIs(t, err, errs.ErrShardNotMember)
 
 	// The shard starts over empty
 	lc, err = sd.GetOrCreateLeader(constant.DefaultNamespace, shard, nil)

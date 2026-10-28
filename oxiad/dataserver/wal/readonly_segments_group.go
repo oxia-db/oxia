@@ -15,15 +15,17 @@
 package wal
 
 import (
+	"fmt"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/emirpasic/gods/v2/trees/redblacktree"
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/oxiad/common/vfs"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 
 	"github.com/oxia-db/oxia/common/object"
 )
@@ -124,7 +126,7 @@ func (r *readOnlySegmentsGroup) Get(offset int64) (object.RefCount[ReadOnlySegme
 	// Check if we have a segment file on disk
 	baseOffset, found := r.allSegments.Floor(offset)
 	if !found {
-		return nil, codec.ErrOffsetOutOfBounds
+		return nil, fmt.Errorf("%w: offset %d", errs.ErrOffsetOverflow, offset)
 	}
 
 	rosegment, err := newReadOnlySegment(r.fs, r.basePath, baseOffset.Key)

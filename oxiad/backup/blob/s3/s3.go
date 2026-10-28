@@ -30,6 +30,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -128,7 +130,7 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err != nil {
 		var notFound *types.NoSuchKey
 		if errors.As(err, &notFound) {
-			return nil, blob.ErrNotFound
+			return nil, errs.ErrNotFound
 		}
 		return nil, fmt.Errorf("s3: get %s: %w", key, err)
 	}

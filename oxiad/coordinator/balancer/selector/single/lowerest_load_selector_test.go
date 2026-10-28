@@ -22,7 +22,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestSelectLowerestLoadSelector(t *testing.T) {
@@ -30,10 +29,11 @@ func TestSelectLowerestLoadSelector(t *testing.T) {
 	ds := func(id string) *proto.DataServerIdentity {
 		return &proto.DataServerIdentity{Internal: id}
 	}
-	_, err := llSelector.Select(&Context{
+	result, err := llSelector.Select(&Context{
 		LoadRatioSupplier: nil,
 	})
-	assert.ErrorIs(t, err, selector.ErrNoFunctioning)
+	assert.NoError(t, err)
+	assert.Empty(t, result)
 	ratioSnapshot := DefaultShardsRank(&model.RatioParams{
 		NodeShardsInfos: map[string][]model.ShardInfo{
 			"sv-1": {
@@ -143,12 +143,13 @@ func TestSelectLowerestLoadSelectorAfterShardMove(t *testing.T) {
 }
 
 func TestSelectLowerestLoadSelectorWithoutLoadRatios(t *testing.T) {
-	_, err := (&lowerestLoadSelector{}).Select(&Context{
+	result, err := (&lowerestLoadSelector{}).Select(&Context{
 		Candidates:        linkedhashset.New("sv-1"),
 		LoadRatioSupplier: func() *model.Ratio { return nil },
 	})
 
-	assert.ErrorIs(t, err, selector.ErrNoFunctioning)
+	assert.NoError(t, err)
+	assert.Empty(t, result)
 }
 
 func TestSelectLowerestLoadSelectorWithoutRankedCandidates(t *testing.T) {
@@ -158,12 +159,13 @@ func TestSelectLowerestLoadSelectorWithoutRankedCandidates(t *testing.T) {
 		},
 	})
 
-	_, err := (&lowerestLoadSelector{}).Select(&Context{
+	result, err := (&lowerestLoadSelector{}).Select(&Context{
 		Candidates:        linkedhashset.New("sv-2"),
 		LoadRatioSupplier: func() *model.Ratio { return ratioSnapshot },
 	})
 
-	assert.ErrorIs(t, err, selector.ErrNoFunctioning)
+	assert.NoError(t, err)
+	assert.Empty(t, result)
 }
 
 func makeShardInfos(nodeID string, count int, startID int) []model.ShardInfo {

@@ -21,6 +21,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -125,7 +127,7 @@ func (s *internalRpcServer) Handshake(c context.Context, req *proto.HandshakeReq
 	bound, err := s.manifest.SetInstanceID(req.InstanceId)
 	var handshakeStatus proto.HandshakeStatus
 	switch {
-	case errors.Is(err, manifestpkg.ErrInstanceIDMismatch):
+	case errors.Is(err, errs.ErrFailedPrecondition):
 		handshakeStatus = proto.HandshakeStatus_HANDSHAKE_STATUS_MISMATCH
 	case err != nil:
 		log.Warn("Failed to bind instance id", slog.Any("error", err))
@@ -155,7 +157,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 	// NewTerm applies to both followers and leaders
 	// First check if we have already a follower controller running
 	if follower, err := s.shardsDirector.GetFollower(req.Shard); err != nil { //nolint:revive
-		if !errors.Is(err, controller.ErrNodeIsNotFollower) {
+		if !errors.Is(err, errs.ErrShardNotMember) {
 			log.Warn(
 				"NewTerm failed: could not get follower controller",
 				slog.Any("error", err),
@@ -486,7 +488,7 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 		return res, constant.IntoGrpcStatusError(err)
 	}
 
-	if !errors.Is(err, controller.ErrNodeIsNotFollower) {
+	if !errors.Is(err, errs.ErrShardNotMember) {
 		return nil, constant.IntoGrpcStatusError(err)
 	}
 

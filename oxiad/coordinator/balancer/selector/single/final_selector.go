@@ -29,7 +29,7 @@ type finalSelector struct{}
 func (*finalSelector) Select(ssContext *Context) (string, error) {
 	candidatesArr := ssContext.Candidates.Values()
 	if len(candidatesArr) == 0 {
-		return "", selector.ErrNoFunctioning
+		return "", nil
 	}
 
 	sort.Strings(candidatesArr)

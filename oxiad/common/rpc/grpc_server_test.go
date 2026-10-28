@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -80,7 +82,7 @@ func TestGrpcServerStartRejectsUnsupportedAuthProvider(t *testing.T) {
 	s, err := Default.StartGrpcServer("test", "127.0.0.1:0",
 		func(grpc.ServiceRegistrar) { registered = true }, nil, &auth.Options{Provider: "ldap"}, nil)
 
-	require.ErrorIs(t, err, auth.ErrUnsupportedProvider)
+	require.ErrorIs(t, err, errs.ErrNotImplemented)
 	require.Nil(t, s)
 	require.False(t, registered)
 }

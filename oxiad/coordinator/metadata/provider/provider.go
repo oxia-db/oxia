@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"errors"
 	"io"
 
 	gproto "google.golang.org/protobuf/proto"
@@ -23,8 +22,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/cache"
 	metadataconstant "github.com/oxia-db/oxia/oxiad/common/metadata"
 )
-
-var ErrCoordinatorLeaderUnavailable = errors.New("coordinator leader unavailable")
 
 type Versioned[T any] struct {
 	Value   T
@@ -35,7 +32,7 @@ type Provider[T gproto.Message] interface {
 	io.Closer
 
 	// Store writes the snapshot if its version matches the stored one, or
-	// fails with ErrBadVersion. A failed write may still have been applied:
+	// fails with ErrMetaBadVersion. A failed write may still have been applied:
 	// the next Load or Store then reads the stored snapshot.
 	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 

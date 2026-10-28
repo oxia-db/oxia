@@ -17,11 +17,12 @@ package leader
 import (
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestSelect_NoCandidates(t *testing.T) {
@@ -31,7 +32,7 @@ func TestSelect_NoCandidates(t *testing.T) {
 		Candidates: []*proto.DataServerIdentity{},
 		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
-	assert.ErrorIs(t, err, selector.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestSelect_NilCandidates(t *testing.T) {
@@ -41,7 +42,7 @@ func TestSelect_NilCandidates(t *testing.T) {
 		Candidates: nil,
 		Namespaces: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{},
 	})
-	assert.ErrorIs(t, err, selector.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestSelect_SingleCandidate(t *testing.T) {

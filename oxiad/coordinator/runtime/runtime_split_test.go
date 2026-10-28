@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pb "google.golang.org/protobuf/proto"
@@ -675,7 +677,7 @@ func TestRuntimeInitiateSplitRejectsChangeEnsemblePlannedBefore(t *testing.T) {
 
 	r.dispatchAction(swap)
 	_, err = swap.Wait()
-	assert.ErrorIs(t, err, shardcontroller.ErrNotReadyForChangeEnsemble)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 
 	borrowed, _, err = metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)
 	require.NoError(t, err)

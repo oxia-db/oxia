@@ -16,8 +16,9 @@ package auth
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
 const (
@@ -48,13 +49,6 @@ func (op *Options) IsEnabled() bool {
 	return *op.Enabled
 }
 
-var (
-	ErrUnsupportedProvider              = errors.New("unsupported authentication provider")
-	ErrUnMatchedAuthenticationParamType = errors.New("unmatched authentication parameter type")
-	ErrEmptyToken                       = errors.New("empty token")
-	ErrMalformedToken                   = errors.New("malformed token")
-)
-
 // todo: add metrics
 type AuthenticationProvider interface {
 	Authenticate(ctx context.Context, param any) (string, error)
@@ -65,6 +59,6 @@ func NewAuthenticationProvider(ctx context.Context, options Options) (Authentica
 	case ProviderOIDC:
 		return NewOIDCProvider(ctx, options.ProviderParams)
 	default:
-		return nil, ErrUnsupportedProvider
+		return nil, fmt.Errorf("%w: authentication provider", errs.ErrNotImplemented)
 	}
 }

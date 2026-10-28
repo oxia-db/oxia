@@ -17,11 +17,12 @@ package single
 import (
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 )
 
 func TestServerSelectReturnsUnsatisfiedAntiAffinity(t *testing.T) {
@@ -37,7 +38,7 @@ func TestServerSelectReturnsUnsatisfiedAntiAffinity(t *testing.T) {
 
 	_, err := NewSelector().Select(context)
 
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 }
 
 func TestSelectorSelectNoCandidates(t *testing.T) {
@@ -45,5 +46,5 @@ func TestSelectorSelectNoCandidates(t *testing.T) {
 		Candidates: linkedhashset.New[string](),
 		Namespace:  "ns-1",
 	})
-	assert.ErrorIs(t, err, selector.ErrNoCandidates)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }

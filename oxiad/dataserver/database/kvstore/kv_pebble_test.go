@@ -28,6 +28,8 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/cockroachdb/pebble/v2/vfs/errorfs"
@@ -82,7 +84,7 @@ func TestPebbbleSimple(t *testing.T) {
 	assert.NoError(t, closer.Close())
 
 	key, res, closer, err = kv.Get("non-existing", ComparisonEqual, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
@@ -109,7 +111,7 @@ func TestPebbbleSimple(t *testing.T) {
 	assert.NoError(t, closer.Close())
 
 	key, res, closer, err = kv.Get("c", ComparisonEqual, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
@@ -527,7 +529,7 @@ func TestPebblePrefixIteratorLookupReadsAtIteratorView(t *testing.T) {
 			}
 			for _, key := range []string{"/new", "/a/", "/b"} {
 				_, err := it.Lookup(key)
-				assert.ErrorIs(t, err, ErrKeyNotFound, key)
+				assert.ErrorIs(t, err, errs.ErrDBKeyNotFound, key)
 			}
 
 			// The lookups don't move the iterator
@@ -561,7 +563,7 @@ func TestPebbbleGetWithinBatch(t *testing.T) {
 	assert.NoError(t, closer.Close())
 
 	value, closer, err = wb.Get("non-existent")
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Nil(t, value)
 	assert.Nil(t, closer)
 
@@ -586,7 +588,7 @@ func TestPebbbleGetWithinBatch(t *testing.T) {
 	assert.NoError(t, wb.Delete("a"))
 
 	value, closer, err = wb.Get("a")
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Nil(t, value)
 	assert.Nil(t, closer)
 	assert.NoError(t, wb.Close())
@@ -621,7 +623,7 @@ func TestPebbleBatchGetAfterDeleteRange(t *testing.T) {
 
 	require.NoError(t, wb.DeleteRange("b", "c"))
 	_, _, err = wb.Get("b")
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	value, closer, err := wb.Get("c")
 	require.NoError(t, err)
 	assert.Equal(t, "c", string(value))
@@ -865,7 +867,7 @@ func TestPebbbleDeleteRangeInBatch(t *testing.T) {
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
 	assert.Equal(t, "", key)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 
 	key, res, closer, err = kv.Get("/a/a/a/zzzzzz", ComparisonEqual, NoInternalKeys)
 	assert.Nil(t, err)
@@ -1101,7 +1103,7 @@ func TestPebbleSnapshot_Loader(t *testing.T) {
 	}
 
 	key, r, closer, err := kv2.Get("my-key", ComparisonEqual, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, r)
 	assert.Nil(t, closer)
@@ -1445,25 +1447,25 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 	assert.NoError(t, err)
 
 	key, res, closer, err := kv.Get("e", ComparisonFloor, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
 
 	key, res, closer, err = kv.Get("e", ComparisonCeiling, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
 
 	key, res, closer, err = kv.Get("e", ComparisonLower, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
 
 	key, res, closer, err = kv.Get("e", ComparisonHigher, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
@@ -1498,7 +1500,7 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 	assert.NoError(t, closer.Close())
 
 	key, res, closer, err = kv.Get("a", ComparisonLower, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
@@ -1511,7 +1513,7 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 
 	// ---------------------------------------------------------------
 	key, res, closer, err = kv.Get("b", ComparisonEqual, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
@@ -1613,7 +1615,7 @@ func TestPebbbleFloorCeiling(t *testing.T) {
 	assert.NoError(t, closer.Close())
 
 	key, res, closer, err = kv.Get("e", ComparisonHigher, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 	assert.Nil(t, res)
 	assert.Nil(t, closer)
@@ -1636,7 +1638,7 @@ func TestPebbleGetEmptyKey(t *testing.T) {
 
 			lookup := func(comparison ComparisonType) string {
 				key, err := getKey(t, kv, "", comparison, NoInternalKeys)
-				if errors.Is(err, ErrKeyNotFound) {
+				if errors.Is(err, errs.ErrDBKeyNotFound) {
 					return notFound
 				}
 				assert.NoError(t, err)
@@ -1725,7 +1727,7 @@ func TestPebbleFindLowerInBatch(t *testing.T) {
 	assert.NoError(t, wb.Put("c", []byte("c")))
 
 	key, err := wb.FindLower("a")
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	assert.Equal(t, "", key)
 
 	key, err = wb.FindLower("b")
@@ -1773,7 +1775,7 @@ func TestPebbleGetAndFindLowerReadFailure(t *testing.T) {
 	defer wb.Close()
 	_, err := wb.FindLower("e")
 	assert.ErrorIs(t, err, os.ErrPermission)
-	assert.NotErrorIs(t, err, ErrKeyNotFound)
+	assert.NotErrorIs(t, err, errs.ErrDBKeyNotFound)
 }
 
 func TestPebbleScanReadFailure(t *testing.T) {
@@ -2415,7 +2417,7 @@ func TestPebbleBatchGetFailsWhenIteratorCannotBeCreated(t *testing.T) {
 	// The first Get of a batch reads through the batch, the next ones through
 	// an iterator
 	_, _, err := wb.Get("a")
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 	_, closer, err := wb.Get("b")
 	assert.ErrorIs(t, err, errFailpoint)
 	assert.Nil(t, closer)

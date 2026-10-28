@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -90,11 +92,11 @@ func TestReadWriteSegment_NonZero(t *testing.T) {
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 6, rw.LastOffset())
 
-	assert.ErrorIs(t, rw.Append(4, []byte("entry-4")), ErrInvalidNextOffset)
+	assert.ErrorIs(t, rw.Append(4, []byte("entry-4")), errs.ErrInvalidArgument)
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 6, rw.LastOffset())
 
-	assert.ErrorIs(t, rw.Append(8, []byte("entry-8")), ErrInvalidNextOffset)
+	assert.ErrorIs(t, rw.Append(8, []byte("entry-8")), errs.ErrInvalidArgument)
 	assert.EqualValues(t, 5, rw.BaseOffset())
 	assert.EqualValues(t, 6, rw.LastOffset())
 
@@ -163,7 +165,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrOffsetOutOfBounds(t *testing.
 	// move commit offset to 1
 	commitOffsetProvider.commitOffset = 1
 
-	// inject payload size failure to trigger ErrOffsetOutOfBounds
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso:], 9999999)
@@ -211,7 +213,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrOffsetOutOfBounds(t *testing.T)
 	// move commit offset to 2
 	commitOffsetProvider.commitOffset = 2
 
-	// inject payload size failure to trigger ErrOffsetOutOfBounds
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso:], 9999999)
@@ -221,7 +223,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrOffsetOutOfBounds(t *testing.T)
 
 	// recover the rw segment
 	_, err = newReadWriteSegment(vfs.OSFS{}, dir, 0, 1024, 0, commitOffsetProvider)
-	assert.ErrorIs(t, err, codec.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
@@ -250,7 +252,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
 	// move commit offset to 1
 	commitOffsetProvider.commitOffset = 1
 
-	// inject payload size failure to trigger ErrOffsetOutOfBounds
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso+4:], 9999999)
@@ -298,7 +300,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 	// move commit offset to 2
 	commitOffsetProvider.commitOffset = 2
 
-	// inject payload size failure to trigger ErrOffsetOutOfBounds
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso+4:], 9999999)
@@ -308,7 +310,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 
 	// recover the rw segment
 	_, err = newReadWriteSegment(vfs.OSFS{}, dir, 0, 1024, 0, commitOffsetProvider)
-	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 // The recovery discards a corrupted record past the commit offset along with
@@ -383,7 +385,7 @@ func TestSegmentAppendShouldNotPanic(t *testing.T) {
 	}
 
 	err = rw.Append(51, fmt.Appendf(nil, "entry-%d", 51))
-	assert.ErrorIs(t, err, ErrSegmentFull)
+	assert.ErrorIs(t, err, errs.ErrWALSegmentFull)
 }
 
 // Appends, reads and flushes run concurrently by design: the flusher (WAL sync
@@ -592,7 +594,7 @@ func TestReadWriteSegmentReadConcurrentWithAppendAndClose(t *testing.T) {
 	assert.NoError(t, <-closeDone)
 
 	_, _, _, err = rw.Read(1)
-	assert.ErrorIs(t, err, ErrSegmentClosed)
+	assert.ErrorIs(t, err, errs.ErrAlreadyClosed)
 }
 
 func TestReadWriteSegmentNewFailsWhenWalDirectoryCannotBeCreated(t *testing.T) {
@@ -668,7 +670,7 @@ func TestReadWriteSegmentReadReportsCorruptedRecord(t *testing.T) {
 	rwSegment.txnMappedFile[payloadOffset] ^= 0xff
 
 	_, _, _, err = rw.Read(0)
-	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	assert.ErrorContains(t, err, "entryOffset: 0")
 }
 
@@ -682,7 +684,7 @@ func TestReadWriteSegmentReadReportsEmptyRecord(t *testing.T) {
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fileOffset(rwSegment.writingIdx, 0, 0):], 0)
 
 	_, _, _, err = rw.Read(0)
-	assert.ErrorIs(t, err, codec.ErrEmptyPayload)
+	assert.ErrorIs(t, err, errs.ErrWALEmptyPayload)
 }
 
 func TestReadWriteSegmentAppendRejectsEmptyPayload(t *testing.T) {
@@ -690,7 +692,7 @@ func TestReadWriteSegmentAppendRejectsEmptyPayload(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, rw.Close()) })
 
-	assert.ErrorIs(t, rw.Append(0, nil), codec.ErrEmptyPayload)
+	assert.ErrorIs(t, rw.Append(0, nil), errs.ErrWALEmptyPayload)
 	assert.EqualValues(t, InvalidOffset, rw.LastOffset())
 }
 
@@ -755,8 +757,8 @@ func TestReadWriteSegmentTruncateRejectsOffsetOutsideSegment(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, rw.Close()) })
 	require.NoError(t, rw.Append(10, []byte("entry-10")))
 
-	assert.ErrorIs(t, rw.Truncate(9), codec.ErrOffsetOutOfBounds)
-	assert.ErrorIs(t, rw.Truncate(11), codec.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, rw.Truncate(9), errs.ErrOffsetOverflow)
+	assert.ErrorIs(t, rw.Truncate(11), errs.ErrOffsetOverflow)
 	assert.EqualValues(t, 10, rw.LastOffset())
 }
 
@@ -771,7 +773,7 @@ func TestReadWriteSegmentTruncateFailsOnCorruptedRecord(t *testing.T) {
 	payloadOffset := fileOffset(rwSegment.writingIdx, 0, 0) + rwSegment.c.codec.GetHeaderSize()
 	rwSegment.txnMappedFile[payloadOffset] ^= 0xff
 
-	assert.ErrorIs(t, rw.Truncate(0), codec.ErrDataCorrupted)
+	assert.ErrorIs(t, rw.Truncate(0), errs.ErrDataCorrupted)
 	assert.EqualValues(t, 1, rw.LastOffset())
 }
 

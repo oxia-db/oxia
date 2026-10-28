@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
@@ -431,7 +433,7 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 	}
 	pinned, err := s.termFeatures(shardMeta)
 	switch {
-	case errors.Is(err, ErrTermFeaturesNotReported):
+	case errors.Is(err, errs.ErrNotImplemented):
 		// The leader runs an older binary: the election that replaces it when
 		// it restarts with a newer one negotiates the features again
 		s.termFeaturesCheckPending = false
@@ -473,7 +475,7 @@ func (s *controller) termFeatures(shardMeta *proto.ShardMetadata) ([]proto.Featu
 	case status.GetTerm() != shardMeta.GetTerm() || status.GetStatus() != proto.ServingStatus_LEADER:
 		return nil, fmt.Errorf("the leader is in term %d with status %s", status.GetTerm(), status.GetStatus())
 	case status.GetTermFeatures() == nil:
-		return nil, ErrTermFeaturesNotReported
+		return nil, fmt.Errorf("%w: the leader doesn't report the features pinned by its term", errs.ErrNotImplemented)
 	}
 	return status.GetTermFeatures().GetFeatures(), nil
 }
@@ -537,13 +539,13 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	// checks it again, in the status update that starts it, in case a split
 	// started since (see Election.persistNewTerm).
 	if shardMeta.Split != nil {
-		return fmt.Errorf("%w: the shard is part of a split", ErrNotReadyForChangeEnsemble)
+		return fmt.Errorf("%w: shard is not ready for change ensemble: the shard is part of a split", errs.ErrUnavailable)
 	}
 	if changeEnsembleAction.From == nil {
-		return fmt.Errorf("%w: from data server is nil", ErrInvalidChangeEnsemble)
+		return fmt.Errorf("%w: invalid change ensemble: from data server is nil", errs.ErrInvalidArgument)
 	}
 	if changeEnsembleAction.To == nil {
-		return fmt.Errorf("%w: to data server is nil", ErrInvalidChangeEnsemble)
+		return fmt.Errorf("%w: invalid change ensemble: to data server is nil", errs.ErrInvalidArgument)
 	}
 	source := changeEnsembleAction.From.GetNameOrDefault()
 	target := changeEnsembleAction.To.GetNameOrDefault()
@@ -552,26 +554,26 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 		return dataServer.GetNameOrDefault() == source
 	})
 	if len(targetEnsemble) != ensembleSize-1 {
-		return fmt.Errorf("%w: source data server %q must appear exactly once in the current ensemble", ErrInvalidChangeEnsemble, source)
+		return fmt.Errorf("%w: invalid change ensemble: source data server %q must appear exactly once in the current ensemble", errs.ErrInvalidArgument, source)
 	}
 	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
 		return dataServer.GetNameOrDefault() == target
 	})
 	if len(ensembleWithoutTarget) != ensembleSize {
-		return fmt.Errorf("%w: target data server %q is already in the current ensemble", ErrInvalidChangeEnsemble, target)
+		return fmt.Errorf("%w: invalid change ensemble: target data server %q is already in the current ensemble", errs.ErrInvalidArgument, target)
 	}
 	targetEnsemble = append(targetEnsemble, changeEnsembleAction.To)
 
 	currentFeatures := s.dataServerSupportedFeaturesSupplier(shardMeta.Ensemble)
 	if len(currentFeatures) != ensembleSize {
-		return fmt.Errorf("%w: found feature info for %d of %d current ensemble data servers",
-			ErrNotReadyForChangeEnsemble, len(currentFeatures), ensembleSize)
+		return fmt.Errorf("%w: shard is not ready for change ensemble: found feature info for %d of %d current ensemble data servers",
+			errs.ErrUnavailable, len(currentFeatures), ensembleSize)
 	}
 	requiredFeatures := negotiate(currentFeatures, ensembleSize)
 	targetFeatureInfo := s.dataServerSupportedFeaturesSupplier(targetEnsemble)
 	if len(targetFeatureInfo) != len(targetEnsemble) {
-		return fmt.Errorf("%w: found feature info for %d of %d target ensemble data servers",
-			ErrNotReadyForChangeEnsemble, len(targetFeatureInfo), len(targetEnsemble))
+		return fmt.Errorf("%w: shard is not ready for change ensemble: found feature info for %d of %d target ensemble data servers",
+			errs.ErrUnavailable, len(targetFeatureInfo), len(targetEnsemble))
 	}
 	if len(requiredFeatures) == 0 {
 		return nil
@@ -592,7 +594,7 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 			slog.Any("current-ensemble", shardMeta.Ensemble),
 			slog.Any("target-ensemble", targetEnsemble),
 		)
-		return fmt.Errorf("%w: missing features %v", ErrChangeEnsembleLosesFeatureSupport, missing)
+		return fmt.Errorf("%w: change ensemble would remove support for negotiated shard features: missing features %v", errs.ErrInvalidArgument, missing)
 	}
 	return nil
 }
@@ -609,7 +611,7 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 		s.shard).UnsafeBorrow()
 	leader := s.electLeader(shardMeta, nil)
 	if leader == nil {
-		electionAction.Error(ErrElectionFailed)
+		electionAction.Error(errors.Wrap(errs.ErrUnavailable, "the election failed to elect a leader"))
 		return
 	}
 	electionAction.Done(leader.GetNameOrDefault())
@@ -745,7 +747,7 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	if e := s.currentElection.Load(); e != nil {
 		if ready := e.IsReadyForChangeEnsemble(); !ready {
 			s.logger.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
-			changeEnsembleAction.Error(ErrNotReadyForChangeEnsemble)
+			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
 		}
 	}
@@ -777,7 +779,7 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		election.Stop()
 		s.currentElection.Store(nil)
 		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
-			ErrNotReadyForChangeEnsemble))
+			errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble")))
 		return
 	}
 	changeEnsembleAction.Done(nil)

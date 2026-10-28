@@ -31,6 +31,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -1527,8 +1529,8 @@ func TestLeaderController_RejectedWrite(t *testing.T) {
 	assert.Equal(t, "s-00000000000000000001-00000000000000000001", results[1].GetKey())
 
 	_, err = lc.WriteBlock(context.Background(), sequentialPut(1))
-	assert.ErrorIs(t, err, database.ErrWriteRejected)
-	assert.ErrorIs(t, err, database.ErrMissingSequenceDeltas)
+	assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
+	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, commitOffset)
@@ -2814,7 +2816,7 @@ func TestLeaderController_ConcurrentWrite(t *testing.T) {
 		FollowerMaps:      nil,
 	})
 
-	errs := make(chan error, 10)
+	writeErrs := make(chan error, 10)
 
 	for i := 0; i < 10; i++ {
 		finalIndex := i
@@ -2825,12 +2827,12 @@ func TestLeaderController_ConcurrentWrite(t *testing.T) {
 					{Key: fmt.Sprintf("%d", finalIndex), Value: []byte{0}},
 				},
 			})
-			errs <- err
+			writeErrs <- err
 		}()
 	}
 
 	for i := 0; i < 10; i++ {
-		assert.NoError(t, <-errs)
+		assert.NoError(t, <-writeErrs)
 	}
 }
 
@@ -3368,7 +3370,7 @@ func TestLeaderController_WalRecoveryWithCorruptedEntry(t *testing.T) {
 	// A corrupted entry that the database already applied fails the recovery
 	corruptWalEntry(t, walDir, shard, 1)
 	lc, err = NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(), walFactory, kvFactory, nil)
-	assert.ErrorIs(t, err, codec.ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 	assert.Nil(t, lc)
 
 	// A leaked database would still hold the Pebble lock and fail the re-open
@@ -3577,7 +3579,7 @@ func TestLeaderControllerCheckpointHoldsTheCommitOffsetAndTerm(t *testing.T) {
 		return nil
 	}))
 	assert.ErrorIs(t, lc.WithDatabase(checkpoint.Generation+1, func(string) error { return nil }),
-		database.ErrDatabaseReplaced, "a checkpoint of a database since replaced")
+		errs.ErrUnavailable, "a checkpoint of a database since replaced")
 
 	require.NoError(t, lc.Close())
 	_, err = lc.Checkpoint()
@@ -4020,7 +4022,7 @@ func TestLeaderControllerBecomeLeaderRejectsMoreFollowersThanTheReplicationFacto
 			"f2": constant2.InvalidEntryId,
 		},
 	})
-	assert.ErrorIs(t, err, ErrTooManyCursors)
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 }
 
 // A new leader deletes the ephemeral records of the sessions that are gone,

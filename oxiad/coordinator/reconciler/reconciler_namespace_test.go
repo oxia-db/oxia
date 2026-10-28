@@ -22,6 +22,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
@@ -29,7 +31,6 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
-	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
@@ -362,7 +363,7 @@ func TestNamespaceReconcilerReconcileReturnsCreationError(t *testing.T) {
 
 func TestNamespaceReconcilerReconcileReturnsAlreadyExistsForRetry(t *testing.T) {
 	base := namespaceRuntimeForErrors("existing", "healthy")
-	createErr := fmt.Errorf("namespace creation: %w", metadatacommon.ErrAlreadyExists)
+	createErr := fmt.Errorf("namespace creation: %w", errs.ErrAlreadyExists)
 	runtime := &failingNamespaceRuntime{
 		Runtime: base,
 		failures: map[string]error{
@@ -474,7 +475,7 @@ func (m *mockNamespaceMetadata) CreateNamespaceStatus(
 	}
 
 	if _, exists := cloned.Namespaces[name]; exists {
-		return metadatacommon.ErrAlreadyExists
+		return errs.ErrAlreadyExists
 	}
 
 	namespaceStatus := gproto.Clone(status).(*proto.NamespaceStatus)
@@ -723,7 +724,7 @@ func (m *mockNamespaceRuntime) initShardControllers(name string) error {
 		return err
 	}
 	if !exists {
-		return metadatacommon.ErrConflict
+		return errs.ErrUnavailable
 	}
 	for shard, shardMetadata := range namespaceStatus.UnsafeBorrow().GetShards() {
 		if shardMetadata.GetStatusOrDefault() == proto.ShardStatusDeleting {

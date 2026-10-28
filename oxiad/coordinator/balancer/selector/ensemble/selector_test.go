@@ -17,12 +17,13 @@ package ensemble
 import (
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/slices"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/single"
 )
 
@@ -63,7 +64,7 @@ func TestSelectFewerCandidatesThanReplicas(t *testing.T) {
 		Namespace:  "ns-1",
 		Replicas:   2,
 	})
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedEnsembleReplicas)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestSelectFailsWhenAntiAffinityUnsatisfied(t *testing.T) {
@@ -78,7 +79,7 @@ func TestSelectFailsWhenAntiAffinityUnsatisfied(t *testing.T) {
 		Replicas:       2,
 	})
 
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedAntiAffinity)
+	assert.ErrorIs(t, err, errs.ErrUnavailable)
 }
 
 func TestSelectFailsWhenReplicasUnsatisfied(t *testing.T) {
@@ -89,7 +90,7 @@ func TestSelectFailsWhenReplicasUnsatisfied(t *testing.T) {
 		Replicas:   2,
 	})
 
-	assert.ErrorIs(t, err, selector.ErrUnsatisfiedEnsembleReplicas)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 // fakeSingleSelector returns the selections in order.

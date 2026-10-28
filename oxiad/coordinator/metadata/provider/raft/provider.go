@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -82,7 +84,7 @@ func (mpr *Provider[T]) WaitToBecomeLeader() (<-chan struct{}, error) {
 }
 
 func (*Provider[T]) GetLeaderName() (string, error) {
-	return "", provider.ErrCoordinatorLeaderUnavailable
+	return "", errors.Wrap(errs.ErrUnavailable, "coordinator leader")
 }
 
 func (mpr *Provider[T]) Close() error {
@@ -133,7 +135,7 @@ func (mpr *Provider[T]) loadLatest() provider.Versioned[T] {
 
 // write replicates the new state through raft, without any provider-side
 // lock: the FSM applies entries serially and the expected-version check makes
-// the update optimistic (ErrBadVersion on conflict).
+// the update optimistic (ErrMetaBadVersion on conflict).
 func (mpr *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned[T], error) {
 	if err := mpr.raft.node.VerifyLeader().Error(); err != nil {
 		return nil, err
@@ -174,7 +176,7 @@ func (mpr *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Version
 		return nil, errors.New("failed to apply new cluster state")
 	}
 	if !applyRes.changeApplied {
-		return nil, metadatacommon.ErrBadVersion
+		return nil, errs.ErrMetaBadVersion
 	}
 
 	return &provider.Versioned[T]{

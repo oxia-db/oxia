@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	gproto "google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
@@ -224,18 +226,18 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 	if snapshot.Version == metadatacommon.NotExists {
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Create(ctx, cmData, metav1.CreateOptions{})
 		if k8serrors.IsAlreadyExists(err) {
-			return nil, metadatacommon.ErrBadVersion
+			return nil, errs.ErrMetaBadVersion
 		}
 	} else {
 		if snapshot.Version == "" {
-			return nil, metadatacommon.ErrBadVersion
+			return nil, errs.ErrMetaBadVersion
 		}
 		cm, err = m.kubernetes.CoreV1().ConfigMaps(m.namespace).Patch(ctx, m.configMapName, types.ApplyPatchType, desiredBytes, metav1.PatchOptions{
 			FieldManager: fieldManager,
 			Force:        gproto.Bool(true),
 		})
 		if k8serrors.IsNotFound(err) || k8serrors.IsConflict(err) {
-			return nil, metadatacommon.ErrBadVersion
+			return nil, errs.ErrMetaBadVersion
 		}
 	}
 	if err != nil {
@@ -329,7 +331,7 @@ func (m *Provider[T]) GetLeaderName() (string, error) {
 			return leader, nil
 		}
 	}
-	return "", provider.ErrCoordinatorLeaderUnavailable
+	return "", errors.Wrap(errs.ErrUnavailable, "coordinator leader")
 }
 
 func (m *Provider[T]) Close() error {

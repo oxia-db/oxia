@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
 
@@ -50,7 +52,7 @@ func TestMetadataWaitToBecomeLeaderReloadsMetadata(t *testing.T) {
 		// The snapshot is outdated until reloaded
 		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 			if statusReloads.Load() == 0 {
-				return metadataconstant.NotExists, metadataconstant.ErrBadVersion
+				return metadataconstant.NotExists, errs.ErrMetaBadVersion
 			}
 			return statusProvider.Store(snapshot)
 		},
@@ -148,7 +150,7 @@ func newLeaderMetadata(t *testing.T) (metadata Metadata, lost chan struct{}, sup
 		},
 		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 			if superseded.Load() {
-				return metadataconstant.NotExists, metadataconstant.ErrBadVersion
+				return metadataconstant.NotExists, errs.ErrMetaBadVersion
 			}
 			return statusProvider.Store(snapshot)
 		},
@@ -169,7 +171,7 @@ func TestMetadataStatusWriteAfterLeadershipLossFails(t *testing.T) {
 	superseded.Store(true)
 
 	_, err := metadata.AllocateShardIDs(1)
-	require.ErrorIs(t, err, metadataconstant.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 }
 
 // A new leader can write the status before this coordinator learns that it
@@ -182,7 +184,7 @@ func TestMetadataStatusVersionConflictWhileLeadingFails(t *testing.T) {
 
 	require.NotPanics(t, func() {
 		_, err := metadata.AllocateShardIDs(1)
-		require.ErrorIs(t, err, metadataconstant.ErrBadVersion)
+		require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 	})
 }
 
@@ -234,7 +236,7 @@ func TestMetadataCreateNamespaceStatusAlreadyExists(t *testing.T) {
 	require.NoError(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{ReplicationFactor: 3}))
 	version := loaded(t, statusProvider).Version
 	err := metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{ReplicationFactor: 1})
-	require.ErrorIs(t, err, metadataconstant.ErrAlreadyExists)
+	require.ErrorIs(t, err, errs.ErrAlreadyExists)
 	require.Contains(t, err.Error(), "default")
 	require.Equal(t, version, loaded(t, statusProvider).Version)
 	status, exists, err := metadata.GetNamespaceStatus("default")
@@ -260,7 +262,7 @@ func TestMetadataCreateNamespaceStatusReturnsWriteError(t *testing.T) {
 
 	err := metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{ReplicationFactor: 3})
 	require.ErrorIs(t, err, storeErr)
-	require.NotErrorIs(t, err, metadataconstant.ErrAlreadyExists)
+	require.NotErrorIs(t, err, errs.ErrAlreadyExists)
 	require.Equal(t, 1, writes)
 	_, exists, err := metadata.GetNamespaceStatus("default")
 	require.NoError(t, err)
@@ -323,7 +325,7 @@ func TestMetadataCreateNamespaceStatusReturnsErrorAfterCommit(t *testing.T) {
 	require.EqualValues(t, 3, saved.UnsafeBorrow().ReplicationFactor)
 	require.NotEqual(t, metadataconstant.NotExists, loaded(t, statusProvider).Version)
 
-	require.ErrorIs(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{}), metadataconstant.ErrAlreadyExists)
+	require.ErrorIs(t, metadata.CreateNamespaceStatus("default", &commonproto.NamespaceStatus{}), errs.ErrAlreadyExists)
 	require.Equal(t, 1, writes)
 }
 
@@ -362,10 +364,10 @@ func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
 		Shards: map[int64]*commonproto.ShardMetadata{0: {Term: 1}},
 	}))
 
-	require.ErrorIs(t, metadata.UpdateShardStatus("other", 0, &commonproto.ShardMetadata{Term: 2}), metadataconstant.ErrNotFound)
+	require.ErrorIs(t, metadata.UpdateShardStatus("other", 0, &commonproto.ShardMetadata{Term: 2}), errs.ErrNotFound)
 
 	// A deleted shard must not be re-created
-	require.ErrorIs(t, metadata.UpdateShardStatus("default", 1, &commonproto.ShardMetadata{Term: 2}), metadataconstant.ErrNotFound)
+	require.ErrorIs(t, metadata.UpdateShardStatus("default", 1, &commonproto.ShardMetadata{Term: 2}), errs.ErrNotFound)
 	_, exists, err := metadata.GetShardStatus("default", 1)
 	require.NoError(t, err)
 	require.False(t, exists)
@@ -380,7 +382,7 @@ func TestMetadataStatusUpdatesFailWhenTargetIsGone(t *testing.T) {
 	// stored when the update returns false
 	require.ErrorIs(t, metadata.PatchNamespaceStatus("other", func(*commonproto.NamespaceStatus) bool {
 		return true
-	}), metadataconstant.ErrNotFound)
+	}), errs.ErrNotFound)
 	require.NoError(t, metadata.PatchNamespaceStatus("default", func(status *commonproto.NamespaceStatus) bool {
 		status.Shards[0].Term = 3
 		return false
@@ -674,12 +676,12 @@ func TestMetadataGetLeaderFailsWhenLeaderUnknown(t *testing.T) {
 	metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
 		Provider: newStatusProvider(),
 		getLeaderName: func() (string, error) {
-			return "", provider.ErrCoordinatorLeaderUnavailable
+			return "", errs.ErrUnavailable
 		},
 	}, newConfigProvider(), "")
 
 	_, err := metadata.GetLeader()
-	require.ErrorIs(t, err, provider.ErrCoordinatorLeaderUnavailable)
+	require.ErrorIs(t, err, errs.ErrUnavailable)
 }
 
 // A status write refused on the version fails, whether the coordinator never
@@ -689,7 +691,7 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 		return newDefaultMetadata(ctx, fakeProvider[*commonproto.ClusterStatus]{
 			Provider: newStatusProvider(),
 			store: func(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
-				return metadataconstant.NotExists, metadataconstant.ErrBadVersion
+				return metadataconstant.NotExists, errs.ErrMetaBadVersion
 			},
 		}, newConfigProvider(), "")
 	}
@@ -697,13 +699,13 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 	notLeading := newMetadata(t.Context())
 	defer func() { require.NoError(t, notLeading.Close()) }()
 	_, err := notLeading.AllocateShardIDs(1)
-	require.ErrorIs(t, err, metadataconstant.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	closing := newMetadata(ctx)
 	cancel()
 	_, err = closing.AllocateShardIDs(1)
-	require.ErrorIs(t, err, metadataconstant.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 	require.NoError(t, closing.Close())
 }
 

@@ -15,7 +15,11 @@
 package single
 
 import (
+	"fmt"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
@@ -27,7 +31,7 @@ type serverAntiAffinitiesSelector struct{}
 
 func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) { //nolint:revive
 	if len(ssContext.AntiAffinities) == 0 {
-		return "", selector.ErrNoFunctioning
+		return "", nil
 	}
 	if ssContext.selected == nil {
 		ssContext.selected = linkedhashset.New[string]()
@@ -56,9 +60,9 @@ func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) 
 			if labelSatisfiedCandidates.Size() < 1 {
 				switch affinity.GetModeOrDefault() {
 				case proto.AntiAffinityModeStrict:
-					return "", selector.ErrUnsatisfiedAntiAffinity
+					return "", fmt.Errorf("%w: unsatisfied anti-affinity", errs.ErrUnavailable)
 				default:
-					return "", selector.ErrUnsupportedAntiAffinityMode
+					return "", fmt.Errorf("%w: anti-affinity mode", errs.ErrNotImplemented)
 				}
 			}
 			if affinityIdx == 0 {
@@ -73,6 +77,7 @@ func (*serverAntiAffinitiesSelector) Select(ssContext *Context) (string, error) 
 		return value, nil
 	}
 
+	// Several candidates are left: the next selector picks among them
 	ssContext.Candidates = candidates
-	return "", selector.ErrMultipleResult
+	return "", nil
 }

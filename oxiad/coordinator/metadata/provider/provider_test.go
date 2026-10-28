@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gproto "google.golang.org/protobuf/proto"
@@ -108,7 +110,7 @@ func TestProvider(t *testing.T) {
 				Value:   status,
 				Version: "",
 			})
-			assert.ErrorIs(t, err, metadatacommon.ErrBadVersion)
+			assert.ErrorIs(t, err, errs.ErrMetaBadVersion)
 
 			newVersion, err := m.Store(provider.Versioned[*proto.ClusterStatus]{
 				Value:   status,
@@ -338,7 +340,7 @@ func incrementVersion(metaObj metav1.Object) {
 
 // A write the API server applies, but whose request then fails, must not
 // leave the provider with the snapshot from before the write: the next write
-// would then use a stale version and fail with ErrBadVersion.
+// would then use a stale version and fail with ErrMetaBadVersion.
 func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
 	kc := newFake()
 	var failNextPatch atomic.Bool
@@ -377,7 +379,7 @@ func TestConfigMapProviderReloadsAfterAppliedWriteFails(t *testing.T) {
 
 	// A write with the version from before the failed one is rejected.
 	_, err = p.Store(provider.Versioned[*proto.ClusterStatus]{Value: &proto.ClusterStatus{InstanceId: "stale"}, Version: before})
-	require.ErrorIs(t, err, metadatacommon.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 
 	require.NoError(t, setInstanceID("next"))
 	require.Equal(t, "next", loaded(t, p).Value.GetInstanceId())
@@ -414,7 +416,7 @@ func TestProviderConcurrentStores(t *testing.T) {
 							Value:   snapshot.Value,
 							Version: snapshot.Version,
 						})
-						if errors.Is(err, metadatacommon.ErrBadVersion) {
+						if errors.Is(err, errs.ErrMetaBadVersion) {
 							// Lost the race: reload and retry
 							continue
 						}

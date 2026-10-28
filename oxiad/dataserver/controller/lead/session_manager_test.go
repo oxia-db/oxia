@@ -28,6 +28,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -130,7 +132,7 @@ func (m mockWriteBatch) Delete(key string) error {
 func (m mockWriteBatch) Get(key string) ([]byte, io.Closer, error) {
 	val, found := m[key]
 	if !found {
-		return nil, nil, kvstore.ErrKeyNotFound
+		return nil, nil, errs.ErrDBKeyNotFound
 	}
 	switch v := val.(type) {
 	case error:
@@ -166,7 +168,7 @@ func (m mockWriteBatch) KeyRangeScan(lowerBound, upperBound string) (kvstore.Key
 }
 
 func (m mockWriteBatch) RangeScan(_, _ string) (kvstore.KeyValueIterator, error) {
-	return nil, kvstore.ErrKeyNotFound
+	return nil, errs.ErrDBKeyNotFound
 }
 
 func (m mockWriteBatch) RangeOverlaps(_, _ string) (internalKeys, regularKeys bool) {

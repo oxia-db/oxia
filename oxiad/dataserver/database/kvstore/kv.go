@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble/v2/vfs"
-	"github.com/pkg/errors"
 
 	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/oxiad/common/crc"
@@ -28,7 +27,6 @@ import (
 )
 
 var (
-	ErrKeyNotFound             = errors.New("oxia: key not found")
 	MaxSnapshotChunkSize int64 = 1024 * 1024 // bytes
 
 )
@@ -115,7 +113,7 @@ type PrefixIterator interface {
 	KeyIterator
 
 	// Lookup returns the value of key, wherever it sorts, at the point in time
-	// of the iterator, or ErrKeyNotFound. It doesn't move the iterator. The
+	// of the iterator, or errs.ErrDBKeyNotFound. It doesn't move the iterator. The
 	// value is only valid until the next Lookup, and until the iterator is
 	// closed.
 	Lookup(key string) ([]byte, error)

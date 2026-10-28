@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +46,7 @@ func TestIDRoundTrips(t *testing.T) {
 func TestParseIDRejectsMalformedIDs(t *testing.T) {
 	for _, s := range []string{"", "nodash", "2026-10-03T13-25-07Z-", "-abc", "2026-10-03-abc", "20261003T132507Z-abc"} {
 		_, err := ParseID(s)
-		assert.ErrorIs(t, err, ErrInvalidID, s)
+		assert.ErrorIs(t, err, errs.ErrInvalidArgument, s)
 	}
 }
 

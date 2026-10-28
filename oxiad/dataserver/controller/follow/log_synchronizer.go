@@ -23,6 +23,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
@@ -201,7 +203,7 @@ func (ls *LogSynchronizer) append0(syncCond chan struct{}, onAppend func(), req 
 	// not have.
 	if req.Entry.Offset != lastAppendedOffset+1 {
 		return fmt.Errorf("entry %d can not immediately follow %d: %w",
-			req.Entry.Offset, lastAppendedOffset, wal.ErrInvalidNextOffset)
+			req.Entry.Offset, lastAppendedOffset, fmt.Errorf("%w: invalid next offset in wal", errs.ErrInvalidArgument))
 	}
 
 	// Append the entry asynchronously, passing the previous CRC from the leader.

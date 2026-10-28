@@ -19,13 +19,14 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/cmd/wal/common"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
-	"github.com/oxia-db/oxia/oxiad/dataserver/wal/codec"
 )
 
 func TestExecTruncatesAfterLastSafeEntry(t *testing.T) {
@@ -41,7 +42,7 @@ func TestExecRejectsLastSafeEntryAfterLastEntry(t *testing.T) {
 	setWalOption(t, t.TempDir(), "default")
 	writeWal(t, 5)
 
-	assert.ErrorIs(t, execute("--last-safe-entry", "10"), codec.ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, execute("--last-safe-entry", "10"), errs.ErrOffsetOverflow)
 
 	assert.EqualValues(t, 4, lastOffset(t))
 }

@@ -17,6 +17,8 @@ package leader
 import (
 	"math"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/emirpasic/gods/v2/sets/linkedhashset"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -30,7 +32,7 @@ type leader struct{}
 
 func (*leader) Select(context *Context) (*commonproto.DataServerIdentity, error) {
 	if len(context.Candidates) == 0 {
-		return nil, selector.ErrNoCandidates
+		return nil, errs.ErrNotFound
 	}
 
 	candidates := linkedhashset.New[string]()

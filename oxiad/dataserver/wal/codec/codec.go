@@ -19,15 +19,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/pkg/errors"
-
 	"github.com/oxia-db/oxia/oxiad/common/vfs"
-)
-
-var (
-	ErrOffsetOutOfBounds = errors.New("oxia: offset out of bounds")
-	ErrEmptyPayload      = errors.New("oxia: empty payload")
-	ErrDataCorrupted     = errors.New("oxia: data corrupted")
 )
 
 type Metadata struct {

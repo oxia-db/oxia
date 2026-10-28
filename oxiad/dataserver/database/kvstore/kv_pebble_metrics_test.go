@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,7 +107,7 @@ func TestPebbleReadWriteOpsMetrics(t *testing.T) {
 		assert.NoError(t, closer.Close())
 	}
 	_, _, _, err = kv.Get("non-existing", ComparisonEqual, NoInternalKeys)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 
 	assert.EqualValues(t, 3, readCounter("oxia_server_kv_write_ops")-writesBefore)
 	assert.EqualValues(t, 5, readCounter("oxia_server_kv_read_ops")-readsBefore)

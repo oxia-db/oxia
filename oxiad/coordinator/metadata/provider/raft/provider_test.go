@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	hashicorpraft "github.com/hashicorp/raft"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,7 +113,7 @@ func TestProviderGetLeaderNameUnavailable(t *testing.T) {
 	defer func() { require.NoError(t, p.Close()) }()
 
 	_, err := p.GetLeaderName()
-	require.ErrorIs(t, err, provider.ErrCoordinatorLeaderUnavailable)
+	require.ErrorIs(t, err, errs.ErrUnavailable)
 }
 
 func TestProviderStoreFailsOnFollower(t *testing.T) {
@@ -143,7 +145,7 @@ func TestProviderStoreOnLeader(t *testing.T) {
 		Value:   &commonproto.ClusterStatus{InstanceId: "stale"},
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, metadatacommon.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 
 	// Undecodable values are refused before reaching raft
 	_, err = p.Store(provider.Versioned[*commonproto.ClusterStatus]{

@@ -22,6 +22,8 @@ import (
 	"path"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
@@ -191,10 +193,10 @@ func TestV2_BreakingPoint_Size(t *testing.T) {
 	binary.BigEndian.PutUint32(buf, 123123)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestV2_BreakingPoint_SizeOverflow(t *testing.T) {
@@ -205,10 +207,10 @@ func TestV2_BreakingPoint_SizeOverflow(t *testing.T) {
 	binary.BigEndian.PutUint32(buf, math.MaxUint32)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestV2_BreakingPoint_PartialHeader(t *testing.T) {
@@ -219,7 +221,7 @@ func TestV2_BreakingPoint_PartialHeader(t *testing.T) {
 	// an offset with fewer than HeaderSize bytes behind it has no readable header
 	for _, startFileOffset := range []uint32{uint32(len(buf)) - 1, uint32(len(buf)) - v2.HeaderSize + 1} {
 		_, _, _, err := v2.ReadHeaderWithValidation(buf, startFileOffset)
-		assert.ErrorIs(t, err, ErrOffsetOutOfBounds)
+		assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 	}
 }
 
@@ -230,10 +232,10 @@ func TestV2_BreakingPoint_PreviousCrc(t *testing.T) {
 	binary.BigEndian.PutUint32(buf[v2PayloadSizeLen:], 123123)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_BreakingPoint_PayloadCrc(t *testing.T) {
@@ -243,10 +245,10 @@ func TestV2_BreakingPoint_PayloadCrc(t *testing.T) {
 	binary.BigEndian.PutUint32(buf[v2PayloadSizeLen+v2PreviousCrcLen:], 123123)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_BreakingPoint_Payload(t *testing.T) {
@@ -256,10 +258,10 @@ func TestV2_BreakingPoint_Payload(t *testing.T) {
 	binary.BigEndian.PutUint32(buf[v2.HeaderSize:], 1231242)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_WriteReadIndex(t *testing.T) {
@@ -332,7 +334,7 @@ func TestV2_IndexBroken(t *testing.T) {
 	assert.NoError(t, err)
 
 	_, err = v2.ReadIndex(vfs.OSFS{}, p)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_ReadEmptyIndex(t *testing.T) {
@@ -340,7 +342,7 @@ func TestV2_ReadEmptyIndex(t *testing.T) {
 	assert.NoError(t, v2.WriteIndex(vfs.OSFS{}, p, nil))
 
 	_, err := v2.ReadIndex(vfs.OSFS{}, p)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_ReadEmptyIndexFile(t *testing.T) {
@@ -351,7 +353,7 @@ func TestV2_ReadEmptyIndexFile(t *testing.T) {
 	assert.NoError(t, err)
 
 	_, err = v2.ReadIndex(vfs.OSFS{}, p)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_ReadShortIndex(t *testing.T) {
@@ -364,7 +366,7 @@ func TestV2_ReadShortIndex(t *testing.T) {
 	assert.NoError(t, err)
 
 	_, err = v2.ReadIndex(vfs.OSFS{}, p)
-	assert.ErrorIs(t, err, ErrDataCorrupted)
+	assert.ErrorIs(t, err, errs.ErrDataCorrupted)
 }
 
 func TestV2_ReadWithValidation(t *testing.T) {

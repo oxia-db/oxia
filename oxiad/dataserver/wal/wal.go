@@ -19,8 +19,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/common/proto"
 	time2 "github.com/oxia-db/oxia/common/time"
@@ -28,13 +26,6 @@ import (
 )
 
 var (
-	ErrEntryNotFound     = errors.New("oxia: entry not found")
-	ErrReaderClosed      = errors.New("oxia: reader already closed")
-	ErrInvalidNextOffset = errors.New("oxia: invalid next offset in wal")
-	ErrSegmentFull       = errors.New("oxia: current segment is full")
-	ErrEmptySegment      = errors.New("oxia: segment has no entries")
-	ErrSegmentClosed     = errors.New("oxia: segment is closed")
-
 	InvalidTerm   int64 = -1
 	InvalidOffset int64 = -1
 )

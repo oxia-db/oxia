@@ -16,9 +16,11 @@ package auth
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -30,10 +32,6 @@ import (
 const (
 	MetadataAuthorizationKey = "authorization"
 	TokenPrefix              = "Bearer "
-)
-
-var (
-	ErrMetadataFetchFailed = errors.New("metadata fetch failed")
 )
 
 type GrpcAuthenticationDelegator struct {
@@ -71,13 +69,13 @@ func NewGrpcAuthenticationDelegator(provider AuthenticationProvider) *GrpcAuthen
 func validateTokenWithContext(ctx context.Context, provider AuthenticationProvider) (string, error) {
 	peerMeta, ok := peer.FromContext(ctx)
 	if !ok {
-		return "", ErrMetadataFetchFailed
+		return "", fmt.Errorf("%w: metadata fetch failed", errs.ErrUnauthenticated)
 	}
 	val := metadata.ValueFromIncomingContext(ctx, MetadataAuthorizationKey)
 	if len(val) < 1 {
 		slog.Debug("Receive empty token from the client",
 			slog.String("peer", peerMeta.Addr.String()))
-		return "", ErrEmptyToken
+		return "", fmt.Errorf("%w: empty token", errs.ErrUnauthenticated)
 	}
 	token := strings.TrimPrefix(val[0], TokenPrefix)
 	var userName string

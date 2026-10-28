@@ -29,6 +29,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -44,22 +46,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
-)
-
-var (
-	ErrBadVersionId          = errors.New("oxia: bad version id")
-	ErrMissingPartitionKey   = errors.New("oxia: sequential key operation requires partition key")
-	ErrMissingSequenceDeltas = errors.New("oxia: sequential key operation missing some sequence deltas")
-	ErrSequenceDeltaIsZero   = errors.New("oxia: sequential key operation requires first delta do be > 0")
-	ErrSequenceOverflow      = errors.New("oxia: sequential key operation overflows the sequence")
-	ErrInvalidSequenceKey    = errors.New("oxia: sequential key operation found a key that is not part of the sequence")
-	ErrNotificationRecord    = errors.New("oxia: write request reaches a notification record")
-	ErrNotificationsDisabled = errors.New("oxia: notifications disabled")
-
-	// ErrWriteRejected marks a write request that ProcessWrite rejected
-	// because it can't be applied to the database: the request has no effect,
-	// and its log entry is applied.
-	ErrWriteRejected = errors.New("oxia: write request rejected")
 )
 
 const (
@@ -680,15 +666,11 @@ func (d *db) processWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 // retrying the request can't succeed, and every replica applying it to the
 // same state rejects it the same way.
 func isRejectedWrite(err error) bool {
-	return errors.Is(err, ErrMissingPartitionKey) ||
-		errors.Is(err, ErrMissingSequenceDeltas) ||
-		errors.Is(err, ErrSequenceDeltaIsZero) ||
-		errors.Is(err, ErrSequenceOverflow) ||
-		errors.Is(err, ErrInvalidSequenceKey) ||
+	return errors.Is(err, errs.ErrDBInvalidSequentialKey) ||
 		// E.g. a DeleteRange without an end, with the natural key sorting.
 		// Each replica trims the notification records on its own: the
 		// request is only rejected where some are left.
-		errors.Is(err, ErrNotificationRecord)
+		errors.Is(err, errs.ErrDBInvalidSystemRecord)
 }
 
 // deserializeFailure returns the failure to deserialize the value of key,
@@ -701,7 +683,7 @@ func deserializeFailure(key string, err error, closeErr error) error {
 	case closeErr != nil:
 		return multierr.Append(err, closeErr)
 	case strings.HasPrefix(key, notificationsPrefix+"/"):
-		return fmt.Errorf("%w: %w", ErrNotificationRecord, err)
+		return fmt.Errorf("%w: notification record %q: %w", errs.ErrDBInvalidSystemRecord, key, err)
 	default:
 		return err
 	}
@@ -732,7 +714,7 @@ func (d *db) rejectWrite(cause error, commitOffset int64, timestamp uint64) erro
 		slog.Int64("offset", commitOffset),
 		slog.Any("error", cause),
 	)
-	return fmt.Errorf("%w: %w", ErrWriteRejected, cause)
+	return fmt.Errorf("%w: %w", errs.ErrDBWriteRejected, cause)
 }
 
 func (d *db) addNotifications(batch kvstore.WriteBatch, notifications *Notifications) error {
@@ -936,7 +918,7 @@ func (it *prefixIterator) Record(key string, includeValue bool) (*proto.GetRespo
 	it.d.readOpsTotal.Add(1)
 
 	value, err := it.Lookup(key)
-	if errors.Is(err, kvstore.ErrKeyNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	} else if err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to read the record")
@@ -1040,7 +1022,7 @@ func (d *db) recoverFeatureFlags() error {
 
 func (d *db) readLastNotificationOffset() (int64, error) {
 	key, _, closer, err := d.kv.Get(lastNotificationKey, kvstore.ComparisonFloor, kvstore.ShowInternalKeys)
-	if errors.Is(err, kvstore.ErrKeyNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		d.log.Debug("No notification offset found")
 		return constant.I64NegativeOne, nil
 	}
@@ -1175,10 +1157,10 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	}
 
 	switch {
-	case errors.Is(err, ErrBadVersionId):
+	case errors.Is(err, errs.ErrDBBadVersion):
 		pr.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
-	case isInvalidSequentialPut(err) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
+	case errors.Is(err, errs.ErrDBInvalidSequentialKey) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
 		// Only this put fails, instead of the whole write request with its
 		// other operations
 		pr.Status = proto.Status_INVALID_ARGUMENT
@@ -1296,7 +1278,7 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 	}
 
 	switch {
-	case errors.Is(err, ErrBadVersionId):
+	case errors.Is(err, errs.ErrDBBadVersion):
 		res.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
 	case err != nil:
@@ -1451,7 +1433,7 @@ type pointReader interface {
 func applyGet(kv pointReader, getReq *proto.GetRequest) (*proto.GetResponse, error) {
 	key, value, closer, err := kv.Get(getReq.Key, kvstore.ComparisonType(getReq.GetComparisonType()), kvstore.NoInternalKeys)
 
-	if errors.Is(err, kvstore.ErrKeyNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	} else if err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
@@ -1546,24 +1528,24 @@ func (d *db) checkExpectedVersionId(batch kvstore.WriteBatch, key string, expect
 	se, err := GetStorageEntryMetadata(batch, key)
 	if err == nil && splitFilter != nil {
 		if se, err = d.filterEntry(batch, key, se, splitFilter, updateOperationCallback); err == nil && se == nil {
-			err = kvstore.ErrKeyNotFound
+			err = errs.ErrDBKeyNotFound
 		}
 	}
 	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
+		if errors.Is(err, errs.ErrDBKeyNotFound) {
 			if expectedVersionId == nil || *expectedVersionId == -1 {
 				// OK, we were checking that the key was not there, and it's indeed not there
 				return nil, nil //nolint:nilnil
 			}
 
-			return nil, ErrBadVersionId
+			return nil, errs.ErrDBBadVersion
 		}
 		return nil, err
 	}
 
 	if expectedVersionId != nil && se.VersionId != *expectedVersionId {
 		se.ReturnToVTPool()
-		return nil, ErrBadVersionId
+		return nil, errs.ErrDBBadVersion
 	}
 
 	return se, nil
@@ -1606,7 +1588,7 @@ func Deserialize(value []byte, se *proto.StorageEntry) error {
 
 func (d *db) ReadNextNotifications(ctx context.Context, startOffset int64) ([]proto.EncodedNotificationBatch, error) {
 	if !d.notificationsEnabled.Load() {
-		return nil, ErrNotificationsDisabled
+		return nil, errors.Wrap(errs.ErrUnavailable, "notifications disabled")
 	}
 	batches, err := d.notificationsTracker.ReadNextNotifications(ctx, startOffset)
 	if err != nil {

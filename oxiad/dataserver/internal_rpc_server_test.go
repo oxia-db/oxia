@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -724,7 +726,7 @@ func invalidReplicationMetadata() []struct {
 }
 
 func notFollower(int64) (follow.FollowerController, error) {
-	return nil, controller.ErrNodeIsNotFollower
+	return nil, errs.ErrShardNotMember
 }
 
 func notLeader(int64) (lead.LeaderController, error) {
