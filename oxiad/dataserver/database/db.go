@@ -666,7 +666,7 @@ func (d *db) processWrite(b *proto.WriteRequest, commitOffset int64, timestamp u
 // retrying the request can't succeed, and every replica applying it to the
 // same state rejects it the same way.
 func isRejectedWrite(err error) bool {
-	return errors.Is(err, errs.ErrDBInvalidSequentialPut) ||
+	return errors.Is(err, errs.ErrDBInvalidSequentialKey) ||
 		// E.g. a DeleteRange without an end, with the natural key sorting.
 		// Each replica trims the notification records on its own: the
 		// request is only rejected where some are left.
@@ -1160,7 +1160,7 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	case errors.Is(err, errs.ErrDBBadVersion):
 		pr.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
-	case errors.Is(err, errs.ErrDBInvalidSequentialPut) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
+	case errors.Is(err, errs.ErrDBInvalidSequentialKey) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
 		// Only this put fails, instead of the whole write request with its
 		// other operations
 		pr.Status = proto.Status_INVALID_ARGUMENT

@@ -50,7 +50,7 @@ var (
 	ErrDBBadVersion           = fmt.Errorf("%w: bad version", ErrConflict)
 	ErrDBKeyNotFound          = fmt.Errorf("%w: key", ErrNotFound)
 	ErrDBInvalidSecondaryKey  = fmt.Errorf("%w: invalid secondary key", ErrInvalidArgument)
-	ErrDBInvalidSequentialPut = fmt.Errorf("%w: invalid sequential put", ErrInvalidArgument)
+	ErrDBInvalidSequentialKey = fmt.Errorf("%w: invalid sequential key", ErrInvalidArgument)
 	ErrDBNotificationRecord   = fmt.Errorf("%w: writes a notification record", ErrInvalidArgument)
 	ErrDBWriteRejected        = fmt.Errorf("%w: write rejected", ErrFailedPrecondition)
 	ErrShardFeaturesChanged   = fmt.Errorf("%w: features changed", ErrFailedPrecondition)
