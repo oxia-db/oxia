@@ -42,7 +42,7 @@ func TestExecRejectsLastSafeEntryAfterLastEntry(t *testing.T) {
 	setWalOption(t, t.TempDir(), "default")
 	writeWal(t, 5)
 
-	assert.ErrorIs(t, execute("--last-safe-entry", "10"), errs.ErrInvalidArgument)
+	assert.ErrorIs(t, execute("--last-safe-entry", "10"), errs.ErrOffsetOverflow)
 
 	assert.EqualValues(t, 4, lastOffset(t))
 }
