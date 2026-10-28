@@ -59,12 +59,12 @@ func TestExecutorExecuteReturnsClientError(t *testing.T) {
 func TestExecutorExecuteAcceptsAliases(t *testing.T) {
 	mockClient := common.NewMockClient()
 	var emptyDeleteOptions []oxia.DeleteOption
-	var emptyListOptions []oxia.ListOption
 	var emptyRangeScanOptions []oxia.RangeScanOption
 	results := make(chan oxia.GetResult)
 	close(results)
 	mockClient.On("Delete", "k", emptyDeleteOptions).Return(nil)
-	mockClient.On("List", "", "", emptyListOptions).Return([]string{"a"}, nil)
+	mockClient.On("RangeScan", "", "", []oxia.RangeScanOption{oxia.IncludeValue(false)}).
+		Return(scanResults(oxia.GetResult{Key: "a"}))
 	mockClient.On("RangeScan", "", "", emptyRangeScanOptions).Return(results)
 	executor, out := newTestExecutor(mockClient)
 
