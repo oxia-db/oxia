@@ -34,6 +34,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller/shard/election"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
@@ -48,10 +49,6 @@ import (
 )
 
 const (
-	// When fencing quorum of servers, after we reach the majority, wait a bit more
-	// to include responses from all healthy servers.
-	quorumFencingGracePeriod = 100 * time.Millisecond
-
 	chanBufferSize = 100
 
 	DefaultPeriodicTasksInterval = 1 * time.Minute
@@ -72,7 +69,7 @@ type controller struct {
 	leaderSelector                      selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener                       controllerapi.ShardEventListener
 	metadataStore                       coordmetadata.Metadata
-	dataServerSupportedFeaturesSupplier FeaturesSupplier
+	dataServerSupportedFeaturesSupplier featurepkg.Supplier
 
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
@@ -95,10 +92,8 @@ type controller struct {
 	closeOnce     sync.Once
 	terminationMu sync.RWMutex
 
-	// currentElection is owned by the event loop, the only goroutine that
-	// replaces it. The term gauge, which runs on the goroutine that collects
-	// the metrics, borrows it to read its term: hence the atomic pointer.
-	currentElection atomic.Pointer[Election]
+	// currentElection is owned by the event loop
+	currentElection election.Election
 
 	leaderElectionLatencyHistogram metric.LatencyHistogram
 	newTermQuorumLatencyHistogram  metric.LatencyHistogram
@@ -141,7 +136,7 @@ func NewController(
 	nc *proto.Namespace,
 	shardMetadata *proto.ShardMetadata,
 	metadataStore coordmetadata.Metadata,
-	dataServerSupportedFeaturesSupplier FeaturesSupplier,
+	dataServerSupportedFeaturesSupplier featurepkg.Supplier,
 	eventListener controllerapi.ShardEventListener,
 	rpcProvider rpc.ControllerRPCProvider,
 	periodTasksInterval time.Duration) Controller {
@@ -182,8 +177,8 @@ func NewController(
 
 	s.termGauge = metric.NewGauge("oxia_coordinator_term",
 		"The term of the shard", "count", labels, func() int64 {
-			if e := s.currentElection.Load(); e != nil {
-				return e.Term()
+			if shardMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard); err == nil && exists {
+				return shardMeta.UnsafeBorrow().GetTerm()
 			}
 			return constant.I64NegativeOne
 		})
@@ -263,7 +258,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
-		s.electLeader(initShardMeta, nil)
+		_, _ = s.electLeader(initShardMeta, nil)
 	default:
 		s.logger.Info(
 			"There is already a data server marked as leader on the shard, verifying",
@@ -271,7 +266,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		)
 
 		if !s.verifyCurrentEnsemble(initShardMeta) {
-			s.electLeader(initShardMeta, nil)
+			_, _ = s.electLeader(initShardMeta, nil)
 		} else {
 			s.Refresh()
 		}
@@ -370,7 +365,7 @@ func (s *controller) handleDataServerFailureWithRetries(failedDataServer *proto.
 			"Detected failure on shard leader",
 			slog.Any("leader", failedDataServer.GetNameOrDefault()),
 		)
-		s.electLeader(shardMeta, nil)
+		_, _ = s.electLeader(shardMeta, nil)
 	}
 }
 
@@ -425,7 +420,7 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 		return
 	}
 	ensemble := shardMeta.Ensemble
-	supported := negotiate(s.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble))
+	supported := featurepkg.Negotiate(s.dataServerSupportedFeaturesSupplier(ensemble), len(ensemble))
 	if len(supported) == 0 {
 		// e.g. the features of a member are not known yet
 		s.termFeaturesCheckPending = false
@@ -457,17 +452,12 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 		slog.Any("pinned-features", pinned),
 		slog.Any("features", features),
 	)
-	s.electLeader(shardMeta, nil)
+	_, _ = s.electLeader(shardMeta, nil)
 }
 
-// termFeatures returns the features pinned by the current term of the shard.
-// They are known if the controller elected the leader of the term; otherwise,
-// e.g. after a restart of the coordinator, the leader reports them.
+// termFeatures returns the features pinned by the current term of the shard,
+// as its leader reports them.
 func (s *controller) termFeatures(shardMeta *proto.ShardMetadata) ([]proto.Feature, error) {
-	if e := s.currentElection.Load(); e != nil && e.mutableShardMetadata.GetLeader() != nil &&
-		e.mutableShardMetadata.GetTerm() == shardMeta.GetTerm() {
-		return e.pinnedFeatures, nil
-	}
 	status, err := s.rpc.GetStatus(s.ctx, shardMeta.Leader, &proto.GetStatusRequest{Shard: s.shard})
 	switch {
 	case err != nil:
@@ -569,7 +559,7 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 		return fmt.Errorf("%w: shard is not ready for change ensemble: found feature info for %d of %d current ensemble data servers",
 			errs.ErrUnavailable, len(currentFeatures), ensembleSize)
 	}
-	requiredFeatures := negotiate(currentFeatures, ensembleSize)
+	requiredFeatures := featurepkg.Negotiate(currentFeatures, ensembleSize)
 	targetFeatureInfo := s.dataServerSupportedFeaturesSupplier(targetEnsemble)
 	if len(targetFeatureInfo) != len(targetEnsemble) {
 		return fmt.Errorf("%w: shard is not ready for change ensemble: found feature info for %d of %d target ensemble data servers",
@@ -578,7 +568,7 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	if len(requiredFeatures) == 0 {
 		return nil
 	}
-	targetFeatures := negotiate(targetFeatureInfo, len(targetEnsemble))
+	targetFeatures := featurepkg.Negotiate(targetFeatureInfo, len(targetEnsemble))
 	var missing []proto.Feature
 	for _, feature := range requiredFeatures {
 		if !slices.Contains(targetFeatures, feature) {
@@ -609,8 +599,8 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-	leader := s.electLeader(shardMeta, nil)
-	if leader == nil {
+	leader, err := s.electLeader(shardMeta, nil)
+	if err != nil {
 		electionAction.Error(errors.Wrap(errs.ErrUnavailable, "the election failed to elect a leader"))
 		return
 	}
@@ -620,21 +610,20 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 // electLeader starts a new election of the shard, with its current metadata,
 // in place of the current one.
 func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction) *proto.DataServerIdentity {
+	changeEnsembleAction *action.ChangeEnsembleAction) (*proto.DataServerIdentity, error) {
 	// stop the current term election
-	if e := s.currentElection.Swap(nil); e != nil {
-		e.Stop()
+	if s.currentElection != nil {
+		s.currentElection.Cancel()
 	}
 
-	election := NewElection(s.ctx, s.logger, s.eventListener,
+	s.currentElection = election.New(s.ctx, s.logger, s.eventListener,
 		s.metadataStore, s.dataServerSupportedFeaturesSupplier, s.leaderSelector,
 		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction,
 		s.leaderElectionLatencyHistogram,
 		s.newTermQuorumLatencyHistogram,
 		s.becomeLeaderLatencyHistogram,
 		s.failedLeaderElectionsCounter)
-	s.currentElection.Store(election)
-	return election.Start()
+	return s.currentElection.Start()
 }
 
 func (s *controller) Delete() {
@@ -744,8 +733,8 @@ func (s *controller) Close() error {
 }
 
 func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
-	if e := s.currentElection.Load(); e != nil {
-		if ready := e.IsReadyForChangeEnsemble(); !ready {
+	if s.currentElection != nil {
+		if !s.currentElection.IsFollowerCaughtUp() {
 			s.logger.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
 			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
@@ -764,22 +753,21 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	leader := s.electLeader(shardMeta, changeEnsembleAction)
-	election := s.currentElection.Load()
-	if err := election.ChangeEnsembleError(); err != nil {
-		changeEnsembleAction.Error(err)
-		return
-	}
+	leader, err := s.electLeader(shardMeta, changeEnsembleAction)
 	if leader == nil {
 		// The election stopped without changing the ensemble, e.g. because a
 		// split of the shard started after the validation above. The shard is
 		// as ready for a change of its ensemble as it was before this one: drop
 		// the election, which never elected a leader for its followers to catch
 		// up with, or it rejects the next changes as not ready.
-		election.Stop()
-		s.currentElection.Store(nil)
+		s.currentElection.Cancel()
+		s.currentElection = nil
 		changeEnsembleAction.Error(fmt.Errorf("%w: the election stopped before changing the ensemble",
 			errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble")))
+		return
+	}
+	if err != nil {
+		changeEnsembleAction.Error(err)
 		return
 	}
 	changeEnsembleAction.Done(nil)

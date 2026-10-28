@@ -17,23 +17,9 @@ package shard
 import (
 	"io"
 
-	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 )
-
-// FeaturesSupplier returns the features that each data server supports, by
-// name, as their handshakes reported them.
-type FeaturesSupplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
-
-// NoOpFeaturesSupplier reports no features for any data server.
-func NoOpFeaturesSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
-	features := make(map[string][]proto.Feature, len(dataServers))
-	for _, dataServer := range dataServers {
-		features[dataServer.GetNameOrDefault()] = []proto.Feature{}
-	}
-	return features
-}
 
 // Controller manages one shard for the coordinator. A single event loop applies
 // the requests and the notifications about the shard, one at a time:

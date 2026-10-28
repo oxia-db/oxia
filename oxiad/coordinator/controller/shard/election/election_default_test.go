@@ -12,21 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package shard
+package election
 
 import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	gproto "google.golang.org/protobuf/proto"
+
+	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
+
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/feature"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
@@ -37,149 +43,11 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordrpc "github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc/rpctest"
 )
-
-func TestNegotiateEmptyInput(t *testing.T) {
-	result := negotiate(nil, 0)
-	assert.Nil(t, result)
-
-	result = negotiate(map[string][]proto.Feature{}, 0)
-	assert.Nil(t, result)
-}
-
-func TestNegotiateSingleNode(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
-	}
-
-	result := negotiate(nodeFeatures, 1)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
-}
-
-func TestNegotiateAllNodesSupport(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node3": {proto.Feature_FEATURE_DB_CHECKSUM},
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
-}
-
-func TestNegotiatePartialSupport(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node3": {},
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Empty(t, result)
-}
-
-func TestNegotiateIgnoresUnknownFeature(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {proto.Feature_FEATURE_UNKNOWN, proto.Feature_FEATURE_DB_CHECKSUM},
-	}
-
-	result := negotiate(nodeFeatures, 2)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
-	assert.NotContains(t, result, proto.Feature_FEATURE_UNKNOWN)
-}
-
-func TestNegotiateHandlesDuplicates(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
-	}
-
-	result := negotiate(nodeFeatures, 2)
-	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, result)
-}
-
-func TestNegotiateNoCommonFeatures(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {},
-		"node3": {},
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Empty(t, result)
-}
-
-func TestNegotiateOldNodeWithNoFeatures(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"new-node-1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"new-node-2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"old-node":   nil,
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Empty(t, result, "should not enable features when old nodes are present")
-}
-
-func TestNegotiateNilNodeFeatures(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node3": nil,
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Empty(t, result, "nil feature info must not count as support")
-}
-
-func TestNegotiateMissingFeatureInfo(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"node1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"node2": {proto.Feature_FEATURE_DB_CHECKSUM},
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Empty(t, result, "missing feature info must not count as support")
-}
-
-func TestNegotiateMixedVersionsRollingUpgrade(t *testing.T) {
-	nodeFeatures := map[string][]proto.Feature{
-		"new-node-1": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"new-node-2": {proto.Feature_FEATURE_DB_CHECKSUM},
-		"old-node":   {},
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Empty(t, result, "features should not be enabled until all nodes are upgraded")
-
-	nodeFeatures["old-node"] = []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
-
-	result = negotiate(nodeFeatures, 3)
-	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM, "feature should be enabled after all nodes are upgraded")
-}
-
-func TestNegotiateSecondaryIndexValidationRequiresFullUpgrade(t *testing.T) {
-	currentFeatures := []proto.Feature{
-		proto.Feature_FEATURE_DB_CHECKSUM,
-		proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION,
-	}
-	nodeFeatures := map[string][]proto.Feature{
-		"new-node-1": currentFeatures,
-		"new-node-2": currentFeatures,
-		"old-node":   {proto.Feature_FEATURE_DB_CHECKSUM},
-	}
-
-	result := negotiate(nodeFeatures, 3)
-	assert.Contains(t, result, proto.Feature_FEATURE_DB_CHECKSUM)
-	assert.NotContains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
-
-	nodeFeatures["old-node"] = currentFeatures
-	result = negotiate(nodeFeatures, 3)
-	assert.Contains(t, result, proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION)
-}
 
 func TestChooseCandidatesChoosesHighestHeadEntry(t *testing.T) {
 	tests := []struct {
@@ -237,7 +105,7 @@ func TestChooseCandidatesChoosesHighestHeadEntry(t *testing.T) {
 }
 
 func TestElectionWaitForMajoritySuccess(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -257,7 +125,7 @@ func TestElectionWaitForMajoritySuccess(t *testing.T) {
 }
 
 func TestElectionWaitForMajorityFailureNoQuorum(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -277,7 +145,7 @@ func TestElectionWaitForMajorityFailureNoQuorum(t *testing.T) {
 }
 
 func TestElectionWaitForMajorityMixedSuccessAndFailure(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -298,7 +166,7 @@ func TestElectionWaitForMajorityMixedSuccessAndFailure(t *testing.T) {
 }
 
 func TestElectionWaitForMajorityExcludesRemovedServers(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -324,7 +192,7 @@ func TestElectionWaitForMajorityExcludesRemovedServers(t *testing.T) {
 }
 
 func TestElectionWaitForMajorityEarlyReturn(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -342,7 +210,7 @@ func TestElectionWaitForMajorityEarlyReturn(t *testing.T) {
 }
 
 func TestElectionWaitForEnsembleMajorityWaitsForEnsembleMember(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	removedServer := testDataServer("removed")
@@ -384,7 +252,7 @@ func TestElectionWaitForEnsembleMajorityFailureNoQuorum(t *testing.T) {
 		"failure after the majority":  {leader, removed, failed},
 	} {
 		t.Run(name, func(t *testing.T) {
-			e := &Election{}
+			e := &election{}
 			ch := make(chan electionResponse, 3)
 			for _, r := range responses {
 				ch <- r
@@ -403,7 +271,7 @@ func TestElectionWaitForEnsembleMajorityFailureNoQuorum(t *testing.T) {
 }
 
 func TestElectionWaitForEnsembleMajorityAlreadyReached(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -431,7 +299,7 @@ func TestElectionWaitForEnsembleMajorityAlreadyReached(t *testing.T) {
 }
 
 func TestElectionWaitForGracePeriodAllResponsesReceived(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -454,7 +322,7 @@ func TestElectionWaitForGracePeriodAllResponsesReceived(t *testing.T) {
 }
 
 func TestElectionWaitForGracePeriodTimeout(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	ensemble := []*proto.DataServerIdentity{server1, server2}
@@ -475,7 +343,7 @@ func TestElectionWaitForGracePeriodTimeout(t *testing.T) {
 }
 
 func TestElectionWaitForGracePeriodIgnoresErrors(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	server3 := testDataServer("server3")
@@ -498,7 +366,7 @@ func TestElectionWaitForGracePeriodIgnoresErrors(t *testing.T) {
 }
 
 func TestElectionWaitForGracePeriodExcludesRemovedServers(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	removedServer := testDataServer("removed")
@@ -524,7 +392,7 @@ func TestElectionWaitForGracePeriodExcludesRemovedServers(t *testing.T) {
 }
 
 func TestElectionWaitForGracePeriodAlreadyComplete(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	ensemble := []*proto.DataServerIdentity{server1, server2}
@@ -617,7 +485,7 @@ func TestElectionCheckRemovedEntriesReplicationFactor3(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &Election{
+			e := &election{
 				logger: slog.Default(),
 				mutableShardMetadata: &proto.ShardMetadata{
 					Term:         3,
@@ -643,7 +511,7 @@ func TestElectionCheckRemovedEntriesReplicationFactor5(t *testing.T) {
 	s4 := testDataServer("s4")
 	s5 := testDataServer("s5")
 	s6 := testDataServer("s6")
-	e := &Election{
+	e := &election{
 		logger: slog.Default(),
 		mutableShardMetadata: &proto.ShardMetadata{
 			Term:         3,
@@ -663,81 +531,6 @@ func TestElectionCheckRemovedEntriesReplicationFactor5(t *testing.T) {
 	assert.ErrorIs(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
 		s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
 	}, removed), errs.ErrInvalidArgument)
-}
-
-// The split controller updates the parent while a leader election of the
-// parent is fencing its ensemble: the election must store its outcome on top
-// of these updates.
-func TestElectionStartKeepsSplitUpdatesWhileFencing(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		update func(parent *proto.ShardMetadata)
-	}{{
-		// CatchUp noticed that the parent's term changed
-		name:   "back-to-bootstrap",
-		update: func(parent *proto.ShardMetadata) { parent.Split.Phase = proto.SplitPhaseBootstrap },
-	}, {
-		name:   "abort",
-		update: func(parent *proto.ShardMetadata) { parent.Split = nil },
-	}} {
-		t.Run(test.name, func(t *testing.T) {
-			rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
-			elected := startElection(t, metadata, rpc, 0)
-
-			expectParentFenced(t, rpc, 6)
-			split := updateSplitParent(t, metadata, test.update)
-			electParentLeader(t, rpc, elected)
-
-			parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
-			assert.True(t, gproto.Equal(split, parent.GetSplit()), "split metadata: %v", parent.GetSplit())
-			assert.Equal(t, proto.ShardStatusSteadyState, parent.GetStatus())
-			assert.EqualValues(t, 6, parent.GetTerm())
-			assert.Equal(t, ps2.GetPublic(), parent.GetLeader().GetPublic())
-		})
-	}
-}
-
-// The split is aborted while a leader election of the parent waits to retry,
-// e.g. because its ensemble has no quorum: the next attempt must start from
-// the current metadata of the parent, or the parent stays marked as being
-// split, into children that no longer exist.
-func TestElectionStartKeepsSplitUpdatesBetweenAttempts(t *testing.T) {
-	rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
-	elected := startElection(t, metadata, rpc, 0)
-
-	// The first attempt cannot fence a quorum
-	expectParentFenced(t, rpc, 6)
-	updateSplitParent(t, metadata, func(parent *proto.ShardMetadata) { parent.Split = nil })
-	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
-		rpc.GetNode(node).NewTermResponse(0, 0, errors.New("unreachable"))
-	}
-
-	expectParentFenced(t, rpc, 7)
-	assert.Nil(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, 0).GetSplit())
-	electParentLeader(t, rpc, elected)
-
-	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
-	assert.Nil(t, parent.GetSplit())
-	assert.Equal(t, proto.ShardStatusSteadyState, parent.GetStatus())
-	assert.EqualValues(t, 7, parent.GetTerm())
-	assert.Equal(t, ps2.GetPublic(), parent.GetLeader().GetPublic())
-}
-
-// Deleting the namespace marks the shard for deletion while its leader
-// election is fencing the ensemble: the election must not bring the shard
-// back, which would publish it again until its shard controller deletes it.
-func TestElectionStartKeepsDeletingStatus(t *testing.T) {
-	rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
-	elected := startElection(t, metadata, rpc, 0)
-
-	expectParentFenced(t, rpc, 6)
-	metadata.DeleteNamespaceStatus(constant.DefaultNamespace)
-	electParentLeader(t, rpc, elected)
-
-	shard := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
-	assert.Equal(t, proto.ShardStatusDeleting, shard.GetStatus())
-	assert.EqualValues(t, 6, shard.GetTerm())
-	assert.Equal(t, ps2.GetPublic(), shard.GetLeader().GetPublic())
 }
 
 // The addresses of the ensemble are loaded before persisting a new term: a
@@ -817,7 +610,7 @@ func TestElectionFenceNewTermQuorumRequiresEnsembleMajority(t *testing.T) {
 }
 
 func TestElectionWaitForEnsembleMajorityCollectsRemovedServers(t *testing.T) {
-	e := &Election{}
+	e := &election{}
 	server1 := testDataServer("server1")
 	server2 := testDataServer("server2")
 	removed1 := testDataServer("removed1")
@@ -948,7 +741,7 @@ func TestElectionPrepareIfChangeEnsembleKeepsRemovedNodesUnique(t *testing.T) {
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
-	e := &Election{
+	e := &election{
 		logger:               slog.Default(),
 		changeEnsembleAction: action.NewChangeEnsembleAction(5, s3, s4),
 	}
@@ -971,7 +764,7 @@ func TestElectionAbortChangeEnsembleKeepsPendingDeletesUnique(t *testing.T) {
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
 	abortErr := errors.New("aborted")
-	e := &Election{
+	e := &election{
 		logger:               slog.Default(),
 		changeEnsembleAction: action.NewChangeEnsembleAction(5, s3, s4),
 	}
@@ -981,7 +774,7 @@ func TestElectionAbortChangeEnsembleKeepsPendingDeletesUnique(t *testing.T) {
 
 	assertShardEnsemble(t, retryShardMetadata.PendingDeleteShardNodes, s4)
 	assert.Nil(t, e.changeEnsembleAction)
-	assert.ErrorIs(t, e.ChangeEnsembleError(), abortErr)
+	assert.ErrorIs(t, e.changeEnsembleErr, abortErr)
 }
 
 // The election of a shard that was removed meanwhile fails instead of
@@ -1017,7 +810,7 @@ func TestElectionPersistNewLeaderReturnsWriteError(t *testing.T) {
 func TestElectionStartPanicsWhenStartedTwice(t *testing.T) {
 	e := newTestElection(t, nil, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
 	e.started.Store(true)
-	assert.PanicsWithValue(t, "bug! the election has been started", func() { e.Start() })
+	assert.PanicsWithValue(t, "bug! the election has been started", func() { _, _ = e.Start() })
 }
 
 type electionResponse = fenceResponse
@@ -1026,98 +819,13 @@ func testDataServer(id string) *proto.DataServerIdentity {
 	return &proto.DataServerIdentity{Internal: id, Public: id}
 }
 
-// startElection starts a leader election of the shard, as its shard
-// controller does, and returns the elected leader once the election ends.
-func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.ControllerRPCProvider, shard int64) <-chan *proto.DataServerIdentity {
-	t.Helper()
-	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	s := &controller{
-		namespace:                           constant.DefaultNamespace,
-		shard:                               shard,
-		metadataStore:                       metadata,
-		dataServerSupportedFeaturesSupplier: NoOpFeaturesSupplier,
-		leaderSelector:                      leaderselector.NewSelector(),
-		rpc:                                 rpc,
-		logger:                              slog.Default(),
-		leaderElectionLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
-			"The time it takes to elect a leader for the shard", labels),
-		failedLeaderElectionsCounter: metric.NewCounter("oxia_coordinator_leader_election_failed",
-			"The number of failed leader elections", "count", labels),
-		newTermQuorumLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
-			"The time it takes to take the ensemble of data servers to a new term", labels),
-		becomeLeaderLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
-			"The time it takes for the new elected leader to start", labels),
-	}
-	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
-
-	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
-	elected := make(chan *proto.DataServerIdentity, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		elected <- s.electLeader(shardMeta, nil)
-	}()
-	t.Cleanup(func() {
-		s.ctxCancel()
-		<-done
-		s.currentElection.Load().Stop()
-	})
-	return elected
-}
-
-// requireElectionEnded waits for the election to end, and returns the leader
-// it elected.
-func requireElectionEnded(t *testing.T, elected <-chan *proto.DataServerIdentity) *proto.DataServerIdentity {
-	t.Helper()
-	select {
-	case leader := <-elected:
-		return leader
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "the election did not end in time")
-		return nil
-	}
-}
-
-// electParentLeader completes an election of the parent shard of
-// setupSplitTest that is fencing its ensemble: ps2 has the highest entry, and
-// becomes the leader.
-func electParentLeader(t *testing.T, rpc *rpctest.RpcProvider, elected <-chan *proto.DataServerIdentity) {
-	t.Helper()
-	rpc.GetNode(ps1).NewTermResponse(5, 100, nil)
-	rpc.GetNode(ps2).NewTermResponse(5, 105, nil)
-	rpc.GetNode(ps3).NewTermResponse(5, 100, nil)
-	rpc.GetNode(ps2).BecomeLeaderResponse(nil)
-	assert.Equal(t, ps2.GetPublic(), requireElectionEnded(t, elected).GetPublic())
-}
-
-// expectParentFenced waits for the election to fence each member of the
-// parent's ensemble at the term.
-func expectParentFenced(t *testing.T, rpc *rpctest.RpcProvider, term int64) {
-	t.Helper()
-	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
-		rpc.GetNode(node).ExpectNewTermRequest(t, 0, term, true)
-	}
-}
-
-// updateSplitParent applies an update of the split controller to the parent
-// shard of setupSplitTest, and returns the updated split metadata.
-func updateSplitParent(t *testing.T, metadata coordmetadata.Metadata, update func(parent *proto.ShardMetadata)) *proto.SplitMetadata {
-	t.Helper()
-	require.NoError(t, metadata.PatchNamespaceStatus(constant.DefaultNamespace, func(status *proto.NamespaceStatus) bool {
-		shards := status.Shards
-		update(shards[0])
-		return true
-	}))
-	return requireShardMetadata(t, metadata, constant.DefaultNamespace, 0).GetSplit()
-}
-
 // newTestElection creates an election of the shard, as its shard controller
 // does, that the test drives step by step.
 func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.ControllerRPCProvider, shard int64,
-	shardMeta *proto.ShardMetadata) *Election {
+	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	e := NewElection(t.Context(), slog.Default(), nil, metadata, NoOpFeaturesSupplier, leaderselector.NewSelector(),
+	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 		rpc, constant.DefaultNamespace, shard, shardMeta, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
@@ -1126,8 +834,8 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 		metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
 			"The time it takes for the new elected leader to start", labels),
 		metric.NewCounter("oxia_coordinator_leader_election_failed",
-			"The number of failed leader elections", "count", labels))
-	t.Cleanup(e.Stop)
+			"The number of failed leader elections", "count", labels)).(*election)
+	t.Cleanup(e.Cancel)
 	return e
 }
 
@@ -1185,4 +893,134 @@ func (m *hookedMetadata) PatchNamespaceStatus(namespace string, modify func(*pro
 		return m.patchNamespaceStatus(namespace, modify)
 	}
 	return m.Metadata.PatchNamespaceStatus(namespace, modify)
+}
+
+var namespaceConfig = &proto.Namespace{
+	Name:              "my-namespace",
+	InitialShardCount: 1,
+	ReplicationFactor: 3,
+}
+
+func newTestMetadata(t *testing.T, metadataProvider provider.Provider[*proto.ClusterStatus], clusterConfig *proto.ClusterConfiguration) coordmetadata.Metadata {
+	t.Helper()
+
+	if clusterConfig == nil {
+		clusterConfig = &proto.ClusterConfiguration{}
+	}
+	if len(clusterConfig.Namespaces) == 0 {
+		clusterConfig.Namespaces = []*proto.Namespace{namespaceConfig}
+	}
+	if len(clusterConfig.Servers) == 0 {
+		clusterConfig.Servers = []*proto.DataServerIdentity{
+			{Public: "seed-public-1:6648", Internal: "seed-internal-1:6649"},
+			{Public: "seed-public-2:7648", Internal: "seed-internal-2:7649"},
+			{Public: "seed-public-3:8648", Internal: "seed-internal-3:8649"},
+		}
+	}
+
+	dir := t.TempDir()
+	snapshot, err := metadataProvider.Load()
+	require.NoError(t, err)
+	statusData, err := metadatacodec.ClusterStatusCodec.MarshalYAML(snapshot.Value)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileStatusName), statusData, 0o600))
+	configData, err := metadatacodec.ClusterConfigCodec.MarshalYAML(clusterConfig)
+	assert.NoError(t, err)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, coordoption.DefaultFileConfigName), configData, 0o600))
+	metadataFactory, err := coordmetadata.New(t.Context(), &coordoption.Options{
+		Metadata: coordoption.MetadataOptions{
+			ProviderOptions: coordoption.ProviderOptions{
+				ProviderName: metadatacommon.NameFile,
+				File: coordoption.FileMetadata{
+					Dir: dir,
+				},
+			},
+		},
+	})
+	assert.NoError(t, err)
+	metadata := metadataFactory.CreateMetadata(t.Context())
+	_, err = metadata.WaitToBecomeLeader()
+	assert.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, metadata.Close())
+		assert.NoError(t, metadataFactory.Close())
+	})
+	return metadata
+}
+
+func storeTestShardMetadata(
+	t *testing.T,
+	metadata coordmetadata.Metadata,
+	namespace string,
+	shard int64,
+	namespaceConfig *proto.Namespace,
+	shardMetadata *proto.ShardMetadata,
+) {
+	t.Helper()
+	namespaceStatus := &proto.NamespaceStatus{
+		ReplicationFactor: namespaceConfig.GetReplicationFactor(),
+		Shards: map[int64]*proto.ShardMetadata{
+			shard: gproto.CloneOf(shardMetadata),
+		},
+	}
+	require.NoError(t, metadata.CreateNamespaceStatus(namespace, namespaceStatus))
+}
+
+func testShardMetadata(metadata coordmetadata.Metadata, namespace string, shard int64) (*proto.ShardMetadata, bool) {
+	borrowedMeta, exists, err := metadata.GetShardStatus(namespace, shard)
+	if err != nil || !exists {
+		return nil, false
+	}
+	return gproto.CloneOf(borrowedMeta.UnsafeBorrow()), true
+}
+
+func requireShardMetadata(t *testing.T, metadata coordmetadata.Metadata, namespace string, shard int64) *proto.ShardMetadata {
+	t.Helper()
+	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
+	require.True(t, exists)
+	return shardMetadata
+}
+
+func shardTerm(metadata coordmetadata.Metadata, namespace string, shard int64) int64 {
+	shardMetadata, exists := testShardMetadata(metadata, namespace, shard)
+	if !exists {
+		return 0
+	}
+	return shardMetadata.Term
+}
+
+func assertShardEnsemble(
+	t *testing.T,
+	actual []*proto.DataServerIdentity,
+	expected ...*proto.DataServerIdentity,
+) {
+	t.Helper()
+	require.Len(t, actual, len(expected))
+	for i, expectedServer := range expected {
+		assert.True(t, gproto.Equal(expectedServer, actual[i]))
+	}
+}
+
+// requireClosed waits for the channel to be closed.
+func requireClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting for "+what)
+	}
+}
+
+// statusWriteFailingMetadata fails the shard status writes, as the metadata
+// does when it gives up retrying them because the coordinator is closing.
+type statusWriteFailingMetadata struct {
+	coordmetadata.Metadata
+}
+
+func (statusWriteFailingMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) error {
+	return context.Canceled
+}
+
+func (statusWriteFailingMetadata) PatchNamespaceStatus(string, func(*proto.NamespaceStatus) bool) error {
+	return context.Canceled
 }

@@ -39,6 +39,7 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	"github.com/oxia-db/oxia/oxiad/coordinator/controller/shard/election"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
@@ -1505,7 +1506,7 @@ func TestSplitController_ChildEnsembleMemberDiesDuringBootstrap(t *testing.T) {
 // supportedFeaturesExcept reports every data server as supporting the
 // features of this binary, except for one data server that doesn't support
 // the given feature.
-func supportedFeaturesExcept(dataServer *proto.DataServerIdentity, unsupported proto.Feature) FeaturesSupplier {
+func supportedFeaturesExcept(dataServer *proto.DataServerIdentity, unsupported proto.Feature) feature.Supplier {
 	return func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
 		features := make(map[string][]proto.Feature, len(dataServers))
 		for _, server := range dataServers {
@@ -2331,14 +2332,14 @@ func TestSplitController_ParentElectionAfterPointOfNoReturn(t *testing.T) {
 	queueNewTermResponses(rpcMock, ps1, ps2, ps3)
 
 	// The election reads the parent before the point of no return...
-	election := newHoldingMetadata(metadata, func() bool { return true })
-	elected := startElection(t, election, rpcMock, 0)
-	requireClosed(t, election.held, "the election to start")
+	holding := newHoldingMetadata(metadata, func() bool { return true })
+	elected := startElection(t, holding, rpcMock, 0)
+	requireClosed(t, holding.held, "the holding to start")
 
 	// ...and makes its first status update once Finalize fenced the parent
 	split := newHoldingMetadata(metadata, func() bool {
 		parent, _ := testShardMetadata(metadata, constant.DefaultNamespace, 0)
-		return isFinalizingSplitParent(parent)
+		return election.IsFinalizingSplitParent(parent)
 	})
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -2351,11 +2352,11 @@ func TestSplitController_ParentElectionAfterPointOfNoReturn(t *testing.T) {
 	})
 	defer sc.Close()
 	requireClosed(t, split.held, "Finalize to fence the parent")
-	close(election.release)
-	requireClosed(t, election.written, "the election's first status update")
+	close(holding.release)
+	requireClosed(t, holding.written, "the holding's first status update")
 
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
-	assert.True(t, isFinalizingSplitParent(parent), "split metadata: %v", parent.GetSplit())
+	assert.True(t, election.IsFinalizingSplitParent(parent), "split metadata: %v", parent.GetSplit())
 	assert.Equal(t, proto.ShardStatusElection, parent.GetStatus())
 	assert.EqualValues(t, 6, parent.GetTerm())
 
@@ -2382,9 +2383,9 @@ func TestSplitController_ParentElectionAfterSplitCompleted(t *testing.T) {
 	queueNewTermResponses(rpcMock, ps1, ps2, ps3)
 	queueChildrenReelectionResponses(rpcMock)
 
-	election := newHoldingMetadata(metadata, func() bool { return true })
-	elected := startElection(t, election, rpcMock, 0)
-	requireClosed(t, election.held, "the election to start")
+	holding := newHoldingMetadata(metadata, func() bool { return true })
+	elected := startElection(t, holding, rpcMock, 0)
+	requireClosed(t, holding.held, "the election to start")
 
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -2403,8 +2404,8 @@ func TestSplitController_ParentElectionAfterSplitCompleted(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("Split did not complete in time")
 	}
-	close(election.release)
-	requireClosed(t, election.written, "the election's first status update")
+	close(holding.release)
+	requireClosed(t, holding.written, "the election's first status update")
 
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
 	assert.Equal(t, proto.ShardStatusDeleting, parent.GetStatus())
@@ -3321,7 +3322,7 @@ func newUnstartedSplitController(t *testing.T, metadata coordmetadata.Metadata, 
 		metadata:                  metadata,
 		rpcProvider:               rpcMock,
 		eventListener:             listener,
-		supportedFeaturesSupplier: NoOpFeaturesSupplier,
+		supportedFeaturesSupplier: feature.NoOpSupplier,
 		requiredFeatures:          make(map[int64][]proto.Feature),
 		catchUpRoundTimeout:       DefaultCatchUpRoundTimeout,
 		logger:                    slog.Default(),

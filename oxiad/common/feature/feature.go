@@ -18,6 +18,8 @@
 package feature
 
 import (
+	"slices"
+
 	"github.com/oxia-db/oxia/common/proto"
 )
 
@@ -81,4 +83,65 @@ func Missing(required []proto.Feature, available []proto.Feature) []proto.Featur
 		}
 	}
 	return missing
+}
+
+// Union returns the sorted features that are in a or in b, without duplicates.
+func Union(a []proto.Feature, b []proto.Feature) []proto.Feature {
+	union := slices.Concat(a, b)
+	slices.Sort(union)
+	return slices.Compact(union)
+}
+
+// Negotiate returns the features that every one of the given number of data
+// servers supports. A data server missing from nodeFeatures supports none.
+func Negotiate(nodeFeatures map[string][]proto.Feature, candidates int) []proto.Feature {
+	if candidates == 0 || len(nodeFeatures) == 0 {
+		return nil
+	}
+
+	// Start with all supported features
+	featureCount := make(map[proto.Feature]int)
+
+	for _, features := range nodeFeatures {
+		// Track unique features per node to handle duplicates
+		seen := make(map[proto.Feature]bool)
+		for _, f := range features {
+			if f == proto.Feature_FEATURE_UNKNOWN {
+				continue
+			}
+			if !seen[f] {
+				seen[f] = true
+				featureCount[f]++
+			}
+		}
+	}
+
+	// Only include features supported by ALL nodes
+	var negotiated []proto.Feature
+	for f, count := range featureCount {
+		if count == candidates {
+			negotiated = append(negotiated, f)
+		}
+	}
+
+	return negotiated
+}
+
+// Supplier returns the features that each data server supports, by name, as
+// their handshakes reported them.
+type Supplier = func(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature
+
+// NoOpSupplier reports no features for any data server.
+func NoOpSupplier(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
+	features := make(map[string][]proto.Feature, len(dataServers))
+	for _, dataServer := range dataServers {
+		features[dataServer.GetNameOrDefault()] = []proto.Feature{}
+	}
+	return features
+}
+
+// NegotiateDataServers returns the features that all the given data servers
+// support.
+func NegotiateDataServers(dataServers []*proto.DataServerIdentity, supplier Supplier) []proto.Feature {
+	return Negotiate(supplier(dataServers), len(dataServers))
 }
