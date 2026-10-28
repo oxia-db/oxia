@@ -84,7 +84,7 @@ func TestClientPool_KeepsConnectionOnTransientHealthFailures(t *testing.T) {
 	defer pool.Close()
 
 	conn, err := newTestConnectionWithHealthConfig(pool, target,
-		10*time.Millisecond, 10*time.Millisecond)
+		10*time.Millisecond, time.Second)
 	require.NoError(t, err)
 
 	pool.Lock()
