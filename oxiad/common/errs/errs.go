@@ -51,7 +51,7 @@ var (
 	ErrDBKeyNotFound          = fmt.Errorf("%w: key", ErrNotFound)
 	ErrDBInvalidSecondaryKey  = fmt.Errorf("%w: invalid secondary key", ErrInvalidArgument)
 	ErrDBInvalidSequentialKey = fmt.Errorf("%w: invalid sequential key", ErrInvalidArgument)
-	ErrDBNotificationRecord   = fmt.Errorf("%w: writes a notification record", ErrInvalidArgument)
+	ErrDBInvalidSystemRecord  = fmt.Errorf("%w: invalid system record", ErrInvalidArgument)
 	ErrDBWriteRejected        = fmt.Errorf("%w: write rejected", ErrFailedPrecondition)
 	ErrShardFeaturesChanged   = fmt.Errorf("%w: features changed", ErrFailedPrecondition)
 	ErrShardNotMember         = fmt.Errorf("%w: not member", ErrNotFound)

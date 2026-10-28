@@ -591,7 +591,7 @@ func TestDB_RejectedWrite(t *testing.T) {
 		rejected: &proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
 			StartInclusive: "a",
 		}}},
-		cause: errs.ErrDBNotificationRecord,
+		cause: errs.ErrDBInvalidSystemRecord,
 	}} {
 		t.Run(test.name, func(t *testing.T) {
 			newDB := func() DB {

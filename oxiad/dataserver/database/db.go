@@ -670,7 +670,7 @@ func isRejectedWrite(err error) bool {
 		// E.g. a DeleteRange without an end, with the natural key sorting.
 		// Each replica trims the notification records on its own: the
 		// request is only rejected where some are left.
-		errors.Is(err, errs.ErrDBNotificationRecord)
+		errors.Is(err, errs.ErrDBInvalidSystemRecord)
 }
 
 // deserializeFailure returns the failure to deserialize the value of key,
@@ -683,7 +683,7 @@ func deserializeFailure(key string, err error, closeErr error) error {
 	case closeErr != nil:
 		return multierr.Append(err, closeErr)
 	case strings.HasPrefix(key, notificationsPrefix+"/"):
-		return fmt.Errorf("%w: %w", errs.ErrDBNotificationRecord, err)
+		return fmt.Errorf("%w: notification record %q: %w", errs.ErrDBInvalidSystemRecord, key, err)
 	default:
 		return err
 	}
