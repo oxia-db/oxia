@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	grpcstatus "google.golang.org/grpc/status"
@@ -141,6 +142,46 @@ func TestDataServerControllerHealthPingWithRetriesToleratesTransientFailures(t *
 // Close does not wait for a health check loop to sleep out its retry backoff,
 // which used to hold up the coordinator shutdown for up to a minute per
 // unreachable data server.
+// Without a health watch, the ping loop alone fails a data server that
+// reports NOT_SERVING.
+func TestDataServerControllerHealthPingWithRetriesFailsNotServingDataServer(t *testing.T) {
+	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := &fakeRpcProvider{RpcProvider: rpctest.NewRpcProvider()}
+	node := rpc.GetNode(addr)
+	rpc.getHealthClient = func(*proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
+		return &fakeHealthClient{
+			HealthClient: node.HealthClient,
+			watch: func(context.Context, *grpc_health_v1.HealthCheckRequest, ...grpc.CallOption) (
+				grpc_health_v1.Health_WatchClient, error) {
+				return nil, errors.New("watch not available")
+			},
+		}, nil
+	}
+
+	nc := NewController(context.Background(), dataServer, rpctest.NewShardAssignmentsProvider(), nal, rpc,
+		"test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().GetState() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the data server was not failed")
+	}
+	assert.Equal(t, NotRunning, nc.GetStatus().GetState())
+}
+
 func TestDataServerControllerCloseInterruptsHealthCheckBackoff(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
@@ -1059,4 +1100,20 @@ func (p *fakeRpcProvider) Handshake(ctx context.Context, node *proto.DataServerI
 		return p.handshake(ctx, node, req)
 	}
 	return p.RpcProvider.Handshake(ctx, node, req)
+}
+
+// fakeHealthClient calls the hook of each method that has one, and the
+// embedded HealthClient otherwise.
+type fakeHealthClient struct {
+	*rpctest.HealthClient
+	watch func(ctx context.Context, req *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (
+		grpc_health_v1.Health_WatchClient, error)
+}
+
+func (c *fakeHealthClient) Watch(ctx context.Context, req *grpc_health_v1.HealthCheckRequest,
+	opts ...grpc.CallOption) (grpc_health_v1.Health_WatchClient, error) {
+	if c.watch != nil {
+		return c.watch(ctx, req, opts...)
+	}
+	return c.HealthClient.Watch(ctx, req, opts...)
 }
