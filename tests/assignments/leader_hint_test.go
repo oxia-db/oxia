@@ -140,7 +140,7 @@ func TestLeaderHintListWithoutClient(t *testing.T) {
 	// The assignment dispatcher on the non-leader may not have received
 	// the shard assignments yet, so retry until the leader hint is present.
 	assert.Eventually(t, func() bool {
-		stream, err := clientRpc.List(t.Context(), &proto.ListRequest{Shard: &shardID})
+		stream, err := clientRpc.List(t.Context(), &proto.ListRequest{Shard: &shardID}) //nolint:staticcheck
 		if err != nil {
 			return false
 		}
@@ -204,7 +204,7 @@ func TestLeaderHintListWithClient(t *testing.T) {
 	_, _, err = client.Put(t.Context(), "/key2", []byte("value"))
 	assert.NoError(t, err)
 
-	keys, err := client.List(t.Context(), "/key1", "/key3")
+	keys, err := client.List(t.Context(), "/key1", "/key3") //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Contains(t, keys, "/key1")
 	assert.Contains(t, keys, "/key2")

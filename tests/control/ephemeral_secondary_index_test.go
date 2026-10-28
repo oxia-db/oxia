@@ -85,7 +85,7 @@ func TestEphemeralSecondaryIndexCleanup(t *testing.T) {
 	// Closing the client closes its session, which deletes its ephemeral record
 	assert.NoError(t, sessionClient.Close())
 
-	keys, err := client.List(context.Background(), "a", "z", oxia.UseIndex("idx"))
+	keys, err := client.List(context.Background(), "a", "z", oxia.UseIndex("idx")) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"/persistent"}, keys)
 

@@ -88,7 +88,7 @@ func TestDeleteRangeNotificationRecords(t *testing.T) {
 	// notification records: only the one of the delete range itself is left
 	notificationsStart, notificationsEnd := "__oxia/notifications/", "__oxia/notifications//"
 	require.NoError(t, client.DeleteRange(ctx, notificationsStart, notificationsEnd))
-	records, err := client.List(ctx, notificationsStart, notificationsEnd, oxia.ShowInternalKeys(true))
+	records, err := client.List(ctx, notificationsStart, notificationsEnd, oxia.ShowInternalKeys(true)) //nolint:staticcheck
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 

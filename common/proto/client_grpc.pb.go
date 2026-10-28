@@ -92,11 +92,15 @@ type OxiaClientClient interface {
 	// Clients should send this request to the shard leader. In the future,
 	// this may be handled server-side in a proxy layer.
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadResponse], error)
+	// Deprecated: Do not use.
 	// *
 	// Requests all the keys between a range of keys.
 	//
 	// Clients should send an equivalent request to all respective shards,
 	// unless a particular partition key was specified.
+	//
+	// Use RangeScan instead. The servers keep serving List for the clients
+	// that use it.
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListResponse], error)
 	// *
 	// Requests all the records between a range of keys.
@@ -186,6 +190,7 @@ func (c *oxiaClientClient) Read(ctx context.Context, in *ReadRequest, opts ...gr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OxiaClient_ReadClient = grpc.ServerStreamingClient[ReadResponse]
 
+// Deprecated: Do not use.
 func (c *oxiaClientClient) List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &OxiaClient_ServiceDesc.Streams[3], OxiaClient_List_FullMethodName, cOpts...)
@@ -335,11 +340,15 @@ type OxiaClientServer interface {
 	// Clients should send this request to the shard leader. In the future,
 	// this may be handled server-side in a proxy layer.
 	Read(*ReadRequest, grpc.ServerStreamingServer[ReadResponse]) error
+	// Deprecated: Do not use.
 	// *
 	// Requests all the keys between a range of keys.
 	//
 	// Clients should send an equivalent request to all respective shards,
 	// unless a particular partition key was specified.
+	//
+	// Use RangeScan instead. The servers keep serving List for the clients
+	// that use it.
 	List(*ListRequest, grpc.ServerStreamingServer[ListResponse]) error
 	// *
 	// Requests all the records between a range of keys.

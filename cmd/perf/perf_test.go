@@ -48,7 +48,7 @@ func TestPerfRunWritesZeroPayloads(t *testing.T) {
 	var keys []string
 	assert.Eventually(t, func() bool {
 		var err error
-		keys, err = client.List(context.Background(), "key-", "key-~")
+		keys, err = client.List(context.Background(), "key-", "key-~") //nolint:staticcheck
 		return err == nil && len(keys) > 0
 	}, 10*time.Second, 10*time.Millisecond)
 
@@ -69,7 +69,7 @@ func TestPerfRunCountsFailedOperations(t *testing.T) {
 
 	client := newSyncClient(t, server.ServiceAddr())
 	assert.Eventually(t, func() bool {
-		keys, err := client.List(context.Background(), "key-", "key-~")
+		keys, err := client.List(context.Background(), "key-", "key-~") //nolint:staticcheck
 		return err == nil && len(keys) > 0
 	}, 10*time.Second, 10*time.Millisecond)
 	require.NoError(t, server.Close())
@@ -88,13 +88,13 @@ func TestPerfRunWritesRandomPayloads(t *testing.T) {
 
 	client := newSyncClient(t, server.ServiceAddr())
 	assert.Eventually(t, func() bool {
-		keys, err := client.List(context.Background(), "key-", "key-~")
+		keys, err := client.List(context.Background(), "key-", "key-~") //nolint:staticcheck
 		return err == nil && len(keys) > 0
 	}, 10*time.Second, 10*time.Millisecond)
 
 	cancel()
 	<-done
-	keys, err := client.List(context.Background(), "key-", "key-~")
+	keys, err := client.List(context.Background(), "key-", "key-~") //nolint:staticcheck
 	require.NoError(t, err)
 	_, value, _, err := client.Get(context.Background(), keys[0])
 	require.NoError(t, err)

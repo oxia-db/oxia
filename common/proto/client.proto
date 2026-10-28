@@ -76,8 +76,13 @@ service OxiaClient {
    *
    * Clients should send an equivalent request to all respective shards,
    * unless a particular partition key was specified.
+   *
+   * Use RangeScan instead. The servers keep serving List for the clients
+   * that use it.
    */
-  rpc List(ListRequest) returns (stream ListResponse);
+  rpc List(ListRequest) returns (stream ListResponse) {
+    option deprecated = true;
+  }
 
   /**
    * Requests all the records between a range of keys.

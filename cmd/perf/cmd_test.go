@@ -45,7 +45,7 @@ func TestRunPerfStopsOnClose(t *testing.T) {
 
 	client := newSyncClient(t, server.ServiceAddr())
 	assert.Eventually(t, func() bool {
-		keys, err := client.List(context.Background(), "key-", "key-~")
+		keys, err := client.List(context.Background(), "key-", "key-~") //nolint:staticcheck
 		return err == nil && len(keys) > 0
 	}, 10*time.Second, 10*time.Millisecond)
 

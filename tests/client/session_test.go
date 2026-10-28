@@ -59,7 +59,7 @@ loop:
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		keys, err := syncClient.List(context.Background(), "/session-leak/", "/session-leak//")
+		keys, err := syncClient.List(context.Background(), "/session-leak/", "/session-leak//") //nolint:staticcheck
 		return assert.NoError(t, err) && assert.Empty(t, keys)
 	}, 10*time.Second, 1*time.Second)
 }

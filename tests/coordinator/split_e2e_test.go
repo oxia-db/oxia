@@ -249,7 +249,7 @@ func TestCoordinator_ShardSplit(t *testing.T) {
 		require.NoError(t, err, "connect to child %d leader", childId)
 
 		shardIdVal := childId
-		listStream, err := rpcClient.List(ctx, &proto.ListRequest{
+		listStream, err := rpcClient.List(ctx, &proto.ListRequest{ //nolint:staticcheck
 			Shard:          &shardIdVal,
 			StartInclusive: "",
 			EndExclusive:   "",
@@ -493,7 +493,7 @@ func (c *splitTestCluster) listShardKeys(t *testing.T, shard int64) []string {
 
 	rpcClient, err := clientPool.GetClientRpc(c.shardStatus(t, shard).Leader.Public)
 	require.NoError(t, err)
-	stream, err := rpcClient.List(context.Background(), &proto.ListRequest{
+	stream, err := rpcClient.List(context.Background(), &proto.ListRequest{ //nolint:staticcheck
 		Shard:               &shard,
 		IncludeInternalKeys: true,
 	})
@@ -1902,7 +1902,7 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 	}
 
 	// Verify secondary indexes work before split (baseline)
-	alphaKeysBefore, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category"))
+	alphaKeysBefore, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category")) //nolint:staticcheck
 	require.NoError(t, err)
 	assert.Equal(t, 20, len(alphaKeysBefore), "expected 20 alpha keys before split")
 
@@ -1916,7 +1916,7 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 	// ---- Verify secondary index "category" ----
 	// List all keys for each category via secondary index
 	for _, cat := range categories {
-		keys, err := client.List(ctx, cat, cat+"\xff", oxia.UseIndex("category"))
+		keys, err := client.List(ctx, cat, cat+"\xff", oxia.UseIndex("category")) //nolint:staticcheck
 		require.NoError(t, err, "list by category %q", cat)
 
 		// Count expected keys for this category
@@ -1939,7 +1939,7 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 
 	// ---- Verify secondary index "priority" with range query ----
 	// Query a range of priorities: "0010" to "0030" (exclusive)
-	priorityKeys, err := client.List(ctx, "0010", "0030", oxia.UseIndex("priority"))
+	priorityKeys, err := client.List(ctx, "0010", "0030", oxia.UseIndex("priority")) //nolint:staticcheck
 	require.NoError(t, err)
 	assert.Equal(t, 20, len(priorityKeys), "expected 20 keys in priority range [0010, 0030)")
 
@@ -1971,7 +1971,7 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 	// ---- Verify the index of the records written with a partition key ----
 	// Queried in the child that holds the partition, the index must have an
 	// entry for every record, and each entry must resolve to its record.
-	partitionIndexKeys, err := client.List(ctx, partitionKey, partitionKey+"\xff",
+	partitionIndexKeys, err := client.List(ctx, partitionKey, partitionKey+"\xff", //nolint:staticcheck
 		oxia.UseIndex("pk"), oxia.PartitionKey(partitionKey))
 	require.NoError(t, err)
 	assert.ElementsMatch(t, partitionedKeys, partitionIndexKeys)
@@ -1998,7 +1998,7 @@ func TestCoordinator_ShardSplit_SecondaryIndexes(t *testing.T) {
 	}
 
 	// Verify new post-split records appear in secondary index queries
-	allAlphaKeys, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category"))
+	allAlphaKeys, err := client.List(ctx, "alpha", "alpha\xff", oxia.UseIndex("category")) //nolint:staticcheck
 	require.NoError(t, err)
 	// Original: 20 alpha keys (i % 3 == 0 for i in [0,59]) + new: i=60,63,66,69 → 4 more
 	// Actually: alpha is categories[0], so i%3==0 → indices 0,3,6,...,57 = 20 keys
@@ -2076,7 +2076,7 @@ func TestCoordinator_KeySorting(t *testing.T) {
 			_, _, _ = client.Put(context.Background(), "/b", []byte("b"))
 			_, _, _ = client.Put(context.Background(), "/a/b", []byte("a/b"))
 
-			list, err := client.List(context.Background(), "", "")
+			list, err := client.List(context.Background(), "", "") //nolint:staticcheck
 			assert.NoError(t, err)
 
 			if keySorting == proto.KeySortingType_HIERARCHICAL {

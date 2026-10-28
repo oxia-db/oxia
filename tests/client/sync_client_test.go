@@ -57,7 +57,7 @@ func TestSyncClientImpl_SecondaryIndexes(t *testing.T) {
 
 	// ////////////////////////////////////////////////////////////////////////
 
-	l, err := client.List(ctx, "1", "4", oxia.UseIndex("val-idx"))
+	l, err := client.List(ctx, "1", "4", oxia.UseIndex("val-idx")) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"b", "c", "d"}, l)
 
@@ -116,11 +116,11 @@ func TestSyncClientImpl_SecondaryIndexesRepeated(t *testing.T) {
 
 	// ////////////////////////////////////////////////////////////////////////
 
-	l, err := client.List(ctx, "b", "e", oxia.UseIndex("val-idx"))
+	l, err := client.List(ctx, "b", "e", oxia.UseIndex("val-idx")) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"/b", "/c", "/d"}, l)
 
-	l, err = client.List(ctx, "I", "d", oxia.UseIndex("val-idx"))
+	l, err = client.List(ctx, "I", "d", oxia.UseIndex("val-idx")) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"/i", "/j", "/a", "/b", "/c"}, l)
 
@@ -431,11 +431,11 @@ func TestSyncClientImpl_InternalKeys(t *testing.T) {
 
 	// ////////////////////////////////////////////////////////////////////////
 
-	l, err := client.List(ctx, "a", "")
+	l, err := client.List(ctx, "a", "") //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c"}, l)
 
-	l, err = client.List(ctx, "a", "__oxia/a-test---", oxia.ShowInternalKeys(true))
+	l, err = client.List(ctx, "a", "__oxia/a-test---", oxia.ShowInternalKeys(true)) //nolint:staticcheck
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c", "__oxia/a-test"}, l)
 
