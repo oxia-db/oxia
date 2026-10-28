@@ -2345,12 +2345,13 @@ func TestSplitController_ParentElectionAfterPointOfNoReturn(t *testing.T) {
 	// The election reads the parent before the point of no return...
 	holding := newHoldingMetadata(metadata, func() bool { return true })
 	elected := startElection(t, holding, rpcMock, 0)
-	requireClosed(t, holding.held, "the holding to start")
+	requireClosed(t, holding.held, "the election to start")
 
 	// ...and makes its first status update once Finalize fenced the parent
 	split := newHoldingMetadata(metadata, func() bool {
 		parent, _ := testShardMetadata(metadata, constant.DefaultNamespace, 0)
-		return isFinalizingSplitParent(parent)
+		return len(parent.GetSplit().GetChildShardIds()) > 0 &&
+			parent.GetSplit().GetPhaseOrDefault() == proto.SplitPhaseFinalize
 	})
 	sc := NewSplitController(SplitControllerConfig{
 		Namespace:     constant.DefaultNamespace,
@@ -2364,10 +2365,11 @@ func TestSplitController_ParentElectionAfterPointOfNoReturn(t *testing.T) {
 	defer sc.Close()
 	requireClosed(t, split.held, "Finalize to fence the parent")
 	close(holding.release)
-	requireClosed(t, holding.written, "the holding's first status update")
+	requireClosed(t, holding.written, "the election's first status update")
 
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
-	assert.True(t, isFinalizingSplitParent(parent), "split metadata: %v", parent.GetSplit())
+	assert.True(t, len(parent.GetSplit().GetChildShardIds()) > 0 &&
+		parent.GetSplit().GetPhaseOrDefault() == proto.SplitPhaseFinalize, "split metadata: %v", parent.GetSplit())
 	assert.Equal(t, proto.ShardStatusElection, parent.GetStatus())
 	assert.EqualValues(t, 6, parent.GetTerm())
 
@@ -3421,11 +3423,4 @@ func assertSplitAborted(t *testing.T, metadata coordmetadata.Metadata, listener 
 	default:
 		assert.Fail(t, "the split abort was not notified")
 	}
-}
-
-// isFinalizingSplitParent reports whether a shard is the parent of a split past
-// the point of no return.
-func isFinalizingSplitParent(meta *proto.ShardMetadata) bool {
-	split := meta.GetSplit()
-	return len(split.GetChildShardIds()) > 0 && split.GetPhaseOrDefault() == proto.SplitPhaseFinalize
 }

@@ -180,22 +180,28 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 	rpc := rpctest.NewRpcProvider()
 	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
+	removed := testDataServer("removed")
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s3).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s4).NewTermResponse(1, 0, nil)
+	// The removed data server answers during the grace period, with a feature
+	// enabled on the shard
 	go func() {
-		rpc.GetNode(s4).ExpectNewTermRequest(t, 5, 2, false)
+		rpc.GetNode(removed).ExpectNewTermRequest(t, 5, 2, false)
 		time.Sleep(quorumFencingGracePeriod / 4)
-		rpc.GetNode(s4).NewTermResponse(1, 0, nil)
+		rpc.GetNode(removed).NewTermResponseWithFeatures(1, 0, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nil)
 	}()
 
 	start := time.Now()
-	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
-		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, nil)
+	candidates, removedEntries, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, []*proto.DataServerIdentity{removed})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), quorumFencingGracePeriod)
 	assert.Len(t, candidates, 4)
 	assert.NotContains(t, candidates, s5)
+	assert.Contains(t, removedEntries, removed)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, features)
 }
 
 // A follower that is not added by the leader yet, behind it, or unreachable,
@@ -466,6 +472,27 @@ func TestElectionPrepareIfChangeEnsembleKeepsRemovedNodesUnique(t *testing.T) {
 	assertShardEnsemble(t, shardMeta.Ensemble, s1, s2, s4)
 	assertShardEnsemble(t, shardMeta.RemovedNodes, s3)
 	assert.Empty(t, shardMeta.PendingDeleteShardNodes)
+}
+
+// An earlier election persisted the change already: the election keeps the
+// shard metadata as it is, and completes the change.
+func TestElectionPrepareIfChangeEnsembleKeepsPersistedChange(t *testing.T) {
+	s1 := testDataServer("s1")
+	s3 := testDataServer("s3")
+	s4 := testDataServer("s4")
+	e := &election{
+		logger:         slog.Default(),
+		changeEnsemble: action.NewChangeEnsembleAction(5, s3, s4),
+	}
+	shardMeta := &proto.ShardMetadata{
+		Ensemble:     []*proto.DataServerIdentity{s1, s4},
+		RemovedNodes: []*proto.DataServerIdentity{s3},
+	}
+
+	e.prepareIfChangeEnsemble(shardMeta)
+
+	assertShardEnsemble(t, shardMeta.Ensemble, s1, s4)
+	assertShardEnsemble(t, shardMeta.RemovedNodes, s3)
 }
 
 // The election of a shard that was removed meanwhile fails instead of

@@ -282,7 +282,7 @@ func TestControllerElectLeaderReturnsNewLeader(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
-	newLeader, err := s.electLeaderWithRetries(shardMeta)
+	newLeader, err := s.electLeader(shardMeta, nil)
 	require.NoError(t, err)
 	require.NotNil(t, newLeader)
 	assert.True(t, gproto.Equal(s1, newLeader))
@@ -292,41 +292,53 @@ func TestControllerElectLeaderReturnsNewLeader(t *testing.T) {
 	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 1)
 }
 
-// Each retry starts a new election from the stored shard status, which holds
-// the term of the failed election, and retries reading it.
-func TestControllerElectLeaderWithRetriesStartsFromStoredStatus(t *testing.T) {
+// A failed election queues a new one, instead of retrying in the event loop.
+func TestControllerElectLeaderQueuesElectionOnFailure(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 	s1 := testDataServer("s1")
-	base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
 		&proto.ClusterConfiguration{})
-	storeTestShardMetadata(t, base, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 		Status:   proto.ShardStatusSteadyState,
 		Term:     1,
 		Ensemble: []*proto.DataServerIdentity{s1},
 	})
-	reads := 0
-	metadata := &hookedMetadata{Metadata: base}
-	metadata.getShardStatus = func(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error) {
-		switch reads++; reads {
-		case 2:
-			return commonobject.Borrowed[*proto.ShardMetadata]{}, false, errors.New("status unavailable")
-		case 3:
-			return commonobject.Borrowed[*proto.ShardMetadata]{}, false, nil
-		}
-		return base.GetShardStatus(namespace, shard)
+	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
+	s := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		featureSupplier: feature.NoOpSupplier,
+		leaderSelector:  leaderselector.NewSelector(),
+		rpc:             rpc,
+		logger:          slog.Default(),
+		electionOp:      make(chan *action.ElectionAction, 1),
+		leaderElectionLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
+			"The time it takes to elect a leader for the shard", labels),
+		failedLeaderElectionsCounter: metric.NewCounter("oxia_coordinator_leader_election_failed",
+			"The number of failed leader elections", "count", labels),
+		newTermQuorumLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
+			"The time it takes to take the ensemble of data servers to a new term", labels),
+		becomeLeaderLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
+			"The time it takes for the new elected leader to start", labels),
 	}
+	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
+	defer s.ctxCancel()
 
 	rpc.GetNode(s1).NewTermResponse(0, 0, errors.New("unreachable"))
-	elected := startElection(t, metadata, rpc, shard)
-	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
+	leader, err := s.electLeader(shardMeta, nil)
+	assert.ErrorContains(t, err, "unreachable")
+	assert.Nil(t, leader)
 
-	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
-	rpc.GetNode(s1).BecomeLeaderResponse(nil)
-	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 3, true)
-	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 3, 1)
-	assert.Equal(t, s1.GetPublic(), requireElectionEnded(t, elected).GetPublic())
-	assert.EqualValues(t, 4, reads)
+	select {
+	case queued := <-s.electionOp:
+		assert.EqualValues(t, shard, queued.GetShard())
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "no election was queued")
+	}
+	s.currentElection.Cancel()
 }
 
 // The split controller updates the parent while a leader election of the
@@ -369,13 +381,16 @@ func TestControllerElectLeaderKeepsSplitUpdatesBetweenAttempts(t *testing.T) {
 	rpc, metadata, _ := setupSplitTest(t, proto.SplitPhaseCatchUp)
 	elected := startElection(t, metadata, rpc, 0)
 
-	// The first attempt cannot fence a quorum
+	// The first election cannot fence a quorum
 	expectParentFenced(t, rpc, 6)
 	updateSplitParent(t, metadata, func(parent *proto.ShardMetadata) { parent.Split = nil })
 	for _, node := range []*proto.DataServerIdentity{ps1, ps2, ps3} {
 		rpc.GetNode(node).NewTermResponse(0, 0, errors.New("unreachable"))
 	}
+	assert.Nil(t, requireElectionEnded(t, elected))
 
+	// The next election starts from the current metadata of the parent
+	elected = startElection(t, metadata, rpc, 0)
 	expectParentFenced(t, rpc, 7)
 	assert.Nil(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, 0).GetSplit())
 	electParentLeader(t, rpc, elected)
@@ -3750,7 +3765,7 @@ func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.C
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		leader, _ := s.electLeaderWithRetries(shardMeta)
+		leader, _ := s.electLeader(shardMeta, nil)
 		elected <- leader
 	}()
 	t.Cleanup(func() {
