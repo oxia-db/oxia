@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pkg/errors"
@@ -620,12 +621,17 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		request.IncludeValues = new(false)
 	}
 
-	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
-	defer cancel()
+	// The request timeout bounds the wait for the first response: the scan
+	// then streams for as long as ctx lasts
+	scanCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	timeout := time.AfterFunc(c.options.requestTimeout, func() { cancel(context.DeadlineExceeded) })
+	defer timeout.Stop()
 
 	// As for a list, the responses say whether the leader included the end
 	responded := false
-	err := c.executor.ExecuteRangeScan(retryCtx, request, func(response *proto.RangeScanResponse) error {
+	err := c.executor.ExecuteRangeScan(scanCtx, request, func(response *proto.RangeScanResponse) error {
+		timeout.Stop()
 		if request.EndInclusive && !response.EndInclusive {
 			return ErrEndInclusiveUnsupported
 		}
@@ -640,6 +646,9 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 	})
 	if err == nil && request.EndInclusive && !responded {
 		err = ErrEndInclusiveUnsupported
+	}
+	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(scanCtx), context.DeadlineExceeded) {
+		err = context.DeadlineExceeded
 	}
 	if err != nil {
 		onResult(GetResult{Err: err}, nil)

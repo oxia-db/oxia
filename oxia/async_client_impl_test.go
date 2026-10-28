@@ -679,6 +679,28 @@ func TestAsyncClientRangeScanEndInclusive(t *testing.T) {
 	}
 }
 
+// A scan that streams for longer than the request timeout goes on until its end.
+func TestAsyncClientRangeScanOutlastsTheRequestTimeout(t *testing.T) {
+	client := newScanTestClient(&pausingExecutor{pause: 200 * time.Millisecond}, 1)
+	client.options.requestTimeout = 50 * time.Millisecond
+
+	var keys []string
+	for result := range client.RangeScan(context.Background(), "a", "z") {
+		require.NoError(t, result.Err)
+		keys = append(keys, result.Key)
+	}
+	assert.Equal(t, []string{"a", "b"}, keys)
+}
+
+// A shard that doesn't answer within the request timeout fails the scan.
+func TestAsyncClientRangeScanTimesOutWithoutResponse(t *testing.T) {
+	client := newScanTestClient(&staticExecutor{slow: map[int64]bool{1: true}}, 1)
+	client.options.requestTimeout = 50 * time.Millisecond
+
+	result := <-client.RangeScan(context.Background(), "a", "z")
+	assert.ErrorIs(t, result.Err, context.DeadlineExceeded)
+}
+
 // An older server ignores include_values and sends the values: the client drops them.
 func TestAsyncClientRangeScanWithoutValuesDropsValues(t *testing.T) {
 	executor := &staticExecutor{keys: map[int64][]string{1: {"a"}, 2: {"b"}}}
@@ -770,7 +792,31 @@ func (e *staticExecutor) end(ctx context.Context, shardId int64) error {
 	return e.errs[shardId]
 }
 
-func newScanTestClient(executor *staticExecutor, shards ...int64) *clientImpl {
+// pausingExecutor sends a record, pauses, and sends another before the scan ends.
+type pausingExecutor struct {
+	internal.Executor
+	pause time.Duration
+}
+
+func (e *pausingExecutor) ExecuteRangeScan(ctx context.Context, _ *proto.RangeScanRequest,
+	rangeScanResponseConsumer func(*proto.RangeScanResponse) error) error {
+	for i, key := range []string{"a", "b"} {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(e.pause):
+			}
+		}
+		records := []*proto.GetResponse{{Key: new(key), Version: &proto.Version{}}}
+		if err := rangeScanResponseConsumer(&proto.RangeScanResponse{Records: records}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newScanTestClient(executor internal.Executor, shards ...int64) *clientImpl {
 	return &clientImpl{
 		options:      clientOptions{requestTimeout: time.Minute},
 		shardManager: &staticShardManager{shards: shards},
