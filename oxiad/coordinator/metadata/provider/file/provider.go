@@ -224,7 +224,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 	existingVersion := existingSnapshot.Version
 
 	if snapshot.Version != existingVersion {
-		return nil, errs.ErrBadVersion
+		return nil, errs.ErrMetaBadVersion
 	}
 
 	newVersion := metadatacommon.NextVersion(existingVersion)

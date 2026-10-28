@@ -40,7 +40,7 @@ func generateUniqueKeyFromSequences(batch kvstore.WriteBatch, req *proto.PutRequ
 
 	if req.ExpectedVersionId != nil {
 		// Cannot set an expected version id when key is sequential
-		return "", errs.ErrBadVersion
+		return "", errs.ErrDBBadVersion
 	}
 
 	parts, err := findCurrentLastKeyInSequence(batch, req, features)
@@ -93,7 +93,7 @@ func findCurrentLastKeyInSequence(wb kvstore.WriteBatch, req *proto.PutRequest,
 	prefixKey := req.Key
 	maxKey := fmt.Sprintf("%s-%020d", prefixKey, maxSequence)
 	lastKeyInSequence, err := wb.FindLower(maxKey)
-	if err != nil && !errors.Is(err, errs.ErrNotFound) {
+	if err != nil && !errors.Is(err, errs.ErrDBKeyNotFound) {
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func findCurrentLastKeyInSequence(wb kvstore.WriteBatch, req *proto.PutRequest,
 		// e.g. "<prefixKey>+x-<n>": every replica must generate the same keys.
 		keysPrefix = prefixKey
 	}
-	if errors.Is(err, errs.ErrNotFound) || !strings.HasPrefix(lastKeyInSequence, keysPrefix) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) || !strings.HasPrefix(lastKeyInSequence, keysPrefix) {
 		lastKeyInSequence = ""
 	} else {
 		lastKeyInSequence = strings.TrimPrefix(lastKeyInSequence, prefixKey)

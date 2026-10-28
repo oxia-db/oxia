@@ -609,7 +609,7 @@ func TestReaderReadNext(t *testing.T) {
 		Value:  []byte("entry-99"),
 	}, entry)
 	entry2, _, _, err := reader.ReadNext()
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 	assert.Nil(t, entry2)
 
 	assert.NoError(t, reader.Close())
@@ -1910,7 +1910,7 @@ func TestWalTruncateLogRejectsOffsetPastLastEntry(t *testing.T) {
 	appendEntries(t, w, 1, 0, 9, "v")
 
 	_, err := w.TruncateLog(20)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 	assert.EqualValues(t, 9, w.LastOffset())
 
 	assert.NoError(t, w.Close())
@@ -2009,7 +2009,7 @@ func TestReverseReaderReadNextFailsOnEmptyWal(t *testing.T) {
 	r, err := w.NewReverseReader()
 	require.NoError(t, err)
 	_, _, _, err = r.ReadNext()
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 	assert.NoError(t, r.Close())
 
 	assert.NoError(t, w.Close())

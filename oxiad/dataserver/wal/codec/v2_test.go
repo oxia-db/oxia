@@ -193,10 +193,10 @@ func TestV2_BreakingPoint_Size(t *testing.T) {
 	binary.BigEndian.PutUint32(buf, 123123)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestV2_BreakingPoint_SizeOverflow(t *testing.T) {
@@ -207,10 +207,10 @@ func TestV2_BreakingPoint_SizeOverflow(t *testing.T) {
 	binary.BigEndian.PutUint32(buf, math.MaxUint32)
 
 	_, _, _, err := v2.ReadHeaderWithValidation(buf, 0)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	_, _, _, err = v2.ReadRecordWithValidation(buf, 0)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestV2_BreakingPoint_PartialHeader(t *testing.T) {
@@ -221,7 +221,7 @@ func TestV2_BreakingPoint_PartialHeader(t *testing.T) {
 	// an offset with fewer than HeaderSize bytes behind it has no readable header
 	for _, startFileOffset := range []uint32{uint32(len(buf)) - 1, uint32(len(buf)) - v2.HeaderSize + 1} {
 		_, _, _, err := v2.ReadHeaderWithValidation(buf, startFileOffset)
-		assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+		assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 	}
 }
 

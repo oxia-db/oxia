@@ -32,7 +32,7 @@ type Provider[T gproto.Message] interface {
 	io.Closer
 
 	// Store writes the snapshot if its version matches the stored one, or
-	// fails with ErrBadVersion. A failed write may still have been applied:
+	// fails with ErrMetaBadVersion. A failed write may still have been applied:
 	// the next Load or Store then reads the stored snapshot.
 	Store(snapshot Versioned[T]) (newVersion metadataconstant.Version, err error)
 

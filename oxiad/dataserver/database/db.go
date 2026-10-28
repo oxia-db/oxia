@@ -918,7 +918,7 @@ func (it *prefixIterator) Record(key string, includeValue bool) (*proto.GetRespo
 	it.d.readOpsTotal.Add(1)
 
 	value, err := it.Lookup(key)
-	if errors.Is(err, errs.ErrNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	} else if err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to read the record")
@@ -1022,7 +1022,7 @@ func (d *db) recoverFeatureFlags() error {
 
 func (d *db) readLastNotificationOffset() (int64, error) {
 	key, _, closer, err := d.kv.Get(lastNotificationKey, kvstore.ComparisonFloor, kvstore.ShowInternalKeys)
-	if errors.Is(err, errs.ErrNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		d.log.Debug("No notification offset found")
 		return constant.I64NegativeOne, nil
 	}
@@ -1157,7 +1157,7 @@ func (d *db) applyPut(batch kvstore.WriteBatch, baseVersionId *atomic.Int64, not
 	}
 
 	switch {
-	case errors.Is(err, errs.ErrBadVersion):
+	case errors.Is(err, errs.ErrDBBadVersion):
 		pr.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
 	case errors.Is(err, errs.ErrDBInvalidSequentialPut) && d.IsFeatureEnabled(proto.Feature_FEATURE_SEQUENCE_KEY_VALIDATION):
@@ -1278,7 +1278,7 @@ func (d *db) applyDelete(batch kvstore.WriteBatch, notifications *Notifications,
 	}
 
 	switch {
-	case errors.Is(err, errs.ErrBadVersion):
+	case errors.Is(err, errs.ErrDBBadVersion):
 		res.Status = proto.Status_UNEXPECTED_VERSION_ID
 		return nil
 	case err != nil:
@@ -1433,7 +1433,7 @@ type pointReader interface {
 func applyGet(kv pointReader, getReq *proto.GetRequest) (*proto.GetResponse, error) {
 	key, value, closer, err := kv.Get(getReq.Key, kvstore.ComparisonType(getReq.GetComparisonType()), kvstore.NoInternalKeys)
 
-	if errors.Is(err, errs.ErrNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	} else if err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
@@ -1528,24 +1528,24 @@ func (d *db) checkExpectedVersionId(batch kvstore.WriteBatch, key string, expect
 	se, err := GetStorageEntryMetadata(batch, key)
 	if err == nil && splitFilter != nil {
 		if se, err = d.filterEntry(batch, key, se, splitFilter, updateOperationCallback); err == nil && se == nil {
-			err = errs.ErrNotFound
+			err = errs.ErrDBKeyNotFound
 		}
 	}
 	if err != nil {
-		if errors.Is(err, errs.ErrNotFound) {
+		if errors.Is(err, errs.ErrDBKeyNotFound) {
 			if expectedVersionId == nil || *expectedVersionId == -1 {
 				// OK, we were checking that the key was not there, and it's indeed not there
 				return nil, nil //nolint:nilnil
 			}
 
-			return nil, errs.ErrBadVersion
+			return nil, errs.ErrDBBadVersion
 		}
 		return nil, err
 	}
 
 	if expectedVersionId != nil && se.VersionId != *expectedVersionId {
 		se.ReturnToVTPool()
-		return nil, errs.ErrBadVersion
+		return nil, errs.ErrDBBadVersion
 	}
 
 	return se, nil

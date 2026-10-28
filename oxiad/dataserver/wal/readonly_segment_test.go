@@ -53,11 +53,11 @@ func TestReadOnlySegment(t *testing.T) {
 
 	data, _, _, err := ro.Read(100)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	data, _, _, err = ro.Read(-1)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	assert.NoError(t, ro.Close())
 }
@@ -147,11 +147,11 @@ func TestRO_auto_recover_broken_index(t *testing.T) {
 
 	data, _, _, err := ro.Read(100)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	data, _, _, err = ro.Read(-1)
 	assert.Nil(t, data)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	assert.NoError(t, ro.Close())
 }

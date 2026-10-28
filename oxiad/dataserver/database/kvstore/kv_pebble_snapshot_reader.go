@@ -33,7 +33,7 @@ import (
 type SnapshotReader interface {
 	io.Closer
 
-	// Get returns the value of a key, or errs.ErrNotFound. Only ComparisonEqual
+	// Get returns the value of a key, or errs.ErrDBKeyNotFound. Only ComparisonEqual
 	// is supported. The caller closes the value.
 	Get(key string, comparisonType ComparisonType, opts IteratorOpts) (storedKey string, value []byte, closer io.Closer, err error)
 }
@@ -68,7 +68,7 @@ func (r *pebbleSnapshotReader) Get(key string, comparisonType ComparisonType, _ 
 	}
 	value, closer, err := r.db.Get(r.keyEncoder.Encode(key))
 	if errors.Is(err, pebble.ErrNotFound) {
-		return "", nil, nil, errs.ErrNotFound
+		return "", nil, nil, errs.ErrDBKeyNotFound
 	} else if err != nil {
 		return "", nil, nil, err
 	}

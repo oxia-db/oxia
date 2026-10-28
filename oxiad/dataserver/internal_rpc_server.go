@@ -157,7 +157,7 @@ func (s *internalRpcServer) NewTerm(c context.Context, req *proto.NewTermRequest
 	// NewTerm applies to both followers and leaders
 	// First check if we have already a follower controller running
 	if follower, err := s.shardsDirector.GetFollower(req.Shard); err != nil { //nolint:revive
-		if !errors.Is(err, errs.ErrNotFound) {
+		if !errors.Is(err, errs.ErrShardNotMember) {
 			log.Warn(
 				"NewTerm failed: could not get follower controller",
 				slog.Any("error", err),
@@ -488,7 +488,7 @@ func (s *internalRpcServer) GetStatus(_ context.Context, req *proto.GetStatusReq
 		return res, constant.IntoGrpcStatusError(err)
 	}
 
-	if !errors.Is(err, errs.ErrNotFound) {
+	if !errors.Is(err, errs.ErrShardNotMember) {
 		return nil, constant.IntoGrpcStatusError(err)
 	}
 

@@ -330,7 +330,7 @@ func TestNotificationsTrimmerTrimNotificationsSkipsVanishedFirstBatch(t *testing
 	putNotificationBatch(t, kv, 0, map[string]*proto.Notification{"a": {}})
 	hooked := &hookedKV{KV: kv}
 	trimmer.kv = hooked
-	hooked.failWith(opGet, notificationKey(0), errs.ErrNotFound)
+	hooked.failWith(opGet, notificationKey(0), errs.ErrDBKeyNotFound)
 
 	assert.NoError(t, trimmer.trimNotifications())
 	assert.Empty(t, listener.trimmedOffsets)
@@ -358,13 +358,13 @@ func TestNotificationsTrimmerReadFromPastLastBatch(t *testing.T) {
 	// The next key is not a batch
 	putRawKey(t, kv, sessionKeyPrefix+"/0000000000000001", []byte{})
 	_, _, err := trimmer.readFrom(1)
-	assert.ErrorIs(t, err, errs.ErrNotFound)
+	assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 
 	// The next key is not a valid batch key
 	putRawKey(t, kv, notificationsPrefix+"/z", []byte{})
 	_, _, err = trimmer.readFrom(1)
 	assert.Error(t, err)
-	assert.NotErrorIs(t, err, errs.ErrNotFound)
+	assert.NotErrorIs(t, err, errs.ErrDBKeyNotFound)
 }
 
 // newIdleNotificationsTrimmer returns a trimmer that runs only when the test

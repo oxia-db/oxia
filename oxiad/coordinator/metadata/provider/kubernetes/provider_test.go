@@ -333,7 +333,7 @@ func TestProviderStoreFailsToSerializeConfigMap(t *testing.T) {
 	assert.Empty(t, configMaps.Items)
 }
 
-// A write that creates the config map fails with ErrBadVersion when another
+// A write that creates the config map fails with ErrMetaBadVersion when another
 // coordinator created it first.
 func TestProviderStoreRejectsCreatingExistingConfigMap(t *testing.T) {
 	kc := fake.NewSimpleClientset()
@@ -345,7 +345,7 @@ func TestProviderStoreRejectsCreatingExistingConfigMap(t *testing.T) {
 		Value:   newConfig(2),
 		Version: metadatacommon.NotExists,
 	})
-	require.ErrorIs(t, err, errs.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 }
 
 func TestProviderWaitToBecomeLeaderSignalsLeaseLoss(t *testing.T) {

@@ -89,7 +89,7 @@ func (m *Provider[T]) write(snapshot provider.Versioned[T]) (*provider.Versioned
 	defer m.mu.Unlock()
 
 	if snapshot.Version != m.version {
-		return nil, errs.ErrBadVersion
+		return nil, errs.ErrMetaBadVersion
 	}
 
 	m.value = m.codec.Clone(snapshot.Value)

@@ -287,7 +287,7 @@ func (it *prefixIterator) KeepsIndexEntry(filter *DeferredSplitFilter, indexKey 
 		return true, nil
 	}
 	value, err := it.Lookup(primaryKey)
-	if errors.Is(err, errs.ErrNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -320,7 +320,7 @@ func (d *db) getKept(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*pr
 	}
 
 	it, err := d.kv.Seek(getReq.Key, kvstore.ComparisonType(getReq.ComparisonType))
-	if errors.Is(err, errs.ErrNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	} else if err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")
@@ -334,7 +334,7 @@ func (d *db) getKept(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*pr
 
 func (d *db) getKeptEqual(getReq *proto.GetRequest, filter *DeferredSplitFilter) (*proto.GetResponse, error) {
 	key, value, closer, err := d.kv.Get(getReq.Key, kvstore.ComparisonEqual, kvstore.NoInternalKeys)
-	if errors.Is(err, errs.ErrNotFound) {
+	if errors.Is(err, errs.ErrDBKeyNotFound) {
 		return &proto.GetResponse{Status: proto.Status_KEY_NOT_FOUND}, nil
 	} else if err != nil {
 		return nil, errors.Wrap(err, "oxia db: failed to apply batch")

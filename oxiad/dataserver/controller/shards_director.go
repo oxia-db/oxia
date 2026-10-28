@@ -143,7 +143,7 @@ func (s *shardsDirector) GetFollower(shardId int64) (follow.FollowerController, 
 		"This node is not hosting shard",
 		slog.Int64("shard", shardId),
 	)
-	return nil, fmt.Errorf("%w: follower of shard %d", errs.ErrNotFound, shardId)
+	return nil, fmt.Errorf("%w: shard %d", errs.ErrShardNotMember, shardId)
 }
 
 func (s *shardsDirector) GetOrCreateLeader(namespace string, shardId int64, newTermOptions *proto.NewTermOptions) (lead.LeaderController, error) {

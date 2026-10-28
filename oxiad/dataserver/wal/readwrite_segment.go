@@ -234,7 +234,7 @@ func (ms *readWriteSegment) Read(offset int64) (payload []byte, previousCrc uint
 		return nil, 0, 0, errors.Wrap(errs.ErrAlreadyClosed, "segment")
 	}
 	if offset < ms.c.baseOffset || offset > ms.lastOffset.Load() {
-		return nil, 0, 0, errors.Wrap(errs.ErrInvalidArgument, "offset out of bounds")
+		return nil, 0, 0, errs.ErrOffsetOverflow
 	}
 
 	fileReadOffset := fileOffset(*ms.readIdx.Load(), ms.c.baseOffset, offset)
@@ -353,7 +353,7 @@ func (ms *readWriteSegment) Delete() error {
 
 func (ms *readWriteSegment) Truncate(lastSafeOffset int64) error {
 	if lastSafeOffset < ms.c.baseOffset || lastSafeOffset > ms.lastOffset.Load() {
-		return errors.Wrap(errs.ErrInvalidArgument, "offset out of bounds")
+		return errs.ErrOffsetOverflow
 	}
 
 	// Write zeroes in the section to clear

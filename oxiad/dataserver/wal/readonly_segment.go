@@ -156,7 +156,7 @@ func (ms *readOnlySegment) LastOffset() int64 {
 
 func (ms *readOnlySegment) Read(offset int64) (payload []byte, previousCrc uint32, payloadCrc uint32, err error) {
 	if offset < ms.c.baseOffset || offset > ms.lastOffset {
-		return nil, 0, 0, errors.Wrap(errs.ErrInvalidArgument, "offset out of bounds")
+		return nil, 0, 0, errs.ErrOffsetOverflow
 	}
 	fileReadOffset := fileOffset(ms.idx, ms.c.baseOffset, offset)
 	if payload, previousCrc, payloadCrc, err = ms.c.codec.ReadRecordWithValidation(ms.txnMappedFile, fileReadOffset); err != nil {

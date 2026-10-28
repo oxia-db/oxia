@@ -165,7 +165,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrOffsetOutOfBounds(t *testing.
 	// move commit offset to 1
 	commitOffsetProvider.commitOffset = 1
 
-	// inject payload size failure to trigger errs.ErrInvalidArgument
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso:], 9999999)
@@ -213,7 +213,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrOffsetOutOfBounds(t *testing.T)
 	// move commit offset to 2
 	commitOffsetProvider.commitOffset = 2
 
-	// inject payload size failure to trigger errs.ErrInvalidArgument
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso:], 9999999)
@@ -223,7 +223,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrOffsetOutOfBounds(t *testing.T)
 
 	// recover the rw segment
 	_, err = newReadWriteSegment(vfs.OSFS{}, dir, 0, 1024, 0, commitOffsetProvider)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
@@ -252,7 +252,7 @@ func TestReadWriteSegment_BrokenUncommittedData_ErrDataCorrupted(t *testing.T) {
 	// move commit offset to 1
 	commitOffsetProvider.commitOffset = 1
 
-	// inject payload size failure to trigger errs.ErrInvalidArgument
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso+4:], 9999999)
@@ -300,7 +300,7 @@ func TestReadWriteSegment_BrokenCommittedData_ErrDataCorrupted(t *testing.T) {
 	// move commit offset to 2
 	commitOffsetProvider.commitOffset = 2
 
-	// inject payload size failure to trigger errs.ErrInvalidArgument
+	// inject payload size failure to trigger errs.ErrOffsetOverflow
 	rwSegment := rw.(*readWriteSegment)
 	fso := fileOffset(rwSegment.writingIdx, 0, 2)
 	binary.BigEndian.PutUint32(rwSegment.txnMappedFile[fso+4:], 9999999)
@@ -757,8 +757,8 @@ func TestReadWriteSegmentTruncateRejectsOffsetOutsideSegment(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, rw.Close()) })
 	require.NoError(t, rw.Append(10, []byte("entry-10")))
 
-	assert.ErrorIs(t, rw.Truncate(9), errs.ErrInvalidArgument)
-	assert.ErrorIs(t, rw.Truncate(11), errs.ErrInvalidArgument)
+	assert.ErrorIs(t, rw.Truncate(9), errs.ErrOffsetOverflow)
+	assert.ErrorIs(t, rw.Truncate(11), errs.ErrOffsetOverflow)
 	assert.EqualValues(t, 10, rw.LastOffset())
 }
 

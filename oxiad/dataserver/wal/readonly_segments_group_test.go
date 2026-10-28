@@ -132,7 +132,7 @@ func TestReadOnlySegmentsGroupTrimSegmentsAtCurrentSegmentDeletesAllSegments(t *
 		assert.NoFileExists(t, txnPath(walBasePath, s))
 	}
 	_, err = group.Get(current - 1)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 
 	group.AddedNewSegment(current)
 	require.NoError(t, group.TrimSegments(current+1, current, func() error { return nil }))
@@ -179,7 +179,7 @@ func TestReadOnlySegmentsGroupGetFailsBeforeFirstSegment(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, group.Close()) })
 
 	_, err = group.Get(-1)
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 func TestReadOnlySegmentsGroupGetReleasesSegmentWhenEvictionFails(t *testing.T) {
@@ -244,7 +244,7 @@ func TestReadOnlySegmentsGroupTrimSegmentsReportsUnremovableFiles(t *testing.T) 
 	assert.Error(t, err)
 	assert.NoFileExists(t, c.txnPath)
 	_, err = group.Get(segments[0])
-	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+	assert.ErrorIs(t, err, errs.ErrOffsetOverflow)
 }
 
 // A segment that cannot be statted is left on the disk: the trimming goes on

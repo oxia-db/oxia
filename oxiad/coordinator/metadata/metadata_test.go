@@ -52,7 +52,7 @@ func TestMetadataWaitToBecomeLeaderReloadsMetadata(t *testing.T) {
 		// The snapshot is outdated until reloaded
 		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 			if statusReloads.Load() == 0 {
-				return metadataconstant.NotExists, errs.ErrBadVersion
+				return metadataconstant.NotExists, errs.ErrMetaBadVersion
 			}
 			return statusProvider.Store(snapshot)
 		},
@@ -150,7 +150,7 @@ func newLeaderMetadata(t *testing.T) (metadata Metadata, lost chan struct{}, sup
 		},
 		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
 			if superseded.Load() {
-				return metadataconstant.NotExists, errs.ErrBadVersion
+				return metadataconstant.NotExists, errs.ErrMetaBadVersion
 			}
 			return statusProvider.Store(snapshot)
 		},
@@ -171,7 +171,7 @@ func TestMetadataStatusWriteAfterLeadershipLossFails(t *testing.T) {
 	superseded.Store(true)
 
 	_, err := metadata.AllocateShardIDs(1)
-	require.ErrorIs(t, err, errs.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 }
 
 // A new leader can write the status before this coordinator learns that it
@@ -184,7 +184,7 @@ func TestMetadataStatusVersionConflictWhileLeadingFails(t *testing.T) {
 
 	require.NotPanics(t, func() {
 		_, err := metadata.AllocateShardIDs(1)
-		require.ErrorIs(t, err, errs.ErrBadVersion)
+		require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 	})
 }
 
@@ -691,7 +691,7 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 		return newDefaultMetadata(ctx, fakeProvider[*commonproto.ClusterStatus]{
 			Provider: newStatusProvider(),
 			store: func(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
-				return metadataconstant.NotExists, errs.ErrBadVersion
+				return metadataconstant.NotExists, errs.ErrMetaBadVersion
 			},
 		}, newConfigProvider(), "")
 	}
@@ -699,13 +699,13 @@ func TestMetadataStatusVersionConflictWithoutLeadershipFails(t *testing.T) {
 	notLeading := newMetadata(t.Context())
 	defer func() { require.NoError(t, notLeading.Close()) }()
 	_, err := notLeading.AllocateShardIDs(1)
-	require.ErrorIs(t, err, errs.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	closing := newMetadata(ctx)
 	cancel()
 	_, err = closing.AllocateShardIDs(1)
-	require.ErrorIs(t, err, errs.ErrBadVersion)
+	require.ErrorIs(t, err, errs.ErrMetaBadVersion)
 	require.NoError(t, closing.Close())
 }
 

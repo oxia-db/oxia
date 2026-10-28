@@ -409,7 +409,7 @@ func TestLeaderController_DeferredSplitFilter(t *testing.T) {
 	exists := func(key string) bool {
 		_, _, closer, err := kv.Get(key, kvstore.ComparisonEqual, kvstore.ShowInternalKeys)
 		if err != nil {
-			assert.ErrorIs(t, err, errs.ErrNotFound)
+			assert.ErrorIs(t, err, errs.ErrDBKeyNotFound)
 			return false
 		}
 		assert.NoError(t, closer.Close())
@@ -666,7 +666,7 @@ func TestSessionDelete_DeferredSplitFilterNotifications(t *testing.T) {
 			if err == nil {
 				assert.NoError(t, closer.Close())
 			}
-			assert.ErrorIs(t, err, errs.ErrNotFound, put.Key)
+			assert.ErrorIs(t, err, errs.ErrDBKeyNotFound, put.Key)
 		}
 	}
 }

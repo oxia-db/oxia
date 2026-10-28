@@ -430,7 +430,7 @@ func TestRuntimeCreateNamespaceDoesNotReviveDeletedShards(t *testing.T) {
 			}
 			err := c.CreateNamespace(namespace.Name, namespace)
 			if count == 1 {
-				require.ErrorIs(t, err, errs.ErrUnavailable)
+				require.ErrorIs(t, err, errs.ErrConflict)
 				require.Contains(t, err.Error(), namespace.Name)
 			} else {
 				require.NoError(t, err)

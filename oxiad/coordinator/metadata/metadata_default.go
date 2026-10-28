@@ -89,7 +89,7 @@ func (m *defaultMetadata) computeStatus(fn func(*commonproto.ClusterStatus, meta
 		Value:   next,
 		Version: current.Version,
 	})
-	if errors.Is(err, errs.ErrBadVersion) {
+	if errors.Is(err, errs.ErrMetaBadVersion) {
 		// Another coordinator wrote the status. The version check refused
 		// this write, so nothing is lost: the write fails, and its caller
 		// retries over the fresh state, or stops once this coordinator learns
