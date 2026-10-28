@@ -679,13 +679,13 @@ func TestAsyncClientRangeScanEndInclusive(t *testing.T) {
 	}
 }
 
-// An older server ignores keys_only and sends the values: the client drops them.
-func TestAsyncClientRangeScanKeysOnlyDropsValues(t *testing.T) {
+// An older server ignores include_values and sends the values: the client drops them.
+func TestAsyncClientRangeScanWithoutValuesDropsValues(t *testing.T) {
 	executor := &staticExecutor{keys: map[int64][]string{1: {"a"}, 2: {"b"}}}
 	client := newScanTestClient(executor, 1, 2)
 
 	var results []GetResult
-	for result := range client.RangeScan(context.Background(), "a", "z", KeysOnly()) {
+	for result := range client.RangeScan(context.Background(), "a", "z", IncludeValue(false)) {
 		require.NoError(t, result.Err)
 		results = append(results, result)
 	}

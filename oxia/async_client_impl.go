@@ -615,7 +615,9 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		SecondaryIndexName:  opts.secondaryIndexName,
 		IncludeInternalKeys: opts.showInternalKeys,
 		EndInclusive:        opts.endInclusive,
-		KeysOnly:            opts.keysOnly,
+	}
+	if !opts.includeValue {
+		request.IncludeValues = new(false)
 	}
 
 	retryCtx, cancel := context.WithTimeout(ctx, c.options.requestTimeout)
@@ -629,7 +631,7 @@ func (c *clientImpl) rangeScanFromShard(ctx context.Context, minKeyInclusive str
 		}
 		responded = true
 		for _, record := range response.Records {
-			if request.KeysOnly {
+			if !opts.includeValue {
 				record.Value = nil
 			}
 			onResult(toGetResult(record, "", nil), record.SecondaryIndexKey)

@@ -1098,7 +1098,7 @@ func TestSyncClientImpl_RangeScan(t *testing.T) {
 	assert.NoError(t, standaloneServer.Close())
 }
 
-func TestSyncClientImplRangeScanKeysOnly(t *testing.T) {
+func TestSyncClientImplRangeScanWithoutValues(t *testing.T) {
 	config := dataserver.NewTestConfig(t.TempDir())
 	config.NumShards = 3
 	standaloneServer, err := dataserver.NewStandalone(config)
@@ -1133,7 +1133,7 @@ func TestSyncClientImplRangeScanKeysOnly(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var keys []string
-			for result := range client.RangeScan(ctx, test.start, test.end, append(test.options, oxia.KeysOnly())...) {
+			for result := range client.RangeScan(ctx, test.start, test.end, append(test.options, oxia.IncludeValue(false))...) {
 				require.NoError(t, result.Err)
 				assert.Nil(t, result.Value)
 				assert.Equal(t, versions[result.Key].VersionId, result.Version.VersionId)

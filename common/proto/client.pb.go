@@ -1724,9 +1724,9 @@ type RangeScanRequest struct {
 	IncludeInternalKeys bool    `protobuf:"varint,5,opt,name=include_internal_keys,json=includeInternalKeys,proto3" json:"include_internal_keys,omitempty"`
 	// The range includes its end, as in ListRequest
 	EndInclusive bool `protobuf:"varint,6,opt,name=end_inclusive,json=endInclusive,proto3" json:"end_inclusive,omitempty"`
-	// Return the key and the version of each record, without its value. Older
-	// servers ignore it and send the values.
-	KeysOnly      bool `protobuf:"varint,7,opt,name=keys_only,json=keysOnly,proto3" json:"keys_only,omitempty"`
+	// Whether to return the value of each record, or only its key and version.
+	// Unset is true. Older servers ignore it and send the values.
+	IncludeValues *bool `protobuf:"varint,7,opt,name=include_values,json=includeValues,proto3,oneof" json:"include_values,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1803,9 +1803,9 @@ func (x *RangeScanRequest) GetEndInclusive() bool {
 	return false
 }
 
-func (x *RangeScanRequest) GetKeysOnly() bool {
-	if x != nil {
-		return x.KeysOnly
+func (x *RangeScanRequest) GetIncludeValues() bool {
+	if x != nil && x.IncludeValues != nil {
+		return *x.IncludeValues
 	}
 	return false
 }
@@ -2690,17 +2690,18 @@ const file_client_proto_rawDesc = "" +
 	"\x15_secondary_index_name\"G\n" +
 	"\fListResponse\x12\x12\n" +
 	"\x04keys\x18\x01 \x03(\tR\x04keys\x12#\n" +
-	"\rend_inclusive\x18\x02 \x01(\bR\fendInclusive\"\xcb\x02\n" +
+	"\rend_inclusive\x18\x02 \x01(\bR\fendInclusive\"\xed\x02\n" +
 	"\x10RangeScanRequest\x12\x19\n" +
 	"\x05shard\x18\x01 \x01(\x03H\x00R\x05shard\x88\x01\x01\x12'\n" +
 	"\x0fstart_inclusive\x18\x02 \x01(\tR\x0estartInclusive\x12#\n" +
 	"\rend_exclusive\x18\x03 \x01(\tR\fendExclusive\x125\n" +
 	"\x14secondary_index_name\x18\x04 \x01(\tH\x01R\x12secondaryIndexName\x88\x01\x01\x122\n" +
 	"\x15include_internal_keys\x18\x05 \x01(\bR\x13includeInternalKeys\x12#\n" +
-	"\rend_inclusive\x18\x06 \x01(\bR\fendInclusive\x12\x1b\n" +
-	"\tkeys_only\x18\a \x01(\bR\bkeysOnlyB\b\n" +
+	"\rend_inclusive\x18\x06 \x01(\bR\fendInclusive\x12*\n" +
+	"\x0einclude_values\x18\a \x01(\bH\x02R\rincludeValues\x88\x01\x01B\b\n" +
 	"\x06_shardB\x17\n" +
-	"\x15_secondary_index_name\"q\n" +
+	"\x15_secondary_index_nameB\x11\n" +
+	"\x0f_include_values\"q\n" +
 	"\x11RangeScanResponse\x127\n" +
 	"\arecords\x18\x01 \x03(\v2\x1d.io.oxia.proto.v1.GetResponseR\arecords\x12#\n" +
 	"\rend_inclusive\x18\x02 \x01(\bR\fendInclusive\"C\n" +

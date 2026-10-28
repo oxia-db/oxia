@@ -83,8 +83,20 @@ func (t *includeValue) applyGet(opts *getOptions) {
 	opts.includeValue = t.includeValue
 }
 
-// IncludeValue is a function that creates a GetOption for including or excluding a value.
-func IncludeValue(include bool) GetOption {
+func (t *includeValue) applyRangeScan(opts *rangeScanOptions) {
+	opts.includeValue = t.includeValue
+}
+
+// ReadOption is an option of the operations that read records: Get and RangeScan.
+type ReadOption interface {
+	GetOption
+	RangeScanOption
+}
+
+// IncludeValue includes or excludes the values of the records that Get and RangeScan return. Without
+// the values, they return the keys and the versions. Older servers send the values of a RangeScan
+// anyway, and the client drops them.
+func IncludeValue(include bool) ReadOption {
 	return &includeValue{
 		includeValue: include,
 	}

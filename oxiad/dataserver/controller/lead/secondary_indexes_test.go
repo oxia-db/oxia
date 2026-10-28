@@ -317,7 +317,7 @@ func TestSecondaryIndices_RangeScan(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
-func TestSecondaryIndexRangeScanKeysOnly(t *testing.T) {
+func TestSecondaryIndexRangeScanWithoutValues(t *testing.T) {
 	var shard int64 = 1
 
 	kvFactory, _ := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -350,7 +350,7 @@ func TestSecondaryIndexRangeScanKeysOnly(t *testing.T) {
 		StartInclusive:     "0",
 		EndExclusive:       "2",
 		SecondaryIndexName: pb.String("my-idx"),
-		KeysOnly:           true,
+		IncludeValues:      new(false),
 	})
 	require.NoError(t, err)
 	require.Len(t, results, 2)

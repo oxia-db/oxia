@@ -1800,7 +1800,7 @@ func TestDBRangeScan(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
-func TestDBRangeScanKeysOnly(t *testing.T) {
+func TestDBRangeScanWithoutValues(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	require.NoError(t, err)
 	db, err := NewDB(constant.DefaultNamespace, 1, factory, proto.KeySortingType_NATURAL, 0, time.SystemClock)
@@ -1816,7 +1816,7 @@ func TestDBRangeScanKeysOnly(t *testing.T) {
 	}}, wal.InvalidOffset, now(), NoOpCallback)
 	require.NoError(t, err)
 
-	it, err := db.RangeScan(&proto.RangeScanRequest{StartInclusive: "a", EndExclusive: "c", KeysOnly: true})
+	it, err := db.RangeScan(&proto.RangeScanRequest{StartInclusive: "a", EndExclusive: "c", IncludeValues: new(false)})
 	require.NoError(t, err)
 	var records []*proto.GetResponse
 	for ; it.Valid(); it.Next() {

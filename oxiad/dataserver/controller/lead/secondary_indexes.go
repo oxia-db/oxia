@@ -372,7 +372,7 @@ func newSecondaryIndexRangeScanIterator(req *proto.RangeScanRequest, db database
 		return nil, err
 	}
 
-	it := &secondaryIndexRangeIterator{listIt: listIt, includeValue: !req.KeysOnly}
+	it := &secondaryIndexRangeIterator{listIt: listIt, includeValue: req.IncludeValues == nil || *req.IncludeValues}
 	it.readRecord()
 	return it, nil
 }

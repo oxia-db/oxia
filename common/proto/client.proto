@@ -77,7 +77,7 @@ service OxiaClient {
    * Clients should send an equivalent request to all respective shards,
    * unless a particular partition key was specified.
    *
-   * Use RangeScan with keys_only instead. The servers keep serving List for
+   * Use RangeScan with include_values = false instead. The servers keep serving List for
    * the clients that use it.
    */
   rpc List(ListRequest) returns (stream ListResponse) {
@@ -482,9 +482,9 @@ message RangeScanRequest {
   // The range includes its end, as in ListRequest
   bool end_inclusive = 6;
 
-  // Return the key and the version of each record, without its value. Older
-  // servers ignore it and send the values.
-  bool keys_only = 7;
+  // Whether to return the value of each record, or only its key and version.
+  // Unset is true. Older servers ignore it and send the values.
+  optional bool include_values = 7;
 }
 
 /**

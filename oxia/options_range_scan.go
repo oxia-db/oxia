@@ -16,7 +16,7 @@ package oxia
 
 type rangeScanOptions struct {
 	listOptions
-	keysOnly bool
+	includeValue bool
 }
 
 // RangeScanOption represents an option for the [SyncClient.RangeScan] operation.
@@ -25,22 +25,9 @@ type RangeScanOption interface {
 }
 
 func newRangeScanOptions(opts []RangeScanOption) *rangeScanOptions {
-	rangeScanOpts := &rangeScanOptions{}
+	rangeScanOpts := &rangeScanOptions{includeValue: true}
 	for _, opt := range opts {
 		opt.applyRangeScan(rangeScanOpts)
 	}
 	return rangeScanOpts
-}
-
-type keysOnly struct{}
-
-func (keysOnly) applyRangeScan(opts *rangeScanOptions) {
-	opts.keysOnly = true
-}
-
-// KeysOnly makes RangeScan return the key and the version of each record,
-// without its value. Older servers still send the values, and the client
-// drops them.
-func KeysOnly() RangeScanOption {
-	return keysOnly{}
 }

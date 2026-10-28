@@ -843,8 +843,8 @@ func (d *db) List(request *proto.ListRequest) (kvstore.KeyIterator, error) {
 
 type rangeScanIterator struct {
 	kvstore.KeyValueIterator
-	timer    metric.Timer
-	keysOnly bool
+	timer         metric.Timer
+	includeValues bool
 }
 
 func (it *rangeScanIterator) Value() (*proto.GetResponse, error) {
@@ -879,7 +879,7 @@ func (it *rangeScanIterator) Value() (*proto.GetResponse, error) {
 			ClientIdentity:     se.ClientIdentity,
 		},
 	}
-	if !it.keysOnly {
+	if it.includeValues {
 		res.Value = se.Value
 	}
 
@@ -912,7 +912,7 @@ func (d *db) RangeScan(request *proto.RangeScanRequest) (RangeScanIterator, erro
 	return &rangeScanIterator{
 		KeyValueIterator: it,
 		timer:            d.listLatencyHisto.Timer(),
-		keysOnly:         request.KeysOnly,
+		includeValues:    request.IncludeValues == nil || *request.IncludeValues,
 	}, nil
 }
 

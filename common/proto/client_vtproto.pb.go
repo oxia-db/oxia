@@ -560,7 +560,6 @@ func (m *RangeScanRequest) CloneVT() *RangeScanRequest {
 	r.EndExclusive = m.EndExclusive
 	r.IncludeInternalKeys = m.IncludeInternalKeys
 	r.EndInclusive = m.EndInclusive
-	r.KeysOnly = m.KeysOnly
 	if rhs := m.Shard; rhs != nil {
 		tmpVal := *rhs
 		r.Shard = &tmpVal
@@ -568,6 +567,10 @@ func (m *RangeScanRequest) CloneVT() *RangeScanRequest {
 	if rhs := m.SecondaryIndexName; rhs != nil {
 		tmpVal := *rhs
 		r.SecondaryIndexName = &tmpVal
+	}
+	if rhs := m.IncludeValues; rhs != nil {
+		tmpVal := *rhs
+		r.IncludeValues = &tmpVal
 	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -1606,7 +1609,7 @@ func (this *RangeScanRequest) EqualVT(that *RangeScanRequest) bool {
 	if this.EndInclusive != that.EndInclusive {
 		return false
 	}
-	if this.KeysOnly != that.KeysOnly {
+	if p, q := this.IncludeValues, that.IncludeValues; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -3173,9 +3176,9 @@ func (m *RangeScanRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if m.KeysOnly {
+	if m.IncludeValues != nil {
 		i--
-		if m.KeysOnly {
+		if *m.IncludeValues {
 			dAtA[i] = 1
 		} else {
 			dAtA[i] = 0
@@ -4384,7 +4387,7 @@ func (m *RangeScanRequest) SizeVT() (n int) {
 	if m.EndInclusive {
 		n += 2
 	}
-	if m.KeysOnly {
+	if m.IncludeValues != nil {
 		n += 2
 	}
 	n += len(m.unknownFields)
@@ -7717,7 +7720,7 @@ func (m *RangeScanRequest) UnmarshalVT(dAtA []byte) error {
 			m.EndInclusive = bool(v != 0)
 		case 7:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field KeysOnly", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeValues", wireType)
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
@@ -7734,7 +7737,8 @@ func (m *RangeScanRequest) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
-			m.KeysOnly = bool(v != 0)
+			b := bool(v != 0)
+			m.IncludeValues = &b
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -12323,7 +12327,7 @@ func (m *RangeScanRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 			m.EndInclusive = bool(v != 0)
 		case 7:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field KeysOnly", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field IncludeValues", wireType)
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
@@ -12340,7 +12344,8 @@ func (m *RangeScanRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 					break
 				}
 			}
-			m.KeysOnly = bool(v != 0)
+			b := bool(v != 0)
+			m.IncludeValues = &b
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
