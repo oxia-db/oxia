@@ -113,7 +113,7 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 	ensemble = refreshed[:len(meta.Ensemble)]
 	if meta.EnsembleChange != nil {
 		// To is a member of the ensemble
-		to := ensemble[slices.IndexFunc(ensemble, sharding.SameDataServer(meta.EnsembleChange.To))]
+		to := ensemble[slices.IndexFunc(ensemble, sharding.MatchDataServer(meta.EnsembleChange.To))]
 		change = &proto.EnsembleChangeMetadata{From: refreshed[len(meta.Ensemble)], To: to}
 	}
 	return ensemble, change, nil
@@ -280,7 +280,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			// committed: every committed entry is on from, and on a majority of
 			// the ensemble before the change without to
 			change := e.meta.EnsembleChange
-			isTo := sharding.SameDataServer(change.To)
+			isTo := sharding.MatchDataServer(change.To)
 			e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
 				slog.Any("from", change.From), slog.Any("to", change.To))
 			// To may have missed the fence
@@ -516,14 +516,14 @@ func (e *election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	}
 	from := e.changeEnsemble.From
 	to := e.changeEnsemble.To
-	if slices.ContainsFunc(mutShardMeta.Ensemble, sharding.SameDataServer(to)) {
+	if slices.ContainsFunc(mutShardMeta.Ensemble, sharding.MatchDataServer(to)) {
 		return
 	}
 	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
 	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes,
-		sharding.SameDataServer(to))
-	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, sharding.SameDataServer(from))
+		sharding.MatchDataServer(to))
+	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, sharding.MatchDataServer(from))
 	mutShardMeta.Ensemble = append(mutShardMeta.Ensemble, to)
 	mutShardMeta.EnsembleChange = &proto.EnsembleChangeMetadata{From: from, To: to}
 	e.logger.Info(

@@ -629,7 +629,7 @@ func TestRuntimeInitiateSplitSelectsChildrenSupportingParentFeatures(t *testing.
 		require.NoError(t, err)
 		require.True(t, exists, "child shard %d", child)
 		for _, server := range childMeta.UnsafeBorrow().GetEnsemble() {
-			assert.False(t, slices.ContainsFunc(older, sharding.SameDataServer(server)),
+			assert.False(t, slices.ContainsFunc(older, sharding.MatchDataServer(server)),
 				"child shard %d has %s in its ensemble", child, server.GetNameOrDefault())
 		}
 	}

@@ -20,9 +20,9 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// SameDataServer returns a predicate matching a data server by name, the same
+// MatchDataServer returns a predicate matching a data server by name, the same
 // data server whatever its addresses, e.g. for slices.ContainsFunc.
-func SameDataServer(server *proto.DataServerIdentity) func(*proto.DataServerIdentity) bool {
+func MatchDataServer(server *proto.DataServerIdentity) func(*proto.DataServerIdentity) bool {
 	name := server.GetNameOrDefault()
 	return func(other *proto.DataServerIdentity) bool {
 		return other.GetNameOrDefault() == name
@@ -32,7 +32,7 @@ func SameDataServer(server *proto.DataServerIdentity) func(*proto.DataServerIden
 // AddDataServer appends the data server to the list, unless the list has it
 // already.
 func AddDataServer(servers []*proto.DataServerIdentity, server *proto.DataServerIdentity) []*proto.DataServerIdentity {
-	if slices.ContainsFunc(servers, SameDataServer(server)) {
+	if slices.ContainsFunc(servers, MatchDataServer(server)) {
 		return servers
 	}
 	return append(servers, server)

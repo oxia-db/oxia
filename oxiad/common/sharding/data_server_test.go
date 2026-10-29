@@ -22,14 +22,14 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestSameDataServerMatchesByName(t *testing.T) {
+func TestMatchDataServerMatchesByName(t *testing.T) {
 	name := "s1"
 	s1 := &proto.DataServerIdentity{Name: &name, Public: "s1:9091", Internal: "s1:8191"}
 	moved := &proto.DataServerIdentity{Name: &name, Public: "s1-new:9091", Internal: "s1-new:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 
-	assert.True(t, SameDataServer(s1)(moved))
-	assert.False(t, SameDataServer(s1)(s2))
+	assert.True(t, MatchDataServer(s1)(moved))
+	assert.False(t, MatchDataServer(s1)(s2))
 }
 
 func TestAddDataServerSkipsTheSameDataServer(t *testing.T) {

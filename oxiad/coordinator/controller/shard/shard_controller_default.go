@@ -546,12 +546,12 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	target := changeEnsembleAction.To.GetNameOrDefault()
 	ensembleSize := len(shardMeta.Ensemble)
 	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
-		sharding.SameDataServer(changeEnsembleAction.From))
+		sharding.MatchDataServer(changeEnsembleAction.From))
 	if len(targetEnsemble) != ensembleSize-1 {
 		return fmt.Errorf("%w: invalid change ensemble: source data server %q must appear exactly once in the current ensemble", errs.ErrInvalidArgument, source)
 	}
 	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
-		sharding.SameDataServer(changeEnsembleAction.To))
+		sharding.MatchDataServer(changeEnsembleAction.To))
 	if len(ensembleWithoutTarget) != ensembleSize {
 		return fmt.Errorf("%w: invalid change ensemble: target data server %q is already in the current ensemble", errs.ErrInvalidArgument, target)
 	}
