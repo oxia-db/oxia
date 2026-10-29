@@ -58,12 +58,13 @@ type GrpcServer struct {
 	logger           *slog.Logger
 	watchableOptions *commonoption.Watch[*option.Options]
 
-	grpcServer   rpc2.GrpcServer
-	adminServer  rpc2.GrpcServer
-	healthServer *health.Server
-	coordinator  Coordinator
-	clientPool   rpc.ClientPool
-	metrics      *metric.PrometheusMetrics
+	grpcServer       rpc2.GrpcServer
+	adminServer      rpc2.GrpcServer
+	healthServer     *health.Server
+	coordinator      Coordinator
+	metadataProvider metadata.Provider
+	clientPool       rpc.ClientPool
+	metrics          *metric.PrometheusMetrics
 }
 
 func watchClusterConfigProvider(cluster *option.ClusterOptions, v *viper.Viper, clusterConfigChangeNotifications chan any) error {
@@ -237,6 +238,7 @@ func NewGrpcServer(parent context.Context, watchableOptions *commonoption.Watch[
 		healthServer:     healthServer,
 		clientPool:       clientPool,
 		coordinator:      coordinatorInstance,
+		metadataProvider: metadataProvider,
 		metrics:          metricsServer,
 	}
 	server.wg.Go(func() {
@@ -290,6 +292,7 @@ func (s *GrpcServer) Close() error {
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
 		s.coordinator.Close(),
+		s.metadataProvider.Close(),
 	)
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())

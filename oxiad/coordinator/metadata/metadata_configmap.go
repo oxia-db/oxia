@@ -16,7 +16,6 @@ package metadata
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -42,8 +41,6 @@ import (
 
 var _ Provider = &metadataProviderConfigMap{}
 
-var errLeaderLost = errors.New("metadata leadership lost")
-
 const (
 	leaseDuration = 15 * time.Second
 	renewDeadline = 10 * time.Second
@@ -62,6 +59,7 @@ type metadataProviderConfigMap struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	log *slog.Logger
 }
@@ -188,7 +186,9 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
-				log.Warn("Stopped leading - lease lost!")
+				if m.ctx.Err() == nil {
+					log.Warn("Stopped leading - lease lost!")
+				}
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -206,23 +206,26 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 		panic(err)
 	}
 
-	go process.DoWithLabels(m.ctx, map[string]string{
-		"component":     "metadata-provider",
-		"sub-component": "k8s-leader-elector",
-	}, func() {
-		leaderElector.Run(m.ctx)
-		log.Error("Leader elector stopped", slog.Any("error", errLeaderLost))
-		panic(errLeaderLost)
+	m.wg.Go(func() {
+		process.DoWithLabels(m.ctx, map[string]string{
+			"component":     "metadata-provider",
+			"sub-component": "k8s-leader-elector",
+		}, func() {
+			leaderElector.Run(m.ctx)
+			if m.ctx.Err() != nil {
+				return
+			}
+			log.Error("Coordination leadership lost: terminating to avoid a split brain")
+			os.Exit(1)
+		})
 	})
 
 	return wg.Wait(m.ctx)
 }
 
 func (m *metadataProviderConfigMap) Close() error {
-	m.Lock()
-	defer m.Unlock()
-
 	m.cancel()
+	m.wg.Wait()
 	m.log.Info("Closed metadata provider")
 	return nil
 }
