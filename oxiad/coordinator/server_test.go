@@ -63,7 +63,7 @@ type orderedClientPool struct {
 
 func (p *orderedClientPool) Close() error { return p.close() }
 
-func TestGrpcServerCloseReleasesMetadataAfterCoordinatorAndBeforeClientPool(t *testing.T) {
+func TestGrpcServerCloseClosesMetadataProviderAfterCoordinator(t *testing.T) {
 	var order closeOrder
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &GrpcServer{
@@ -78,5 +78,5 @@ func TestGrpcServerCloseReleasesMetadataAfterCoordinatorAndBeforeClientPool(t *t
 	}
 
 	assert.NoError(t, s.Close())
-	assert.Equal(t, closeOrder{"grpc-server", "admin-server", "coordinator", "metadata-provider", "client-pool"}, order)
+	assert.Equal(t, closeOrder{"client-pool", "grpc-server", "admin-server", "coordinator", "metadata-provider"}, order)
 }

@@ -288,11 +288,11 @@ func (s *GrpcServer) Close() error {
 	var err error
 	s.healthServer.Shutdown()
 	err = multierr.Combine(
+		s.clientPool.Close(),
 		s.grpcServer.Close(),
 		s.adminServer.Close(),
 		s.coordinator.Close(),
 		s.metadataProvider.Close(),
-		s.clientPool.Close(),
 	)
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
