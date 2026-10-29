@@ -943,10 +943,13 @@ func TestRuntimeComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
 			0: {
-				Status:       proto.ShardStatusUnknown,
-				Leader:       removed,
-				Ensemble:     []*proto.DataServerIdentity{removed},
-				RemovedNodes: []*proto.DataServerIdentity{removed},
+				Status:   proto.ShardStatusUnknown,
+				Leader:   removed,
+				Ensemble: []*proto.DataServerIdentity{removed},
+				EnsembleChange: &proto.EnsembleChangeMetadata{
+					From: &proto.DataServerIdentity{Public: "changed-public:6648", Internal: "changed-internal:6649"},
+					To:   removed,
+				},
 				Int32HashRange: &proto.HashRange{
 					Min: 0,
 					Max: 100,
@@ -970,6 +973,8 @@ func TestRuntimeComputeNewAssignmentsKeepsRemovedShardNodeAuthorities(t *testing
 			"active-internal:6649",
 			"removed-public:6648",
 			"removed-internal:6649",
+			"changed-public:6648",
+			"changed-internal:6649",
 		},
 		assignments.AllowedAuthorities,
 	)
@@ -1085,7 +1090,7 @@ func TestDataServersFromStatusIncludesAllShardMembers(t *testing.T) {
 			0: {
 				Leader:                  leader,
 				Ensemble:                []*proto.DataServerIdentity{leader, member},
-				RemovedNodes:            []*proto.DataServerIdentity{removed},
+				EnsembleChange:          &proto.EnsembleChangeMetadata{From: removed, To: member},
 				PendingDeleteShardNodes: []*proto.DataServerIdentity{pendingDelete},
 			},
 			// Without a leader

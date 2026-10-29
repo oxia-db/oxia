@@ -209,6 +209,14 @@ func assertShardLeader(
 	assert.True(t, gproto.Equal(expected, shardLeader(metadata, namespace, shard)))
 }
 
+func assertEnsembleChange(t *testing.T, actual *proto.EnsembleChangeMetadata, from *proto.DataServerIdentity,
+	to *proto.DataServerIdentity) {
+	t.Helper()
+	require.NotNil(t, actual)
+	assert.Equal(t, from.GetNameOrDefault(), actual.GetFrom().GetNameOrDefault())
+	assert.Equal(t, to.GetNameOrDefault(), actual.GetTo().GetNameOrDefault())
+}
+
 func assertShardEnsemble(
 	t *testing.T,
 	actual []*proto.DataServerIdentity,
@@ -1408,7 +1416,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
 
 	// s3 misses the committed entry: it must not become the leader. s2 leads,
-	// in place of s4, the member with the lowest head entry
+	// in place of s4, the member the change added
 	rpc.GetNode(s3).ExpectNoBecomeLeaderRequest(t)
 	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s3)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
@@ -1421,8 +1429,8 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 	assert.EqualValues(t, 3, metaSnap.Term)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s2)
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
-	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
+	assert.Nil(t, metaSnap.EnsembleChange)
+	assertShardEnsemble(t, metaSnap.PendingDeleteShardNodes, s4)
 
 	assert.NoError(t, sc.Close())
 }
@@ -1499,7 +1507,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRetainedFollowerAfterLeader
 	assert.NoError(t, wg.Wait(ctx))
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s4)
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s2)
+	assertEnsembleChange(t, metaSnap.EnsembleChange, s2, s4)
 	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
 
 	// s1 crashes before s3 and s4 catch up: the next election fences s2 again
@@ -1515,7 +1523,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRetainedFollowerAfterLeader
 	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 4, true)
 
 	// s3 misses the committed entry: it must not become the leader. s2 leads,
-	// in place of s4, the member with the lowest head entry
+	// in place of s4, the member the change added
 	rpc.GetNode(s3).ExpectNoBecomeLeaderRequest(t)
 	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFollowers(t, shard, 4, 3, s3)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
@@ -1527,8 +1535,8 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRetainedFollowerAfterLeader
 	metaSnap = requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s2)
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
-	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
+	assert.Nil(t, metaSnap.EnsembleChange)
+	assertShardEnsemble(t, metaSnap.PendingDeleteShardNodes, s4)
 
 	assert.NoError(t, sc.Close())
 }
@@ -1600,7 +1608,7 @@ func TestControllerDispatchChangeEnsembleReplacesDeadFollower(t *testing.T) {
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s4)
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s3)
+	assertEnsembleChange(t, metaSnap.EnsembleChange, s3, s4)
 
 	assert.NoError(t, sc.Close())
 }
@@ -1679,8 +1687,8 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedLeader(t *testing.T)
 	assert.EqualValues(t, 3, metaSnap.Term)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
 	assertShardEnsemble(t, metaSnap.Ensemble, s2, s3, s1)
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
-	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
+	assert.Nil(t, metaSnap.EnsembleChange)
+	assertShardEnsemble(t, metaSnap.PendingDeleteShardNodes, s4)
 
 	assert.NoError(t, sc.Close())
 }
@@ -1776,8 +1784,8 @@ func TestControllerDispatchChangeEnsembleKeepsEntriesAfterFailedBecomeLeader(t *
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s3)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s4)
-	// The periodic tasks release s2 once the followers caught up
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s2)
+	// The periodic tasks complete the change once the followers caught up
+	assertEnsembleChange(t, metaSnap.EnsembleChange, s2, s4)
 
 	assert.NoError(t, sc.Close())
 }
@@ -1958,7 +1966,7 @@ func TestControllerDispatchChangeEnsembleRejectsFeatureSupportRegression(t *test
 // A change of the ensemble is refused, without a new term, while a removed
 // data server is not released: a second change could let a fence quorum miss a
 // committed entry that only the retained data server has.
-func TestControllerDispatchChangeEnsembleRejectsUnreleasedRemovedNodes(t *testing.T) {
+func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 
@@ -1973,11 +1981,11 @@ func TestControllerDispatchChangeEnsembleRejectsUnreleasedRemovedNodes(t *testin
 	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
 	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
 	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:       proto.ShardStatusSteadyState,
-		Term:         2,
-		Leader:       s1,
-		Ensemble:     []*proto.DataServerIdentity{s1, s2, s3},
-		RemovedNodes: []*proto.DataServerIdentity{s4},
+		Status:         proto.ShardStatusSteadyState,
+		Term:           2,
+		Leader:         s1,
+		Ensemble:       []*proto.DataServerIdentity{s1, s2, s3},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: s4, To: s3},
 	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 	defer sc.Close()
 
@@ -1989,7 +1997,7 @@ func TestControllerDispatchChangeEnsembleRejectsUnreleasedRemovedNodes(t *testin
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.EqualValues(t, 2, metaSnap.Term)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
-	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
+	assertEnsembleChange(t, metaSnap.EnsembleChange, s4, s3)
 	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s5)))
 }
 
@@ -2201,7 +2209,7 @@ func TestControllerDispatchChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	shard := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
 	assert.EqualValues(t, 6, shard.GetTerm())
 	assertShardEnsemble(t, shard.GetEnsemble(), ps1, ps2, spare)
-	assertShardEnsemble(t, shard.GetRemovedNodes(), ps3)
+	assertEnsembleChange(t, shard.GetEnsembleChange(), ps3, spare)
 }
 
 // Each UpdateShardStatus persists the full cluster status. A periodic tick
@@ -2264,10 +2272,10 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
-// The periodic tasks release the retained data servers once the followers of
-// the current election caught up, and start an election when there is none,
-// e.g. after a restart. A failed release is left to the next round.
-func TestControllerHandlePeriodicTasksReleasesRemovedNodes(t *testing.T) {
+// The periodic tasks complete the pending change of the ensemble once a
+// majority of the current election caught up, and start an election when there
+// is none, e.g. after a restart. A failed write is left to the next round.
+func TestControllerHandlePeriodicTasksCompletesEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
@@ -2276,6 +2284,7 @@ func TestControllerHandlePeriodicTasksReleasesRemovedNodes(t *testing.T) {
 		election  *fakeElection
 		status    proto.ShardStatus
 		writeErr  error
+		pending   bool
 		elects    bool
 		releasing bool
 	}{
@@ -2284,19 +2293,25 @@ func TestControllerHandlePeriodicTasksReleasesRemovedNodes(t *testing.T) {
 		{name: "followers catching up", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
 		{name: "followers caught up", election: &fakeElection{quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, releasing: true},
+		{name: "already pending deletion", election: &fakeElection{quorumCaughtUp: true},
+			status: proto.ShardStatusSteadyState, pending: true, releasing: true},
 		{name: "release failure", election: &fakeElection{quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, writeErr: errors.New("store unavailable")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+			shardMeta := &proto.ShardMetadata{
+				Status:         test.status,
+				Term:           1,
+				Leader:         s1,
+				Ensemble:       []*proto.DataServerIdentity{s1},
+				EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s1},
+			}
+			if test.pending {
+				shardMeta.PendingDeleteShardNodes = []*proto.DataServerIdentity{s2}
+			}
 			require.NoError(t, base.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
-				Shards: map[int64]*proto.ShardMetadata{shard: {
-					Status:       test.status,
-					Term:         1,
-					Leader:       s1,
-					Ensemble:     []*proto.DataServerIdentity{s1},
-					RemovedNodes: []*proto.DataServerIdentity{s2},
-				}},
+				Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
 			}))
 			metadata := &hookedMetadata{Metadata: base}
 			if test.writeErr != nil {
@@ -2304,10 +2319,16 @@ func TestControllerHandlePeriodicTasksReleasesRemovedNodes(t *testing.T) {
 					return test.writeErr
 				}
 			}
+			rpc := rpctest.NewRpcProvider()
+			if test.pending {
+				// Its copy can't be deleted yet: it stays pending
+				rpc.GetNode(s2).DeleteShardResponse(errors.New("unreachable"))
+			}
 			s := &controller{
 				namespace:     constant.DefaultNamespace,
 				shard:         shard,
 				metadataStore: metadata,
+				rpc:           rpc,
 				ctx:           t.Context(),
 				logger:        slog.Default(),
 				electionOp:    make(chan *action.ElectionAction, 1),
@@ -2320,11 +2341,10 @@ func TestControllerHandlePeriodicTasksReleasesRemovedNodes(t *testing.T) {
 			assert.Equal(t, test.elects, len(s.electionOp) == 1)
 			stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
 			if test.releasing {
-				assert.Empty(t, stored.RemovedNodes)
+				assert.Nil(t, stored.EnsembleChange)
 				assertShardEnsemble(t, stored.PendingDeleteShardNodes, s2)
 			} else {
-				assertShardEnsemble(t, stored.RemovedNodes, s2)
-				assert.Empty(t, stored.PendingDeleteShardNodes)
+				assertEnsembleChange(t, stored.EnsembleChange, s2, s1)
 			}
 		})
 	}
@@ -2592,7 +2612,7 @@ func TestControllerDeleteDeletesRetainedAndPendingCopies(t *testing.T) {
 			Term:                    1,
 			Leader:                  leader,
 			Ensemble:                []*proto.DataServerIdentity{leader},
-			RemovedNodes:            []*proto.DataServerIdentity{retained},
+			EnsembleChange:          &proto.EnsembleChangeMetadata{From: retained, To: leader},
 			PendingDeleteShardNodes: []*proto.DataServerIdentity{pending},
 		}},
 	}))

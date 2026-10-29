@@ -44,17 +44,3 @@ func TestHeadEntriesMoveMovesHeadEntry(t *testing.T) {
 	assert.Equal(t, HeadEntries{s2: {Term: 2, Offset: 4}}, from)
 	assert.Equal(t, HeadEntries{s3: {Term: 1, Offset: 9}, s1: {Term: 2, Offset: 5}}, to)
 }
-
-func TestMoveDataServerMovesByName(t *testing.T) {
-	name := "s1"
-	s1 := &proto.DataServerIdentity{Name: &name, Public: "s1:9091", Internal: "s1:8191"}
-	s2 := &proto.DataServerIdentity{Public: "s2", Internal: "s2"}
-	s3 := &proto.DataServerIdentity{Public: "s3", Internal: "s3"}
-	from := []*proto.DataServerIdentity{{Name: &name, Public: "s1:9091", Internal: "s1:8191"}, s2}
-	to := []*proto.DataServerIdentity{s3}
-
-	MoveDataServer(s1, &from, &to)
-
-	assert.Equal(t, []*proto.DataServerIdentity{s2}, from)
-	assert.Equal(t, []*proto.DataServerIdentity{s3, s1}, to)
-}

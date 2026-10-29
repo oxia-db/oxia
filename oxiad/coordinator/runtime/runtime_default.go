@@ -625,8 +625,8 @@ func mergedAuthorities(status map[string]commonobject.Borrowed[*proto.NamespaceS
 			for _, server := range shard.Ensemble {
 				addServerAuthorities(server.GetPublic(), server.GetInternal())
 			}
-			for _, server := range shard.RemovedNodes {
-				addServerAuthorities(server.GetPublic(), server.GetInternal())
+			if change := shard.GetEnsembleChange(); change != nil {
+				addServerAuthorities(change.GetFrom().GetPublic(), change.GetFrom().GetInternal())
 			}
 		}
 	}
@@ -652,9 +652,7 @@ func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.Namesp
 			for _, server := range shard.Ensemble {
 				addServer(server)
 			}
-			for _, server := range shard.RemovedNodes {
-				addServer(server)
-			}
+			addServer(shard.GetEnsembleChange().GetFrom())
 			for _, server := range shard.PendingDeleteShardNodes {
 				addServer(server)
 			}

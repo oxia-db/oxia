@@ -42,10 +42,11 @@ import (
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 4. fence             |--x no majority of the ensemble and the
-//	           |    NewTerm to the    |    removed members, or of the ensemble
-//	           |    ensemble and the  |
-//	           |    removed members   |
+//	           | 4. fence             |--x no majority of the ensemble and from,
+//	           |    NewTerm to the    |    or of the ensemble
+//	           |    ensemble, and to  |
+//	           |    from of a pending |
+//	           |    change            |
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
@@ -62,7 +63,7 @@ import (
 //	           | 7. persist           |--x a store error
 //	           |    SteadyState, the  |
 //	           |    leader, ensemble  |    before the leader is told: if 8 fails, the
-//	           |    and removed       |    next election starts from them
+//	           |    and its change    |    next election starts from them
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
@@ -85,39 +86,39 @@ import (
 //
 // # Change of the ensemble
 //
-// A change replaces one member of the ensemble: "from" becomes a removed member
-// and "to" joins the ensemble. A committed entry is on a majority of the
-// ensemble before or after the change, which differ by one member, so a fence
-// quorum of the ensemble and the removed members includes one of its holders.
-// The removed members are thus fenced and are candidates, until enough members
-// of the ensemble have every entry:
+// A change replaces one member of the ensemble, "from", with "to", and stays
+// pending in the shard status (EnsembleChangeMetadata). A committed entry is on
+// a majority of the ensemble before or after the change, which differ by one
+// member, so a fence quorum of the ensemble and from includes one of its
+// holders. From is thus fenced and is a candidate, until enough members of the
+// ensemble have every entry:
 //
 //	ensemble {A,B,C}         ensemble {A,C,D}              ensemble {A,C,D}
-//	removed  {}      ---->   removed  {B}          ---->   removed  {}
-//	                 change                       release  pending deletion {B}
-//	                 election                     (n+1)/2 members of the
-//	                    |                         ensemble committed the head
-//	                    |                         entry of the leader: any later
-//	                    |                         fence quorum includes one of them
+//	change   none    ---->   change {from B, to D} ---->   change none
+//	                 change                       complete pending deletion {B}
+//	                 election                     a majority of the ensemble
+//	                    |                         committed the head entry of
+//	                    |                         the leader: any later fence
+//	                    |                         quorum includes one of them
 //	                    v
-//	           6. choose leader among the fenced members of the ensemble and the
-//	              removed members; a member of the ensemble wins a tie
+//	           6. choose leader among the fenced members of the ensemble and
+//	              from; a member of the ensemble wins a tie
 //	                    |
 //	       +------------+---------------------------+
 //	       |                                        |
-//	 a member of the ensemble                 a removed member, ahead of every
-//	 has the highest head entry               member of the ensemble
+//	 a member of the ensemble                 from, ahead of every member of
+//	 has the highest head entry               the ensemble
 //	       |                                        |
-//	 it leads, the change is done             it goes back into the ensemble and
-//	                                          leads, in place of the member with
-//	                                          the lowest head entry, which is
-//	                                          removed instead: the change is undone
+//	 it leads, the change stays pending       it goes back into the ensemble in
+//	                                          place of to, and leads: the change
+//	                                          is undone, as Raft rolls back to
+//	                                          the configuration before a change
+//	                                          that isn't committed, and to is
+//	                                          deleted
 //
-// Every election fences the removed members until they're released, and can
-// choose them. If the release fails, the next election releases them. The shard
-// controller refuses another change until then: with two changes, the
-// ensembles would differ by two members, and a fence quorum could miss a
-// committed entry.
+// The shard controller completes the change, and refuses another one until
+// then: with two changes, the ensembles would differ by two members, and a
+// fence quorum could miss a committed entry.
 type Election interface {
 	// Start runs the election, and returns the elected leader. It fails if
 	// called twice.

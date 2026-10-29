@@ -59,7 +59,6 @@ func TestCoordinatorInitiateLeaderElection(t *testing.T) {
 		Term:                    999,
 		Leader:                  nil,
 		Ensemble:                []*proto.DataServerIdentity{},
-		RemovedNodes:            []*proto.DataServerIdentity{},
 		PendingDeleteShardNodes: make([]*proto.DataServerIdentity, 0),
 		Int32HashRange:          &proto.HashRange{Min: 2000, Max: 100000},
 	}

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -628,9 +629,8 @@ func TestRuntimeInitiateSplitSelectsChildrenSupportingParentFeatures(t *testing.
 		require.NoError(t, err)
 		require.True(t, exists, "child shard %d", child)
 		for _, server := range childMeta.UnsafeBorrow().GetEnsemble() {
-			assert.False(t, slices.ContainsFunc(older, func(o *proto.DataServerIdentity) bool {
-				return o.GetNameOrDefault() == server.GetNameOrDefault()
-			}), "child shard %d has %s in its ensemble", child, server.GetNameOrDefault())
+			assert.False(t, slices.ContainsFunc(older, sharding.SameDataServer(server)),
+				"child shard %d has %s in its ensemble", child, server.GetNameOrDefault())
 		}
 	}
 }
@@ -786,8 +786,8 @@ func TestValidateSplitParentRejectsUnsplittableShards(t *testing.T) {
 		{"pending ensemble change", steady(func(s *proto.ShardMetadata) {
 			s.PendingDeleteShardNodes = []*proto.DataServerIdentity{splitPs1}
 		}), "has pending ensemble changes"},
-		{"retained data server", steady(func(s *proto.ShardMetadata) {
-			s.RemovedNodes = []*proto.DataServerIdentity{splitPs1}
+		{"pending change of the ensemble", steady(func(s *proto.ShardMetadata) {
+			s.EnsembleChange = &proto.EnsembleChangeMetadata{From: splitPs1, To: splitPs1}
 		}), "has pending ensemble changes"},
 		{"single hash", steady(func(s *proto.ShardMetadata) {
 			s.Int32HashRange = &proto.HashRange{Min: 7, Max: 7}

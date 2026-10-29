@@ -50,8 +50,8 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc/rpctest"
 )
 
-// The election returns the head entries of the candidates and of the removed
-// data servers, and the features enabled on them.
+// The election returns the head entries of the candidates and of the data
+// server removed by the pending change, and the features enabled on them.
 func TestElectionFenceQuorumReturnsHeadEntries(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -66,7 +66,7 @@ func TestElectionFenceQuorumReturnsHeadEntries(t *testing.T) {
 	rpc.GetNode(removed).NewTermResponse(1, 101, nil)
 
 	candidates, retainedHeads, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
-		[]*proto.DataServerIdentity{s1, s2, s3}, []*proto.DataServerIdentity{removed})
+		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
 	assert.EqualValues(t, 100, candidates[s1].GetOffset())
@@ -110,7 +110,7 @@ func TestElectionFenceQuorumWaitsForEnsembleMajority(t *testing.T) {
 	}()
 
 	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
-		[]*proto.DataServerIdentity{removed})
+		&proto.EnsembleChangeMetadata{From: removed, To: s2})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
 }
@@ -141,7 +141,7 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 
 	start := time.Now()
 	candidates, retainedHeads, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
-		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, []*proto.DataServerIdentity{removed})
+		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, &proto.EnsembleChangeMetadata{From: removed, To: s5})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), quorumFencingGracePeriod)
 	assert.Len(t, candidates, 4)
@@ -244,21 +244,25 @@ func TestElectionRefreshEnsembleInfoUsesRegisteredAddresses(t *testing.T) {
 	// The ensemble is compared and logged at debug level only
 	e.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	ensemble, retained, err := e.refreshEnsembleInfo(&proto.ShardMetadata{
-		Ensemble:     []*proto.DataServerIdentity{oldIdentity},
-		RemovedNodes: []*proto.DataServerIdentity{unregistered},
+	ensemble, change, err := e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble:       []*proto.DataServerIdentity{oldIdentity},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: unregistered, To: oldIdentity},
 	})
 	require.NoError(t, err)
 	assertShardEnsemble(t, ensemble, newIdentity)
-	assertShardEnsemble(t, retained, unregistered)
-	// Appending to the ensemble keeps the retained data servers
-	_ = append(ensemble, testDataServer("s3"))
-	assertShardEnsemble(t, retained, unregistered)
+	assertEnsembleChange(t, change, unregistered, newIdentity)
+
+	ensemble, change, err = e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble: []*proto.DataServerIdentity{oldIdentity},
+	})
+	require.NoError(t, err)
+	assertShardEnsemble(t, ensemble, newIdentity)
+	assert.Nil(t, change)
 }
 
-// The new term fences the retained data servers at the addresses they're
-// registered with, as the ensemble.
-func TestElectionNewTermRefreshesRetainedAddresses(t *testing.T) {
+// The new term fences the data server removed by the pending change at the
+// address it's registered with, as the ensemble.
+func TestElectionNewTermRefreshesRemovedDataServerAddress(t *testing.T) {
 	var shard int64 = 5
 	name := "s2"
 	oldIdentity := &proto.DataServerIdentity{Name: &name, Public: "old-public:9091", Internal: "old-internal:8191"}
@@ -268,19 +272,20 @@ func TestElectionNewTermRefreshesRetainedAddresses(t *testing.T) {
 		&proto.ClusterConfiguration{})
 	require.NoError(t, metadata.CreateDataServer(&proto.DataServer{Identity: newIdentity}))
 	shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
-		Ensemble: []*proto.DataServerIdentity{s1}, RemovedNodes: []*proto.DataServerIdentity{oldIdentity}}
+		Ensemble:       []*proto.DataServerIdentity{s1},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: oldIdentity, To: s1}}
 	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
 	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, shardMeta)
 
 	_, err := e.newTerm()
 	require.NoError(t, err)
 	stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
-	assert.Equal(t, newIdentity.GetInternal(), stored.GetRemovedNodes()[0].GetInternal())
-	assert.Equal(t, newIdentity.GetInternal(), e.meta.GetRemovedNodes()[0].GetInternal())
+	assertEnsembleChange(t, stored.GetEnsembleChange(), newIdentity, s1)
+	assertEnsembleChange(t, e.meta.GetEnsembleChange(), newIdentity, s1)
 }
 
-// When the removed data servers make the fencing majority, a majority of the
-// new ensemble must still be fenced.
+// When the data server removed by the pending change makes the fencing
+// majority, a majority of the new ensemble must still be fenced.
 func TestElectionFenceQuorumRequiresEnsembleMajority(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -293,7 +298,7 @@ func TestElectionFenceQuorumRequiresEnsembleMajority(t *testing.T) {
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 
 	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
-		[]*proto.DataServerIdentity{removed})
+		&proto.EnsembleChangeMetadata{From: removed, To: s2})
 	assert.ErrorContains(t, err, "quorum of the new ensemble not reached")
 }
 
@@ -307,9 +312,9 @@ func TestElectionChooseLeaderFailsWithoutLeader(t *testing.T) {
 }
 
 // The leader has the highest head entry among the fenced data servers, a
-// candidate when one ties with a retained data server. A retained data server
-// ahead of every candidate goes back into the ensemble, in place of the
-// candidate with the lowest head entry.
+// candidate when one ties with the from of the pending change. From, ahead of
+// every candidate, undoes the change: it swaps back with to, whatever the head
+// entry of to, and to is deleted.
 func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -321,14 +326,17 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		retainedHeads sharding.HeadEntries
 		leader        *proto.DataServerIdentity
 		ensemble      []*proto.DataServerIdentity
-		retained      []*proto.DataServerIdentity
+		changeFrom    *proto.DataServerIdentity
+		changeTo      *proto.DataServerIdentity
+		pending       []*proto.DataServerIdentity
 		followers     []*proto.DataServerIdentity
 	}{{
 		name:          "higher term wins over a higher offset",
 		ensembleHeads: sharding.HeadEntries{s1: {Term: 3, Offset: 1}, s3: {Term: 2, Offset: 9}, s4: {Term: 2, Offset: 4}},
 		leader:        s1,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
-		retained:      []*proto.DataServerIdentity{s2},
+		changeFrom:    s2,
+		changeTo:      s4,
 		followers:     []*proto.DataServerIdentity{s3, s4},
 	}, {
 		name:          "candidate ties with the retained data server",
@@ -336,38 +344,48 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
 		leader:        s1,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
-		retained:      []*proto.DataServerIdentity{s2},
+		changeFrom:    s2,
+		changeTo:      s4,
 		followers:     []*proto.DataServerIdentity{s3, s4},
 	}, {
-		name:          "retained data server ahead by offset",
+		name:          "from ahead by offset",
 		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 1, Offset: 9}},
 		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
-		retained:      []*proto.DataServerIdentity{s4},
+		pending:       []*proto.DataServerIdentity{s4},
 		followers:     []*proto.DataServerIdentity{s3},
 	}, {
-		name:          "retained data server ahead by term",
+		name:          "from ahead by term, to isn't the lowest",
 		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 9}},
 		retainedHeads: sharding.HeadEntries{s2: {Term: 3, Offset: 5}},
 		leader:        s2,
-		ensemble:      []*proto.DataServerIdentity{s1, s4, s2},
-		retained:      []*proto.DataServerIdentity{s3},
-		followers:     []*proto.DataServerIdentity{s4},
+		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
+		pending:       []*proto.DataServerIdentity{s4},
+		followers:     []*proto.DataServerIdentity{s3},
+	}, {
+		name:          "from ahead, to missed the fence",
+		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 3}},
+		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		leader:        s2,
+		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
+		pending:       []*proto.DataServerIdentity{s4},
+		followers:     []*proto.DataServerIdentity{s1, s3},
 	}} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
 				&proto.ClusterConfiguration{})
 			e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{
-				Ensemble:     []*proto.DataServerIdentity{s1, s3, s4},
-				RemovedNodes: []*proto.DataServerIdentity{s2},
+				Ensemble:       []*proto.DataServerIdentity{s1, s3, s4},
+				EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s4},
 			})
 
 			leader, followers, err := e.chooseLeader(test.ensembleHeads, test.retainedHeads)
 			require.NoError(t, err)
 			assert.Equal(t, test.leader, leader)
 			assertShardEnsemble(t, e.meta.Ensemble, test.ensemble...)
-			assertShardEnsemble(t, e.meta.RemovedNodes, test.retained...)
+			assertEnsembleChange(t, e.meta.EnsembleChange, test.changeFrom, test.changeTo)
+			assertShardEnsemble(t, e.meta.PendingDeleteShardNodes, test.pending...)
 			assert.ElementsMatch(t, test.followers, maps.Keys(followers))
 		})
 	}
@@ -480,9 +498,9 @@ func TestElectionFencingFailedFollowersStopsOnInvalidTerm(t *testing.T) {
 	rpc.GetNode(follower).ExpectNoMoreNewTermRequest(t)
 }
 
-// A data server that is swapped out again while it is still among the
-// removed data servers is listed once.
-func TestElectionPrepareIfChangeEnsembleKeepsRemovedNodesUnique(t *testing.T) {
+// A change of the ensemble records itself as pending, and takes the added data
+// server out of the pending deletions.
+func TestElectionPrepareIfChangeEnsembleRecordsChange(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
@@ -493,14 +511,13 @@ func TestElectionPrepareIfChangeEnsembleKeepsRemovedNodesUnique(t *testing.T) {
 	}
 	shardMeta := &proto.ShardMetadata{
 		Ensemble:                []*proto.DataServerIdentity{s1, s2, s3},
-		RemovedNodes:            []*proto.DataServerIdentity{s3},
 		PendingDeleteShardNodes: []*proto.DataServerIdentity{s4},
 	}
 
 	e.prepareIfChangeEnsemble(shardMeta)
 
 	assertShardEnsemble(t, shardMeta.Ensemble, s1, s2, s4)
-	assertShardEnsemble(t, shardMeta.RemovedNodes, s3)
+	assertEnsembleChange(t, shardMeta.EnsembleChange, s3, s4)
 	assert.Empty(t, shardMeta.PendingDeleteShardNodes)
 }
 
@@ -515,14 +532,14 @@ func TestElectionPrepareIfChangeEnsembleKeepsPersistedChange(t *testing.T) {
 		changeEnsemble: action.NewChangeEnsembleAction(5, s3, s4),
 	}
 	shardMeta := &proto.ShardMetadata{
-		Ensemble:     []*proto.DataServerIdentity{s1, s4},
-		RemovedNodes: []*proto.DataServerIdentity{s3},
+		Ensemble:       []*proto.DataServerIdentity{s1, s4},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: s3, To: s4},
 	}
 
 	e.prepareIfChangeEnsemble(shardMeta)
 
 	assertShardEnsemble(t, shardMeta.Ensemble, s1, s4)
-	assertShardEnsemble(t, shardMeta.RemovedNodes, s3)
+	assertEnsembleChange(t, shardMeta.EnsembleChange, s3, s4)
 }
 
 // The election of a shard that was removed meanwhile fails instead of
@@ -571,8 +588,8 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 	assert.Equal(t, s1.GetPublic(), stored.GetLeader().GetPublic())
 }
 
-// A retained data server ahead of every candidate goes back into the ensemble,
-// and the candidate it replaces stays removed until the release.
+// From, ahead of every candidate, undoes the change: the ensemble is the one
+// before it again, and to is deleted.
 func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -603,14 +620,14 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	e.Cancel()
 	stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s2)
-	assertShardEnsemble(t, stored.GetRemovedNodes(), s4)
-	assert.Empty(t, stored.GetPendingDeleteShardNodes())
+	assert.Nil(t, stored.GetEnsembleChange())
+	assertShardEnsemble(t, stored.GetPendingDeleteShardNodes(), s4)
 }
 
-// The election keeps the retained data servers: the shard controller releases
-// them once a majority of the ensemble caught up, which a dead follower doesn't
-// block. A canceled election never reports a caught-up majority.
-func TestElectionStartKeepsRemovedNodes(t *testing.T) {
+// The election keeps the change pending: the shard controller completes it once
+// a majority of the ensemble caught up, which a dead follower doesn't block. A
+// canceled election never reports a caught-up majority.
+func TestElectionStartKeepsChangePending(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -658,7 +675,7 @@ func TestElectionStartKeepsRemovedNodes(t *testing.T) {
 
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
-			assertShardEnsemble(t, stored.GetRemovedNodes(), s2)
+			assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 			assert.Empty(t, stored.GetPendingDeleteShardNodes())
 		})
 	}
@@ -850,6 +867,18 @@ func shardTerm(metadata coordmetadata.Metadata, namespace string, shard int64) i
 		return 0
 	}
 	return shardMetadata.Term
+}
+
+func assertEnsembleChange(t *testing.T, actual *proto.EnsembleChangeMetadata, from *proto.DataServerIdentity,
+	to *proto.DataServerIdentity) {
+	t.Helper()
+	if from == nil {
+		assert.Nil(t, actual)
+		return
+	}
+	require.NotNil(t, actual)
+	assert.Equal(t, from.GetNameOrDefault(), actual.GetFrom().GetNameOrDefault())
+	assert.Equal(t, to.GetNameOrDefault(), actual.GetTo().GetNameOrDefault())
 }
 
 func assertShardEnsemble(
