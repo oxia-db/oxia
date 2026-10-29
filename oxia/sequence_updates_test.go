@@ -125,6 +125,18 @@ func TestSequenceUpdatesGetSequenceUpdatesFailsOnRequestError(t *testing.T) {
 	assert.ErrorIs(t, su.getSequenceUpdates(), constant.ErrNodeIsNotLeader)
 }
 
+// A request that fails because the subscription was closed reports the close,
+// not the error of the request.
+func TestSequenceUpdatesGetSequenceUpdatesFailsWithContextErrorWhenClosed(t *testing.T) {
+	su, _ := newTestSequenceUpdates(nil)
+	su.rpcProvider = &sequenceUpdatesTestRpcProvider{err: constant.ErrNodeIsNotLeader}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	su.ctx = ctx
+
+	assert.ErrorIs(t, su.getSequenceUpdates(), context.Canceled)
+}
+
 // The first response is empty when no sequence key exists yet: it is not an
 // update.
 func TestSequenceUpdatesGetSequenceUpdatesSkipsEmptyKey(t *testing.T) {
