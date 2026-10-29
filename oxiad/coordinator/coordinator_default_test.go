@@ -17,10 +17,14 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -35,6 +39,7 @@ import (
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -70,6 +75,19 @@ func TestNewFailsToStart(t *testing.T) {
 		{"internal listener", func(options *option.Options) {
 			options.Server.Internal.BindAddress = occupied.Addr().String()
 		}},
+		{"metrics TLS", func(options *option.Options) {
+			options.Observability.Metric = commonoption.MetricOptions{
+				Enabled:     &constant.FlagTrue,
+				BindAddress: "localhost:0",
+				TLS:         invalidTLS,
+			}
+		}},
+		{"metrics listener", func(options *option.Options) {
+			options.Observability.Metric = commonoption.MetricOptions{
+				Enabled:     &constant.FlagTrue,
+				BindAddress: occupied.Addr().String(),
+			}
+		}},
 		{"controller TLS", func(options *option.Options) { options.Controller.TLS = invalidTLS }},
 		{"metadata", func(options *option.Options) {
 			options.Metadata.ProviderName = option.ProviderFile
@@ -87,22 +105,14 @@ func TestNewFailsToStart(t *testing.T) {
 			options.Metadata.File.StatusName = filepath.Join(readOnly, option.DefaultFileStatusName)
 			options.Metadata.File.ConfigName = filepath.Join(t.TempDir(), option.DefaultFileConfigName)
 		}},
-		{"metrics TLS", func(options *option.Options) {
-			options.Observability.Metric = commonoption.MetricOptions{
-				Enabled:     &constant.FlagTrue,
-				BindAddress: "localhost:0",
-				TLS:         invalidTLS,
-			}
-		}},
-		{"metrics listener", func(options *option.Options) {
-			options.Observability.Metric = commonoption.MetricOptions{
-				Enabled:     &constant.FlagTrue,
-				BindAddress: occupied.Addr().String(),
-			}
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			options := newTestOptions()
+			// The parts that fail after the metrics server started release it
+			options.Observability.Metric = commonoption.MetricOptions{
+				Enabled:     &constant.FlagTrue,
+				BindAddress: "127.0.0.1:0",
+			}
 			test.modify(options)
 
 			server, err := New(t.Context(), commonwatch.New(options))
@@ -151,6 +161,71 @@ func TestNewFailsToReconcileClusterConfiguration(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrPermission)
 	assert.ErrorContains(t, err, "failed to reconcile the cluster configuration")
 	assert.Nil(t, server)
+}
+
+// A standby coordinator serves its metrics while it waits for the leadership,
+// and reports whether it holds it.
+func TestNewServesMetricsAsStandby(t *testing.T) {
+	options := newTestOptions()
+	options.Metadata.ProviderName = option.ProviderFile
+	options.Metadata.File.StatusName = filepath.Join(t.TempDir(), option.DefaultFileStatusName)
+	options.Metadata.File.ConfigName = filepath.Join(t.TempDir(), option.DefaultFileConfigName)
+	holderFactory, err := coordmetadata.New(t.Context(), options)
+	require.NoError(t, err)
+	holder := holderFactory.CreateMetadata(t.Context())
+	_, err = holder.WaitToBecomeLeader()
+	require.NoError(t, err)
+
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	metricsAddress := free.Addr().String()
+	require.NoError(t, free.Close())
+	options.Observability.Metric = commonoption.MetricOptions{
+		Enabled:     &constant.FlagTrue,
+		BindAddress: metricsAddress,
+	}
+	type startResult struct {
+		server Coordinator
+		err    error
+	}
+	started := make(chan startResult, 1)
+	go func() {
+		server, err := New(t.Context(), commonwatch.New(options))
+		started <- startResult{server: server, err: err}
+	}()
+	requireLeader := func(expected int) {
+		t.Helper()
+		pattern := regexp.MustCompile(fmt.Sprintf(`(?m)^oxia_coordinator_is_leader(\{[^}]*\})? %d$`, expected))
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+metricsAddress+"/metrics", http.NoBody)
+			require.NoError(c, err)
+			response, err := http.DefaultClient.Do(request)
+			require.NoError(c, err)
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(c, err)
+			assert.Regexp(c, pattern, string(body))
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+
+	requireLeader(0)
+	select {
+	case result := <-started:
+		require.FailNow(t, "the standby started while the leadership is held", "err: %v", result.err)
+	default:
+	}
+
+	require.NoError(t, holder.Close())
+	require.NoError(t, holderFactory.Close())
+	var result startResult
+	select {
+	case result = <-started:
+		require.NoError(t, result.err)
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the standby did not become the leader")
+	}
+	requireLeader(1)
+	require.NoError(t, result.server.Close())
 }
 
 func TestCoordinatorAppliesLogLevelChanges(t *testing.T) {

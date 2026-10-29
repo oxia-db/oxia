@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/commonio"
 	"github.com/oxia-db/oxia/common/failpoint"
+	commonmetric "github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordreconciler "github.com/oxia-db/oxia/oxiad/coordinator/reconciler"
@@ -39,6 +41,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/metric"
+	commonoption "github.com/oxia-db/oxia/oxiad/common/option"
 	commonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 )
 
@@ -60,6 +63,7 @@ type coordinator struct {
 	metadata         coordmetadata.Metadata
 	metadataFactory  *coordmetadata.Factory
 	metrics          *metric.PrometheusMetrics
+	leaderGauge      commonmetric.Gauge
 }
 
 func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (_ Coordinator, err error) {
@@ -79,13 +83,26 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		runtime              coordruntime.Runtime
 		metadata             coordmetadata.Metadata
 		metadataFactory      *coordmetadata.Factory
+		metricsServer        *metric.PrometheusMetrics
 	)
+	leader := &atomic.Bool{}
+	leaderGauge := commonmetric.NewGauge("oxia_coordinator_is_leader",
+		"Whether the coordinator holds the leadership of the cluster metadata", "", nil, func() int64 {
+			if leader.Load() {
+				return 1
+			}
+			return 0
+		})
 	defer func() {
 		if err == nil {
 			return
 		}
 
 		cancel()
+		leaderGauge.Unregister()
+		if metricsServer != nil {
+			err = multierr.Append(err, metricsServer.Close())
+		}
 		err = multierr.Append(err, commonio.CloseIfNotNil(managementGrpcServer))
 		err = multierr.Append(err, commonio.CloseIfNotNil(reconciler))
 		err = multierr.Append(err, commonio.CloseIfNotNil(runtime))
@@ -104,6 +121,10 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 	grpcServer, err = commonrpc.Default.StartGrpcServer("coordinator", internalServer.BindAddress, func(registrar grpc.ServiceRegistrar) { //nolint:contextcheck
 		grpc_health_v1.RegisterHealthServer(registrar, healthServer)
 	}, internalServerTLS, &internalServer.Auth, nil)
+	if err != nil {
+		return nil, err
+	}
+	metricsServer, err = startMetricsServer(&options.Observability.Metric) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +158,7 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 	if err != nil {
 		return nil, err
 	}
+	leader.Store(true)
 	runtime, err = coordruntime.New(ctx, metadata, rpc.NewControllerRPCProviderFactory(controllerTLS))
 	if failErr, ok := failpoint.Eval[error]("coordinator.newRuntime"); ok {
 		err = failErr
@@ -150,17 +172,6 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		return nil, err
 	}
 
-	var metricsServer *metric.PrometheusMetrics
-	if metricOptions := options.Observability.Metric; metricOptions.IsEnabled() {
-		metricTLS, err := metricOptions.TLS.TryIntoServerTLSConf()
-		if err != nil {
-			return nil, err
-		}
-		metricsServer, err = metric.Start(metricOptions.BindAddress, metricTLS) //nolint:contextcheck
-		if err != nil {
-			return nil, err
-		}
-	}
 	c := &coordinator{
 		ctx:              ctx,
 		ctxCancel:        cancel,
@@ -175,6 +186,7 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		metadata:         metadata,
 		metadataFactory:  metadataFactory,
 		metrics:          metricsServer,
+		leaderGauge:      leaderGauge,
 	}
 	c.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
@@ -192,6 +204,18 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 	})
 
 	return c, nil
+}
+
+// startMetricsServer returns a nil server when the metrics are disabled.
+func startMetricsServer(options *commonoption.MetricOptions) (*metric.PrometheusMetrics, error) {
+	if !options.IsEnabled() {
+		return nil, nil //nolint:nilnil
+	}
+	metricTLS, err := options.TLS.TryIntoServerTLSConf()
+	if err != nil {
+		return nil, err
+	}
+	return metric.Start(options.BindAddress, metricTLS)
 }
 
 func (s *coordinator) bgLeadershipWatcher(leadershipLost <-chan struct{}) {
@@ -244,6 +268,7 @@ func (s *coordinator) Close() error {
 		s.metadata.Close(),
 		s.metadataFactory.Close(),
 	)
+	s.leaderGauge.Unregister()
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
 	}
