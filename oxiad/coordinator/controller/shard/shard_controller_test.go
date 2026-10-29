@@ -1427,6 +1427,112 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 	assert.NoError(t, sc.Close())
 }
 
+// The retained data server stays fenced after the change: it may hold a
+// committed entry that the new ensemble misses until its followers catch up.
+// RF=3: s1 committed the entry at offset 5 with the ack of s2, while s3 is still
+// at offset 4. s2 misses the fence of the change, and s1 leads. s1 crashes
+// before s3 and s4 catch up: the next election must not elect s3, and s2 goes
+// back into the ensemble and leads.
+func TestControllerDispatchChangeEnsembleKeepsEntryOfRetainedFollowerAfterLeaderCrash(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+
+	// caught-up the leader election entry
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	wg := concurrent.NewWaitGroup(1)
+	wg.Go(func() error {
+		// Retry until the shard controller is ready for ensemble change.
+		for {
+			a := action.NewChangeEnsembleAction(shard, s2, s4)
+			sc.Dispatch(a)
+			_, err := a.Wait()
+			if !errors.Is(err, errs.ErrUnavailable) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+
+	// s2 misses the fence of the change: s1 leads
+	rpc.GetNode(s1).NewTermResponse(2, 5, nil)
+	rpc.GetNode(s2).NewTermResponse(-1, -1, errors.New("fails"))
+	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
+	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s3, s4)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	assert.NoError(t, wg.Wait(ctx))
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s4)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s2)
+	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
+
+	// s1 crashes before s3 and s4 catch up: the next election fences s2 again
+	rpc.GetNode(s1).NewTermResponse(-1, -1, errors.New("fails"))
+	rpc.GetNode(s2).NewTermResponse(2, 5, nil)
+	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
+	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
+	sc.BecameUnavailable(s1)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 4, true)
+
+	// s3 misses the committed entry: it must not become the leader. s2 leads,
+	// in place of s4, the member with the lowest head entry
+	rpc.GetNode(s3).ExpectNoBecomeLeaderRequest(t)
+	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFollowers(t, shard, 4, 3, s3)
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+
+	assert.Eventually(t, func() bool {
+		return shardTerm(metadata, constant.DefaultNamespace, shard) == 4 &&
+			shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState
+	}, 10*time.Second, 100*time.Millisecond)
+	metaSnap = requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s2)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
+	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
+
+	assert.NoError(t, sc.Close())
+}
+
 // Same as TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower,
 // when the swapped out data server is the leader: s1 committed the entry at
 // offset 5 with the ack of s2, and s2 is slow to answer the fence of the new
