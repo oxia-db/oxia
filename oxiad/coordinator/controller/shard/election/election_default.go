@@ -15,6 +15,7 @@
 package election
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -222,25 +223,47 @@ gracePeriod:
 	return candidatesResponse, removedResponse, enabled, nil
 }
 
-func (e *election) chooseLeader(candidatesStatus sharding.HeadEntries) (
+// chooseLeader chooses the leader among the fenced data servers with the highest
+// head entry, which has every committed entry. The removed data servers are
+// candidates too, but a candidate of the ensemble wins a tie: a removed data
+// server is chosen only when it is ahead of every candidate of the ensemble. It
+// then goes back into the ensemble, in place of the candidate with the lowest
+// head entry, which is removed instead, and the choice starts again.
+func (e *election) chooseLeader(candidatesStatus sharding.HeadEntries, removedStatus sharding.HeadEntries) (
 	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
 	candidates := chooseCandidates(candidatesStatus)
+	if restored := chooseCandidates(removedStatus); len(restored) > 0 && len(candidates) > 0 &&
+		compareEntryIDs(removedStatus[restored[0]], candidatesStatus[candidates[0]]) > 0 {
+		replaced := slices.MinFunc(maps.Keys(candidatesStatus), func(a, b *proto.DataServerIdentity) int {
+			return compareEntryIDs(candidatesStatus[a], candidatesStatus[b])
+		})
+		e.logger.Warn("A removed data server is ahead of the ensemble, it goes back into the ensemble",
+			slog.Any("restored", restored[0]), slog.Any("replaced", replaced))
+		e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, func(server *proto.DataServerIdentity) bool {
+			return server.GetNameOrDefault() == replaced.GetNameOrDefault()
+		}), restored[0])
+		e.meta.RemovedNodes = append(slices.DeleteFunc(e.meta.RemovedNodes, func(server *proto.DataServerIdentity) bool {
+			return server.GetNameOrDefault() == restored[0].GetNameOrDefault()
+		}), replaced)
+		candidatesStatus[restored[0]], removedStatus[replaced] = removedStatus[restored[0]], candidatesStatus[replaced]
+		delete(candidatesStatus, replaced)
+		delete(removedStatus, restored[0])
+		return e.chooseLeader(candidatesStatus, removedStatus)
+	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
 	if err != nil {
 		return nil, nil, err
 	}
-	server, err := e.leaderSelector.Select(&leaderselector.Context{
+	if leader, err = e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: candidates,
 		Namespaces: namespaces,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, nil, err
 	}
-	leader = server
 	followers = make(sharding.HeadEntries)
-	for a, e := range candidatesStatus {
-		if a.GetNameOrDefault() != leader.GetNameOrDefault() {
-			followers[a] = e
+	for server, head := range candidatesStatus {
+		if server.GetNameOrDefault() != leader.GetNameOrDefault() {
+			followers[server] = head
 		}
 	}
 	return leader, followers, nil
@@ -271,8 +294,10 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	return nil
 }
 
-// ensureFollowerCaught Must be called before we change ensemble to avoid any potential data lost.
-func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity, leaderEntry *proto.EntryId) {
+// ensureFollowerCaught waits for the followers to commit the head entry of the
+// leader at the election, and calls onCaughtUp for each of them.
+func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
+	leaderEntry *proto.EntryId, onCaughtUp func()) {
 	waitGroup := sync.WaitGroup{}
 	for _, server := range ensemble {
 		if server.GetNameOrDefault() == leader.GetNameOrDefault() {
@@ -293,8 +318,10 @@ func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 					if err != nil {
 						return err
 					}
-					followerHeadOffset := fs.HeadOffset
-					if followerHeadOffset >= leaderEntry.Offset {
+					// Unlike its head entry, which can be of a diverging log until
+					// the leader truncates it, the committed entries of a follower
+					// are the ones of the leader
+					if fs.CommitOffset >= leaderEntry.Offset {
 						e.logger.Info(
 							"Follower is caught-up with the leader after election",
 							slog.Any("server", server),
@@ -305,7 +332,7 @@ func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 						"Follower is *not* caught-up yet with the leader",
 						slog.Any("server", server),
 						slog.Int64("leader-head-offset", leaderEntry.Offset),
-						slog.Int64("follower-head-offset", followerHeadOffset),
+						slog.Int64("follower-commit-offset", fs.CommitOffset),
 					)
 					return errors.Wrap(errs.ErrFailedPrecondition, "follower not caught up yet")
 				}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
@@ -329,6 +356,7 @@ func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 					e.logger.Info("Abort data server swap follower status validation due to context canceled", slog.Any("error", err))
 					return
 				}
+				onCaughtUp()
 			})
 	}
 	waitGroup.Wait()
@@ -468,32 +496,6 @@ func (e *election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	)
 }
 
-// validateConsistency verifies that enough candidates have every entry of each
-// removed data server that answered the fence, for any later fence quorum of
-// the new ensemble to include one of them: the entries may be committed, and
-// the removed data servers are neither candidates nor fenced by the next
-// elections.
-func (e *election) validateConsistency(candidatesStatus sharding.HeadEntries,
-	removedStatus sharding.HeadEntries) error {
-	// A fence quorum is a majority of the ensemble: it misses at most
-	// len - majority members
-	needed := (len(e.meta.Ensemble) + 1) / 2
-	for dataServer, removedHead := range removedStatus {
-		holders := 0
-		for _, head := range candidatesStatus {
-			if head.GetTerm() > removedHead.GetTerm() ||
-				(head.GetTerm() == removedHead.GetTerm() && head.GetOffset() >= removedHead.GetOffset()) {
-				holders++
-			}
-		}
-		if holders < needed {
-			return fmt.Errorf("%w: entries of removed data server %q are on %d of the %d candidates needed",
-				errs.ErrInvalidArgument, dataServer.GetNameOrDefault(), holders, needed)
-		}
-	}
-	return nil
-}
-
 func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	termOptions, err := e.metadataStore.GetNamespaceTermOptions(e.namespace)
 	if err != nil {
@@ -564,13 +566,10 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 	if err != nil {
 		return nil, err
 	}
-	if err = e.validateConsistency(candidatesStatus, removedStatus); err != nil {
-		return nil, err
-	}
 	if err = e.checkNegotiatedFeatures(negotiatedFeatures, enabledFeatures, candidatesStatus); err != nil {
 		return nil, err
 	}
-	candidateLeader, followers, err := e.chooseLeader(candidatesStatus)
+	candidateLeader, followers, err := e.chooseLeader(candidatesStatus, removedStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -580,10 +579,9 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 		slog.Any("new-leader", candidateLeader),
 		slog.Any("followers", followers),
 	)
+	leaderHead := candidatesStatus[candidateLeader]
 	// Persisted first: if BecomeLeader fails, the next election keeps it
 	e.meta.Status = proto.ShardStatusSteadyState
-	e.meta.PendingDeleteShardNodes = slices.Concat(e.meta.PendingDeleteShardNodes, e.meta.RemovedNodes)
-	e.meta.RemovedNodes = nil
 	e.meta.Leader = candidateLeader
 
 	if err = e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
@@ -633,13 +631,41 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 				"oxia":  "election-monitor-followers-caught-up",
 				"shard": fmt.Sprintf("%d", e.shard),
 			}, func() {
-				e.ensureFollowerCaught(e.meta.Ensemble, candidateLeader, candidatesStatus[candidateLeader])
+				// Once enough members of the ensemble have every entry of the
+				// leader, any later fence quorum of the ensemble includes one
+				// of them: the removed data servers aren't needed anymore
+				needed := int32((len(e.meta.Ensemble) + 1) / 2)
+				holders := atomic.Int32{}
+				onCaughtUp := func() {
+					if holders.Add(1) == needed && len(e.meta.RemovedNodes) > 0 {
+						e.releaseRemovedNodes()
+					}
+				}
+				onCaughtUp() // the leader
+				e.ensureFollowerCaught(e.meta.Ensemble, candidateLeader, leaderHead, onCaughtUp)
 
 				e.followerCaughtUp.Store(true)
 			},
 		)
 	})
 	return candidateLeader, nil
+}
+
+// releaseRemovedNodes moves the removed data servers to pending deletion. If it
+// fails, the next election fences them again, and releases them.
+func (e *election) releaseRemovedNodes() {
+	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
+		if current.GetTerm() != e.meta.Term {
+			return false, nil
+		}
+		current.PendingDeleteShardNodes = slices.Concat(current.PendingDeleteShardNodes, current.RemovedNodes)
+		current.RemovedNodes = nil
+		return true, nil
+	}); err != nil {
+		e.logger.Warn("Failed to release the removed data servers", slog.Any("error", err))
+		return
+	}
+	e.logger.Info("Released the removed data servers", slog.Any("removed-data-servers", e.meta.RemovedNodes))
 }
 
 // checkNegotiatedFeatures validates the feature set pinned by the new term
@@ -763,4 +789,8 @@ func chooseCandidates(candidatesStatus sharding.HeadEntries) []*proto.DataServer
 		}
 	}
 	return candidates
+}
+
+func compareEntryIDs(a *proto.EntryId, b *proto.EntryId) int {
+	return cmp.Or(cmp.Compare(a.GetTerm(), b.GetTerm()), cmp.Compare(a.GetOffset(), b.GetOffset()))
 }

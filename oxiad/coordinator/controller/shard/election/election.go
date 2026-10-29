@@ -24,48 +24,100 @@ import (
 // creates a new one for each election, and cancels the current one before it
 // starts the next.
 //
-//	Start
-//	  | 1. load the options of the term and the current addresses of the
-//	  |    ensemble, then persist a new term with the status Election. The
-//	  |    term is persisted before fencing with it, so that no later election
-//	  |    reuses it. The shard must not be deleting, the parent of a split
-//	  |    past the point of no return, or part of a split while its ensemble
-//	  |    changes
-//	  | 2. change the ensemble, if asked: the replaced member becomes a removed
-//	  |    member, which is fenced but is not a candidate, and the added one
-//	  |    joins the ensemble. If an earlier election persisted the new
-//	  |    ensemble already, the election completes the change as is
-//	  | 3. pin, in the options of the term, the features that every member of
-//	  |    the ensemble supports, and the ones that an earlier election found
-//	  |    already enabled on the shard
-//	  | 4. fence: send NewTerm to the ensemble and the removed members, and
-//	  |    wait for a majority of them and for a majority of the ensemble
-//	  |    among them, the new leader needing the acks of its followers; then
-//	  |    wait for the others during a grace period. The fenced members of the
-//	  |    ensemble are the candidates
-//	  | 5. check that enough candidates have every entry of the removed members
-//	  |    that answered, which may be committed, for any later fence quorum of
-//	  |    the new ensemble to include one of them; and that the candidates
-//	  |    support the pinned features and the ones already enabled on the shard
-//	  | 6. persist a candidate with the highest head entry as the leader, with
-//	  |    the status SteadyState and the new ensemble. It is persisted before
-//	  |    the leader is told, so that if BecomeLeader fails, the next election
-//	  |    starts from the new ensemble. The removed members are pending
-//	  |    deletion
-//	  | 7. send BecomeLeader to the leader, with the other candidates as its
-//	  v    followers
-//	leader elected; in the background, until Cancel:
-//	  - fence the members of the ensemble that missed the fence, and add them
-//	    to the leader as followers
-//	  - wait for the followers to catch up with the head entry of the leader
-//	    (see IsFollowerCaughtUp)
+// # Election
 //
-// A failed step fails the election, and the caller retries with a new election
-// from the current shard status. The election fails with
-// errs.ErrShardNotElectable, which must not be retried, at step 1 if the shard
-// can't be elected. It fails with a *feature.EnabledError at step 5 if the
-// candidates have features enabled that the term didn't pin: the next election
-// pins them.
+//	           +----------------------+
+//	Start ---->| 1. new term          |--x errs.ErrShardNotElectable: the shard is
+//	           |    persist term+1,   |    deleting, the parent of a split past the
+//	           |    status Election   |    point of no return, or in a split while
+//	           +----------------------+    its ensemble changes
+//	                      |
+//	           +----------------------+
+//	           | 2. change ensemble   |    only for a change, see below
+//	           +----------------------+
+//	                      |
+//	           +----------------------+
+//	           | 3. pin features      |    the ones the whole ensemble supports, and
+//	           |                      |    the ones an earlier election found enabled
+//	           +----------------------+
+//	                      |
+//	           +----------------------+
+//	           | 4. fence             |--x no majority of the ensemble and the
+//	           |    NewTerm to the    |    removed members, or of the ensemble
+//	           |    ensemble and the  |
+//	           |    removed members   |
+//	           +----------------------+
+//	                      |
+//	           +----------------------+
+//	           | 5. check features    |--x *feature.EnabledError: an enabled feature
+//	           |                      |    isn't pinned; the next election pins it
+//	           +----------------------+
+//	                      |
+//	           +----------------------+
+//	           | 6. choose leader     |    the fenced member with the highest head
+//	           |                      |    entry, which has every committed entry
+//	           +----------------------+
+//	                      |
+//	           +----------------------+
+//	           | 7. persist           |--x a store error
+//	           |    SteadyState, the  |
+//	           |    leader, ensemble  |    before the leader is told: if 8 fails, the
+//	           |    and removed       |    next election starts from them
+//	           +----------------------+
+//	                      |
+//	           +----------------------+
+//	           | 8. BecomeLeader      |--x an rpc error
+//	           |    the other fenced  |
+//	           |    members of the    |
+//	           |    ensemble follow   |
+//	           +----------------------+
+//	                      |
+//	                      v
+//	background, until Cancel:
+//	  - fence the members of the ensemble that missed the fence, and add them as
+//	    followers
+//	  - wait for each follower to commit the head entry of the leader (see
+//	    IsFollowerCaughtUp), then release the removed members, see below
+//
+// A failed step (x) fails the election, and the caller retries with a new
+// election from the current shard status, except after
+// errs.ErrShardNotElectable.
+//
+// # Change of the ensemble
+//
+// A change replaces one member of the ensemble: "from" becomes a removed member
+// and "to" joins the ensemble. A committed entry is on a majority of the
+// ensemble before or after the change, which differ by one member, so a fence
+// quorum of the ensemble and the removed members includes one of its holders.
+// The removed members are thus fenced and are candidates, until enough members
+// of the ensemble have every entry:
+//
+//	ensemble {A,B,C}         ensemble {A,C,D}              ensemble {A,C,D}
+//	removed  {}      ---->   removed  {B}          ---->   removed  {}
+//	                 change                       release  pending deletion {B}
+//	                 election                     (n+1)/2 members of the
+//	                    |                         ensemble committed the head
+//	                    |                         entry of the leader: any later
+//	                    |                         fence quorum includes one of them
+//	                    v
+//	           6. choose leader among the fenced members of the ensemble and the
+//	              removed members; a member of the ensemble wins a tie
+//	                    |
+//	       +------------+---------------------------+
+//	       |                                        |
+//	 a member of the ensemble                 a removed member, ahead of every
+//	 has the highest head entry               member of the ensemble
+//	       |                                        |
+//	 it leads, the change is done             it goes back into the ensemble and
+//	                                          leads, in place of the member with
+//	                                          the lowest head entry, which is
+//	                                          removed instead: the change is undone
+//
+// Every election fences the removed members until they're released, and can
+// choose them. If the release fails, the next election releases them. The shard
+// controller refuses another change until then: with two changes, the
+// ensembles would differ by two members, and a fence quorum could miss a
+// committed entry.
 type Election interface {
 	// Start runs the election, and returns the elected leader. It fails if
 	// called twice.

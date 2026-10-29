@@ -275,7 +275,7 @@ func (m *Monitor) shardCandidate(key shardKey, meta *proto.ShardMetadata,
 	if meta.Split != nil {
 		return candidate{}, false
 	}
-	if len(meta.PendingDeleteShardNodes) > 0 {
+	if len(meta.PendingDeleteShardNodes) > 0 || len(meta.RemovedNodes) > 0 {
 		return candidate{}, false
 	}
 	// Skip shards whose hash range is too small to split; InitiateSplit would

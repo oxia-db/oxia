@@ -1344,11 +1344,11 @@ func TestControllerDispatchChangeEnsembleWaitsForNewEnsembleQuorum(t *testing.T)
 	assert.NoError(t, sc.Close())
 }
 
-// A change ensemble election fences the removed data server as well, but it
-// is not a leader candidate: it can be the only responder that holds a
-// committed entry. RF=3: s1 committed the entry at offset 5 with the ack of s2,
-// while s3 is still at offset 4. Swapping s2 out while s1 misses the fence must
-// not elect s3: s1 would be truncated when it rejoins, and s2 gets deleted.
+// A change ensemble election fences the removed data server, which is a
+// candidate as well: it can be the only responder that holds a committed entry.
+// RF=3: s1 committed the entry at offset 5 with the ack of s2, while s3 is still
+// at offset 4. Swapping s2 out while s1 misses the fence must not elect s3: s2
+// goes back into the ensemble and leads, and the change is undone.
 func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -1407,31 +1407,21 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
 	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
 
-	// s3 misses the committed entry: it must not become the leader
+	// s3 misses the committed entry: it must not become the leader. s2 leads,
+	// in place of s4, the member with the lowest head entry
 	rpc.GetNode(s3).ExpectNoBecomeLeaderRequest(t)
-
-	// The change fails, and the election that follows elects a leader of the
-	// current ensemble, where s2 is a candidate again
-	rpc.GetNode(s1).NewTermResponse(-1, -1, errors.New("fails"))
-	rpc.GetNode(s2).NewTermResponse(2, 5, nil)
-	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
-
-	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 4, true)
-	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 4, true)
-	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 4, true)
-
-	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFollowers(t, shard, 4, 3, s3)
+	rpc.GetNode(s2).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s3)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrInvalidArgument)
+	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrFailedPrecondition)
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.Equal(t, proto.ShardStatusSteadyState, metaSnap.GetStatusOrDefault())
-	assert.EqualValues(t, 4, metaSnap.Term)
+	assert.EqualValues(t, 3, metaSnap.Term)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
-	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
-	// The failed change leaves the copy of s4 to the next change
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s2)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
 	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
 
 	assert.NoError(t, sc.Close())
@@ -1440,7 +1430,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 // Same as TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower,
 // when the swapped out data server is the leader: s1 committed the entry at
 // offset 5 with the ack of s2, and s2 is slow to answer the fence of the new
-// term.
+// term. s1 leads again, and the change is undone.
 func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedLeader(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -1500,36 +1490,26 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedLeader(t *testing.T)
 
 	// s3 misses the committed entry: it must not become the leader
 	rpc.GetNode(s3).ExpectNoBecomeLeaderRequest(t)
-
-	// The change ensemble is aborted and the election goes on with the current
-	// ensemble, where s1 is a candidate again
-	rpc.GetNode(s1).NewTermResponse(2, 5, nil)
-	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
-
-	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 4, true)
-	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 4, true)
-	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 4, true)
-
-	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 4, 3, s3)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s3)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrInvalidArgument)
+	assert.ErrorIs(t, wg.Wait(ctx), errs.ErrFailedPrecondition)
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.Equal(t, proto.ShardStatusSteadyState, metaSnap.GetStatusOrDefault())
-	assert.EqualValues(t, 4, metaSnap.Term)
+	assert.EqualValues(t, 3, metaSnap.Term)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
-	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
-	// The failed change leaves the copy of s4 to the next change
+	assertShardEnsemble(t, metaSnap.Ensemble, s2, s3, s1)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
 	assert.Empty(t, metaSnap.PendingDeleteShardNodes)
 
 	assert.NoError(t, sc.Close())
 }
 
 // A change whose BecomeLeader fails after the new ensemble is persisted keeps
-// the entries of the removed data server: enough members of the new ensemble
-// have them for the next election, which no longer fences it.
+// the removed data server: the next election fences it again, and releases it
+// once enough members of the new ensemble have its entries.
 func TestControllerDispatchChangeEnsembleKeepsEntriesAfterFailedBecomeLeader(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -1593,13 +1573,15 @@ func TestControllerDispatchChangeEnsembleKeepsEntriesAfterFailedBecomeLeader(t *
 	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s3, s4)
 	rpc.GetNode(s1).BecomeLeaderResponse(errors.New("fails"))
 
-	// s1 misses the next election, which no longer fences s2: s3 has its
-	// entries
+	// s1 misses the next election, which fences s2 again: s3 ties with it, and
+	// leads
 	rpc.GetNode(s1).NewTermResponse(-1, -1, errors.New("fails"))
+	rpc.GetNode(s2).NewTermResponse(2, 5, nil)
 	rpc.GetNode(s3).NewTermResponse(2, 5, nil)
 	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 
 	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 4, true)
 	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 4, true)
 	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 4, true)
 
@@ -1616,6 +1598,14 @@ func TestControllerDispatchChangeEnsembleKeepsEntriesAfterFailedBecomeLeader(t *
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s3)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s3, s4)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s2)
+
+	// s4 commits the head entry of s3: s2 is released
+	rpc.GetNode(s4).GetStatusResponse(4, proto.ServingStatus_FOLLOWER, 5, 5)
+	assert.Eventually(t, func() bool {
+		metaSnap = requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+		return len(metaSnap.RemovedNodes) == 0
+	}, 10*time.Second, 100*time.Millisecond)
 	assertShardEnsemble(t, metaSnap.PendingDeleteShardNodes, s2)
 
 	assert.NoError(t, sc.Close())
@@ -1792,6 +1782,44 @@ func TestControllerDispatchChangeEnsembleRejectsFeatureSupportRegression(t *test
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
+}
+
+// A change of the ensemble is refused, without a new term, while a removed
+// data server is not released: a second change could let a fence quorum miss a
+// committed entry that only the removed data server has.
+func TestControllerDispatchChangeEnsembleRejectsUnreleasedRemovedNodes(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+	s5 := &proto.DataServerIdentity{Public: "s5:9091", Internal: "s5:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	rpc.GetNode(s1).GetStatusResponse(2, proto.ServingStatus_LEADER, 1, 1)
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
+	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:       proto.ShardStatusSteadyState,
+		Term:         2,
+		Leader:       s1,
+		Ensemble:     []*proto.DataServerIdentity{s1, s2, s3},
+		RemovedNodes: []*proto.DataServerIdentity{s4},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer sc.Close()
+
+	change := action.NewChangeEnsembleAction(shard, s2, s5)
+	sc.Dispatch(change)
+	_, err := change.Wait()
+	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
+
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.EqualValues(t, 2, metaSnap.Term)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s4)
+	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s5)))
 }
 
 func TestControllerValidateChangeEnsembleFeaturesRejectsMissingFeatureInfo(t *testing.T) {
@@ -2002,7 +2030,7 @@ func TestControllerDispatchChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	shard := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
 	assert.EqualValues(t, 6, shard.GetTerm())
 	assertShardEnsemble(t, shard.GetEnsemble(), ps1, ps2, spare)
-	assertShardEnsemble(t, shard.GetPendingDeleteShardNodes(), ps3)
+	assertShardEnsemble(t, shard.GetRemovedNodes(), ps3)
 }
 
 // Each UpdateShardStatus persists the full cluster status. A periodic tick
@@ -2063,6 +2091,54 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	borrowedAfter, _, err = metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	require.NoError(t, err)
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+}
+
+// The removed data servers are released by an election: the periodic tasks
+// start one when no election is left to do it, e.g. after a restart or a failed
+// release, but not while the current election may still release them.
+func TestControllerHandlePeriodicTasksElectsToReleaseRemovedNodes(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	for _, test := range []struct {
+		name     string
+		election *fakeElection
+		status   proto.ShardStatus
+		elects   bool
+	}{
+		{name: "no election", status: proto.ShardStatusSteadyState, elects: true},
+		{name: "followers caught up", election: &fakeElection{followerCaughtUp: true},
+			status: proto.ShardStatusSteadyState, elects: true},
+		{name: "followers catching up", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
+		{name: "election running", status: proto.ShardStatusElection},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+			require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+				Shards: map[int64]*proto.ShardMetadata{shard: {
+					Status:       test.status,
+					Term:         1,
+					Leader:       s1,
+					Ensemble:     []*proto.DataServerIdentity{s1},
+					RemovedNodes: []*proto.DataServerIdentity{s2},
+				}},
+			}))
+			s := &controller{
+				namespace:     constant.DefaultNamespace,
+				shard:         shard,
+				metadataStore: metadata,
+				ctx:           t.Context(),
+				logger:        slog.Default(),
+				electionOp:    make(chan *action.ElectionAction, 1),
+			}
+			if test.election != nil {
+				s.currentElection = test.election
+			}
+
+			s.handlePeriodicTasks()
+			assert.Equal(t, test.elects, len(s.electionOp) == 1)
+		})
+	}
 }
 
 // assertPeriodicTasksKeepUpdate runs the periodic tasks of the shard, which
@@ -3880,4 +3956,19 @@ func (m *hookedMetadata) PatchNamespaceStatus(namespace string, modify func(*pro
 		return m.patchNamespaceStatus(namespace, modify)
 	}
 	return m.Metadata.PatchNamespaceStatus(namespace, modify)
+}
+
+// fakeElection is an election that is already elected.
+type fakeElection struct {
+	followerCaughtUp bool
+}
+
+func (*fakeElection) Start() (*proto.DataServerIdentity, error) {
+	return nil, errs.ErrFailedPrecondition
+}
+
+func (*fakeElection) Cancel() {}
+
+func (f *fakeElection) IsFollowerCaughtUp() bool {
+	return f.followerCaughtUp
 }
