@@ -71,6 +71,52 @@ func TestDataServerController_HealthCheck(t *testing.T) {
 	assert.NoError(t, nc.Close())
 }
 
+// TestDataServerController_CloseInterruptsHealthCheckBackoff verifies that
+// Close does not wait for a health check loop to sleep out its retry backoff,
+// which used to hold up the coordinator shutdown, and with it the release of
+// the coordinator lease, for up to 15 seconds.
+func TestDataServerController_CloseInterruptsHealthCheckBackoff(t *testing.T) {
+	addr := model.Server{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+
+	sap := newMockShardAssignmentsProvider()
+	nal := newMockNodeAvailabilityListener()
+	rpc := newMockRpcProvider()
+	nc := newDataServerController(context.Background(), addr, sap, nal, rpc, time.Hour)
+
+	node := rpc.GetNode(addr)
+
+	assert.Eventually(t, func() bool {
+		return nc.Status() == Running
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// The failed health check makes the controller fence the node from its
+	// retry notification, right before it starts waiting out the backoff
+	// interval (an hour, with jitter, in this test).
+	node.healthClient.SetError(errors.New("failed to connect"))
+
+	select {
+	case unavailableNode := <-nal.events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the node must be fenced once the health check fails")
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- nc.Close()
+	}()
+
+	select {
+	case err := <-closed:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "Close must not wait for the health check backoff to elapse")
+	}
+}
+
 func TestDataServerController_GetInfoOnlyCalledOnStateTransition(t *testing.T) {
 	addr := model.Server{
 		Public:   "my-server:9190",
