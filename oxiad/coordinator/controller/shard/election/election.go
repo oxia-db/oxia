@@ -134,8 +134,8 @@ type Election interface {
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
 
-	// Term returns the term of the election, once Start persisted it. It is
-	// called from the goroutine that called Start.
+	// Term returns the term of the election, which is only persisted once Start
+	// succeeded. It is called from the goroutine that called Start.
 	Term() int64
 
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader

@@ -110,7 +110,8 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 				slog.Any("new-ensemble", refreshed))
 		}
 	}
-	ensemble = refreshed[:len(meta.Ensemble)]
+	// Capped, so that an append to the ensemble doesn't overwrite from
+	ensemble = refreshed[:len(meta.Ensemble):len(meta.Ensemble)]
 	if meta.EnsembleChange != nil {
 		idx := slices.IndexFunc(ensemble, sharding.MatchDataServer(meta.EnsembleChange.To))
 		if idx < 0 {
