@@ -268,6 +268,10 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	}
 	if len(candidates) > 0 {
 		if _, retained := retainedHeads[candidates[0]]; retained {
+			// todo: swap out the member added by the change instead, from the
+			//  ensemble before the change in the shard metadata, which the fence
+			//  rule in fenceQuorum needs too: the one with the lowest head entry
+			//  may be another one, when the added member missed the fence
 			replaced := slices.MinFunc(maps.Keys(ensembleHeads), func(a, b *proto.DataServerIdentity) int {
 				return entry.Compare(ensembleHeads[a], ensembleHeads[b])
 			})

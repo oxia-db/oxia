@@ -1768,7 +1768,8 @@ func TestControllerDispatchChangeEnsembleKeepsEntriesAfterFailedBecomeLeader(t *
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	assert.ErrorContains(t, wg.Wait(ctx), "fails")
+	// The change was persisted before BecomeLeader failed: it's done
+	assert.NoError(t, wg.Wait(ctx))
 	assert.Eventually(t, func() bool {
 		return shardStatus(metadata, constant.DefaultNamespace, shard) == proto.ShardStatusSteadyState &&
 			shardTerm(metadata, constant.DefaultNamespace, shard) == 4
@@ -1890,6 +1891,42 @@ func TestNewControllerNegotiatesFeaturesOfMixedVersions(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 
 	sc.Close()
+}
+
+// A failed change election reports the change as done if it persisted the new
+// ensemble, and as failed otherwise, or when the shard status can't be read.
+func TestControllerIsEnsembleChangedReadsStoredEnsemble(t *testing.T) {
+	var shard int64 = 5
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	for _, test := range []struct {
+		name     string
+		ensemble []*proto.DataServerIdentity
+		hooks    func(m *hookedMetadata)
+		changed  bool
+	}{
+		{name: "persisted", ensemble: []*proto.DataServerIdentity{s2}, changed: true},
+		{name: "not persisted", ensemble: []*proto.DataServerIdentity{s1}},
+		{name: "status unavailable", ensemble: []*proto.DataServerIdentity{s2}, hooks: func(m *hookedMetadata) {
+			m.getShardStatus = func(string, int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error) {
+				return commonobject.Borrowed[*proto.ShardMetadata]{}, false, errors.New("status unavailable")
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+			require.NoError(t, base.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+				Shards: map[int64]*proto.ShardMetadata{shard: {Term: 1, Ensemble: test.ensemble}},
+			}))
+			metadata := &hookedMetadata{Metadata: base}
+			if test.hooks != nil {
+				test.hooks(metadata)
+			}
+			s := &controller{namespace: constant.DefaultNamespace, shard: shard, metadataStore: metadata}
+
+			assert.Equal(t, test.changed, s.isEnsembleChanged(action.NewChangeEnsembleAction(shard, s1, s2)))
+		})
+	}
 }
 
 func TestControllerDispatchChangeEnsembleRejectsFeatureSupportRegression(t *testing.T) {

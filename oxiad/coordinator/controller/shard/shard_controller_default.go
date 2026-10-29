@@ -802,10 +802,26 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		// Drop it, or it rejects the next changes as not ready
 		s.currentElection.Cancel()
 		s.currentElection = nil
-		changeEnsembleAction.Error(err)
-		return
+		// The election may fail after persisting the change, e.g. at
+		// BecomeLeader: the next election, queued already, keeps it
+		// todo: a change that fails after fencing the new member, and before
+		//  persisting it, leaves an empty copy of the shard on that member
+		if !s.isEnsembleChanged(changeEnsembleAction) {
+			changeEnsembleAction.Error(err)
+			return
+		}
 	}
 	changeEnsembleAction.Done(nil)
+}
+
+func (s *controller) isEnsembleChanged(changeEnsembleAction *action.ChangeEnsembleAction) bool {
+	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	if err != nil || !exists {
+		return false
+	}
+	return slices.ContainsFunc(borrowedMeta.UnsafeBorrow().GetEnsemble(), func(server *proto.DataServerIdentity) bool {
+		return server.GetNameOrDefault() == changeEnsembleAction.To.GetNameOrDefault()
+	})
 }
 
 func (s *controller) Refresh() {
