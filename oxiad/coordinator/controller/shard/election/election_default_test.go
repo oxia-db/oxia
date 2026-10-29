@@ -244,9 +244,39 @@ func TestElectionRefreshEnsembleInfoUsesRegisteredAddresses(t *testing.T) {
 	// The ensemble is compared and logged at debug level only
 	e.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	ensemble, err := e.refreshEnsembleInfo([]*proto.DataServerIdentity{oldIdentity, unregistered})
+	ensemble, retained, err := e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble:     []*proto.DataServerIdentity{oldIdentity},
+		RemovedNodes: []*proto.DataServerIdentity{unregistered},
+	})
 	require.NoError(t, err)
-	assertShardEnsemble(t, ensemble, newIdentity, unregistered)
+	assertShardEnsemble(t, ensemble, newIdentity)
+	assertShardEnsemble(t, retained, unregistered)
+	// Appending to the ensemble keeps the retained data servers
+	_ = append(ensemble, testDataServer("s3"))
+	assertShardEnsemble(t, retained, unregistered)
+}
+
+// The new term fences the retained data servers at the addresses they're
+// registered with, as the ensemble.
+func TestElectionNewTermRefreshesRetainedAddresses(t *testing.T) {
+	var shard int64 = 5
+	name := "s2"
+	oldIdentity := &proto.DataServerIdentity{Name: &name, Public: "old-public:9091", Internal: "old-internal:8191"}
+	newIdentity := &proto.DataServerIdentity{Name: &name, Public: "new-public:9091", Internal: "new-internal:8191"}
+	s1 := testDataServer("s1")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	require.NoError(t, metadata.CreateDataServer(&proto.DataServer{Identity: newIdentity}))
+	shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
+		Ensemble: []*proto.DataServerIdentity{s1}, RemovedNodes: []*proto.DataServerIdentity{oldIdentity}}
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
+	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, shardMeta)
+
+	_, err := e.newTerm()
+	require.NoError(t, err)
+	stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.Equal(t, newIdentity.GetInternal(), stored.GetRemovedNodes()[0].GetInternal())
+	assert.Equal(t, newIdentity.GetInternal(), e.meta.GetRemovedNodes()[0].GetInternal())
 }
 
 // When the removed data servers make the fencing majority, a majority of the
