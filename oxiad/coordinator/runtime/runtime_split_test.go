@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -628,9 +629,8 @@ func TestRuntimeInitiateSplitSelectsChildrenSupportingParentFeatures(t *testing.
 		require.NoError(t, err)
 		require.True(t, exists, "child shard %d", child)
 		for _, server := range childMeta.UnsafeBorrow().GetEnsemble() {
-			assert.False(t, slices.ContainsFunc(older, func(o *proto.DataServerIdentity) bool {
-				return o.GetNameOrDefault() == server.GetNameOrDefault()
-			}), "child shard %d has %s in its ensemble", child, server.GetNameOrDefault())
+			assert.False(t, slices.ContainsFunc(older, sharding.SameDataServer(server)),
+				"child shard %d has %s in its ensemble", child, server.GetNameOrDefault())
 		}
 	}
 }

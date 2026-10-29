@@ -43,8 +43,6 @@ func (h HeadEntries) Move(server *proto.DataServerIdentity, to HeadEntries) {
 // e.g. out of the ensemble.
 func MoveDataServer(server *proto.DataServerIdentity, from *[]*proto.DataServerIdentity,
 	to *[]*proto.DataServerIdentity) {
-	*from = slices.DeleteFunc(*from, func(s *proto.DataServerIdentity) bool {
-		return s.GetNameOrDefault() == server.GetNameOrDefault()
-	})
+	*from = slices.DeleteFunc(*from, SameDataServer(server))
 	*to = append(*to, server)
 }

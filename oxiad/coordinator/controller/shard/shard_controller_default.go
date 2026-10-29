@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
@@ -544,15 +545,13 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	source := changeEnsembleAction.From.GetNameOrDefault()
 	target := changeEnsembleAction.To.GetNameOrDefault()
 	ensembleSize := len(shardMeta.Ensemble)
-	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == source
-	})
+	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
+		sharding.SameDataServer(changeEnsembleAction.From))
 	if len(targetEnsemble) != ensembleSize-1 {
 		return fmt.Errorf("%w: invalid change ensemble: source data server %q must appear exactly once in the current ensemble", errs.ErrInvalidArgument, source)
 	}
-	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == target
-	})
+	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
+		sharding.SameDataServer(changeEnsembleAction.To))
 	if len(ensembleWithoutTarget) != ensembleSize {
 		return fmt.Errorf("%w: invalid change ensemble: target data server %q is already in the current ensemble", errs.ErrInvalidArgument, target)
 	}

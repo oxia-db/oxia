@@ -502,24 +502,17 @@ func (e *election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	}
 	from := e.changeEnsemble.From
 	to := e.changeEnsemble.To
-	if slices.ContainsFunc(mutShardMeta.Ensemble, func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == to.GetNameOrDefault()
-	}) {
+	if slices.ContainsFunc(mutShardMeta.Ensemble, sharding.SameDataServer(to)) {
 		return
 	}
-	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server *proto.DataServerIdentity) bool {
-		return server.GetNameOrDefault() == from.GetNameOrDefault()
-	}) {
+	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, sharding.SameDataServer(from)) {
 		mutShardMeta.RemovedNodes = append(mutShardMeta.RemovedNodes, from)
 	}
 	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
-	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == to.GetNameOrDefault()
-	})
-	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == from.GetNameOrDefault()
-	})
+	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes,
+		sharding.SameDataServer(to))
+	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, sharding.SameDataServer(from))
 	mutShardMeta.Ensemble = append(mutShardMeta.Ensemble, to)
 	e.logger.Info(
 		"Changing ensemble",
