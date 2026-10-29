@@ -31,3 +31,30 @@ func TestHeadEntriesLogValueGroupsByName(t *testing.T) {
 	assert.Equal(t, slog.KindGroup, value.Kind())
 	assert.Equal(t, []slog.Attr{slog.Any("s1", entryId)}, value.Group())
 }
+
+func TestHeadEntriesMoveMovesHeadEntry(t *testing.T) {
+	s1 := &proto.DataServerIdentity{Public: "s1", Internal: "s1"}
+	s2 := &proto.DataServerIdentity{Public: "s2", Internal: "s2"}
+	s3 := &proto.DataServerIdentity{Public: "s3", Internal: "s3"}
+	from := HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 4}}
+	to := HeadEntries{s3: {Term: 1, Offset: 9}}
+
+	from.Move(s1, to)
+
+	assert.Equal(t, HeadEntries{s2: {Term: 2, Offset: 4}}, from)
+	assert.Equal(t, HeadEntries{s3: {Term: 1, Offset: 9}, s1: {Term: 2, Offset: 5}}, to)
+}
+
+func TestMoveDataServerMovesByName(t *testing.T) {
+	name := "s1"
+	s1 := &proto.DataServerIdentity{Name: &name, Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2", Internal: "s2"}
+	s3 := &proto.DataServerIdentity{Public: "s3", Internal: "s3"}
+	from := []*proto.DataServerIdentity{{Name: &name, Public: "s1:9091", Internal: "s1:8191"}, s2}
+	to := []*proto.DataServerIdentity{s3}
+
+	MoveDataServer(s1, &from, &to)
+
+	assert.Equal(t, []*proto.DataServerIdentity{s2}, from)
+	assert.Equal(t, []*proto.DataServerIdentity{s3, s1}, to)
+}

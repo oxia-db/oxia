@@ -786,7 +786,7 @@ func TestValidateSplitParentRejectsUnsplittableShards(t *testing.T) {
 		{"pending ensemble change", steady(func(s *proto.ShardMetadata) {
 			s.PendingDeleteShardNodes = []*proto.DataServerIdentity{splitPs1}
 		}), "has pending ensemble changes"},
-		{"removed data server", steady(func(s *proto.ShardMetadata) {
+		{"retained data server", steady(func(s *proto.ShardMetadata) {
 			s.RemovedNodes = []*proto.DataServerIdentity{splitPs1}
 		}), "has pending ensemble changes"},
 		{"single hash", steady(func(s *proto.ShardMetadata) {

@@ -774,10 +774,10 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while changing the ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-	// A removed data server may still hold committed entries that the ensemble
+	// A retained data server may still hold committed entries that the ensemble
 	// doesn't: a second change would let a fence quorum miss them
 	if len(shardMeta.RemovedNodes) > 0 {
-		changeEnsembleAction.Error(fmt.Errorf("%w: the removed data servers %v are not released yet",
+		changeEnsembleAction.Error(fmt.Errorf("%w: the retained data servers %v are not released yet",
 			errs.ErrFailedPrecondition, shardMeta.RemovedNodes))
 		return
 	}
@@ -848,9 +848,6 @@ func (s *controller) Refresh() {
 }
 
 func (s *controller) handlePeriodicTasks() {
-	// Read first: an election releases the removed data servers before its
-	// followers are all caught up
-	electionDone := s.currentElection == nil || s.currentElection.IsFollowerCaughtUp()
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
 		s.logger.Warn("Failed to handle the periodic tasks, retrying next round", slog.Any("error", err))
@@ -860,21 +857,41 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
+	if len(shardMeta.RemovedNodes) > 0 {
+		if err := s.handleRetainedNodes(shardMeta); err != nil {
+			s.logger.Warn("Failed to handle the retained data servers", slog.Any("error", err))
+		}
+	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
 		}
 	}
-	// No election is left to release them, e.g. after a restart, or after a
-	// failed release: the next election does
-	if len(shardMeta.RemovedNodes) > 0 && electionDone &&
-		shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
-		s.logger.Info("Starting an election to release the removed data servers",
-			slog.Any("removed-data-servers", shardMeta.RemovedNodes))
-		channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
-	}
 
 	s.checkTermFeatures(shardMeta)
+}
+
+func (s *controller) handleRetainedNodes(shardMeta *proto.ShardMetadata) error {
+	if s.currentElection == nil {
+		if shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
+			s.logger.Info("Starting an election to release the retained data servers",
+				slog.Any("retained-data-servers", shardMeta.RemovedNodes))
+			channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
+		}
+		return nil
+	}
+	if !s.currentElection.IsFollowerCaughtUp() {
+		return nil
+	}
+	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
+		current.PendingDeleteShardNodes = slices.Concat(current.PendingDeleteShardNodes, current.RemovedNodes)
+		current.RemovedNodes = nil
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("release the retained data servers: %w", err)
+	}
+	s.logger.Info("Released the retained data servers", slog.Any("retained-data-servers", shardMeta.RemovedNodes))
+	return nil
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from

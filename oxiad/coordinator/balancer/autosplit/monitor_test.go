@@ -755,7 +755,7 @@ func TestMonitorEvaluateSkipsOnStatusError(t *testing.T) {
 }
 
 // Only the steady-state shards that have a leader, are not being split, have
-// no pending ensemble change or removed data server, and whose stats can be
+// no pending ensemble change or retained data server, and whose stats can be
 // collected are split.
 func TestMonitorEvaluateSkipsIneligibleShards(t *testing.T) {
 	metadata := newTestMetadata(t, oversizedAutoSplitConfig("0s"))
