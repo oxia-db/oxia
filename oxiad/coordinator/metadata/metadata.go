@@ -82,10 +82,11 @@ type Metadata interface {
 	// doesn't exist.
 	GetNamespaceStatus(namespace string) (commonobject.Borrowed[*commonproto.NamespaceStatus], bool, error)
 	// PatchNamespaceStatus applies modify to a copy of the current status of a
-	// namespace, and stores it in a single write, unless modify returns false.
+	// namespace, and stores it in a single write, unless modify returns false or
+	// an error, which PatchNamespaceStatus returns.
 	// A namespace left without shards is deleted. It returns ErrNotFound if
 	// the namespace doesn't exist.
-	PatchNamespaceStatus(namespace string, modify func(status *commonproto.NamespaceStatus) bool) error
+	PatchNamespaceStatus(namespace string, modify func(status *commonproto.NamespaceStatus) (bool, error)) error
 	// DeleteNamespaceStatus marks the shards of a namespace as deleting, and
 	// returns its status. Unlike the other writes, it retries until the write
 	// succeeds or the metadata closes, and returns an empty value then.
@@ -94,6 +95,12 @@ type Metadata interface {
 	// GetShardStatus returns the metadata of a shard, and false if it doesn't
 	// exist.
 	GetShardStatus(namespace string, shard int64) (commonobject.Borrowed[*commonproto.ShardMetadata], bool, error)
+	// PatchShardStatus applies modify to a copy of the current metadata of a
+	// shard, and stores it in a single write, unless modify returns false or
+	// an error, which PatchShardStatus returns. It returns ErrNotFound if the
+	// shard doesn't exist.
+	PatchShardStatus(namespace string, shard int64,
+		modify func(shardMetadata *commonproto.ShardMetadata) (bool, error)) error
 	// UpdateShardStatus replaces the metadata of an existing shard, or returns
 	// ErrNotFound.
 	UpdateShardStatus(namespace string, shard int64, shardMetadata *commonproto.ShardMetadata) error

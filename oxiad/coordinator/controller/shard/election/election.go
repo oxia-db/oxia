@@ -18,53 +18,63 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// Election elects the leader of a shard for a new term. An election is used
-// once: it starts from the shard status it was created with, runs a single
-// time, and updates the shard status as it goes. The shard controller creates
-// a new one for each election, and cancels the current one before it starts
-// the next:
+// Election elects the leader of a shard in a new term. An election runs once:
+// it starts from the shard status it was created with, updates the shard
+// status as it goes, and either elects a leader or fails. The shard controller
+// creates a new one for each election, and cancels the current one before it
+// starts the next.
 //
 //	Start
-//	  | 1. persist a new term, with the status Election and the current
-//	  |    addresses of the ensemble
+//	  | 1. load the options of the term and the current addresses of the
+//	  |    ensemble, then persist a new term with the status Election. The
+//	  |    term is persisted before fencing with it, so that no later election
+//	  |    reuses it. The shard must not be deleting, the parent of a split
+//	  |    past the point of no return, or part of a split while its ensemble
+//	  |    changes
 //	  | 2. change the ensemble, if asked: the replaced member becomes a removed
-//	  |    member, and the added one joins the ensemble
-//	  | 3. pin, in the term options, the features that the whole ensemble
-//	  |    supports
-//	  | 4. fence: send NewTerm to the ensemble and the removed members, wait for
-//	  |    a majority of them and of the ensemble, then for the others during a
-//	  |    grace period. The fenced members of the ensemble are the candidates
-//	  | 5. check that the removed members don't have entries that may be
-//	  |    committed beyond every candidate, and that the candidates support
-//	  |    the pinned features and the ones already enabled on the shard
-//	  | 6. send BecomeLeader to a candidate with the highest head entry, with
-//	  |    the other candidates as its followers
-//	  | 7. persist the leader, with the status SteadyState; the removed members
-//	  v    are pending deletion
-//	leader elected, and in the background until Cancel:
-//	  - fence the members that missed the fence, and add them to the leader
+//	  |    member, which is fenced but is not a candidate, and the added one
+//	  |    joins the ensemble. If an earlier election persisted the new
+//	  |    ensemble already, the election completes the change as is
+//	  | 3. pin, in the options of the term, the features that every member of
+//	  |    the ensemble supports, and the ones that an earlier election found
+//	  |    already enabled on the shard
+//	  | 4. fence: send NewTerm to the ensemble and the removed members, and
+//	  |    wait for a majority of them and for a majority of the ensemble
+//	  |    among them, the new leader needing the acks of its followers; then
+//	  |    wait for the others during a grace period. The fenced members of the
+//	  |    ensemble are the candidates
+//	  | 5. check that enough candidates have every entry of the removed members
+//	  |    that answered, which may be committed, for any later fence quorum of
+//	  |    the new ensemble to include one of them; and that the candidates
+//	  |    support the pinned features and the ones already enabled on the shard
+//	  | 6. persist a candidate with the highest head entry as the leader, with
+//	  |    the status SteadyState and the new ensemble. It is persisted before
+//	  |    the leader is told, so that if BecomeLeader fails, the next election
+//	  |    starts from the new ensemble. The removed members are pending
+//	  |    deletion
+//	  | 7. send BecomeLeader to the leader, with the other candidates as its
+//	  v    followers
+//	leader elected; in the background, until Cancel:
+//	  - fence the members of the ensemble that missed the fence, and add them
+//	    to the leader as followers
 //	  - wait for the followers to catch up with the head entry of the leader
+//	    (see IsFollowerCaughtUp)
 //
-// A step that fails starts over from step 1, with a new term, until the
-// election is cancelled. If the removed members may have committed entries
-// that no candidate has, the election gives up the change of the ensemble,
-// unless an attempt sent BecomeLeader already, and the next attempts elect a
-// leader of the current ensemble. Features that the candidates enable, or that
-// the ensemble supports, beyond the pinned ones are pinned by the next attempt.
-// The election stops at step 1 if the shard is being deleted, is the parent of
-// a split past the point of no return, or is part of a split while the
-// ensemble changes.
+// A failed step fails the election, and the caller retries with a new election
+// from the current shard status. The election fails with
+// errs.ErrShardNotElectable, which must not be retried, at step 1 if the shard
+// can't be elected. It fails with a *feature.EnabledError at step 5 if the
+// candidates have features enabled that the term didn't pin: the next election
+// pins them.
 type Election interface {
-	// Start runs the election until it elects a leader, and returns it. It
-	// fails if the election stopped before, e.g. because it was cancelled,
-	// and if it gave up the change of the ensemble, after electing a leader
-	// of the current ensemble. It panics if it is called twice.
+	// Start runs the election, and returns the elected leader. It fails if
+	// called twice.
 	Start() (*proto.DataServerIdentity, error)
 
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
 
 	// IsFollowerCaughtUp reports whether the followers caught up with the
-	// elected leader. It can be called from any goroutine.
+	// leader. Any goroutine can call it.
 	IsFollowerCaughtUp() bool
 }

@@ -1162,7 +1162,7 @@ type fakeMetadata struct {
 	createNamespaceStatus func(namespace string, status *proto.NamespaceStatus) error
 	listNamespaceStatus   func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
 	getNamespaceStatus    func(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error)
-	patchNamespaceStatus  func(namespace string, modify func(*proto.NamespaceStatus) bool) error
+	patchNamespaceStatus  func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error
 	updateShardStatus     func(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error
 	deleteShardStatus     func(namespace string, shard int64) error
 	getConfig             func() (commonobject.Borrowed[*proto.ClusterConfiguration], error)
@@ -1242,7 +1242,7 @@ func (m *fakeMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrow
 	return m.Metadata.GetNamespaceStatus(namespace)
 }
 
-func (m *fakeMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+func (m *fakeMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 	if m.patchNamespaceStatus != nil {
 		return m.patchNamespaceStatus(namespace, modify)
 	}
@@ -1267,7 +1267,7 @@ func (m *fakeMetadata) DeleteShardStatus(namespace string, shard int64) error {
 // once the writer has read the status it builds on, to race a concurrent
 // update with it.
 func (m *fakeMetadata) beforeStatusWrites(before func()) {
-	m.patchNamespaceStatus = func(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+	m.patchNamespaceStatus = func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 		before()
 		return m.Metadata.PatchNamespaceStatus(namespace, modify)
 	}
@@ -1279,7 +1279,7 @@ func (m *fakeMetadata) beforeStatusWrites(before func()) {
 
 // afterStatusWrites calls after right after every shard status write.
 func (m *fakeMetadata) afterStatusWrites(after func()) {
-	m.patchNamespaceStatus = func(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+	m.patchNamespaceStatus = func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 		err := m.Metadata.PatchNamespaceStatus(namespace, modify)
 		after()
 		return err

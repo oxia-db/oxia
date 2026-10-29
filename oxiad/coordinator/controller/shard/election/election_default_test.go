@@ -15,7 +15,6 @@
 package election
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"os"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -104,312 +104,104 @@ func TestChooseCandidatesChoosesHighestHeadEntry(t *testing.T) {
 	}
 }
 
-func TestElectionWaitForMajoritySuccess(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
+// The election returns the head entries of the candidates and of the removed
+// data servers, and the features enabled on them.
+func TestElectionFenceQuorumReturnsHeadEntries(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	removed := testDataServer("removed")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
+	rpc.GetNode(s1).NewTermResponseWithFeatures(1, 100, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 95, nil)
+	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
+	rpc.GetNode(removed).NewTermResponse(1, 101, nil)
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-
-	assert.NoError(t, err)
-	assert.Equal(t, 2, totalResponses)
-	assert.Len(t, result, 2)
-	assert.Equal(t, int64(100), result[server1].Offset)
-	assert.Equal(t, int64(95), result[server2].Offset)
+	candidates, removedEntries, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3}, []*proto.DataServerIdentity{removed})
+	require.NoError(t, err)
+	assert.Len(t, candidates, 2)
+	assert.EqualValues(t, 100, candidates[s1].GetOffset())
+	assert.EqualValues(t, 95, candidates[s2].GetOffset())
+	assert.Len(t, removedEntries, 1)
+	assert.EqualValues(t, 101, removedEntries[removed].GetOffset())
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, features)
 }
 
-func TestElectionWaitForMajorityFailureNoQuorum(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
+func TestElectionFenceQuorumFailsWithoutQuorum(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
-	ch <- electionResponse{DataServer: server3, Err: errors.New("timeout")}
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
+	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "election failed: quorum not reached")
-	assert.Nil(t, result)
-	assert.Equal(t, 3, totalResponses)
+	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2, s3}, nil)
+	assert.ErrorContains(t, err, "quorum not reached")
+	assert.ErrorContains(t, err, "unreachable")
 }
 
-func TestElectionWaitForMajorityMixedSuccessAndFailure(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
+// A majority of the fenced data servers that holds a single member of the
+// ensemble isn't enough: the election waits for another member.
+func TestElectionFenceQuorumWaitsForEnsembleMajority(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	removed := testDataServer("removed")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
-	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(removed).NewTermResponse(1, 0, nil)
+	go func() {
+		rpc.GetNode(s2).ExpectNewTermRequest(t, 5, 2, false)
+		time.Sleep(2 * quorumFencingGracePeriod)
+		rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+	}()
 
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-
-	assert.NoError(t, err)
-	assert.Equal(t, 3, totalResponses)
-	assert.Len(t, result, 2)
-	assert.Equal(t, int64(100), result[server1].Offset)
-	assert.Equal(t, int64(90), result[server3].Offset)
+	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
+		[]*proto.DataServerIdentity{removed})
+	require.NoError(t, err)
+	assert.Len(t, candidates, 2)
 }
 
-func TestElectionWaitForMajorityExcludesRemovedServers(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
+// Once a quorum is fenced, the election waits for the others during a grace
+// period, and goes on without the ones that don't respond in time.
+func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	s4 := testDataServer("s4")
+	s5 := testDataServer("s5")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
-	ch := make(chan electionResponse, 4)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
-
-	removed := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, removed, make(map[proto.Feature]bool))
-
-	assert.NoError(t, err)
-	assert.Equal(t, 3, totalResponses)
-	assert.Len(t, result, 2)
-	assert.NotContains(t, result, removedServer, "removed server should not be in result")
-	assert.Contains(t, result, server1)
-	assert.Contains(t, result, server2)
-	assert.Len(t, removed, 1)
-	assert.Equal(t, int64(110), removed[removedServer].Offset)
-}
-
-func TestElectionWaitForMajorityEarlyReturn(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
-
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
-
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-
-	assert.NoError(t, err)
-	assert.Equal(t, 2, totalResponses, "should return early after reaching majority")
-	assert.Len(t, result, 2)
-}
-
-func TestElectionWaitForEnsembleMajorityWaitsForEnsembleMember(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServerIdentity{server1, server2}
-
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 2, Offset: 1}}}
-	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: -1, Offset: -1}}}
-
-	// server1 and the removed server are a majority of the fenced servers,
-	// but only one member of the ensemble
-	removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, removedResponse, make(map[proto.Feature]bool))
-	assert.NoError(t, err)
-	assert.Equal(t, 2, totalResponses)
-
-	totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, removedResponse, make(map[proto.Feature]bool))
-
-	assert.NoError(t, err)
-	assert.Equal(t, 3, totalResponses)
-	assert.Len(t, result, 2)
-	assert.Contains(t, result, server1)
-	assert.Contains(t, result, server2)
-}
-
-func TestElectionWaitForEnsembleMajorityFailureNoQuorum(t *testing.T) {
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServerIdentity{server1, server2}
-
-	failed := electionResponse{DataServer: server2, Err: errors.New("connection failed")}
-	leader := electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 2, Offset: 1}}}
-	removed := electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}}}
-
-	for name, responses := range map[string][]electionResponse{
-		"failure before the majority": {failed, leader, removed},
-		"failure after the majority":  {leader, removed, failed},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := &election{}
-			ch := make(chan electionResponse, 3)
-			for _, r := range responses {
-				ch <- r
-			}
-
-			removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-			result, totalResponses, err := e.waitForMajority(ch, 3, 2, ensemble, removedResponse, make(map[proto.Feature]bool))
-			assert.NoError(t, err)
-
-			totalResponses, err = e.waitForEnsembleMajority(ch, 3, ensemble, totalResponses, result, removedResponse, make(map[proto.Feature]bool))
-
-			assert.ErrorContains(t, err, "election failed: quorum of the new ensemble not reached")
-			assert.Equal(t, 3, totalResponses)
-		})
-	}
-}
-
-func TestElectionWaitForEnsembleMajorityAlreadyReached(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
-
-	ch := make(chan electionResponse, 4)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 100}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
-	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
-
-	removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 4, 3, ensemble, removedResponse, make(map[proto.Feature]bool))
-	assert.NoError(t, err)
-	assert.Equal(t, 3, totalResponses)
-
-	// With an odd ensemble, the fencing majority already includes a majority
-	// of the ensemble
-	totalResponses, err = e.waitForEnsembleMajority(ch, 4, ensemble, totalResponses, result, removedResponse, make(map[proto.Feature]bool))
-
-	assert.NoError(t, err)
-	assert.Equal(t, 3, totalResponses, "should not wait for more responses")
-	assert.Len(t, result, 2)
-}
-
-func TestElectionWaitForGracePeriodAllResponsesReceived(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
-
-	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
-		server1: {Term: 1, Offset: 100},
-	}
-
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
-	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
-
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-
-	assert.Len(t, candidatesResponse, 3, "all servers should be in the result")
-	assert.Equal(t, int64(100), candidatesResponse[server1].Offset)
-	assert.Equal(t, int64(95), candidatesResponse[server2].Offset)
-	assert.Equal(t, int64(90), candidatesResponse[server3].Offset)
-}
-
-func TestElectionWaitForGracePeriodTimeout(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	ensemble := []*proto.DataServerIdentity{server1, server2}
-
-	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
-		server1: {Term: 1, Offset: 100},
-	}
-
-	ch := make(chan electionResponse, 3)
+	removed := testDataServer("removed")
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s4).NewTermResponse(1, 0, nil)
+	// The removed data server answers during the grace period, with a feature
+	// enabled on the shard
+	go func() {
+		rpc.GetNode(removed).ExpectNewTermRequest(t, 5, 2, false)
+		time.Sleep(quorumFencingGracePeriod / 4)
+		rpc.GetNode(removed).NewTermResponseWithFeatures(1, 0, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nil)
+	}()
 
 	start := time.Now()
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-	elapsed := time.Since(start)
-
-	assert.Len(t, candidatesResponse, 1, "should only have initial server")
-	assert.GreaterOrEqual(t, elapsed, quorumFencingGracePeriod, "should wait at least grace period")
-	assert.Less(t, elapsed, quorumFencingGracePeriod+50*time.Millisecond, "should not wait much longer")
-}
-
-func TestElectionWaitForGracePeriodIgnoresErrors(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	server3 := testDataServer("server3")
-	ensemble := []*proto.DataServerIdentity{server1, server2, server3}
-
-	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
-		server1: {Term: 1, Offset: 100},
-	}
-
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: server2, Err: errors.New("connection failed")}
-	ch <- electionResponse{DataServer: server3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 90}}}
-
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-
-	assert.Len(t, candidatesResponse, 2, "should have initial server and successful response")
-	assert.Contains(t, candidatesResponse, server1)
-	assert.Contains(t, candidatesResponse, server3)
-	assert.NotContains(t, candidatesResponse, server2, "failed server should not be added")
-}
-
-func TestElectionWaitForGracePeriodExcludesRemovedServers(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	removedServer := testDataServer("removed")
-	ensemble := []*proto.DataServerIdentity{server1, server2}
-
-	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
-		server1: {Term: 1, Offset: 100},
-	}
-
-	ch := make(chan electionResponse, 3)
-	ch <- electionResponse{DataServer: removedServer, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 110}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 95}}}
-
-	removed := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	e.waitForGracePeriod(ch, 3, ensemble, 1, candidatesResponse, removed, make(map[proto.Feature]bool))
-
-	assert.Len(t, candidatesResponse, 2)
-	assert.Contains(t, candidatesResponse, server1)
-	assert.Contains(t, candidatesResponse, server2)
-	assert.NotContains(t, candidatesResponse, removedServer, "removed server should not be in result")
-	assert.Len(t, removed, 1)
-	assert.Equal(t, int64(110), removed[removedServer].Offset)
-}
-
-func TestElectionWaitForGracePeriodAlreadyComplete(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	ensemble := []*proto.DataServerIdentity{server1, server2}
-
-	candidatesResponse := map[*proto.DataServerIdentity]*proto.EntryId{
-		server1: {Term: 1, Offset: 100},
-		server2: {Term: 1, Offset: 95},
-	}
-
-	ch := make(chan electionResponse, 2)
-
-	start := time.Now()
-	e.waitForGracePeriod(ch, 2, ensemble, 2, candidatesResponse, make(map[*proto.DataServerIdentity]*proto.EntryId), make(map[proto.Feature]bool))
-	elapsed := time.Since(start)
-
-	assert.Len(t, candidatesResponse, 2)
-	assert.Less(t, elapsed, 10*time.Millisecond, "should return immediately when all responses received")
+	candidates, removedEntries, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, []*proto.DataServerIdentity{removed})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, time.Since(start), quorumFencingGracePeriod)
+	assert.Len(t, candidates, 4)
+	assert.NotContains(t, candidates, s5)
+	assert.Contains(t, removedEntries, removed)
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, features)
 }
 
 // A follower that is not added by the leader yet, behind it, or unreachable,
@@ -433,104 +225,58 @@ func TestElectionEnsureFollowerCaughtRetriesUntilCaughtUp(t *testing.T) {
 	}
 }
 
-func TestElectionCheckRemovedEntriesReplicationFactor3(t *testing.T) {
+// Enough candidates must have the entries of the removed data servers for any
+// later fence quorum of the new ensemble to include one of them.
+func TestElectionValidateConsistencyRequiresCandidatesToHaveRemovedEntries(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
-
-	// RF=3: s2 is swapped for s4, an entry is committed once 2 members have it
-	tests := []struct {
+	for _, test := range []struct {
 		name       string
-		candidates map[*proto.DataServerIdentity]*proto.EntryId
-		removed    map[*proto.DataServerIdentity]*proto.EntryId
-		loses      bool
-	}{
-		{
-			name:       "removed data server not ahead",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s1: {Term: 2, Offset: 5}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-		},
-		{
-			name:       "removed data server not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{},
-		},
-		{
-			name:       "removed data server ahead and an old member not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-			loses:      true,
-		},
-		{
-			name:       "removed data server ahead by term and an old member not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s3: {Term: 2, Offset: 9}, s4: {Term: -1, Offset: -1}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 3, Offset: 5}},
-			loses:      true,
-		},
-		{
-			// Its entries beyond the candidates were acked by no other member
-			name: "removed data server ahead and all members fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{
-				s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1},
-			},
-			removed: map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-		},
-		{
-			// The added data server was not a member when the entries were written
-			name:       "removed data server ahead and the added one not fenced",
-			candidates: map[*proto.DataServerIdentity]*proto.EntryId{s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 4}},
-			removed:    map[*proto.DataServerIdentity]*proto.EntryId{s2: {Term: 2, Offset: 5}},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := &election{
-				logger: slog.Default(),
-				mutableShardMetadata: &proto.ShardMetadata{
-					Term:         3,
-					Ensemble:     []*proto.DataServerIdentity{s1, s3, s4},
-					RemovedNodes: []*proto.DataServerIdentity{s2},
-				},
-				changeEnsembleAction: action.NewChangeEnsembleAction(5, s2, s4),
-			}
-			err := e.checkRemovedEntries(tt.candidates, tt.removed)
-			if tt.loses {
+		ensemble   []*proto.DataServerIdentity
+		candidates sharding.HeadEntries
+		removed    sharding.HeadEntries
+		fails      bool
+	}{{
+		name:       "two of three candidates have the entries",
+		ensemble:   []*proto.DataServerIdentity{s1, s3, s4},
+		candidates: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 5}, s4: {Term: -1, Offset: -1}},
+		removed:    sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+	}, {
+		name:       "removed data server not fenced",
+		ensemble:   []*proto.DataServerIdentity{s1, s3, s4},
+		candidates: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
+		removed:    sharding.HeadEntries{},
+	}, {
+		name:       "only the leader has the entries",
+		ensemble:   []*proto.DataServerIdentity{s1, s3, s4},
+		candidates: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
+		removed:    sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		fails:      true,
+	}, {
+		name:       "removed data server ahead by term",
+		ensemble:   []*proto.DataServerIdentity{s1, s3, s4},
+		candidates: sharding.HeadEntries{s1: {Term: 2, Offset: 9}, s3: {Term: 2, Offset: 9}, s4: {Term: -1, Offset: -1}},
+		removed:    sharding.HeadEntries{s2: {Term: 3, Offset: 5}},
+		fails:      true,
+	}, {
+		// Any fence quorum of two members includes the one that stays
+		name:       "replication factor 2",
+		ensemble:   []*proto.DataServerIdentity{s1, s4},
+		candidates: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s4: {Term: -1, Offset: -1}},
+		removed:    sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			e := &election{meta: &proto.ShardMetadata{Ensemble: test.ensemble}}
+			err := e.validateConsistency(test.candidates, test.removed)
+			if test.fails {
 				assert.ErrorIs(t, err, errs.ErrInvalidArgument)
 			} else {
 				assert.NoError(t, err)
 			}
 		})
 	}
-}
-
-func TestElectionCheckRemovedEntriesReplicationFactor5(t *testing.T) {
-	s1 := testDataServer("s1")
-	s2 := testDataServer("s2")
-	s3 := testDataServer("s3")
-	s4 := testDataServer("s4")
-	s5 := testDataServer("s5")
-	s6 := testDataServer("s6")
-	e := &election{
-		logger: slog.Default(),
-		mutableShardMetadata: &proto.ShardMetadata{
-			Term:         3,
-			Ensemble:     []*proto.DataServerIdentity{s1, s2, s3, s4, s6},
-			RemovedNodes: []*proto.DataServerIdentity{s5},
-		},
-		changeEnsembleAction: action.NewChangeEnsembleAction(5, s5, s6),
-	}
-	removed := map[*proto.DataServerIdentity]*proto.EntryId{s5: {Term: 2, Offset: 5}}
-
-	// s5 and s1 cannot form a write quorum of 3
-	assert.NoError(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
-		s2: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
-	}, removed))
-
-	// s5, s1 and s2 can
-	assert.ErrorIs(t, e.checkRemovedEntries(map[*proto.DataServerIdentity]*proto.EntryId{
-		s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 4}, s6: {Term: -1, Offset: -1},
-	}, removed), errs.ErrInvalidArgument)
 }
 
 // The addresses of the ensemble are loaded before persisting a new term: a
@@ -564,7 +310,7 @@ func TestElectionStartReturnsMetadataLoadErrorBeforeNewTerm(t *testing.T) {
 			rpc := rpctest.NewRpcProvider()
 			e := newTestElection(t, metadata, rpc, shard, shardMeta)
 
-			_, err := e.start()
+			_, err := e.Start()
 			assert.ErrorContains(t, err, "config unavailable")
 			assert.EqualValues(t, 2, shardTerm(base, constant.DefaultNamespace, shard))
 			assert.Empty(t, rpc.GetNode(s1).NewTermRequests)
@@ -574,7 +320,7 @@ func TestElectionStartReturnsMetadataLoadErrorBeforeNewTerm(t *testing.T) {
 
 // The election fences the ensemble at the addresses the data servers are
 // registered with.
-func TestElectionRefreshedEnsembleUsesRegisteredAddresses(t *testing.T) {
+func TestElectionRefreshEnsembleInfoUsesRegisteredAddresses(t *testing.T) {
 	serverName := "s1"
 	oldIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "old-public:9091", Internal: "old-internal:8191"}
 	newIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "new-public:9091", Internal: "new-internal:8191"}
@@ -586,14 +332,14 @@ func TestElectionRefreshedEnsembleUsesRegisteredAddresses(t *testing.T) {
 	// The ensemble is compared and logged at debug level only
 	e.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	ensemble, err := e.refreshedEnsemble([]*proto.DataServerIdentity{oldIdentity, unregistered})
+	ensemble, err := e.refreshEnsembleInfo([]*proto.DataServerIdentity{oldIdentity, unregistered})
 	require.NoError(t, err)
 	assertShardEnsemble(t, ensemble, newIdentity, unregistered)
 }
 
 // When the removed data servers make the fencing majority, a majority of the
 // new ensemble must still be fenced.
-func TestElectionFenceNewTermQuorumRequiresEnsembleMajority(t *testing.T) {
+func TestElectionFenceQuorumRequiresEnsembleMajority(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	removed := testDataServer("removed")
@@ -604,47 +350,17 @@ func TestElectionFenceNewTermQuorumRequiresEnsembleMajority(t *testing.T) {
 	rpc.GetNode(removed).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, err := e.fenceNewTermQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
+	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
 		[]*proto.DataServerIdentity{removed})
 	assert.ErrorContains(t, err, "quorum of the new ensemble not reached")
 }
 
-func TestElectionWaitForEnsembleMajorityCollectsRemovedServers(t *testing.T) {
-	e := &election{}
-	server1 := testDataServer("server1")
-	server2 := testDataServer("server2")
-	removed1 := testDataServer("removed1")
-	removed2 := testDataServer("removed2")
-	removed3 := testDataServer("removed3")
-	ensemble := []*proto.DataServerIdentity{server1, server2}
-
-	ch := make(chan electionResponse, 5)
-	ch <- electionResponse{DataServer: server1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 10}}}
-	ch <- electionResponse{DataServer: removed1, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 10}}}
-	ch <- electionResponse{DataServer: removed2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 10}}}
-	ch <- electionResponse{DataServer: removed3, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 11}}}
-	ch <- electionResponse{DataServer: server2, Response: &proto.NewTermResponse{HeadEntryId: &proto.EntryId{Term: 1, Offset: 9}}}
-
-	removedResponse := make(map[*proto.DataServerIdentity]*proto.EntryId)
-	result, totalResponses, err := e.waitForMajority(ch, 5, 3, ensemble, removedResponse, make(map[proto.Feature]bool))
-	require.NoError(t, err)
-	assert.Equal(t, 3, totalResponses)
-
-	totalResponses, err = e.waitForEnsembleMajority(ch, 5, ensemble, totalResponses, result, removedResponse,
-		make(map[proto.Feature]bool))
-	require.NoError(t, err)
-	assert.Equal(t, 5, totalResponses)
-	assert.Len(t, result, 2)
-	assert.Len(t, removedResponse, 3)
-	assert.Equal(t, int64(11), removedResponse[removed3].Offset)
-}
-
-func TestElectionSelectNewLeaderFailsWithoutLeader(t *testing.T) {
+func TestElectionChooseLeaderFailsWithoutLeader(t *testing.T) {
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
 		&proto.ClusterConfiguration{})
 	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
 
-	_, _, err := e.selectNewLeader(map[*proto.DataServerIdentity]*proto.EntryId{})
+	_, _, err := e.chooseLeader(map[*proto.DataServerIdentity]*proto.EntryId{})
 	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
@@ -665,12 +381,12 @@ func TestElectionStartReturnsLeaderSelectionErrors(t *testing.T) {
 		}},
 		{name: "leader write", err: "failed to persist the new leader", hooks: func(m *hookedMetadata) {
 			writes := 0
-			m.patchNamespaceStatus = func(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+			m.patchShardStatus = func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error {
 				// The new term is written, the new leader is not
 				if writes++; writes > 1 {
 					return errors.New("store unavailable")
 				}
-				return m.Metadata.PatchNamespaceStatus(namespace, modify)
+				return m.Metadata.PatchShardStatus(namespace, shard, modify)
 			}
 		}},
 	} {
@@ -687,7 +403,7 @@ func TestElectionStartReturnsLeaderSelectionErrors(t *testing.T) {
 			rpc.GetNode(s1).BecomeLeaderResponse(nil)
 			e := newTestElection(t, metadata, rpc, shard, shardMeta)
 
-			_, err := e.start()
+			_, err := e.Start()
 			assert.ErrorContains(t, err, test.err)
 			stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
 			assert.Equal(t, proto.ShardStatusElection, stored.GetStatus())
@@ -742,8 +458,8 @@ func TestElectionPrepareIfChangeEnsembleKeepsRemovedNodesUnique(t *testing.T) {
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
 	e := &election{
-		logger:               slog.Default(),
-		changeEnsembleAction: action.NewChangeEnsembleAction(5, s3, s4),
+		logger:         slog.Default(),
+		changeEnsemble: action.NewChangeEnsembleAction(5, s3, s4),
 	}
 	shardMeta := &proto.ShardMetadata{
 		Ensemble:                []*proto.DataServerIdentity{s1, s2, s3},
@@ -758,28 +474,30 @@ func TestElectionPrepareIfChangeEnsembleKeepsRemovedNodesUnique(t *testing.T) {
 	assert.Empty(t, shardMeta.PendingDeleteShardNodes)
 }
 
-// The data server that an aborted change ensemble was adding is listed once
-// among the data servers to delete the shard from.
-func TestElectionAbortChangeEnsembleKeepsPendingDeletesUnique(t *testing.T) {
+// An earlier election persisted the change already: the election keeps the
+// shard metadata as it is, and completes the change.
+func TestElectionPrepareIfChangeEnsembleKeepsPersistedChange(t *testing.T) {
+	s1 := testDataServer("s1")
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
-	abortErr := errors.New("aborted")
 	e := &election{
-		logger:               slog.Default(),
-		changeEnsembleAction: action.NewChangeEnsembleAction(5, s3, s4),
+		logger:         slog.Default(),
+		changeEnsemble: action.NewChangeEnsembleAction(5, s3, s4),
 	}
-	retryShardMetadata := &proto.ShardMetadata{PendingDeleteShardNodes: []*proto.DataServerIdentity{s4}}
+	shardMeta := &proto.ShardMetadata{
+		Ensemble:     []*proto.DataServerIdentity{s1, s4},
+		RemovedNodes: []*proto.DataServerIdentity{s3},
+	}
 
-	e.abortChangeEnsemble(retryShardMetadata, abortErr)
+	e.prepareIfChangeEnsemble(shardMeta)
 
-	assertShardEnsemble(t, retryShardMetadata.PendingDeleteShardNodes, s4)
-	assert.Nil(t, e.changeEnsembleAction)
-	assert.ErrorIs(t, e.changeEnsembleErr, abortErr)
+	assertShardEnsemble(t, shardMeta.Ensemble, s1, s4)
+	assertShardEnsemble(t, shardMeta.RemovedNodes, s3)
 }
 
 // The election of a shard that was removed meanwhile fails instead of
 // bringing the shard back.
-func TestElectionPersistFailsWhenShardIsRemoved(t *testing.T) {
+func TestElectionNewTermFailsWhenShardIsRemoved(t *testing.T) {
 	var shard int64 = 5
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
 		&proto.ClusterConfiguration{})
@@ -789,31 +507,46 @@ func TestElectionPersistFailsWhenShardIsRemoved(t *testing.T) {
 		Ensemble: []*proto.DataServerIdentity{testDataServer("s1")},
 	})
 	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, &proto.ShardMetadata{
-		Status:   proto.ShardStatusElection,
+		Status:   proto.ShardStatusSteadyState,
 		Term:     2,
 		Ensemble: []*proto.DataServerIdentity{testDataServer("s1")},
 	})
 
-	assert.ErrorContains(t, e.persistNewTerm(), "failed to persist the new term: shard 5 not found")
-	assert.ErrorContains(t, e.persistNewLeader(), "failed to persist the new leader: shard 5 not found")
+	_, err := e.newTerm()
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 	_, exists := testShardMetadata(metadata, constant.DefaultNamespace, shard)
 	assert.False(t, exists)
 }
 
-func TestElectionPersistNewLeaderReturnsWriteError(t *testing.T) {
-	e := newTestElection(t, statusWriteFailingMetadata{}, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
-	err := e.persistNewLeader()
-	assert.ErrorIs(t, err, context.Canceled)
-	assert.ErrorContains(t, err, "failed to persist the new leader")
+// The leader is persisted before it is told: if BecomeLeader fails, the next
+// election starts from it.
+func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
+	var shard int64 = 5
+	s1 := testDataServer("s1")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
+		Ensemble: []*proto.DataServerIdentity{s1}}
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
+	rpc := rpctest.NewRpcProvider()
+	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(errors.New("unreachable"))
+	e := newTestElection(t, metadata, rpc, shard, shardMeta)
+
+	_, err := e.Start()
+	assert.ErrorContains(t, err, "unreachable")
+	stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.Equal(t, proto.ShardStatusSteadyState, stored.GetStatus())
+	assert.EqualValues(t, 3, stored.GetTerm())
+	assert.Equal(t, s1.GetPublic(), stored.GetLeader().GetPublic())
 }
 
-func TestElectionStartPanicsWhenStartedTwice(t *testing.T) {
+func TestElectionStartFailsWhenStartedTwice(t *testing.T) {
 	e := newTestElection(t, nil, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
 	e.started.Store(true)
-	assert.PanicsWithValue(t, "bug! the election has been started", func() { _, _ = e.Start() })
+	_, err := e.Start()
+	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
 }
-
-type electionResponse = fenceResponse
 
 func testDataServer(id string) *proto.DataServerIdentity {
 	return &proto.DataServerIdentity{Internal: id, Public: id}
@@ -826,15 +559,13 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
 	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-		rpc, constant.DefaultNamespace, shard, shardMeta, nil,
+		rpc, constant.DefaultNamespace, shard, shardMeta, nil, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
 			"The time it takes to take the ensemble of data servers to a new term", labels),
 		metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency",
-			"The time it takes for the new elected leader to start", labels),
-		metric.NewCounter("oxia_coordinator_leader_election_failed",
-			"The number of failed leader elections", "count", labels)).(*election)
+			"The time it takes for the new elected leader to start", labels)).(*election)
 	t.Cleanup(e.Cancel)
 	return e
 }
@@ -848,7 +579,8 @@ type hookedMetadata struct {
 	getShardStatus          func(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error)
 	listNamespaceStatus     func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
 	getNamespaceTermOptions func(namespace string) (*proto.NewTermOptions, error)
-	patchNamespaceStatus    func(namespace string, modify func(*proto.NamespaceStatus) bool) error
+	patchNamespaceStatus    func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error
+	patchShardStatus        func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error
 }
 
 func (m *hookedMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool, error) {
@@ -888,11 +620,19 @@ func (m *hookedMetadata) GetNamespaceTermOptions(namespace string) (*proto.NewTe
 	return m.Metadata.GetNamespaceTermOptions(namespace)
 }
 
-func (m *hookedMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) bool) error {
+func (m *hookedMetadata) PatchNamespaceStatus(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error {
 	if m.patchNamespaceStatus != nil {
 		return m.patchNamespaceStatus(namespace, modify)
 	}
 	return m.Metadata.PatchNamespaceStatus(namespace, modify)
+}
+
+func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
+	modify func(*proto.ShardMetadata) (bool, error)) error {
+	if m.patchShardStatus != nil {
+		return m.patchShardStatus(namespace, shard, modify)
+	}
+	return m.Metadata.PatchShardStatus(namespace, shard, modify)
 }
 
 var namespaceConfig = &proto.Namespace{
@@ -1009,18 +749,4 @@ func requireClosed(t *testing.T, ch <-chan struct{}, what string) {
 	case <-time.After(10 * time.Second):
 		require.FailNow(t, "timed out waiting for "+what)
 	}
-}
-
-// statusWriteFailingMetadata fails the shard status writes, as the metadata
-// does when it gives up retrying them because the coordinator is closing.
-type statusWriteFailingMetadata struct {
-	coordmetadata.Metadata
-}
-
-func (statusWriteFailingMetadata) UpdateShardStatus(string, int64, *proto.ShardMetadata) error {
-	return context.Canceled
-}
-
-func (statusWriteFailingMetadata) PatchNamespaceStatus(string, func(*proto.NamespaceStatus) bool) error {
-	return context.Canceled
 }
