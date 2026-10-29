@@ -880,6 +880,9 @@ func (s *controller) handleRetainedNodes(shardMeta *proto.ShardMetadata) error {
 		}
 		return nil
 	}
+	// todo: wait for a majority of the ensemble instead of every follower, here
+	//  and before a change of the ensemble, which is enough: a dead follower
+	//  blocks both until the next election
 	if !s.currentElection.IsFollowerCaughtUp() {
 		return nil
 	}

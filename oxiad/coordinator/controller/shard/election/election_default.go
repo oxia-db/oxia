@@ -114,6 +114,10 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 
 	fencingDataServers := slices.Concat(ensemble, retained)
 	fencingQuorumSize := len(fencingDataServers)
+	// todo: require a majority of the ensemble before the change and of the one
+	//  after instead, which is enough and tolerates a failure of the new member
+	//  while a dead retained data server isn't released; it needs the ensemble
+	//  before the change in the shard metadata
 	majority := fencingQuorumSize/2 + 1
 
 	// Use a new context, so we can cancel the pending requests
