@@ -76,8 +76,8 @@ import (
 //	background, until Cancel:
 //	  - fence the members of the ensemble that missed the fence, and add them as
 //	    followers
-//	  - wait for each follower to commit the head entry of the leader (see
-//	    IsFollowerCaughtUp), then release the removed members, see below
+//	  - wait for a majority of the ensemble to commit the head entry of the
+//	    leader (see IsQuorumCaughtUp)
 //
 // A failed step (x) fails the election, and the caller retries with a new
 // election from the current shard status, except after
@@ -126,7 +126,9 @@ type Election interface {
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
 
-	// IsFollowerCaughtUp reports whether the followers caught up with the
-	// leader. Any goroutine can call it.
-	IsFollowerCaughtUp() bool
+	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
+	// included, committed the head entry of the leader at the election: any
+	// fence quorum of a later election includes one of them. It stays false
+	// once the election is canceled. Any goroutine can call it.
+	IsQuorumCaughtUp() bool
 }

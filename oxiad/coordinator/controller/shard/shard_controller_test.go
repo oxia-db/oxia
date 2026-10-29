@@ -1533,6 +1533,78 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRetainedFollowerAfterLeader
 	assert.NoError(t, sc.Close())
 }
 
+// A dead follower doesn't block the change that replaces it: a majority of the
+// ensemble caught up is enough.
+func TestControllerDispatchChangeEnsembleReplacesDeadFollower(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	// Do initial election
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+
+	// s2 caught up, s3 is dead
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	wg := concurrent.NewWaitGroup(1)
+	wg.Go(func() error {
+		// Retry until the shard controller is ready for ensemble change.
+		for {
+			a := action.NewChangeEnsembleAction(shard, s3, s4)
+			sc.Dispatch(a)
+			_, err := a.Wait()
+			if !errors.Is(err, errs.ErrUnavailable) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+
+	rpc.GetNode(s1).NewTermResponse(2, 1, nil)
+	rpc.GetNode(s2).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(-1, -1, errors.New("fails"))
+	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 3, true)
+
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 3, s2, s4)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	assert.NoError(t, wg.Wait(ctx))
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s4)
+	assertShardEnsemble(t, metaSnap.RemovedNodes, s3)
+
+	assert.NoError(t, sc.Close())
+}
+
 // Same as TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower,
 // when the swapped out data server is the leader: s1 committed the entry at
 // offset 5 with the ack of s2, and s2 is slow to answer the fence of the new
@@ -2210,9 +2282,9 @@ func TestControllerHandlePeriodicTasksReleasesRemovedNodes(t *testing.T) {
 		{name: "no election", status: proto.ShardStatusSteadyState, elects: true},
 		{name: "no election, election running", status: proto.ShardStatusElection},
 		{name: "followers catching up", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
-		{name: "followers caught up", election: &fakeElection{followerCaughtUp: true},
+		{name: "followers caught up", election: &fakeElection{quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, releasing: true},
-		{name: "release failure", election: &fakeElection{followerCaughtUp: true},
+		{name: "release failure", election: &fakeElection{quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, writeErr: errors.New("store unavailable")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -4086,7 +4158,7 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 
 // fakeElection is an election that is already elected.
 type fakeElection struct {
-	followerCaughtUp bool
+	quorumCaughtUp bool
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {
@@ -4095,6 +4167,6 @@ func (*fakeElection) Start() (*proto.DataServerIdentity, error) {
 
 func (*fakeElection) Cancel() {}
 
-func (f *fakeElection) IsFollowerCaughtUp() bool {
-	return f.followerCaughtUp
+func (f *fakeElection) IsQuorumCaughtUp() bool {
+	return f.quorumCaughtUp
 }

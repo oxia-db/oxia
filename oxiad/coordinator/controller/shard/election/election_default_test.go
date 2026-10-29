@@ -152,7 +152,7 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 
 // A follower that is not added by the leader yet, behind it, or unreachable,
 // is asked again until it catches up.
-func TestElectionEnsureFollowerCaughtRetriesUntilCaughtUp(t *testing.T) {
+func TestElectionEnsureQuorumCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 	leader := testDataServer("leader")
@@ -166,12 +166,29 @@ func TestElectionEnsureFollowerCaughtRetriesUntilCaughtUp(t *testing.T) {
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 9)
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 10)
 
-	require.NoError(t, e.ensureFollowerCaught([]*proto.DataServerIdentity{leader, follower}, leader,
+	require.NoError(t, e.ensureQuorumCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
 		&proto.EntryId{Term: 2, Offset: 10}))
 
 	for range 5 {
 		rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
 	}
+}
+
+// A majority of the ensemble, the leader included, is enough: the wait for the
+// other followers stops, and a dead follower doesn't block it.
+func TestElectionEnsureQuorumCaughtUpStopsAtMajority(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+	leader := testDataServer("leader")
+	follower := testDataServer("follower")
+	dead := testDataServer("dead")
+	e := newTestElection(t, nil, rpc, shard, &proto.ShardMetadata{})
+
+	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 10)
+
+	require.NoError(t, e.ensureQuorumCaughtUp([]*proto.DataServerIdentity{leader, follower, dead}, leader,
+		&proto.EntryId{Term: 2, Offset: 10}))
+	rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
 }
 
 // The addresses of the ensemble are loaded before persisting a new term: a
@@ -561,47 +578,60 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 }
 
 // The election keeps the retained data servers: the shard controller releases
-// them once the followers caught up. A canceled election never reports its
-// followers as caught up.
+// them once a majority of the ensemble caught up, which a dead follower doesn't
+// block. A canceled election never reports a caught-up majority.
 func TestElectionStartKeepsRemovedNodes(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
 	s4 := testDataServer("s4")
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
-		&proto.ClusterConfiguration{})
-	shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
-		Ensemble: []*proto.DataServerIdentity{s1, s2, s3}}
-	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
-	rpc := rpctest.NewRpcProvider()
-	rpc.GetNode(s1).NewTermResponse(2, 5, nil)
-	rpc.GetNode(s2).NewTermResponse(2, 5, nil)
-	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
-	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
-	rpc.GetNode(s1).BecomeLeaderResponse(nil)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
-		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
-		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
-		metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
+	for _, test := range []struct {
+		name     string
+		caughtUp bool
+	}{
+		{name: "majority caught up, s4 dead", caughtUp: true},
+		{name: "canceled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+				&proto.ClusterConfiguration{})
+			shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
+				Ensemble: []*proto.DataServerIdentity{s1, s2, s3}}
+			storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
+			rpc := rpctest.NewRpcProvider()
+			rpc.GetNode(s1).NewTermResponse(2, 5, nil)
+			rpc.GetNode(s2).NewTermResponse(2, 5, nil)
+			rpc.GetNode(s3).NewTermResponse(2, 4, nil)
+			rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
+			rpc.GetNode(s1).BecomeLeaderResponse(nil)
+			e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
+				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
+				metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
+				metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
+				metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
+			t.Cleanup(e.Cancel)
 
-	leader, err := e.Start()
-	require.NoError(t, err)
-	// The ensemble wins the tie
-	assert.Equal(t, s1.GetPublic(), leader.GetPublic())
+			leader, err := e.Start()
+			require.NoError(t, err)
+			// The ensemble wins the tie
+			assert.Equal(t, s1.GetPublic(), leader.GetPublic())
 
-	// s3 caught up, s4 never answers
-	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
-	rpc.GetNode(s4).ExpectGetStatusRequest(t, shard)
-	e.Cancel()
-	assert.False(t, e.IsFollowerCaughtUp())
+			if test.caughtUp {
+				rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
+				assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
+			} else {
+				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+				e.Cancel()
+				assert.False(t, e.IsQuorumCaughtUp())
+			}
 
-	stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
-	assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
-	assertShardEnsemble(t, stored.GetRemovedNodes(), s2)
-	assert.Empty(t, stored.GetPendingDeleteShardNodes())
+			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
+			assertShardEnsemble(t, stored.GetRemovedNodes(), s2)
+			assert.Empty(t, stored.GetPendingDeleteShardNodes())
+		})
+	}
 }
 
 func TestElectionStartFailsWhenStartedTwice(t *testing.T) {
