@@ -213,10 +213,11 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 			"sub-component": "k8s-leader-elector",
 		}, func() {
 			leaderElector.Run(m.ctx)
+			log.Info("Leader elector stopped")
 			if m.ctx.Err() != nil {
 				return
 			}
-			log.Error("Leader elector stopped", slog.Any("error", errLeaderLost))
+			log.Error("Terminating to avoid a split brain", slog.Any("error", errLeaderLost))
 			os.Exit(1)
 		})
 	})
