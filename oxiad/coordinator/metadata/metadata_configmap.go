@@ -16,7 +16,6 @@ package metadata
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -41,8 +40,6 @@ import (
 )
 
 var _ Provider = &metadataProviderConfigMap{}
-
-var errLeaderLost = errors.New("metadata leadership lost")
 
 const (
 	leaseDuration = 15 * time.Second
@@ -189,7 +186,9 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
-				log.Warn("Stopped leading - lease lost!")
+				if m.ctx.Err() == nil {
+					log.Warn("Stopped leading - lease lost!")
+				}
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
@@ -213,11 +212,10 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 			"sub-component": "k8s-leader-elector",
 		}, func() {
 			leaderElector.Run(m.ctx)
-			log.Info("Leader elector stopped")
 			if m.ctx.Err() != nil {
 				return
 			}
-			log.Error("Terminating to avoid a split brain", slog.Any("error", errLeaderLost))
+			log.Error("Coordination leadership lost: terminating to avoid a split brain")
 			os.Exit(1)
 		})
 	})
