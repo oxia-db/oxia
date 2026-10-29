@@ -73,9 +73,9 @@ type election struct {
 	featureSupplier  feature.Supplier
 
 	// mutable
-	meta             *proto.ShardMetadata
-	started          atomic.Bool
-	followerCaughtUp atomic.Bool
+	meta           *proto.ShardMetadata
+	started        atomic.Bool
+	quorumCaughtUp atomic.Bool
 
 	// metrics
 	leaderElectionLatencyHistogram metric.LatencyHistogram
@@ -318,11 +318,14 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 }
 
 //nolint:revive
-func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
+func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	leaderEntry *proto.EntryId) error {
-	failures := make([]error, len(ensemble))
+	ctx, cancel := context.WithCancel(e.ctx)
 	waitGroup := sync.WaitGroup{}
-	for i, server := range ensemble {
+	defer waitGroup.Wait()
+	defer cancel()
+	results := make(chan error, len(ensemble))
+	for _, server := range ensemble {
 		if server.GetNameOrDefault() == leader.GetNameOrDefault() {
 			continue
 		}
@@ -335,8 +338,8 @@ func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 					"shard":       fmt.Sprintf("%d", e.shard),
 					"data-server": server.GetNameOrDefault(),
 				}, func() {
-					failures[i] = backoff.RetryNotify(func() error {
-						fs, err := e.provider.GetStatus(e.ctx, server, &proto.GetStatusRequest{Shard: e.shard})
+					results <- backoff.RetryNotify(func() error {
+						fs, err := e.provider.GetStatus(ctx, server, &proto.GetStatusRequest{Shard: e.shard})
 						if err != nil {
 							return err
 						}
@@ -357,7 +360,7 @@ func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 							slog.Int64("follower-commit-offset", fs.CommitOffset),
 						)
 						return errors.Wrap(errs.ErrFailedPrecondition, "follower not caught up yet")
-					}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
+					}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
 						switch {
 						case errors.Is(err, errs.ErrFailedPrecondition):
 						case errors.Is(err, constant.ErrNodeIsNotMember):
@@ -377,8 +380,13 @@ func (e *election) ensureFollowerCaught(ensemble []*proto.DataServerIdentity, le
 				})
 		})
 	}
-	waitGroup.Wait()
-	return multierr.Combine(failures...)
+	// The leader is one of the majority
+	for range quorum.Majority(len(ensemble)) - 1 {
+		if err := <-results; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *election) fenceNewTermAndAddFollower(ctx context.Context, term int64, options *proto.NewTermOptions,
@@ -650,11 +658,11 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 				"oxia":  "election-monitor-followers-caught-up",
 				"shard": fmt.Sprintf("%d", e.shard),
 			}, func() {
-				if err := e.ensureFollowerCaught(e.meta.Ensemble, candidateLeader, leaderHead); err != nil {
+				if err := e.ensureQuorumCaughtUp(e.meta.Ensemble, candidateLeader, leaderHead); err != nil {
 					e.logger.Info("Stopped waiting for the followers to catch up", slog.Any("error", err))
 					return
 				}
-				e.followerCaughtUp.Store(true)
+				e.quorumCaughtUp.Store(true)
 			},
 		)
 	})
@@ -714,8 +722,8 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) IsFollowerCaughtUp() bool {
-	return e.followerCaughtUp.Load()
+func (e *election) IsQuorumCaughtUp() bool {
+	return e.quorumCaughtUp.Load()
 }
 
 func (e *election) Cancel() {

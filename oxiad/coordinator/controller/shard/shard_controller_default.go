@@ -760,8 +760,8 @@ func (s *controller) Close() error {
 
 func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
 	if s.currentElection != nil {
-		if !s.currentElection.IsFollowerCaughtUp() {
-			s.logger.Warn("Change ensemble rejected: shard is not ready (follower catch-up still in progress)")
+		if !s.currentElection.IsQuorumCaughtUp() {
+			s.logger.Warn("Change ensemble rejected: shard is not ready (quorum catch-up still in progress)")
 			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
 		}
@@ -880,10 +880,7 @@ func (s *controller) handleRetainedNodes(shardMeta *proto.ShardMetadata) error {
 		}
 		return nil
 	}
-	// todo: wait for a majority of the ensemble instead of every follower, here
-	//  and before a change of the ensemble, which is enough: a dead follower
-	//  blocks both until the next election
-	if !s.currentElection.IsFollowerCaughtUp() {
+	if !s.currentElection.IsQuorumCaughtUp() {
 		return nil
 	}
 	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
