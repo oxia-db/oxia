@@ -26,6 +26,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/entry"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/quorum"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/cenkalti/backoff/v4"
@@ -118,7 +119,7 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 	//  after instead, which is enough and tolerates a failure of the new member
 	//  while a dead retained data server isn't released; it needs the ensemble
 	//  before the change in the shard metadata
-	majority := fencingQuorumSize/2 + 1
+	majority := quorum.Majority(fencingQuorumSize)
 
 	// Use a new context, so we can cancel the pending requests
 	fencingContext, fencingContextCancel := context.WithCancel(e.ctx)
@@ -171,7 +172,7 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 	successResponses := 0
 	totalResponses := 0
 	// The new leader also needs a majority of the new ensemble as followers
-	ensembleMajority := len(ensemble)/2 + 1
+	ensembleMajority := quorum.Majority(len(ensemble))
 	for (successResponses < majority || len(ensembleHeads) < ensembleMajority) &&
 		totalResponses < fencingQuorumSize {
 		fencingResponse := <-ch

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/quorum"
 
 	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/concurrent"
@@ -148,9 +149,9 @@ type waitingRequest struct {
 
 func NewQuorumAckTracker(replicationFactor uint32, headOffset int64, commitOffset int64) QuorumAckTracker {
 	q := &quorumAckTracker{
-		// Ack quorum is number of follower acks that are required to consider the entry fully committed
-		// We are using RF/2 (and not RF/2 + 1) because the leader is already storing 1 copy locally
-		requiredAcks:      replicationFactor / 2,
+		// The follower acks required to commit an entry: the leader stores one
+		// copy of the majority itself
+		requiredAcks:      quorum.Majority(replicationFactor) - 1,
 		replicationFactor: replicationFactor,
 		waitingRequests:   make([]waitingRequest, 0),
 	}
