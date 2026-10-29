@@ -217,7 +217,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 				return
 			}
 			log.Error("Leader elector stopped", slog.Any("error", errLeaderLost))
-			panic(errLeaderLost)
+			os.Exit(1)
 		})
 	})
 
