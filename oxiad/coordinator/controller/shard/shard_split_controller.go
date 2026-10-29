@@ -31,6 +31,7 @@ import (
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
+	"github.com/oxia-db/oxia/oxiad/common/quorum"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -1177,7 +1178,7 @@ func (sc *SplitController) fenceEnsemble(
 	}
 
 	// Require majority
-	majority := len(ensemble)/2 + 1
+	majority := quorum.Majority(len(ensemble))
 	if len(results) < majority {
 		return nil, nil, errors.Wrapf(lastErr, "failed to reach quorum for NewTerm on shard %d (got %d/%d)",
 			shardId, len(results), len(ensemble))
@@ -1233,7 +1234,7 @@ func (sc *SplitController) waitForChildCommitOffset(ctx context.Context, childId
 		}
 
 		applied := 1
-		majority := len(childMeta.Ensemble)/2 + 1
+		majority := quorum.Majority(len(childMeta.Ensemble))
 		for _, member := range childMeta.Ensemble {
 			if applied == majority {
 				break
