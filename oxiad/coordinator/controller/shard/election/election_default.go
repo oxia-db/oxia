@@ -280,15 +280,14 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			// committed: every committed entry is on from, and on a majority of
 			// the ensemble before the change without to
 			change := e.meta.EnsembleChange
-			isTo := sharding.MatchDataServer(change.To)
 			e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
 				slog.Any("from", change.From), slog.Any("to", change.To))
 			// To may have missed the fence
 			maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ *proto.EntryId) bool {
-				return isTo(server)
+				return server.GetNameOrDefault() == change.To.GetNameOrDefault()
 			})
 			retainedHeads.Move(candidates[0], ensembleHeads)
-			e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, isTo), candidates[0])
+			e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), candidates[0])
 			e.meta.EnsembleChange = nil
 			e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 			return e.chooseLeader(ensembleHeads, retainedHeads)
