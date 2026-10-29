@@ -189,9 +189,7 @@ func (m *metadataProviderConfigMap) WaitToBecomeLeader() error {
 				wg.Done()
 			},
 			OnStoppedLeading: func() {
-				if m.ctx.Err() == nil {
-					log.Warn("Stopped leading - lease lost!")
-				}
+				log.Warn("Stopped leading - lease lost!")
 			},
 			OnNewLeader: func(newLeader string) {
 				if newLeader == myIdentity {
