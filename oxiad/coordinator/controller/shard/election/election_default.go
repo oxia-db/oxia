@@ -251,11 +251,11 @@ gracePeriod:
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 2. from of the       |--> strictly ahead: the change is undone,
-//	           |    pending change    |    from swaps back with to, and the
-//	           |                      |    choice starts again
+//	           | 2. from of the       |    strictly ahead: the change is undone,
+//	           |    pending change    |    from swaps back with to, and is the
+//	           |                      |    only candidate
 //	           +----------------------+
-//	                      | none
+//	                      |
 //	           +----------------------+
 //	           | 3. select            |    the leader among the ties, the others
 //	           |                      |    follow
@@ -276,21 +276,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	}
 	if len(candidates) > 0 {
 		if _, retained := retainedHeads[candidates[0]]; retained {
-			// As Raft rolls back to the configuration before a change that isn't
-			// committed: every committed entry is on from, and on a majority of
-			// the ensemble before the change without to
-			change := e.meta.EnsembleChange
-			e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
-				slog.Any("from", change.From), slog.Any("to", change.To))
-			// To may have missed the fence
-			maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ *proto.EntryId) bool {
-				return server.GetNameOrDefault() == change.To.GetNameOrDefault()
-			})
-			retainedHeads.Move(candidates[0], ensembleHeads)
-			e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), candidates[0])
-			e.meta.EnsembleChange = nil
-			e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
-			return e.chooseLeader(ensembleHeads, retainedHeads)
+			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -310,6 +296,25 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 		}
 	}
 	return leader, followers, nil
+}
+
+// undoEnsembleChange restores the ensemble before the pending change, as Raft
+// rolls back a change that isn't committed, when the retained data server is
+// ahead of every fenced member: it has every committed entry, so the ensemble
+// before the change has them on a majority.
+func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensembleHeads sharding.HeadEntries,
+	retainedHeads sharding.HeadEntries) {
+	change := e.meta.EnsembleChange
+	e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
+		slog.Any("from", change.From), slog.Any("to", change.To))
+	// To may have missed the fence
+	maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ *proto.EntryId) bool {
+		return server.GetNameOrDefault() == change.To.GetNameOrDefault()
+	})
+	retainedHeads.Move(retained, ensembleHeads)
+	e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), retained)
+	e.meta.EnsembleChange = nil
+	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 }
 
 func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
