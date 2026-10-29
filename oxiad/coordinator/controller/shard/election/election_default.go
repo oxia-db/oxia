@@ -83,28 +83,35 @@ type election struct {
 	becomeLeaderLatencyHistogram   metric.LatencyHistogram
 }
 
-func (e *election) refreshEnsembleInfo(ensemble []*proto.DataServerIdentity) ([]*proto.DataServerIdentity, error) {
-	refreshedEnsembleDataServerAddress := make([]*proto.DataServerIdentity, len(ensemble))
-	for idx, candidate := range ensemble {
-		borrowedDataServer, exist, err := e.metadataStore.GetDataServer(candidate.GetNameOrDefault())
+// refreshEnsembleInfo returns the ensemble and the retained data servers of the
+// shard, at the addresses they're registered with: the retained data servers
+// are fenced too, until they're released.
+func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*proto.DataServerIdentity,
+	retained []*proto.DataServerIdentity, err error) {
+	servers := slices.Concat(meta.Ensemble, meta.RemovedNodes)
+	refreshed := make([]*proto.DataServerIdentity, len(servers))
+	for idx, server := range servers {
+		borrowedDataServer, exist, err := e.metadataStore.GetDataServer(server.GetNameOrDefault())
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if exist {
 			if identity := borrowedDataServer.UnsafeBorrow().GetIdentity(); identity != nil {
-				refreshedEnsembleDataServerAddress[idx] = identity
+				refreshed[idx] = identity
 				continue
 			}
 		}
-		refreshedEnsembleDataServerAddress[idx] = candidate
+		refreshed[idx] = server
 	}
 	if e.logger.Enabled(e.ctx, slog.LevelDebug) {
-		if !reflect.DeepEqual(ensemble, refreshedEnsembleDataServerAddress) {
-			e.logger.Info("refresh the shard ensemble dataServer address", slog.Any("current-ensemble", ensemble),
-				slog.Any("new-ensemble", refreshedEnsembleDataServerAddress))
+		if !reflect.DeepEqual(servers, refreshed) {
+			e.logger.Info("refresh the shard ensemble dataServer address", slog.Any("current-ensemble", servers),
+				slog.Any("new-ensemble", refreshed))
 		}
 	}
-	return refreshedEnsembleDataServerAddress, nil
+	// Capped: appending to the ensemble must not overwrite the retained ones
+	size := len(meta.Ensemble)
+	return refreshed[:size:size], refreshed[size:], nil
 }
 
 //nolint:revive
@@ -520,12 +527,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	if err != nil {
 		return nil, err
 	}
-	refreshedEnsemble, err := e.refreshEnsembleInfo(e.meta.Ensemble)
-	if err != nil {
-		return nil, err
-	}
-	// The retained data servers are fenced too, until they're released
-	refreshedRetained, err := e.refreshEnsembleInfo(e.meta.RemovedNodes)
+	refreshedEnsemble, refreshedRetained, err := e.refreshEnsembleInfo(e.meta)
 	if err != nil {
 		return nil, err
 	}

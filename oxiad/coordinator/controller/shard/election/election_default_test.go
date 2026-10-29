@@ -227,9 +227,16 @@ func TestElectionRefreshEnsembleInfoUsesRegisteredAddresses(t *testing.T) {
 	// The ensemble is compared and logged at debug level only
 	e.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	ensemble, err := e.refreshEnsembleInfo([]*proto.DataServerIdentity{oldIdentity, unregistered})
+	ensemble, retained, err := e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble:     []*proto.DataServerIdentity{oldIdentity},
+		RemovedNodes: []*proto.DataServerIdentity{unregistered},
+	})
 	require.NoError(t, err)
-	assertShardEnsemble(t, ensemble, newIdentity, unregistered)
+	assertShardEnsemble(t, ensemble, newIdentity)
+	assertShardEnsemble(t, retained, unregistered)
+	// Appending to the ensemble keeps the retained data servers
+	_ = append(ensemble, testDataServer("s3"))
+	assertShardEnsemble(t, retained, unregistered)
 }
 
 // The new term fences the retained data servers at the addresses they're
