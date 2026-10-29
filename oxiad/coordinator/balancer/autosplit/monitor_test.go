@@ -755,7 +755,8 @@ func TestMonitorEvaluateSkipsOnStatusError(t *testing.T) {
 }
 
 // Only the steady-state shards that have a leader, are not being split, have
-// no pending ensemble change and whose stats can be collected are split.
+// no pending ensemble change or retained data server, and whose stats can be
+// collected are split.
 func TestMonitorEvaluateSkipsIneligibleShards(t *testing.T) {
 	metadata := newTestMetadata(t, oversizedAutoSplitConfig("0s"))
 	leader := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
@@ -771,6 +772,8 @@ func TestMonitorEvaluateSkipsIneligibleShards(t *testing.T) {
 	pendingDelete.PendingDeleteShardNodes = []*proto.DataServerIdentity{leader}
 	electing := shard(5)
 	electing.Status = proto.ShardStatusElection
+	removed := shard(6)
+	removed.RemovedNodes = []*proto.DataServerIdentity{leader}
 	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: withoutLeader,
@@ -779,13 +782,14 @@ func TestMonitorEvaluateSkipsIneligibleShards(t *testing.T) {
 			3: shard(3), // its stats can't be collected
 			4: shard(4),
 			5: electing,
+			6: removed,
 		},
 	}))
 	rpcMock := &mockRpcProvider{
 		statuses: make(map[int64]*proto.GetStatusResponse),
 		errs:     map[int64]error{3: errors.New("unreachable")},
 	}
-	for id := range int64(6) {
+	for id := range int64(7) {
 		rpcMock.setStats(id, &proto.ShardStats{DbSizeBytes: 200 * 1024 * 1024})
 	}
 	splitter := &mockSplitter{}

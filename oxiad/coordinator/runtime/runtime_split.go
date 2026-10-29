@@ -205,7 +205,7 @@ func validateSplitParent(namespace string, parentShardId int64, parentMeta *prot
 	if parentMeta.Split != nil {
 		return errors.Errorf("shard %d already has an active split", parentShardId)
 	}
-	if len(parentMeta.PendingDeleteShardNodes) > 0 {
+	if len(parentMeta.PendingDeleteShardNodes) > 0 || len(parentMeta.RemovedNodes) > 0 {
 		return errors.Errorf("shard %d has pending ensemble changes", parentShardId)
 	}
 	if parentMeta.GetInt32HashRange().GetMax()-parentMeta.GetInt32HashRange().GetMin() < 1 {
