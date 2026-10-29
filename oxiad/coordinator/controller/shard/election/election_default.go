@@ -524,11 +524,17 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The retained data servers are fenced too, until they're released
+	refreshedRetained, err := e.refreshEnsembleInfo(e.meta.RemovedNodes)
+	if err != nil {
+		return nil, err
+	}
 
 	e.meta.Status = proto.ShardStatusElection
 	e.meta.Leader = nil
 	e.meta.Term++
 	e.meta.Ensemble = refreshedEnsemble
+	e.meta.RemovedNodes = refreshedRetained
 	if err = e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		switch {
 		case current.GetStatusOrDefault() == proto.ShardStatusDeleting:
