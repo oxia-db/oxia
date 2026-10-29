@@ -896,8 +896,8 @@ func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error 
 	term := s.currentElection.Term()
 	completed := false
 	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
-		// The catch-up of the election says nothing of a later term, e.g. of
-		// another coordinator: the election of that term completes the change
+		// A catch-up is of its election's term only: during a handover, the other
+		// coordinator may have elected since, undone the change, or started another
 		if current.Term != term || current.EnsembleChange == nil {
 			return false, nil
 		}
