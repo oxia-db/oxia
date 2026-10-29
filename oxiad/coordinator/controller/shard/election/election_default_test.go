@@ -260,6 +260,23 @@ func TestElectionRefreshEnsembleInfoUsesRegisteredAddresses(t *testing.T) {
 	assert.Nil(t, change)
 }
 
+// A pending change whose to isn't a member of the ensemble, e.g. in a status
+// edited by hand, stops the election instead of electing a wrong ensemble.
+func TestElectionRefreshEnsembleInfoRejectsChangeOutsideEnsemble(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
+
+	_, _, err := e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble:       []*proto.DataServerIdentity{s1},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s3},
+	})
+	assert.ErrorIs(t, err, errs.ErrShardNotElectable)
+}
+
 // The new term fences the data server removed by the pending change at the
 // address it's registered with, as the ensemble.
 func TestElectionNewTermRefreshesRemovedDataServerAddress(t *testing.T) {
@@ -585,6 +602,7 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 	stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.Equal(t, proto.ShardStatusSteadyState, stored.GetStatus())
 	assert.EqualValues(t, 3, stored.GetTerm())
+	assert.EqualValues(t, 3, e.Term())
 	assert.Equal(t, s1.GetPublic(), stored.GetLeader().GetPublic())
 }
 

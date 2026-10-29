@@ -2273,8 +2273,9 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 }
 
 // The periodic tasks complete the pending change of the ensemble once a
-// majority of the current election caught up, and start an election when there
-// is none, e.g. after a restart. A failed write is left to the next round.
+// majority of the current election caught up, if the shard is still in its
+// term, and start an election when there is none, e.g. after a restart. A
+// failed write is left to the next round.
 func TestControllerHandlePeriodicTasksCompletesEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
@@ -2291,11 +2292,13 @@ func TestControllerHandlePeriodicTasksCompletesEnsembleChange(t *testing.T) {
 		{name: "no election", status: proto.ShardStatusSteadyState, elects: true},
 		{name: "no election, election running", status: proto.ShardStatusElection},
 		{name: "followers catching up", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
-		{name: "followers caught up", election: &fakeElection{quorumCaughtUp: true},
+		{name: "followers caught up", election: &fakeElection{term: 1, quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, releasing: true},
-		{name: "already pending deletion", election: &fakeElection{quorumCaughtUp: true},
+		{name: "already pending deletion", election: &fakeElection{term: 1, quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, pending: true, releasing: true},
-		{name: "release failure", election: &fakeElection{quorumCaughtUp: true},
+		{name: "caught up in an earlier term", election: &fakeElection{term: 0, quorumCaughtUp: true},
+			status: proto.ShardStatusSteadyState},
+		{name: "release failure", election: &fakeElection{term: 1, quorumCaughtUp: true},
 			status: proto.ShardStatusSteadyState, writeErr: errors.New("store unavailable")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -4225,8 +4228,13 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 
 // fakeElection is an election that is already elected.
 type fakeElection struct {
+	term           int64
 	quorumCaughtUp bool
 	canceled       bool
+}
+
+func (f *fakeElection) Term() int64 {
+	return f.term
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {

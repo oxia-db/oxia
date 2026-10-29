@@ -29,8 +29,9 @@ import (
 //	           +----------------------+
 //	Start ---->| 1. new term          |--x errs.ErrShardNotElectable: the shard is
 //	           |    persist term+1,   |    deleting, the parent of a split past the
-//	           |    status Election   |    point of no return, or in a split while
-//	           +----------------------+    its ensemble changes
+//	           |    status Election   |    point of no return, in a split while its
+//	           +----------------------+    ensemble changes, or its pending change
+//	                      |                adds a data server outside the ensemble
 //	                      |
 //	           +----------------------+
 //	           | 2. change ensemble   |    only for a change, see below
@@ -118,7 +119,13 @@ import (
 //
 // The shard controller completes the change, and refuses another one until
 // then: with two changes, the ensembles would differ by two members, and a
-// fence quorum could miss a committed entry.
+// fence quorum could miss a committed entry. It completes the change once the
+// election of the shard's current term reports IsQuorumCaughtUp, by moving
+// from to the pending deletions and clearing the change, in a single write that
+// checks the term is still the election's. The catch-up is only known in
+// memory: after a restart of the coordinator, the shard controller runs an
+// election to complete the change, which fences from again until a majority of
+// the ensemble caught up.
 type Election interface {
 	// Start runs the election, and returns the elected leader. It fails if
 	// called twice.
@@ -126,6 +133,10 @@ type Election interface {
 
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
+
+	// Term returns the term of the election, once Start persisted it. It is
+	// called from the goroutine that called Start.
+	Term() int64
 
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any

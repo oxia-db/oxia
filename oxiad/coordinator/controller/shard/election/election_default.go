@@ -112,9 +112,12 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 	}
 	ensemble = refreshed[:len(meta.Ensemble)]
 	if meta.EnsembleChange != nil {
-		// To is a member of the ensemble
-		to := ensemble[slices.IndexFunc(ensemble, sharding.MatchDataServer(meta.EnsembleChange.To))]
-		change = &proto.EnsembleChangeMetadata{From: refreshed[len(meta.Ensemble)], To: to}
+		idx := slices.IndexFunc(ensemble, sharding.MatchDataServer(meta.EnsembleChange.To))
+		if idx < 0 {
+			return nil, nil, fmt.Errorf("%w: the pending change of the ensemble adds %q, which isn't a member of it",
+				errs.ErrShardNotElectable, meta.EnsembleChange.To.GetNameOrDefault())
+		}
+		change = &proto.EnsembleChangeMetadata{From: refreshed[len(meta.Ensemble)], To: ensemble[idx]}
 	}
 	return ensemble, change, nil
 }
@@ -736,6 +739,10 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 		return fmt.Errorf("%w: the ensemble now supports features %v", errs.ErrShardFeaturesChanged, added)
 	}
 	return nil
+}
+
+func (e *election) Term() int64 {
+	return e.meta.GetTerm()
 }
 
 func (e *election) IsQuorumCaughtUp() bool {

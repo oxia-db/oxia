@@ -893,15 +893,25 @@ func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error 
 	if !s.currentElection.IsQuorumCaughtUp() {
 		return nil
 	}
+	term := s.currentElection.Term()
+	completed := false
 	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
+		// The catch-up of the election says nothing of a later term, e.g. of
+		// another coordinator: the election of that term completes the change
+		if current.Term != term || current.EnsembleChange == nil {
+			return false, nil
+		}
 		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes,
 			current.EnsembleChange.From)
 		current.EnsembleChange = nil
+		completed = true
 		return true, nil
 	}); err != nil {
 		return fmt.Errorf("complete the change of the ensemble: %w", err)
 	}
-	s.logger.Info("Completed the change of the ensemble", slog.Any("change", change))
+	if completed {
+		s.logger.Info("Completed the change of the ensemble", slog.Any("change", change))
+	}
 	return nil
 }
 
