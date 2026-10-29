@@ -2575,6 +2575,53 @@ func TestControllerDeleteRetriesStatusDeletion(t *testing.T) {
 	assert.False(t, exists)
 }
 
+// A shard deletion cancels the current election, whose fences would create the
+// shard again, and deletes the copies of the retained and pending-delete data
+// servers too: a failure there leaves the copy, and doesn't block the deletion.
+func TestControllerDeleteDeletesRetainedAndPendingCopies(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	leader := testDataServer("s1")
+	retained := testDataServer("s2")
+	pending := testDataServer("s3")
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:                  proto.ShardStatusDeleting,
+			Term:                    1,
+			Leader:                  leader,
+			Ensemble:                []*proto.DataServerIdentity{leader},
+			RemovedNodes:            []*proto.DataServerIdentity{retained},
+			PendingDeleteShardNodes: []*proto.DataServerIdentity{pending},
+		}},
+	}))
+	current := &fakeElection{}
+	s := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		rpc:             rpc,
+		currentElection: current,
+		ctx:             t.Context(),
+		logger:          slog.Default(),
+	}
+
+	rpc.GetNode(leader).DeleteShardResponse(nil)
+	rpc.GetNode(retained).DeleteShardResponse(errors.New("unreachable"))
+	rpc.GetNode(pending).DeleteShardResponse(nil)
+	require.NoError(t, s.deleteShard())
+
+	assert.True(t, current.canceled)
+	assert.Nil(t, s.currentElection)
+	rpc.GetNode(leader).ExpectDeleteShardRequest(t, shard, 1)
+	rpc.GetNode(retained).ExpectDeleteShardRequest(t, shard, 1)
+	rpc.GetNode(pending).ExpectDeleteShardRequest(t, shard, 1)
+	_, exists, err := metadata.GetShardStatus(constant.DefaultNamespace, shard)
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
 func TestControllerDeleteAllowsNilEventListener(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -4159,13 +4206,16 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 // fakeElection is an election that is already elected.
 type fakeElection struct {
 	quorumCaughtUp bool
+	canceled       bool
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {
 	return nil, errs.ErrFailedPrecondition
 }
 
-func (*fakeElection) Cancel() {}
+func (f *fakeElection) Cancel() {
+	f.canceled = true
+}
 
 func (f *fakeElection) IsQuorumCaughtUp() bool {
 	return f.quorumCaughtUp

@@ -674,8 +674,11 @@ func (s *controller) deleteShard() error {
 	shardMeta := gproto.CloneOf(common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while deleting shard: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow())
-	for _, server := range shardMeta.Ensemble {
-		// We need to save the address because it gets modified in the loop
+	if s.currentElection != nil {
+		s.currentElection.Cancel()
+		s.currentElection = nil
+	}
+	for idx, server := range slices.Concat(shardMeta.Ensemble, shardMeta.RemovedNodes, shardMeta.PendingDeleteShardNodes) {
 		if _, err := s.rpc.DeleteShard(s.ctx, server, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
@@ -686,7 +689,10 @@ func (s *controller) deleteShard() error {
 				slog.Any("error", err),
 				slog.Any("data-server", server),
 			)
-			return err
+			if idx < len(shardMeta.Ensemble) {
+				return err
+			}
+			continue
 		}
 
 		s.logger.Info(
