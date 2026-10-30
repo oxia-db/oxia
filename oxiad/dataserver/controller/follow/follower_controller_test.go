@@ -3600,6 +3600,34 @@ func TestFollowerControllerTruncateFailsWhenWalTruncateFails(t *testing.T) {
 	assert.NoError(t, fc.Close())
 }
 
+// A truncation below the commit offset would remove entries applied in the
+// database, which the follower wouldn't apply again once replaced: it refuses
+// it, and keeps its wal.
+func TestFollowerControllerTruncateRefusesBelowTheCommitOffset(t *testing.T) {
+	walFactory, kvFactory := newHookFactories(t)
+	fc := newReplicatingFollower(t, walFactory, kvFactory)
+	appendUncommittedEntries(t, fc, 3)
+	stream, closeStream := openStream(t, fc)
+	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: 1})
+	require.Eventually(t, func() bool { return fc.CommitOffset() == 1 }, 10*time.Second, 10*time.Millisecond)
+	closeStream()
+
+	_, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	_, err = fc.Truncate(&proto.TruncateRequest{Term: 2, HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}})
+	assert.ErrorIs(t, err, constant.ErrResourceConflict)
+	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
+	assert.EqualValues(t, 2, fc.(*followerController).wal.LastOffset())
+
+	// Up to the commit offset, it truncates
+	resp, err := fc.Truncate(&proto.TruncateRequest{Term: 2, HeadEntryId: &proto.EntryId{Term: 1, Offset: 1}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, resp.HeadEntryId.Offset)
+	assert.EqualValues(t, 1, fc.(*followerController).wal.LastOffset())
+
+	assert.NoError(t, fc.Close())
+}
+
 // The state applier retries the committed entries that it fails to read from
 // the WAL, once the leader sends its next request.
 func TestFollowerControllerStateApplierRetriesWalReadFailures(t *testing.T) {
