@@ -267,6 +267,9 @@ gracePeriod:
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
 	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
+	// The fenced data servers with the highest head entry, which have every
+	// committed entry: the members of the ensemble tied at it, or from alone
+	// when it's strictly ahead
 	var candidates []*proto.DataServerIdentity
 	var highest *proto.EntryId
 	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
