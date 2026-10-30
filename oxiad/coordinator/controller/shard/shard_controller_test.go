@@ -1986,7 +1986,9 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 			EnsembleChange: &proto.EnsembleChangeMetadata{From: s4, To: s3},
 		}},
 	}))
-	// The election of the term caught up, but didn't finish the change yet
+	// The election caught up, but leaves the change pending, as one of an
+	// earlier term does
+	current := &fakeElection{quorumCaughtUp: true}
 	sc := &controller{
 		namespace:       constant.DefaultNamespace,
 		shard:           shard,
@@ -1994,19 +1996,102 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 		rpc:             rpc,
 		ctx:             t.Context(),
 		logger:          slog.Default(),
-		currentElection: &fakeElection{quorumCaughtUp: true},
+		currentElection: current,
 	}
 
 	change := action.NewChangeEnsembleAction(shard, s2, s5)
 	sc.onChangeEnsemble(change)
 	_, err := change.Wait()
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
+	assert.Equal(t, 1, current.finishes)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.EqualValues(t, 2, metaSnap.Term)
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 	assertEnsembleChange(t, metaSnap.EnsembleChange, s4, s3)
 	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s5)))
+}
+
+// A change of the ensemble finishes the pending one once a majority of the
+// ensemble caught up, without waiting for the periodic tasks.
+func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, &proto.Namespace{
+		Name:              "my-namespace",
+		InitialShardCount: 1,
+		ReplicationFactor: 2,
+	}, &proto.ShardMetadata{
+		Status:   proto.ShardStatusUnknown,
+		Term:     1,
+		Leader:   nil,
+		Ensemble: []*proto.DataServerIdentity{s1, s2},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 2)
+	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	changeEnsemble := func(from, to *proto.DataServerIdentity) error {
+		for {
+			a := action.NewChangeEnsembleAction(shard, from, to)
+			sc.Dispatch(a)
+			_, err := a.Wait()
+			if !errors.Is(err, errs.ErrUnavailable) {
+				return err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	// s3 is behind at the fence: the change stays pending until it caught up
+	wg := concurrent.NewWaitGroup(1)
+	wg.Go(func() error { return changeEnsemble(s2, s3) })
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(-1, -1, nil)
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 3, true)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 3, 2, s3)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, wg.Wait(ctx))
+	assertEnsembleChange(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).EnsembleChange, s2, s3)
+	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	wg = concurrent.NewWaitGroup(1)
+	wg.Go(func() error { return changeEnsemble(s3, s4) })
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s4).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithFollowers(t, shard, 4, 2, s4)
+	require.NoError(t, wg.Wait(ctx))
+
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.EqualValues(t, 4, metaSnap.Term)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s4)
+	assertEnsembleChange(t, metaSnap.EnsembleChange, s3, s4)
+	assertShardEnsemble(t, metaSnap.PendingDeleteShardNodes, s2)
+	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s2)))
+
+	assert.NoError(t, sc.Close())
 }
 
 func TestControllerValidateChangeEnsembleFeaturesRejectsMissingFeatureInfo(t *testing.T) {
@@ -3895,6 +3980,22 @@ func TestControllerOnChangeEnsembleReturnsShardStatusLoadError(t *testing.T) {
 	_, err := changeEnsemble.Wait()
 	assert.ErrorContains(t, err, "status unavailable")
 	assert.Nil(t, s.currentElection)
+}
+
+// A change of the ensemble fails fast when the caught-up pending change can't be
+// finished: its caller retries it.
+func TestControllerOnChangeEnsembleReturnsFinishError(t *testing.T) {
+	s := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           5,
+		logger:          slog.Default(),
+		currentElection: &fakeElection{quorumCaughtUp: true, finishErr: errors.New("store unavailable")},
+	}
+
+	changeEnsemble := action.NewChangeEnsembleAction(5, testDataServer("s1"), testDataServer("s2"))
+	s.onChangeEnsemble(changeEnsemble)
+	_, err := changeEnsemble.Wait()
+	assert.ErrorContains(t, err, "store unavailable")
 }
 
 func TestControllerRefreshSkipsTerminatedController(t *testing.T) {

@@ -118,9 +118,9 @@ import (
 //
 // Otherwise, TryFinishEnsembleChange finishes the change once a majority of the
 // ensemble caught up (IsQuorumCaughtUp). The shard controller calls it from its
-// periodic tasks, and refuses another change until then: with two changes, the
-// ensembles would differ by two members, and a fence quorum could miss a
-// committed entry. The catch-up is only known in memory: after a restart of the
+// periodic tasks and before another change, which it refuses until then: with
+// two changes, the ensembles would differ by two members, and a fence quorum
+// could miss a committed entry. The catch-up is only known in memory: after a restart of the
 // coordinator, the shard controller runs an election to finish the change.
 type Election interface {
 	// Start runs the election, and returns the elected leader. It fails if
