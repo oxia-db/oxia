@@ -773,7 +773,7 @@ func TestMonitorEvaluateSkipsIneligibleShards(t *testing.T) {
 	electing := shard(5)
 	electing.Status = proto.ShardStatusElection
 	removed := shard(6)
-	removed.RemovedNodes = []*proto.DataServerIdentity{leader}
+	removed.EnsembleChange = &proto.EnsembleChangeMetadata{From: leader, To: leader}
 	require.NoError(t, metadata.CreateNamespaceStatus("default", &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{
 			0: withoutLeader,

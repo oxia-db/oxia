@@ -16,7 +16,6 @@ package sharding
 
 import (
 	"log/slog"
-	"slices"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -37,14 +36,4 @@ func (h HeadEntries) LogValue() slog.Value {
 func (h HeadEntries) Move(server *proto.DataServerIdentity, to HeadEntries) {
 	to[server] = h[server]
 	delete(h, server)
-}
-
-// MoveDataServer moves a data server from a list of data servers to another,
-// e.g. out of the ensemble.
-func MoveDataServer(server *proto.DataServerIdentity, from *[]*proto.DataServerIdentity,
-	to *[]*proto.DataServerIdentity) {
-	*from = slices.DeleteFunc(*from, func(s *proto.DataServerIdentity) bool {
-		return s.GetNameOrDefault() == server.GetNameOrDefault()
-	})
-	*to = append(*to, server)
 }

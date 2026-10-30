@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
@@ -544,15 +545,13 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	source := changeEnsembleAction.From.GetNameOrDefault()
 	target := changeEnsembleAction.To.GetNameOrDefault()
 	ensembleSize := len(shardMeta.Ensemble)
-	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == source
-	})
+	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
+		sharding.MatchDataServer(changeEnsembleAction.From))
 	if len(targetEnsemble) != ensembleSize-1 {
 		return fmt.Errorf("%w: invalid change ensemble: source data server %q must appear exactly once in the current ensemble", errs.ErrInvalidArgument, source)
 	}
-	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble), func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == target
-	})
+	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
+		sharding.MatchDataServer(changeEnsembleAction.To))
 	if len(ensembleWithoutTarget) != ensembleSize {
 		return fmt.Errorf("%w: invalid change ensemble: target data server %q is already in the current ensemble", errs.ErrInvalidArgument, target)
 	}
@@ -678,7 +677,11 @@ func (s *controller) deleteShard() error {
 		s.currentElection.Cancel()
 		s.currentElection = nil
 	}
-	for idx, server := range slices.Concat(shardMeta.Ensemble, shardMeta.RemovedNodes, shardMeta.PendingDeleteShardNodes) {
+	servers := slices.Concat(shardMeta.Ensemble, shardMeta.PendingDeleteShardNodes)
+	if change := shardMeta.GetEnsembleChange(); change != nil {
+		servers = append(servers, change.From)
+	}
+	for idx, server := range servers {
 		if _, err := s.rpc.DeleteShard(s.ctx, server, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
@@ -780,11 +783,12 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while changing the ensemble: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-	// A retained data server may still hold committed entries that the ensemble
-	// doesn't: a second change would let a fence quorum miss them
-	if len(shardMeta.RemovedNodes) > 0 {
-		changeEnsembleAction.Error(fmt.Errorf("%w: the retained data servers %v are not released yet",
-			errs.ErrFailedPrecondition, shardMeta.RemovedNodes))
+	// The data server removed by the pending change may still hold committed
+	// entries that the ensemble doesn't: a second change would let a fence
+	// quorum miss them
+	if change := shardMeta.GetEnsembleChange(); change != nil {
+		changeEnsembleAction.Error(fmt.Errorf("%w: the change of the ensemble from %q to %q is still pending",
+			errs.ErrFailedPrecondition, change.GetFrom().GetNameOrDefault(), change.GetTo().GetNameOrDefault()))
 		return
 	}
 	if err := s.validateChangeEnsembleFeatures(shardMeta, changeEnsembleAction); err != nil {
@@ -863,9 +867,9 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	if len(shardMeta.RemovedNodes) > 0 {
-		if err := s.handleRetainedNodes(shardMeta); err != nil {
-			s.logger.Warn("Failed to handle the retained data servers", slog.Any("error", err))
+	if shardMeta.GetEnsembleChange() != nil {
+		if err := s.handleEnsembleChange(shardMeta); err != nil {
+			s.logger.Warn("Failed to handle the change of the ensemble", slog.Any("error", err))
 		}
 	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
@@ -877,11 +881,11 @@ func (s *controller) handlePeriodicTasks() {
 	s.checkTermFeatures(shardMeta)
 }
 
-func (s *controller) handleRetainedNodes(shardMeta *proto.ShardMetadata) error {
+func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error {
+	change := shardMeta.GetEnsembleChange()
 	if s.currentElection == nil {
 		if shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
-			s.logger.Info("Starting an election to release the retained data servers",
-				slog.Any("retained-data-servers", shardMeta.RemovedNodes))
+			s.logger.Info("Starting an election to complete the change of the ensemble", slog.Any("change", change))
 			channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
 		}
 		return nil
@@ -889,14 +893,25 @@ func (s *controller) handleRetainedNodes(shardMeta *proto.ShardMetadata) error {
 	if !s.currentElection.IsQuorumCaughtUp() {
 		return nil
 	}
+	term := s.currentElection.Term()
+	completed := false
 	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
-		current.PendingDeleteShardNodes = slices.Concat(current.PendingDeleteShardNodes, current.RemovedNodes)
-		current.RemovedNodes = nil
+		// A catch-up is of its election's term only: during a handover, the other
+		// coordinator may have elected since, undone the change, or started another
+		if current.Term != term || current.EnsembleChange == nil {
+			return false, nil
+		}
+		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes,
+			current.EnsembleChange.From)
+		current.EnsembleChange = nil
+		completed = true
 		return true, nil
 	}); err != nil {
-		return fmt.Errorf("release the retained data servers: %w", err)
+		return fmt.Errorf("complete the change of the ensemble: %w", err)
 	}
-	s.logger.Info("Released the retained data servers", slog.Any("retained-data-servers", shardMeta.RemovedNodes))
+	if completed {
+		s.logger.Info("Completed the change of the ensemble", slog.Any("change", change))
+	}
 	return nil
 }
 

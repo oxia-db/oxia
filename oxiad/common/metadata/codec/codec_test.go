@@ -432,6 +432,13 @@ namespaces:
         removedNodes:
           - public: localhost:7658
             internal: localhost:7659
+        ensembleChange:
+          from:
+            public: localhost:7658
+            internal: localhost:7659
+          to:
+            public: localhost:6648
+            internal: localhost:6649
         pendingDeleteShardNodes:
           - public: localhost:8658
             internal: localhost:8659
@@ -446,7 +453,9 @@ instanceId: instance-yaml
 	shard := status.GetNamespaces()["default"].GetShards()[1]
 	require.Equal(t, commonproto.ShardStatusElection, shard.GetStatusOrDefault())
 	require.Len(t, shard.GetEnsemble(), 1)
-	require.Len(t, shard.GetRemovedNodes(), 1)
+	require.Len(t, shard.GetRemovedNodes(), 1) //nolint:staticcheck // the deprecated field still parses
+	require.Equal(t, "localhost:7658", shard.GetEnsembleChange().GetFrom().GetPublic())
+	require.Equal(t, "localhost:6648", shard.GetEnsembleChange().GetTo().GetPublic())
 	require.Len(t, shard.GetPendingDeleteShardNodes(), 1)
 	require.Equal(t, uint32(1), shard.GetInt32HashRange().GetMin())
 	require.Equal(t, uint32(2), shard.GetInt32HashRange().GetMax())
@@ -584,6 +593,7 @@ func TestEncodeClusterStatusYAMLOmitsUnsetFields(t *testing.T) {
 	require.NotContains(t, string(data), "pendingDeleteShardNodes: []")
 	require.NotContains(t, string(data), "int32HashRange: null")
 	require.NotContains(t, string(data), "split: null")
+	require.NotContains(t, string(data), "ensembleChange: null")
 
 	decoded, err := ClusterStatusCodec.UnmarshalYAML(data)
 	require.NoError(t, err)

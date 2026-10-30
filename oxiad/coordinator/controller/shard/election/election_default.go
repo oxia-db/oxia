@@ -83,25 +83,26 @@ type election struct {
 	becomeLeaderLatencyHistogram   metric.LatencyHistogram
 }
 
-// refreshEnsembleInfo returns the ensemble and the retained data servers of the
-// shard, at the addresses they're registered with: the retained data servers
-// are fenced too, until they're released.
+// refreshEnsembleInfo returns the ensemble and its pending change, at the
+// addresses the data servers are registered with.
 func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*proto.DataServerIdentity,
-	retained []*proto.DataServerIdentity, err error) {
-	servers := slices.Concat(meta.Ensemble, meta.RemovedNodes)
+	change *proto.EnsembleChangeMetadata, err error) {
+	servers := meta.Ensemble
+	if meta.EnsembleChange != nil {
+		servers = slices.Concat(servers, []*proto.DataServerIdentity{meta.EnsembleChange.From})
+	}
 	refreshed := make([]*proto.DataServerIdentity, len(servers))
 	for idx, server := range servers {
 		borrowedDataServer, exist, err := e.metadataStore.GetDataServer(server.GetNameOrDefault())
 		if err != nil {
 			return nil, nil, err
 		}
+		refreshed[idx] = server
 		if exist {
 			if identity := borrowedDataServer.UnsafeBorrow().GetIdentity(); identity != nil {
 				refreshed[idx] = identity
-				continue
 			}
 		}
-		refreshed[idx] = server
 	}
 	if e.logger.Enabled(e.ctx, slog.LevelDebug) {
 		if !reflect.DeepEqual(servers, refreshed) {
@@ -109,18 +110,29 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 				slog.Any("new-ensemble", refreshed))
 		}
 	}
-	// Capped: appending to the ensemble must not overwrite the retained ones
-	size := len(meta.Ensemble)
-	return refreshed[:size:size], refreshed[size:], nil
+	// Capped, so that an append to the ensemble doesn't overwrite from
+	ensemble = refreshed[:len(meta.Ensemble):len(meta.Ensemble)]
+	if meta.EnsembleChange != nil {
+		idx := slices.IndexFunc(ensemble, sharding.MatchDataServer(meta.EnsembleChange.To))
+		if idx < 0 {
+			return nil, nil, fmt.Errorf("%w: the pending change of the ensemble adds %q, which isn't a member of it",
+				errs.ErrShardNotElectable, meta.EnsembleChange.To.GetNameOrDefault())
+		}
+		change = &proto.EnsembleChangeMetadata{From: refreshed[len(meta.Ensemble)], To: ensemble[idx]}
+	}
+	return ensemble, change, nil
 }
 
 //nolint:revive
 func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemble []*proto.DataServerIdentity,
-	retained []*proto.DataServerIdentity) (ensembleHeads sharding.HeadEntries,
+	change *proto.EnsembleChangeMetadata) (ensembleHeads sharding.HeadEntries,
 	retainedHeads sharding.HeadEntries, features []proto.Feature, err error) {
 	fenceQuorumTimer := e.newTermQuorumLatencyHistogram.Timer()
 
-	fencingDataServers := slices.Concat(ensemble, retained)
+	fencingDataServers := ensemble
+	if change != nil {
+		fencingDataServers = slices.Concat(ensemble, []*proto.DataServerIdentity{change.From})
+	}
 	fencingQuorumSize := len(fencingDataServers)
 	// todo: require a majority of the ensemble before the change and of the one
 	//  after instead, which is enough and tolerates a failure of the new member
@@ -243,11 +255,11 @@ gracePeriod:
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 2. retained          |--> one strictly ahead: it swaps with the
-//	           |                      |    lowest member of the ensemble, and the
-//	           |                      |    choice starts again
+//	           | 2. from of the       |    strictly ahead: the change is undone,
+//	           |    pending change    |    from swaps back with to, and is the
+//	           |                      |    only candidate
 //	           +----------------------+
-//	                      | none
+//	                      |
 //	           +----------------------+
 //	           | 3. select            |    the leader among the ties, the others
 //	           |                      |    follow
@@ -268,16 +280,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	}
 	if len(candidates) > 0 {
 		if _, retained := retainedHeads[candidates[0]]; retained {
-			replaced := slices.MinFunc(maps.Keys(ensembleHeads), func(a, b *proto.DataServerIdentity) int {
-				return entry.Compare(ensembleHeads[a], ensembleHeads[b])
-			})
-			e.logger.Warn("A retained data server is ahead of the ensemble, it goes back into the ensemble",
-				slog.Any("restored", candidates[0]), slog.Any("replaced", replaced))
-			ensembleHeads.Move(replaced, retainedHeads)
-			retainedHeads.Move(candidates[0], ensembleHeads)
-			sharding.MoveDataServer(replaced, &e.meta.Ensemble, &e.meta.RemovedNodes)
-			sharding.MoveDataServer(candidates[0], &e.meta.RemovedNodes, &e.meta.Ensemble)
-			return e.chooseLeader(ensembleHeads, retainedHeads)
+			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -297,6 +300,25 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 		}
 	}
 	return leader, followers, nil
+}
+
+// undoEnsembleChange restores the ensemble before the pending change, as Raft
+// rolls back a change that isn't committed, when the retained data server is
+// ahead of every fenced member: it has every committed entry, so the ensemble
+// before the change has them on a majority.
+func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensembleHeads sharding.HeadEntries,
+	retainedHeads sharding.HeadEntries) {
+	change := e.meta.EnsembleChange
+	e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
+		slog.Any("from", change.From), slog.Any("to", change.To))
+	// To may have missed the fence
+	maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ *proto.EntryId) bool {
+		return server.GetNameOrDefault() == change.To.GetNameOrDefault()
+	})
+	retainedHeads.Move(retained, ensembleHeads)
+	e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), retained)
+	e.meta.EnsembleChange = nil
+	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 }
 
 func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
@@ -502,28 +524,18 @@ func (e *election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	}
 	from := e.changeEnsemble.From
 	to := e.changeEnsemble.To
-	if slices.ContainsFunc(mutShardMeta.Ensemble, func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == to.GetNameOrDefault()
-	}) {
+	if slices.ContainsFunc(mutShardMeta.Ensemble, sharding.MatchDataServer(to)) {
 		return
-	}
-	if !slices.ContainsFunc(mutShardMeta.RemovedNodes, func(server *proto.DataServerIdentity) bool {
-		return server.GetNameOrDefault() == from.GetNameOrDefault()
-	}) {
-		mutShardMeta.RemovedNodes = append(mutShardMeta.RemovedNodes, from)
 	}
 	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
-	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes, func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == to.GetNameOrDefault()
-	})
-	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, func(dataServer *proto.DataServerIdentity) bool {
-		return dataServer.GetNameOrDefault() == from.GetNameOrDefault()
-	})
+	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes,
+		sharding.MatchDataServer(to))
+	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, sharding.MatchDataServer(from))
 	mutShardMeta.Ensemble = append(mutShardMeta.Ensemble, to)
+	mutShardMeta.EnsembleChange = &proto.EnsembleChangeMetadata{From: from, To: to}
 	e.logger.Info(
 		"Changing ensemble",
-		slog.Any("removed-data-servers", mutShardMeta.RemovedNodes),
 		slog.Any("new-ensemble", mutShardMeta.Ensemble),
 		slog.Any("from", from),
 		slog.Any("to", to),
@@ -535,7 +547,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	if err != nil {
 		return nil, err
 	}
-	refreshedEnsemble, refreshedRetained, err := e.refreshEnsembleInfo(e.meta)
+	refreshedEnsemble, refreshedChange, err := e.refreshEnsembleInfo(e.meta)
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +556,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	e.meta.Leader = nil
 	e.meta.Term++
 	e.meta.Ensemble = refreshedEnsemble
-	e.meta.RemovedNodes = refreshedRetained
+	e.meta.EnsembleChange = refreshedChange
 	if err = e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		switch {
 		case current.GetStatusOrDefault() == proto.ShardStatusDeleting:
@@ -560,7 +572,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 		current.Term = e.meta.Term
 		current.Leader = e.meta.Leader
 		current.Ensemble = e.meta.Ensemble
-		current.RemovedNodes = e.meta.RemovedNodes
+		current.EnsembleChange = e.meta.EnsembleChange
 		current.PendingDeleteShardNodes = e.meta.PendingDeleteShardNodes
 		return true, nil
 	}); err != nil {
@@ -597,7 +609,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 		e.meta.Term,
 		termOptions,
 		e.meta.Ensemble,
-		e.meta.RemovedNodes)
+		e.meta.EnsembleChange)
 	if err != nil {
 		return nil, err
 	}
@@ -626,7 +638,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 		current.Term = e.meta.Term
 		current.Leader = e.meta.Leader
 		current.Ensemble = e.meta.Ensemble
-		current.RemovedNodes = e.meta.RemovedNodes
+		current.EnsembleChange = e.meta.EnsembleChange
 		current.PendingDeleteShardNodes = e.meta.PendingDeleteShardNodes
 		return true, nil
 	}); err != nil {
@@ -728,6 +740,10 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 		return fmt.Errorf("%w: the ensemble now supports features %v", errs.ErrShardFeaturesChanged, added)
 	}
 	return nil
+}
+
+func (e *election) Term() int64 {
+	return e.meta.GetTerm()
 }
 
 func (e *election) IsQuorumCaughtUp() bool {
