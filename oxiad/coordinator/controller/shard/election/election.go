@@ -43,9 +43,9 @@ import (
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 4. fence             |--x no majority of the ensemble and from,
-//	           |    NewTerm to the    |    or of the ensemble
-//	           |    ensemble, and to  |
+//	           | 4. fence             |--x no majority of the ensemble, or not
+//	           |    NewTerm to the    |    half, rounded up, of the one before a
+//	           |    ensemble, and to  |    pending change: from instead of to
 //	           |    from of a pending |
 //	           |    change            |
 //	           +----------------------+
@@ -89,10 +89,11 @@ import (
 //
 // A change replaces one member of the ensemble, "from", with "to", and stays
 // pending in the shard status (EnsembleChangeMetadata). A committed entry is on
-// a majority of the ensemble before or after the change, which differ by one
-// member, so a fence quorum of the ensemble and from includes one of its
-// holders. From is thus fenced and is a candidate, until the ensemble has every
-// committed entry on a majority without from:
+// a majority of the ensemble before or after the change. As in Raft's joint
+// consensus, the fence includes one of its holders: a majority of the ensemble,
+// and half, rounded up, of the one before the change, which overlaps every
+// majority of it. From is thus in the fence and is a candidate, until the
+// ensemble has every committed entry on a majority without from:
 //
 //	ensemble {A,B,C}         ensemble {A,C,D}              ensemble {A,C,D}
 //	change   none    ---->   change {from B, to D} ---->   change none

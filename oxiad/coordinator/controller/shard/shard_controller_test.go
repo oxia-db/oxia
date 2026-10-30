@@ -1271,9 +1271,9 @@ func TestControllerDispatchChangeEnsembleKeepsEnsembleOnFailedElection(t *testin
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 }
 
-// The removed data server counts toward the fencing majority of a change
-// ensemble election, but it is neither a leader nor a follower candidate. With
-// RF=2, the leader and the removed follower reach that majority on their own:
+// The removed data server counts toward the fence quorum of the ensemble
+// before the change, but it is neither a leader nor a follower candidate. With
+// RF=2, the leader and the removed follower reach that quorum on their own:
 // the election must still wait for the new member, otherwise the leader gets
 // no follower to commit its head entry and BecomeLeader cannot complete.
 func TestControllerDispatchChangeEnsembleWaitsForNewEnsembleQuorum(t *testing.T) {

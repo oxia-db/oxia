@@ -28,3 +28,12 @@ func TestMajorityOverlapsAnyOtherMajority(t *testing.T) {
 	}
 	assert.Equal(t, uint32(2), Majority(uint32(3)))
 }
+
+func TestMajorityOverlapOverlapsEveryMajority(t *testing.T) {
+	for n, expected := range map[int]int{1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 10: 5} {
+		assert.Equal(t, expected, MajorityOverlap(n), "n=%d", n)
+		// It can't be disjoint from a majority, and one member less can
+		assert.Greater(t, MajorityOverlap(n)+Majority(n), n, "n=%d", n)
+		assert.Equal(t, n, MajorityOverlap(n)-1+Majority(n), "n=%d", n)
+	}
+}

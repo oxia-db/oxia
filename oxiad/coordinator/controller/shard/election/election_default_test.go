@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -316,7 +317,88 @@ func TestElectionFenceQuorumRequiresEnsembleMajority(t *testing.T) {
 
 	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
 		&proto.EnsembleChangeMetadata{From: removed, To: s2})
-	assert.ErrorContains(t, err, "quorum of the new ensemble not reached")
+	assert.ErrorContains(t, err, "quorum of the ensemble not reached")
+}
+
+// With from and to both unreachable, the other members are a majority of the
+// ensemble before the change and of the one after it: the fence succeeds.
+func TestElectionFenceQuorumSucceedsWithoutFromAndTo(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	removed := testDataServer("removed")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
+	rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
+
+	candidates, retainedHeads, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
+	require.NoError(t, err)
+	assert.Len(t, candidates, 2)
+	assert.Empty(t, retainedHeads)
+}
+
+// With an even replication factor, overlapping every majority of the ensemble
+// before the change takes one member less than a majority: with from
+// unreachable, the fence succeeds with a majority of the ensemble that holds to.
+func TestElectionFenceQuorumSucceedsWithoutFromWithEvenReplicationFactor(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	to := testDataServer("to")
+	removed := testDataServer("removed")
+	for _, test := range []struct {
+		name        string
+		ensemble    []*proto.DataServerIdentity
+		unreachable []*proto.DataServerIdentity
+	}{
+		{name: "rf 2", ensemble: []*proto.DataServerIdentity{s1, to}},
+		{name: "rf 4", ensemble: []*proto.DataServerIdentity{s1, s2, s3, to},
+			unreachable: []*proto.DataServerIdentity{s3}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rpc := rpctest.NewRpcProvider()
+			e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+			for _, server := range test.ensemble {
+				if slices.Contains(test.unreachable, server) {
+					rpc.GetNode(server).NewTermResponse(0, 0, errors.New("unreachable"))
+				} else {
+					rpc.GetNode(server).NewTermResponse(1, 0, nil)
+				}
+			}
+			rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
+
+			candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, test.ensemble,
+				&proto.EnsembleChangeMetadata{From: removed, To: to})
+			require.NoError(t, err)
+			assert.Len(t, candidates, len(test.ensemble)-len(test.unreachable))
+		})
+	}
+}
+
+// A majority of the ensemble isn't enough when it holds to and isn't a majority
+// of the ensemble before the change: the entries committed before it may be on
+// the others only.
+func TestElectionFenceQuorumRequiresOldEnsembleMajority(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	removed := testDataServer("removed")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
+	rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
+
+	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
+	assert.ErrorContains(t, err, "quorum not reached")
 }
 
 func TestElectionChooseLeaderFailsWithoutLeader(t *testing.T) {

@@ -134,11 +134,17 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 		fencingDataServers = slices.Concat(ensemble, []*proto.DataServerIdentity{change.From})
 	}
 	fencingQuorumSize := len(fencingDataServers)
-	// todo: require a majority of the ensemble before the change and of the one
-	//  after instead, which is enough and tolerates a failure of the new member
-	//  while a dead retained data server isn't released; it needs the ensemble
-	//  before the change in the shard metadata
-	majority := quorum.Majority(fencingQuorumSize)
+	// As Raft's joint consensus, the fence overlaps every majority of the
+	// ensemble before the change, from instead of to, which holds the entries
+	// committed before it, and of the ensemble, which holds the ones committed
+	// since. The first takes one member less than a majority with an even
+	// replication factor; the second is a majority, which the leader also needs
+	// as followers
+	majority := quorum.Majority(len(ensemble))
+	oldEnsembleQuorum := quorum.MajorityOverlap(len(ensemble))
+	inOldEnsemble := func(server *proto.DataServerIdentity) bool {
+		return change == nil || !sharding.MatchDataServer(change.To)(server)
+	}
 
 	// Use a new context, so we can cancel the pending requests
 	fencingContext, fencingContextCancel := context.WithCancel(e.ctx)
@@ -188,12 +194,9 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 	enabledFeatures := make(map[proto.Feature]bool)
 	retainedHeads = make(sharding.HeadEntries)
 	ensembleHeads = make(sharding.HeadEntries)
-	successResponses := 0
+	oldEnsembleFenced := 0
 	totalResponses := 0
-	// The new leader also needs a majority of the new ensemble as followers
-	ensembleMajority := quorum.Majority(len(ensemble))
-	for (successResponses < majority || len(ensembleHeads) < ensembleMajority) &&
-		totalResponses < fencingQuorumSize {
+	for (oldEnsembleFenced < oldEnsembleQuorum || len(ensembleHeads) < majority) && totalResponses < fencingQuorumSize {
 		fencingResponse := <-ch
 
 		totalResponses++
@@ -201,7 +204,9 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 			err = multierr.Append(err, fencingResponse.Err)
 			continue
 		}
-		successResponses++
+		if inOldEnsemble(fencingResponse.DataServer) {
+			oldEnsembleFenced++
+		}
 		for _, f := range fencingResponse.Response.GetFeaturesEnabled() {
 			enabledFeatures[f] = true
 		}
@@ -211,12 +216,12 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 			retainedHeads[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
 		}
 	}
-	if successResponses < majority {
+	if oldEnsembleFenced < oldEnsembleQuorum {
 		return nil, nil, nil, errors.Wrap(err, "election failed: quorum not reached")
 	}
-	if len(ensembleHeads) < ensembleMajority {
+	if len(ensembleHeads) < majority {
 		return nil, nil, nil, errors.Errorf(
-			"election failed: quorum of the new ensemble not reached: %d of %d members fenced",
+			"election failed: quorum of the ensemble not reached: %d of %d members fenced",
 			len(ensembleHeads), len(ensemble))
 	}
 	// If we have already reached a quorum of successful responses, we can wait a
