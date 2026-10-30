@@ -233,12 +233,6 @@ func (n *controller) healthPingWithRetries() {
 	var failureEpoch int64
 
 	_ = backoff.RetryNotify(func() error {
-		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
-		if err != nil {
-			failureEpoch = n.currentStatusEpoch()
-			return err
-		}
-
 		ticker := time.NewTicker(n.healthPolicy.ProbeInterval)
 		defer ticker.Stop()
 		for {
@@ -254,6 +248,12 @@ func (n *controller) healthPingWithRetries() {
 				lastObservedEpoch = epoch
 			}
 
+			healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+			if err != nil {
+				failureEpoch = epoch
+				return err
+			}
+
 			// Immediate check on startup instead of waiting for first tick
 			switch err := n.doHealthPing(epoch, healthClient); {
 			case err == nil:
@@ -263,7 +263,7 @@ func (n *controller) healthPingWithRetries() {
 				// is shutting down): fail it right away.
 				failureEpoch = epoch
 				return err
-			case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled:
+			case n.ctx.Err() != nil:
 				// The controller is shutting down
 				return nil
 			default:
