@@ -4104,6 +4104,45 @@ func TestControllerHandlePendingDeleteShardKeepsRemovedShard(t *testing.T) {
 	assert.False(t, exists)
 }
 
+// A removed data server that fails to delete the shard, e.g. a dead one that was
+// replaced, stays pending, and the others are deleted and dropped.
+func TestControllerHandlePendingDeleteShardDeletesPastAFailedDataServer(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+	s1 := testDataServer("s1")
+	dead := testDataServer("dead")
+	removed := testDataServer("removed")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	shardMeta := &proto.ShardMetadata{
+		Status:                  proto.ShardStatusSteadyState,
+		Term:                    1,
+		Leader:                  s1,
+		Ensemble:                []*proto.DataServerIdentity{s1},
+		PendingDeleteShardNodes: []*proto.DataServerIdentity{dead, removed},
+	}
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
+	s := &controller{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadataStore: metadata,
+		rpc:           rpc,
+		ctx:           t.Context(),
+		logger:        slog.Default(),
+	}
+
+	rpc.GetNode(dead).DeleteShardResponse(errors.New("unreachable"))
+	rpc.GetNode(removed).DeleteShardResponse(nil)
+	err := s.handlePendingDeleteShard(shardMeta)
+	assert.ErrorContains(t, err, "unreachable")
+
+	rpc.GetNode(dead).ExpectDeleteShardRequest(t, shard, 1)
+	rpc.GetNode(removed).ExpectDeleteShardRequest(t, shard, 1)
+	stored, exists := testShardMetadata(metadata, constant.DefaultNamespace, shard)
+	require.True(t, exists)
+	assertShardEnsemble(t, stored.PendingDeleteShardNodes, dead)
+}
+
 // The term gauge of a shard reports the term of its last leader election, and
 // -1 until the shard controller runs one.
 func TestNewControllerReportsTermGauge(t *testing.T) {
