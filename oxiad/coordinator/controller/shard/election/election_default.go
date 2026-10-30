@@ -284,6 +284,8 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
 		} else if change := e.meta.EnsembleChange; change != nil &&
 			slices.ContainsFunc(candidates, sharding.MatchDataServer(change.To)) {
+			// To has every committed entry: with it, the ensemble has each of them on a
+			// majority without from
 			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
 				slog.Any("from", change.From), slog.Any("to", change.To))
 			e.meta.EnsembleChange = nil
