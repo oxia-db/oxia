@@ -650,8 +650,8 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	assertShardEnsemble(t, stored.GetPendingDeleteShardNodes(), s4)
 }
 
-// The election keeps the change pending until to caught up, after a majority
-// of the ensemble did, and TryFinishEnsembleChange finishes it then. A canceled
+// The election keeps the change pending until a majority of the ensemble caught
+// up, which a dead follower doesn't block, and finishes it then. A canceled
 // election never reports a caught-up majority, nor finishes the change.
 func TestElectionStartKeepsChangePending(t *testing.T) {
 	var shard int64 = 5
@@ -663,7 +663,7 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 		name     string
 		caughtUp bool
 	}{
-		{name: "majority, then to caught up", caughtUp: true},
+		{name: "majority caught up, s4 dead", caughtUp: true},
 		{name: "canceled"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -694,71 +694,70 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
 				assert.False(t, e.IsQuorumCaughtUp())
-				require.NoError(t, e.TryFinishEnsembleChange())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 				return
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
-			// The majority doesn't finish the change: to is behind
-			require.NoError(t, e.TryFinishEnsembleChange())
-			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
-			assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
-
-			rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 			assert.Eventually(t, func() bool {
-				return e.TryFinishEnsembleChange() == nil &&
-					requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleChange() == nil
+				return requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleChange() == nil
 			}, 10*time.Second, 10*time.Millisecond)
-			stored = requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+			assert.True(t, e.IsQuorumCaughtUp())
+			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
+			assert.Nil(t, stored.GetEnsembleChange())
 			assertShardEnsemble(t, stored.GetPendingDeleteShardNodes(), s2)
 		})
 	}
 }
 
-// TryFinishEnsembleChange finishes the change once to caught up, if the shard is
-// still in the term of the election and the change is pending; a failed write
-// is returned.
-func TestElectionTryFinishEnsembleChange(t *testing.T) {
+// finishEnsembleChange finishes the change if the shard is still in the term of
+// the election and the change is pending; a failed write is returned, and
+// finishEnsembleChangeWithRetries tries it again.
+func TestElectionFinishEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s4 := testDataServer("s4")
 	change := &proto.EnsembleChangeMetadata{From: s2, To: s4}
 	for _, test := range []struct {
-		name       string
-		change     *proto.EnsembleChangeMetadata
-		caughtUp   bool
-		storedTerm int64
-		writeErr   error
-		finished   bool
+		name         string
+		storedChange *proto.EnsembleChangeMetadata
+		storedTerm   int64
+		writeErr     error
+		withRetries  bool
+		finished     bool
 	}{
-		{name: "to caught up", change: change, caughtUp: true, storedTerm: 3, finished: true},
-		{name: "to behind", change: change, storedTerm: 3},
-		{name: "no change", caughtUp: true, storedTerm: 3},
-		{name: "later term", change: change, caughtUp: true, storedTerm: 4},
-		{name: "write failure", change: change, caughtUp: true, storedTerm: 3, writeErr: errors.New("store unavailable")},
+		{name: "pending", storedChange: change, storedTerm: 3, finished: true},
+		{name: "later term", storedChange: change, storedTerm: 4},
+		{name: "already finished", storedTerm: 3},
+		{name: "write failure", storedChange: change, storedTerm: 3, writeErr: errors.New("store unavailable")},
+		{name: "write failure, retried", storedChange: change, storedTerm: 3, writeErr: errors.New("store unavailable"),
+			withRetries: true, finished: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
 				&proto.ClusterConfiguration{})
 			storeTestShardMetadata(t, base, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 				Status: proto.ShardStatusSteadyState, Term: test.storedTerm, Leader: s1,
-				Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: change})
+				Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.storedChange})
 			metadata := &hookedMetadata{Metadata: base}
 			if test.writeErr != nil {
-				metadata.patchShardStatus = func(string, int64, func(*proto.ShardMetadata) (bool, error)) error {
-					return test.writeErr
+				failed := false
+				metadata.patchShardStatus = func(namespace string, shard int64,
+					modify func(*proto.ShardMetadata) (bool, error)) error {
+					if !failed {
+						failed = true
+						return test.writeErr
+					}
+					return base.PatchShardStatus(namespace, shard, modify)
 				}
 			}
-			e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, &proto.ShardMetadata{
-				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change})
-			e.toCaughtUp.Store(test.caughtUp)
+			e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, &proto.ShardMetadata{})
 
-			err := e.TryFinishEnsembleChange()
-			if test.writeErr != nil {
+			if test.withRetries {
+				e.finishEnsembleChangeWithRetries(3)
+			} else if err := e.finishEnsembleChange(3); test.writeErr != nil {
 				assert.ErrorIs(t, err, test.writeErr)
 			} else {
 				require.NoError(t, err)
@@ -767,10 +766,11 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 			if test.finished {
 				assert.Nil(t, stored.GetEnsembleChange())
 				assertShardEnsemble(t, stored.GetPendingDeleteShardNodes(), s2)
-				assert.Nil(t, e.meta.GetEnsembleChange())
 				return
 			}
-			assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
+			if test.storedChange != nil {
+				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
+			}
 			assert.Empty(t, stored.GetPendingDeleteShardNodes())
 		})
 	}
