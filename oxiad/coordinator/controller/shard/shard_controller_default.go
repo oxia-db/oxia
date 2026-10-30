@@ -777,6 +777,11 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
 		}
+		// Don't wait for the periodic tasks to finish the pending change
+		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
+			changeEnsembleAction.Error(err)
+			return
+		}
 	}
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
