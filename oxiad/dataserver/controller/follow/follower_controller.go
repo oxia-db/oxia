@@ -455,6 +455,13 @@ func (fc *followerController) Truncate(req *proto.TruncateRequest) (*proto.Trunc
 	if newTerm != fc.term.Load() {
 		return nil, constant.ErrInvalidTerm
 	}
+	// The entries up to the commit offset are applied in the database, and the
+	// follower doesn't apply the entries that replace them: it would diverge
+	if commitOffset := fc.commitOffset.Load(); req.HeadEntryId.Offset < commitOffset {
+		return nil, errors.Wrapf(constant.ErrResourceConflict,
+			"truncating below the commit offset. truncate-offset: %d - commit-offset: %d",
+			req.HeadEntryId.Offset, commitOffset)
+	}
 	fc.status.Store(int32(proto.ServingStatus_FOLLOWER))
 	headOffset, err := fc.wal.TruncateLog(req.HeadEntryId.Offset)
 	if err != nil {
