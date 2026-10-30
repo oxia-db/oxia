@@ -28,6 +28,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 	gproto "google.golang.org/protobuf/proto"
 
 	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
@@ -893,18 +894,22 @@ func (s *controller) handlePeriodicTasks() {
 // its ensemble, then drops them from the pending-delete nodes, on top of the
 // current metadata of the shard. Other writers update the shard concurrently,
 // e.g. a namespace deletion marks it Deleting, and a write of the copy read
-// before the deletions would revert them.
+// before the deletions would revert them. A data server that fails, e.g. a dead
+// one that was replaced, doesn't hold back the others.
 func (s *controller) handlePendingDeleteShard(shardMeta *proto.ShardMetadata) error {
 	deleted := make(map[string]bool, len(shardMeta.PendingDeleteShardNodes))
+	var err error
 	for _, ds := range shardMeta.PendingDeleteShardNodes {
 		s.logger.Info("Deleting shard from removed data server", slog.Any("data-server", ds))
 
-		if _, err := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
+		if _, deleteErr := s.rpc.DeleteShard(s.ctx, ds, &proto.DeleteShardRequest{
 			Namespace: s.namespace,
 			Shard:     s.shard,
 			Term:      shardMeta.Term,
-		}); err != nil {
-			return fmt.Errorf("delete shard from removed data server %s: %w", ds.GetNameOrDefault(), err)
+		}); deleteErr != nil {
+			err = multierr.Append(err,
+				fmt.Errorf("delete shard from removed data server %s: %w", ds.GetNameOrDefault(), deleteErr))
+			continue
 		}
 
 		s.logger.Info("Successfully deleted shard from data server", slog.Any("data-server", ds))
@@ -923,5 +928,5 @@ func (s *controller) handlePendingDeleteShard(shardMeta *proto.ShardMetadata) er
 			func(ds *proto.DataServerIdentity) bool { return deleted[ds.GetNameOrDefault()] })
 		return len(current.PendingDeleteShardNodes) < pending, nil
 	})
-	return nil
+	return err
 }
