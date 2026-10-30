@@ -473,12 +473,18 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		}
 	}
 
-	// We must wait until all the entries in the leader WAL are fully
-	// committed in the quorum, to avoid missing any entries in the DB
-	// by the moment we make the leader controller accepting new propose/read
-	// requests
-	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, lc.leaderElectionHeadEntryId.Offset); err != nil {
-		return err
+	// The entries of the wal are committed before the leader serves, or it
+	// could miss them. An entry of an earlier term on a majority can still be
+	// replaced by a later leader, whose head has a higher term (Raft §5.4.2):
+	// they are committed with an entry of this term
+	if headOffset > leaderCommitOffset {
+		termEntryOffset, err := lc.appendTermEntry(term)
+		if err != nil {
+			return err
+		}
+		if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, termEntryOffset); err != nil {
+			return err
+		}
 	}
 
 	if err = lc.applyAllEntriesIntoDB(); err != nil {
@@ -535,6 +541,25 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.proposeOrphanedEphemeralsDeleteLocked(ctx, orphanedEphemerals)
 	lc.startDeferredSplitFilter(lc.termCtx, term)
 	return nil
+}
+
+// appendTermEntry appends an empty write of the term after the head of the wal,
+// and returns its offset.
+func (lc *leaderController) appendTermEntry(term int64) (int64, error) {
+	offset := lc.quorumAckTracker.NextOffset()
+	proposal := statemachine.NewWriteProposal(offset, &proto.WriteRequest{})
+	entryValue := &proto.LogEntryValue{}
+	proposal.ToLogEntry(entryValue)
+	_, value, err := lc.marshalLogEntryValue(nil, entryValue)
+	if err != nil {
+		return wal.InvalidOffset, err
+	}
+	if err := lc.wal.Append(&proto.LogEntry{Term: term, Offset: offset, Value: value,
+		Timestamp: proposal.GetTimestamp()}); err != nil {
+		return wal.InvalidOffset, err
+	}
+	lc.quorumAckTracker.AdvanceHeadOffset(offset)
+	return offset, nil
 }
 
 // BecomeLeader : Node handles a Become Leader request

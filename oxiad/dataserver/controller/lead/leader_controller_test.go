@@ -1289,6 +1289,18 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
+	// The entry of term 6 and the entries added in term 6 will be only in the
+	// leader and f1
+	go func() {
+		for i := 0; i < 11; i++ {
+			req := <-rpcClient.AppendReqs
+
+			rpcClient.AckResps <- &proto.Ack{
+				Offset: req.Entry.Offset,
+			}
+		}
+	}()
+
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
 		Term:              6,
@@ -1298,18 +1310,6 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 		},
 	})
 	assert.NoError(t, err)
-
-	// Add some entries in term 6 that will be only in the
-	// leader and f1
-	go func() {
-		for i := 0; i < 10; i++ {
-			req := <-rpcClient.AppendReqs
-
-			rpcClient.AckResps <- &proto.Ack{
-				Offset: req.Entry.Offset,
-			}
-		}
-	}()
 
 	// WriteBlock entries
 	for i := 10; i < 20; i++ {
@@ -3958,6 +3958,89 @@ func TestLeaderControllerBecomeLeaderFailsWhenTheFeatureEnableFailsToMarshal(t *
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 }
 
+// An entry of an earlier term on a majority can still be replaced by a later
+// leader, whose head has a higher term: the leader only commits it, and serves,
+// once a majority has an entry of its own term.
+func TestLeaderControllerBecomeLeaderCommitsEarlierTermsWithAnEntryOfItsTerm(t *testing.T) {
+	kvFactory, walFactory := newHookFactories(t)
+	appendTestEntry(t, walFactory, marshalTestWrite(t, "a"))
+	provider := rpc.NewMockRpcClient()
+	lc := newHookedLeaderController(t, provider, kvFactory, walFactory)
+	_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 2})
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+			Shard:             1,
+			Term:              2,
+			ReplicationFactor: 3,
+			FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+		})
+		done <- err
+	}()
+	nextAppend := func() *proto.Append {
+		t.Helper()
+		select {
+		case req := <-provider.AppendReqs:
+			return req
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "no append to the follower")
+			return nil
+		}
+	}
+
+	req := nextAppend()
+	assert.EqualValues(t, 1, req.Entry.Term)
+	provider.AckResps <- &proto.Ack{Offset: req.Entry.Offset}
+
+	// A majority has the entry of term 1, which isn't committed yet
+	req = nextAppend()
+	assert.EqualValues(t, 2, req.Entry.Term)
+	assert.EqualValues(t, 1, req.Entry.Offset)
+	assert.True(t, isTermEntry(decodeLogEntry(t, req.Entry)))
+	select {
+	case err := <-done:
+		require.FailNow(t, "BecomeLeader returned before the entry of its term is committed", "error: %v", err)
+	default:
+	}
+
+	provider.AckResps <- &proto.Ack{Offset: req.Entry.Offset}
+	require.NoError(t, <-done)
+	assert.Equal(t, proto.ServingStatus_LEADER, lc.Status())
+	assert.True(t, keyExists(t, lc.(*leaderController), "a"))
+}
+
+func TestLeaderControllerBecomeLeaderFailsWhenTheTermEntryCantBeAppended(t *testing.T) {
+	for _, failure := range []string{"marshal", "append"} {
+		t.Run(failure, func(t *testing.T) {
+			kvFactory, walFactory := newHookFactories(t)
+			walFactory.append = func(w wal.Wal, entry *proto.LogEntry) error {
+				if failure == "append" {
+					return errInjected
+				}
+				return w.Append(entry)
+			}
+			lc := newHookedLeaderController(t, rpc.NewMockRpcClient(), kvFactory, walFactory)
+			if failure == "marshal" {
+				lc.(*leaderController).marshalLogEntryValue = func(buf []byte, _ *proto.LogEntryValue) ([]byte, []byte, error) {
+					return buf, nil, errInjected
+				}
+			}
+			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 1})
+			require.NoError(t, err)
+
+			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             1,
+				Term:              1,
+				ReplicationFactor: 1,
+			})
+			assert.ErrorIs(t, err, errInjected)
+			assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
+		})
+	}
+}
+
 // A failed BecomeLeader leaves the controller fenced, as NewTerm does: it
 // doesn't keep the tracker, the follower cursors or the session manager of
 // the term it failed to lead.
@@ -3968,6 +4051,7 @@ func TestLeaderControllerBecomeLeaderReleasesTheTermItFailsToLead(t *testing.T) 
 		expected error
 	}{
 		{name: "wait for commit", canceled: true, expected: context.Canceled},
+		// Without followers, the entry of the term commits at once
 		{name: "feature enable", expected: errInjected},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -3987,13 +4071,17 @@ func TestLeaderControllerBecomeLeaderReleasesTheTermItFailsToLead(t *testing.T) 
 				cancel()
 			}
 			defer cancel()
-			_, err = lc.BecomeLeader(ctx, &proto.BecomeLeaderRequest{
+			request := &proto.BecomeLeaderRequest{
 				Shard:             1,
 				Term:              2,
-				ReplicationFactor: 2,
-				FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+				ReplicationFactor: 1,
 				FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
-			})
+			}
+			if test.canceled {
+				request.ReplicationFactor = 2
+				request.FollowerMaps = map[string]*proto.EntryId{"f1": constant2.InvalidEntryId}
+			}
+			_, err = lc.BecomeLeader(ctx, request)
 			assert.ErrorIs(t, err, test.expected)
 
 			lc.RLock()
@@ -4593,11 +4681,18 @@ func newHookFactories(t *testing.T) (*hookKVFactory, *hookWalFactory) {
 func failMarshals(lc *leaderController, failing *atomic.Bool) {
 	marshal := lc.marshalLogEntryValue
 	lc.marshalLogEntryValue = func(buf []byte, value *proto.LogEntryValue) ([]byte, []byte, error) {
-		if failing.Load() {
+		if failing.Load() && !isTermEntry(value) {
 			return buf, nil, errInjected
 		}
 		return marshal(buf, value)
 	}
+}
+
+// isTermEntry reports whether the value is the one of the entry that
+// BecomeLeader appends for its term.
+func isTermEntry(value *proto.LogEntryValue) bool {
+	writes := value.GetRequests().GetWrites()
+	return len(writes) == 1 && pb.Equal(writes[0], &proto.WriteRequest{})
 }
 
 // newHookedLeaderController creates a leader controller of shard 1 on the
@@ -4842,6 +4937,7 @@ type hookWalFactory struct {
 	newReader        func(w wal.Wal, after int64) (wal.Reader, error)
 	newReverseReader func(w wal.Wal) (wal.Reader, error)
 	sync             func(ctx context.Context, w wal.Wal) error
+	append           func(w wal.Wal, entry *proto.LogEntry) error
 	appendAndSync    func(w wal.Wal, entry *proto.LogEntry, callback func(entryCrc uint32, err error))
 	close            func(w wal.Wal) error
 	delete           func(w wal.Wal) error
@@ -4879,6 +4975,13 @@ func (w *hookWal) Sync(ctx context.Context) error {
 		return w.factory.sync(ctx, w.Wal)
 	}
 	return w.Wal.Sync(ctx)
+}
+
+func (w *hookWal) Append(entry *proto.LogEntry) error {
+	if w.factory.append != nil {
+		return w.factory.append(w.Wal, entry)
+	}
+	return w.Wal.Append(entry)
 }
 
 func (w *hookWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
