@@ -556,11 +556,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 // no-op entry, the leader only commits its entries through one of its term.
 func (lc *leaderController) appendTermEntry(term int64) (int64, error) {
 	offset := lc.quorumAckTracker.NextOffset()
-	_, value, err := lc.marshalLogEntryValue(nil, commonentry.NoOpValue)
-	if err != nil {
-		return wal.InvalidOffset, err
-	}
-	if err := lc.wal.Append(&proto.LogEntry{Term: term, Offset: offset, Value: value,
+	if err := lc.wal.Append(&proto.LogEntry{Term: term, Offset: offset, Value: commonentry.NoOpValue,
 		Timestamp: uint64(time.Now().UnixMilli())}); err != nil {
 		return wal.InvalidOffset, err
 	}

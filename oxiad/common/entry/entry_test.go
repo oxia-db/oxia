@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -39,4 +41,12 @@ func TestCompareOrdersByTermThenOffset(t *testing.T) {
 			assert.Equal(t, test.expected, Compare(test.a, test.b))
 		})
 	}
+}
+
+func TestNoOpValueIsAWriteWithoutOperations(t *testing.T) {
+	value := &proto.LogEntryValue{}
+	require.NoError(t, value.UnmarshalVT(NoOpValue))
+	assert.True(t, pb.Equal(&proto.LogEntryValue{Value: &proto.LogEntryValue_Requests{
+		Requests: &proto.WriteRequests{Writes: []*proto.WriteRequest{{}}},
+	}}, value))
 }

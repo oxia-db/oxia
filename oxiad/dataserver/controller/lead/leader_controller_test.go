@@ -4003,7 +4003,7 @@ func TestLeaderControllerBecomeLeaderCommitsEarlierTermsWithAnEntryOfItsTerm(t *
 	req = nextAppend()
 	assert.EqualValues(t, 2, req.Entry.Term)
 	assert.EqualValues(t, 1, req.Entry.Offset)
-	assert.True(t, isTermEntry(decodeLogEntry(t, req.Entry)))
+	assert.Equal(t, commonentry.NoOpValue, req.Entry.Value)
 	select {
 	case err := <-done:
 		require.FailNow(t, "BecomeLeader returned before the entry of its term is committed", "error: %v", err)
@@ -4017,34 +4017,20 @@ func TestLeaderControllerBecomeLeaderCommitsEarlierTermsWithAnEntryOfItsTerm(t *
 }
 
 func TestLeaderControllerBecomeLeaderFailsWhenTheTermEntryCantBeAppended(t *testing.T) {
-	for _, failure := range []string{"marshal", "append"} {
-		t.Run(failure, func(t *testing.T) {
-			kvFactory, walFactory := newHookFactories(t)
-			appendTestEntry(t, walFactory, marshalTestWrite(t, "a"))
-			walFactory.append = func(w wal.Wal, entry *proto.LogEntry) error {
-				if failure == "append" {
-					return errInjected
-				}
-				return w.Append(entry)
-			}
-			lc := newHookedLeaderController(t, rpc.NewMockRpcClient(), kvFactory, walFactory)
-			if failure == "marshal" {
-				lc.(*leaderController).marshalLogEntryValue = func(buf []byte, _ *proto.LogEntryValue) ([]byte, []byte, error) {
-					return buf, nil, errInjected
-				}
-			}
-			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 2})
-			require.NoError(t, err)
+	kvFactory, walFactory := newHookFactories(t)
+	appendTestEntry(t, walFactory, marshalTestWrite(t, "a"))
+	walFactory.append = func(wal.Wal, *proto.LogEntry) error { return errInjected }
+	lc := newHookedLeaderController(t, rpc.NewMockRpcClient(), kvFactory, walFactory)
+	_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 2})
+	require.NoError(t, err)
 
-			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
-				Shard:             1,
-				Term:              2,
-				ReplicationFactor: 1,
-			})
-			assert.ErrorIs(t, err, errInjected)
-			assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
-		})
-	}
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             1,
+		Term:              2,
+		ReplicationFactor: 1,
+	})
+	assert.ErrorIs(t, err, errInjected)
+	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
 }
 
 // A failed BecomeLeader leaves the controller fenced, as NewTerm does: it
@@ -4687,17 +4673,11 @@ func newHookFactories(t *testing.T) (*hookKVFactory, *hookWalFactory) {
 func failMarshals(lc *leaderController, failing *atomic.Bool) {
 	marshal := lc.marshalLogEntryValue
 	lc.marshalLogEntryValue = func(buf []byte, value *proto.LogEntryValue) ([]byte, []byte, error) {
-		if failing.Load() && !isTermEntry(value) {
+		if failing.Load() {
 			return buf, nil, errInjected
 		}
 		return marshal(buf, value)
 	}
-}
-
-// isTermEntry reports whether the value is the one of the entry that
-// BecomeLeader appends for its term.
-func isTermEntry(value *proto.LogEntryValue) bool {
-	return pb.Equal(value, commonentry.NoOpValue)
 }
 
 // newHookedLeaderController creates a leader controller of shard 1 on the
