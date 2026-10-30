@@ -267,26 +267,23 @@ gracePeriod:
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
 	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
-	// The fenced data servers with the highest head entry, which have every
-	// committed entry: the members of the ensemble tied at it, or from alone
-	// when it's strictly ahead
-	var candidates []*proto.DataServerIdentity
+	var mostUpToDate []*proto.DataServerIdentity
 	var highest *proto.EntryId
 	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
 		for server, head := range heads {
 			if highest == nil || entry.Compare(head, highest) > 0 {
-				highest, candidates = head, []*proto.DataServerIdentity{server}
+				highest, mostUpToDate = head, []*proto.DataServerIdentity{server}
 			} else if i == 0 && entry.Compare(head, highest) == 0 {
 				// Visited first, the ensemble wins a tie
-				candidates = append(candidates, server)
+				mostUpToDate = append(mostUpToDate, server)
 			}
 		}
 	}
-	if len(candidates) > 0 {
-		if _, retained := retainedHeads[candidates[0]]; retained {
-			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
+	if len(mostUpToDate) > 0 {
+		if _, retained := retainedHeads[mostUpToDate[0]]; retained {
+			e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
 		} else if change := e.meta.EnsembleChange; change != nil &&
-			slices.ContainsFunc(candidates, sharding.MatchDataServer(change.To)) {
+			slices.ContainsFunc(mostUpToDate, sharding.MatchDataServer(change.To)) {
 			// To has every committed entry: with it, the ensemble has each of them on a
 			// majority without from
 			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
@@ -300,7 +297,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 		return nil, nil, err
 	}
 	if leader, err = e.leaderSelector.Select(&leaderselector.Context{
-		Candidates: candidates,
+		Candidates: mostUpToDate,
 		Namespaces: namespaces,
 	}); err != nil {
 		return nil, nil, err
