@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/health"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/cenkalti/backoff/v4"
@@ -482,17 +483,36 @@ func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) b
 	// Ideally, we shouldn't need to trigger a new leader election if a follower
 	// is out of sync. We should just go back into the retry-to-fence follower
 	// loop. In practice, the current approach is easier for now.
-	for _, dataServer := range initShardMeta.Ensemble {
-		dataServerStatus, err := s.rpc.GetStatus(s.ctx, dataServer, &proto.GetStatusRequest{Shard: s.shard})
+	ctx, cancel := context.WithTimeout(s.ctx, health.DefaultCheckPolicy.ProbeTimeout)
+	defer cancel()
+
+	statuses := make([]*proto.GetStatusResponse, len(initShardMeta.Ensemble))
+	statusErrs := make([]error, len(initShardMeta.Ensemble))
+	var wg sync.WaitGroup
+	for i, dataServer := range initShardMeta.Ensemble {
+		wg.Go(func() {
+			statuses[i], statusErrs[i] = s.rpc.GetStatus(ctx, dataServer, &proto.GetStatusRequest{Shard: s.shard})
+		})
+	}
+	wg.Wait()
+
+	for i, dataServer := range initShardMeta.Ensemble {
+		dataServerStatus, err := statuses[i], statusErrs[i]
 
 		switch {
-		case err != nil:
+		case err != nil && dataServer.GetNameOrDefault() == initShardMeta.Leader.GetNameOrDefault():
 			s.logger.Warn(
 				"Failed to verify status for shard. Start a new election",
 				slog.Any("error", err),
 				slog.Any("data-server", dataServer),
 			)
 			return false
+		case err != nil:
+			s.logger.Warn(
+				"Failed to verify the status of a follower, leaving it to the leader",
+				slog.Any("error", err),
+				slog.Any("data-server", dataServer),
+			)
 		case dataServer.GetNameOrDefault() == initShardMeta.Leader.GetNameOrDefault() &&
 			dataServerStatus.Status != proto.ServingStatus_LEADER:
 			s.logger.Warn(

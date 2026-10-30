@@ -690,6 +690,85 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
+func TestNewControllerBoundsTheVerificationOfTheLeader(t *testing.T) {
+	var shard int64 = 5
+	rpc := &getStatusFailingRpcProvider{
+		RpcProvider: rpctest.NewRpcProvider(),
+		deadlines:   make(chan time.Duration, 1),
+	}
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	rpc.unreachable = s1
+	n1 := rpc.GetNode(s1)
+	n2 := rpc.GetNode(s2)
+	n3 := rpc.GetNode(s3)
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	n2.GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	n3.GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	select {
+	case timeout := <-rpc.deadlines:
+		assert.Positive(t, timeout)
+		assert.LessOrEqual(t, timeout, health.DefaultCheckPolicy.ProbeTimeout)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "did not verify the leader")
+	}
+
+	n1.ExpectNewTermRequest(t, shard, 2, true)
+	n2.ExpectNewTermRequest(t, shard, 2, true)
+	n3.ExpectNewTermRequest(t, shard, 2, true)
+
+	assert.NoError(t, sc.Close())
+}
+
+func TestNewControllerKeepsLeaderWithUnreachableFollower(t *testing.T) {
+	var shard int64 = 5
+	rpc := &getStatusFailingRpcProvider{
+		RpcProvider: rpctest.NewRpcProvider(),
+		deadlines:   make(chan time.Duration, 1),
+	}
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	rpc.unreachable = s3
+	n1 := rpc.GetNode(s1)
+	n2 := rpc.GetNode(s2)
+	n3 := rpc.GetNode(s3)
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	n1.GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	n2.GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	n1.ExpectGetStatusRequest(t, shard)
+	n2.ExpectGetStatusRequest(t, shard)
+
+	n1.ExpectNoMoreNewTermRequest(t)
+	n2.ExpectNoMoreNewTermRequest(t)
+	n3.ExpectNoMoreNewTermRequest(t)
+
+	assert.NoError(t, sc.Close())
+}
+
 // TestNewControllerDoesNotElectFinalizingSplitParent verifies that the parent
 // of a split past the point of no return is never elected again: neither when
 // its controller starts, e.g. on a coordinator restart, nor on an election
@@ -4348,4 +4427,28 @@ func (f *fakeElection) Cancel() {
 
 func (f *fakeElection) IsQuorumCaughtUp() bool {
 	return f.quorumCaughtUp
+}
+
+// getStatusFailingRpcProvider fails the GetStatus calls to the unreachable data
+// server, and reports the time left until the deadline of each of them.
+type getStatusFailingRpcProvider struct {
+	*rpctest.RpcProvider
+	unreachable *proto.DataServerIdentity
+	deadlines   chan time.Duration
+}
+
+func (r *getStatusFailingRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	if node.GetNameOrDefault() != r.unreachable.GetNameOrDefault() {
+		return r.RpcProvider.GetStatus(ctx, node, req)
+	}
+	var timeout time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(deadline)
+	}
+	select {
+	case r.deadlines <- timeout:
+	default:
+	}
+	return nil, errors.New("dial tcp: i/o timeout")
 }
