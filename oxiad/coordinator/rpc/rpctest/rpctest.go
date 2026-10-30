@@ -944,6 +944,7 @@ type HealthClient struct {
 
 	failNextChecks int
 	failCheckErr   error
+	checks         int
 }
 
 func (*HealthClient) Close() error {
@@ -998,6 +999,14 @@ func (m *HealthClient) PendingCheckFailures() int {
 	return m.failNextChecks
 }
 
+// Checks returns how many Check calls were made.
+func (m *HealthClient) Checks() int {
+	m.Lock()
+	defer m.Unlock()
+
+	return m.checks
+}
+
 // FailWatches delivers err on all currently active watch streams, without
 // affecting Check. It models a watch stream reset while the node is healthy.
 func (m *HealthClient) FailWatches(err error) {
@@ -1015,6 +1024,7 @@ func (m *HealthClient) FailWatches(err error) {
 func (m *HealthClient) Check(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
 	m.Lock()
 	defer m.Unlock()
+	m.checks++
 	if m.failNextChecks > 0 {
 		m.failNextChecks--
 		return nil, m.failCheckErr

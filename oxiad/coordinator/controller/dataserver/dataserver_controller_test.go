@@ -325,8 +325,13 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesSlowNode(t *testing
 	// The watch stream breaks and the verification probe times out: that is
 	// the signature of a saturated node, not a dead one, so it must be left
 	// to the ping loop's failure threshold instead of being fenced.
+	requireStartupPing(t, node.HealthClient)
 	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.DeadlineExceeded, "context deadline exceeded"), 1)
 	node.HealthClient.FailWatches(errors.New("stream reset"))
+	// The verification probe takes the failure, not the ping loop
+	assert.Eventually(t, func() bool {
+		return node.HealthClient.PendingCheckFailures() == 0
+	}, 10*time.Second, 10*time.Millisecond)
 
 	select {
 	case <-nal.Events:
@@ -359,8 +364,13 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesTransportClosing(t 
 	// The connection carrying the watch is being torn down: the stream and
 	// the verification probe both fail with "transport is closing". That is a
 	// local teardown artifact, not evidence the node is dead: no fencing.
+	requireStartupPing(t, node.HealthClient)
 	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.Unavailable, "transport is closing"), 1)
 	node.HealthClient.FailWatches(grpcstatus.Error(codes.Unavailable, "transport is closing"))
+	// The verification probe takes the failure, not the ping loop
+	assert.Eventually(t, func() bool {
+		return node.HealthClient.PendingCheckFailures() == 0
+	}, 10*time.Second, 10*time.Millisecond)
 
 	select {
 	case <-nal.Events:
@@ -1116,4 +1126,13 @@ func (c *fakeHealthClient) Watch(ctx context.Context, req *grpc_health_v1.Health
 		return c.watch(ctx, req, opts...)
 	}
 	return c.HealthClient.Watch(ctx, req, opts...)
+}
+
+// requireStartupPing waits for the ping loop's check at startup, which would
+// otherwise take a failure that the test queues for another check.
+func requireStartupPing(t *testing.T, healthClient *rpctest.HealthClient) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return healthClient.Checks() > 0
+	}, 10*time.Second, 10*time.Millisecond)
 }
