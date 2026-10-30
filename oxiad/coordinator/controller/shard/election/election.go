@@ -79,7 +79,8 @@ import (
 //	  - fence the members of the ensemble that missed the fence, and add them as
 //	    followers
 //	  - wait for a majority of the ensemble to commit the head entry of the
-//	    leader (see IsQuorumCaughtUp)
+//	    leader (see IsQuorumCaughtUp), then for all of it, and persist
+//	    ensemble_caught_up, which the new term reset
 //
 // A failed step (x) fails the election, and the caller retries with a new
 // election from the current shard status, except after

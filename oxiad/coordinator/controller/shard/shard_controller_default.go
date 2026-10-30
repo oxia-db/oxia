@@ -251,34 +251,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	// Do initial check or leader election
-	switch {
-	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
-		s.Delete()
-	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
-		// Child shard during a split: the SplitController manages its lifecycle.
-		// Wait until the split is complete (Split metadata cleared) before
-		// entering the normal event loop, to prevent the load balancer from
-		// triggering elections that would interfere with the split controller.
-		s.logger.Info("Child shard during split, waiting for split to complete")
-		s.waitForSplitComplete()
-	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
-		// Only an election finishes a pending change: the catch-up of the one
-		// before the restart is lost
-		initShardMeta.GetEnsembleChange() != nil:
-		_, _ = s.electLeader(initShardMeta, nil)
-	default:
-		s.logger.Info(
-			"There is already a data server marked as leader on the shard, verifying",
-			slog.Any("current-leader", initShardMeta.Leader),
-		)
-
-		if !s.verifyCurrentEnsemble(initShardMeta) {
-			_, _ = s.electLeader(initShardMeta, nil)
-		} else {
-			s.Refresh()
-		}
-	}
+	s.start(initShardMeta)
 
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 	// A failure from now on is retried from the initial interval
@@ -315,18 +288,58 @@ func (s *controller) run(bo backoff.BackOff) error {
 	return nil
 }
 
+// start brings the shard to a leader from the status the controller starts
+// with: it deletes a shard being deleted, waits for the split of a child, or
+// elects a leader, unless the current one is in place with an ensemble caught
+// up.
+func (s *controller) start(initShardMeta *proto.ShardMetadata) {
+	switch {
+	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
+		s.Delete()
+	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
+		// Child shard during a split: the SplitController manages its lifecycle.
+		// Wait until the split is complete (Split metadata cleared) before
+		// entering the normal event loop, to prevent the load balancer from
+		// triggering elections that would interfere with the split controller.
+		s.logger.Info("Child shard during split, waiting for split to complete")
+		// The split controller elected the child: only an election reports its
+		// catch-up
+		if meta := s.waitForSplitComplete(); meta != nil && !meta.GetEnsembleCaughtUp() {
+			_, _ = s.electLeader(meta, nil)
+		}
+	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
+		// Only an election finishes a pending change, or reports the catch-up
+		// of the ensemble: the catch-up of the one before the restart is lost
+		initShardMeta.GetEnsembleChange() != nil,
+		!initShardMeta.GetEnsembleCaughtUp():
+		_, _ = s.electLeader(initShardMeta, nil)
+	default:
+		s.logger.Info(
+			"There is already a data server marked as leader on the shard, verifying",
+			slog.Any("current-leader", initShardMeta.Leader),
+		)
+
+		if !s.verifyCurrentEnsemble(initShardMeta) {
+			_, _ = s.electLeader(initShardMeta, nil)
+		} else {
+			s.Refresh()
+		}
+	}
+}
+
 // waitForSplitComplete blocks until the Split metadata is cleared from this
 // shard in the status resource, indicating the split controller has finished
 // and the shard can operate normally. This prevents the load balancer from
-// triggering elections that would interfere with the split controller.
-func (s *controller) waitForSplitComplete() {
+// triggering elections that would interfere with the split controller. It
+// returns the shard metadata then, or nil if the controller closes first.
+func (s *controller) waitForSplitComplete() *proto.ShardMetadata {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 			if err != nil {
@@ -341,7 +354,7 @@ func (s *controller) waitForSplitComplete() {
 				s.logger.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
 				)
-				return
+				return meta
 			}
 		}
 	}

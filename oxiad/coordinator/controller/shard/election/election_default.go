@@ -360,8 +360,12 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	return nil
 }
 
+// ensureEnsembleCaughtUp waits for every follower of the ensemble to commit
+// the head entry of the leader: it sets quorumCaughtUp once a majority of the
+// ensemble, the leader included, did, and returns once all of them did.
+//
 //nolint:revive
-func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
+func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	leaderEntry *proto.EntryId) error {
 	ctx, cancel := context.WithCancel(e.ctx)
 	waitGroup := sync.WaitGroup{}
@@ -423,13 +427,30 @@ func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, le
 				})
 		})
 	}
-	// The leader is one of the majority
-	for range quorum.Majority(len(ensemble)) - 1 {
+	// The leader is caught up
+	for caughtUp := 1; ; caughtUp++ {
+		if caughtUp == quorum.Majority(len(ensemble)) {
+			e.quorumCaughtUp.Store(true)
+		}
+		if caughtUp == len(ensemble) {
+			return nil
+		}
 		if err := <-results; err != nil {
 			return err
 		}
 	}
-	return nil
+}
+
+// persistEnsembleCaughtUp stores ensemble_caught_up, unless a later election
+// started since.
+func (e *election) persistEnsembleCaughtUp(term int64) error {
+	return e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
+		if current.Term != term {
+			return false, nil
+		}
+		current.EnsembleCaughtUp = true
+		return true, nil
+	})
 }
 
 func (e *election) fenceNewTermAndAddFollower(ctx context.Context, term int64, options *proto.NewTermOptions,
@@ -571,6 +592,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	e.meta.Term++
 	e.meta.Ensemble = refreshedEnsemble
 	e.meta.EnsembleChange = refreshedChange
+	e.meta.EnsembleCaughtUp = false
 	if err = e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		switch {
 		case current.GetStatusOrDefault() == proto.ShardStatusDeleting:
@@ -587,6 +609,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 		current.Leader = e.meta.Leader
 		current.Ensemble = e.meta.Ensemble
 		current.EnsembleChange = e.meta.EnsembleChange
+		current.EnsembleCaughtUp = e.meta.EnsembleCaughtUp
 		current.PendingDeleteShardNodes = e.meta.PendingDeleteShardNodes
 		return true, nil
 	}); err != nil {
@@ -685,6 +708,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 			},
 		)
 	})
+	term := e.meta.Term
 	e.wg.Go(func() {
 		process.DoWithLabels(
 			e.ctx,
@@ -692,11 +716,15 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 				"oxia":  "election-monitor-followers-caught-up",
 				"shard": fmt.Sprintf("%d", e.shard),
 			}, func() {
-				if err := e.ensureQuorumCaughtUp(e.meta.Ensemble, candidateLeader, leaderHead); err != nil {
+				if err := e.ensureEnsembleCaughtUp(e.meta.Ensemble, candidateLeader, leaderHead); err != nil {
 					e.logger.Info("Stopped waiting for the followers to catch up", slog.Any("error", err))
 					return
 				}
-				e.quorumCaughtUp.Store(true)
+				_ = backoff.RetryNotify(func() error { return e.persistEnsembleCaughtUp(term) },
+					oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
+						e.logger.Warn("Failed to persist the catch-up of the ensemble, retrying later",
+							slog.Any("error", err), slog.Duration("retry-after", duration))
+					})
 			},
 		)
 	})

@@ -1038,8 +1038,12 @@ type ShardMetadata struct {
 	Split                   *SplitMetadata        `protobuf:"bytes,8,opt,name=split,proto3" json:"split,omitempty" yaml:"split,omitempty"`
 	// Unset when no change of the ensemble is pending.
 	EnsembleChange *EnsembleChangeMetadata `protobuf:"bytes,9,opt,name=ensemble_change,json=ensembleChange,proto3" json:"ensemble_change,omitempty" yaml:"ensembleChange,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// False from each new term, until every member of the ensemble has committed
+	// the head entry of the leader at the election, so has every entry committed
+	// before it: e.g. the data server added by a change of the ensemble.
+	EnsembleCaughtUp bool `protobuf:"varint,10,opt,name=ensemble_caught_up,json=ensembleCaughtUp,proto3" json:"ensemble_caught_up,omitempty" yaml:"ensembleCaughtUp,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ShardMetadata) Reset() {
@@ -1134,6 +1138,13 @@ func (x *ShardMetadata) GetEnsembleChange() *EnsembleChangeMetadata {
 		return x.EnsembleChange
 	}
 	return nil
+}
+
+func (x *ShardMetadata) GetEnsembleCaughtUp() bool {
+	if x != nil {
+		return x.EnsembleCaughtUp
+	}
+	return false
 }
 
 type NamespaceStatus struct {
@@ -1335,7 +1346,7 @@ const file_metadata_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x88\x01\n" +
 	"\x16EnsembleChangeMetadata\x128\n" +
 	"\x04from\x18\x01 \x01(\v2$.io.oxia.proto.v1.DataServerIdentityR\x04from\x124\n" +
-	"\x02to\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerIdentityR\x02to\"\xdd\x04\n" +
+	"\x02to\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerIdentityR\x02to\"\x8b\x05\n" +
 	"\rShardMetadata\x125\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x1d.io.oxia.proto.v1.ShardStatusR\x06status\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x03R\x04term\x12<\n" +
@@ -1345,7 +1356,9 @@ const file_metadata_proto_rawDesc = "" +
 	"\x1apending_delete_shard_nodes\x18\x06 \x03(\v2$.io.oxia.proto.v1.DataServerIdentityR\x17pendingDeleteShardNodes\x12E\n" +
 	"\x10int32_hash_range\x18\a \x01(\v2\x1b.io.oxia.proto.v1.HashRangeR\x0eint32HashRange\x125\n" +
 	"\x05split\x18\b \x01(\v2\x1f.io.oxia.proto.v1.SplitMetadataR\x05split\x12Q\n" +
-	"\x0fensemble_change\x18\t \x01(\v2(.io.oxia.proto.v1.EnsembleChangeMetadataR\x0eensembleChange\"\xe3\x01\n" +
+	"\x0fensemble_change\x18\t \x01(\v2(.io.oxia.proto.v1.EnsembleChangeMetadataR\x0eensembleChange\x12,\n" +
+	"\x12ensemble_caught_up\x18\n" +
+	" \x01(\bR\x10ensembleCaughtUp\"\xe3\x01\n" +
 	"\x0fNamespaceStatus\x12-\n" +
 	"\x12replication_factor\x18\x01 \x01(\rR\x11replicationFactor\x12E\n" +
 	"\x06shards\x18\x02 \x03(\v2-.io.oxia.proto.v1.NamespaceStatus.ShardsEntryR\x06shards\x1aZ\n" +

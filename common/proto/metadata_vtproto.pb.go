@@ -348,6 +348,7 @@ func (m *ShardMetadata) CloneVT() *ShardMetadata {
 	r.Int32HashRange = m.Int32HashRange.CloneVT()
 	r.Split = m.Split.CloneVT()
 	r.EnsembleChange = m.EnsembleChange.CloneVT()
+	r.EnsembleCaughtUp = m.EnsembleCaughtUp
 	if rhs := m.Ensemble; rhs != nil {
 		tmpContainer := make([]*DataServerIdentity, len(rhs))
 		for k, v := range rhs {
@@ -961,6 +962,9 @@ func (this *ShardMetadata) EqualVT(that *ShardMetadata) bool {
 		return false
 	}
 	if !this.EnsembleChange.EqualVT(that.EnsembleChange) {
+		return false
+	}
+	if this.EnsembleCaughtUp != that.EnsembleCaughtUp {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1918,6 +1922,16 @@ func (m *ShardMetadata) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.EnsembleCaughtUp {
+		i--
+		if m.EnsembleCaughtUp {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x50
+	}
 	if m.EnsembleChange != nil {
 		size, err := m.EnsembleChange.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
@@ -2512,6 +2526,9 @@ func (m *ShardMetadata) SizeVT() (n int) {
 	if m.EnsembleChange != nil {
 		l = m.EnsembleChange.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.EnsembleCaughtUp {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -5187,6 +5204,26 @@ func (m *ShardMetadata) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EnsembleCaughtUp", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EnsembleCaughtUp = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -8331,6 +8368,26 @@ func (m *ShardMetadata) UnmarshalVTUnsafe(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EnsembleCaughtUp", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EnsembleCaughtUp = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
