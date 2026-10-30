@@ -617,6 +617,17 @@ func createPausedSession(t *testing.T, sm *sessionManager, timeout time.Duration
 	return resp.SessionId, p
 }
 
+// waitForExit waits for the goroutine of a session to exit.
+func waitForExit(t *testing.T, s *session) {
+	t.Helper()
+	exited := make(chan struct{})
+	go func() {
+		s.latch.Wait()
+		close(exited)
+	}()
+	waitFor(t, exited, "the goroutine of the session to exit")
+}
+
 func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 	t.Helper()
 	select {
@@ -653,7 +664,8 @@ func TestSessionManager_StopDuringExpiryProposal(t *testing.T) {
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			kvf, walf, sManager, lc := createSessionManager(t)
-			_, pauser := createPausedSession(t, sManager, 100*time.Millisecond)
+			sessionId, pauser := createPausedSession(t, sManager, 100*time.Millisecond)
+			expiring, _ := sManager.sessions.Get(SessionId(sessionId))
 			waitFor(t, pauser.reached, "the expiry of the session")
 
 			stopDone := make(chan error, 1)
@@ -670,6 +682,7 @@ func TestSessionManager_StopDuringExpiryProposal(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatalf("%s deadlocked with the expiry of a session", tc.name)
 			}
+			waitForExit(t, expiring)
 
 			assert.NoError(t, lc.Close())
 			assert.NoError(t, kvf.Close())
@@ -717,12 +730,7 @@ func TestSessionManager_StoppedManagerDoesNotWrite(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("new term deadlocked with the expiry of a session")
 	}
-	expired := make(chan struct{})
-	go func() {
-		expiring.latch.Wait()
-		close(expired)
-	}()
-	waitFor(t, expired, "the expiry of the session to end")
+	waitForExit(t, expiring)
 
 	// The deletion was rejected: the session is still alive in the new term
 	assert.NotNil(t, getSessionMetadata(t, lc, sessionId))
