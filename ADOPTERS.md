@@ -10,11 +10,13 @@ anyone who is evaluating Oxia, a view of how the project is adopted. See the CNC
 |---------------------------|------------------|----------------|-------------|
 | [Apache Pulsar][pulsar]   | Project          | Production     | Oxia is the [recommended metadata store][pulsar-metadata] and coordination service for new Pulsar clusters, as an alternative to Apache ZooKeeper |
 | [StreamNative Ursa][ursa] | Service Provider | Production     | Oxia is the metadata and coordination layer of Ursa, the Kafka-compatible, lakehouse-native data streaming engine that runs in production on StreamNative Cloud. The offset index, the fencing state and the consumer group state of every partition are committed to Oxia ([paper][ursa-paper]) |
+| [LibreDB Studio][libredb] | Project          | Production     | Open source web database IDE. Its Oxia connection browses keys, looks up values and runs lists and range scans over the Oxia gRPC client API, read only |
 
 [pulsar]: https://pulsar.apache.org
 [pulsar-metadata]: https://pulsar.apache.org/docs/administration-metadata-store/
 [ursa]: https://streamnative.io/ursa
 [ursa-paper]: https://www.vldb.org/pvldb/vol18/p5184-guo.pdf
+[libredb]: https://github.com/libredb/libredb-studio
 
 The types and the adoption levels follow the CNCF
 [adopters template](https://github.com/cncf/project-template/blob/main/ADOPTERS.md):
