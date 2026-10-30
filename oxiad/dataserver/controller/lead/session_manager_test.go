@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -574,6 +575,171 @@ func getSessionMetadata(t *testing.T, lc *leaderController, sessionId int64) *pr
 	err = pb.Unmarshal(resp.Value, &meta)
 	assert.NoError(t, err)
 	return &meta
+}
+
+// expiryPauser is a log handler that parks a session goroutine on its
+// "Session expired" line, right before it proposes the deletion of the session.
+type expiryPauser struct {
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (*expiryPauser) Enabled(context.Context, slog.Level) bool { return true }
+
+func (p *expiryPauser) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == "Session expired" {
+		p.once.Do(func() {
+			close(p.reached)
+			<-p.release
+		})
+	}
+	return nil
+}
+
+func (p *expiryPauser) WithAttrs([]slog.Attr) slog.Handler { return p }
+
+func (p *expiryPauser) WithGroup(string) slog.Handler { return p }
+
+// createPausedSession creates a session whose goroutine parks on its expiry: a
+// session takes its logger from the default one when it starts.
+func createPausedSession(t *testing.T, sm *sessionManager, timeout time.Duration) (int64, *expiryPauser) {
+	t.Helper()
+	p := &expiryPauser{reached: make(chan struct{}), release: make(chan struct{})}
+	defaultLogger := slog.Default()
+	slog.SetDefault(slog.New(p))
+	resp, err := sm.createSession(&proto.CreateSessionRequest{
+		Shard:            sm.shardId,
+		SessionTimeoutMs: uint32(timeout.Milliseconds()),
+	}, 0)
+	slog.SetDefault(defaultLogger)
+	assert.NoError(t, err)
+	return resp.SessionId, p
+}
+
+// waitForExit waits for the goroutine of a session to exit.
+func waitForExit(t *testing.T, s *session) {
+	t.Helper()
+	exited := make(chan struct{})
+	go func() {
+		s.latch.Wait()
+		close(exited)
+	}()
+	waitFor(t, exited, "the goroutine of the session to exit")
+}
+
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// NewTerm, Close and DeleteShard stop the session manager while holding the
+// leader lock, which an expiring session needs to propose the deletion of its
+// record. They must not deadlock when the session gets to the leader lock only
+// after they took it.
+func TestSessionManager_StopDuringExpiryProposal(t *testing.T) {
+	shardId := int64(1)
+	for _, tc := range []struct {
+		name string
+		stop func(lc *leaderController) error
+	}{{
+		name: "NewTerm",
+		stop: func(lc *leaderController) error {
+			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 2})
+			return err
+		},
+	}, {
+		name: "Close",
+		stop: func(lc *leaderController) error { return lc.Close() },
+	}, {
+		name: "DeleteShard",
+		stop: func(lc *leaderController) error {
+			_, err := lc.DeleteShard(&proto.DeleteShardRequest{Namespace: constant.DefaultNamespace, Shard: shardId, Term: 1})
+			return err
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			kvf, walf, sManager, lc := createSessionManager(t)
+			sessionId, pauser := createPausedSession(t, sManager, 100*time.Millisecond)
+			expiring, _ := sManager.sessions.Get(SessionId(sessionId))
+			waitFor(t, pauser.reached, "the expiry of the session")
+
+			stopDone := make(chan error, 1)
+			go func() { stopDone <- tc.stop(lc) }()
+
+			// The manager context is canceled while holding the leader lock:
+			// let the session propose the deletion only then.
+			waitFor(t, sManager.ctx.Done(), "the session manager to be stopped")
+			close(pauser.release)
+
+			select {
+			case err := <-stopDone:
+				assert.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%s deadlocked with the expiry of a session", tc.name)
+			}
+			waitForExit(t, expiring)
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvf.Close())
+			assert.NoError(t, walf.Close())
+		})
+	}
+}
+
+// A session manager stopped by a new term must not write anymore, even when an
+// expiring session gets to the leader lock only after the new term made this
+// node leader again: the deletion would land in the new term, where the
+// session is alive.
+func TestSessionManager_StoppedManagerDoesNotWrite(t *testing.T) {
+	shardId := int64(1)
+	kvf, walf, sManager, lc := createSessionManager(t)
+	sessionId, pauser := createPausedSession(t, sManager, time.Second)
+	expiring, _ := sManager.sessions.Get(SessionId(sessionId))
+	waitFor(t, pauser.reached, "the expiry of the session")
+
+	newTermDone := make(chan error, 1)
+	go func() {
+		_, err := lc.NewTerm(&proto.NewTermRequest{Shard: shardId, Term: 2})
+		newTermDone <- err
+	}()
+	waitFor(t, sManager.ctx.Done(), "the session manager to be stopped")
+
+	// Lead the new term while the stopped session is still about to propose
+	becomeLeaderDone := make(chan struct{})
+	go func() {
+		_, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+			Shard:             shardId,
+			Term:              2,
+			ReplicationFactor: 1,
+		})
+		assert.NoError(t, err)
+		close(becomeLeaderDone)
+	}()
+	waitFor(t, becomeLeaderDone, "the new term to be led")
+	assert.NoError(t, lc.KeepAlive(sessionId))
+
+	close(pauser.release)
+	select {
+	case err := <-newTermDone:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("new term deadlocked with the expiry of a session")
+	}
+	waitForExit(t, expiring)
+
+	// The deletion was rejected: the session is still alive in the new term
+	assert.NotNil(t, getSessionMetadata(t, lc, sessionId))
+	_, found := lc.sessionManager.(*sessionManager).sessions.Get(SessionId(sessionId))
+	assert.True(t, found)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvf.Close())
+	assert.NoError(t, walf.Close())
 }
 
 func createSessionManager(t *testing.T) (kvstore.Factory, wal.Factory, *sessionManager, *leaderController) {
