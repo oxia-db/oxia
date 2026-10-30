@@ -357,6 +357,13 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	}
 	fc.term.Store(newTerm)
 	fc.status.Store(int32(proto.ServingStatus_FENCED))
+
+	// A closed stream of the leader can leave entries appended to the wal and
+	// not synced yet, while the head is read from the last synced entry: wait
+	// for their sync, so that the head covers every entry of the wal
+	if err = fc.wal.Sync(fc.ctx); err != nil {
+		return nil, errors.Wrapf(multierr.Combine(dserror.ErrResourceNotAvailable, err), "wal sync failed")
+	}
 	lastEntryId, err := getLastEntryIdInWal(fc.wal) // todo: consider support it in the WAL directly
 	if err != nil {
 		fc.log.Warn("Failed to get last entry from WAL", slog.Any("error", err), slog.Int64("new-term", req.Term))

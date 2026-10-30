@@ -321,6 +321,14 @@ func (lc *leaderController) NewTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 
 	lc.followers = nil
 	lc.observers = nil
+
+	// The proposals return once their entry is appended to the wal, before it
+	// is synced, while the head is read from the last synced entry: wait for
+	// the syncs in progress, so that the head covers every entry of the wal.
+	// The election, and the truncation of the followers, rely on it.
+	if err := lc.wal.Sync(lc.ctx); err != nil {
+		return nil, err
+	}
 	headEntryId, err := getLastEntryIdInWal(lc.wal)
 	if err != nil {
 		return nil, err
