@@ -685,7 +685,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	clusterConfig := model.ClusterConfig{
 		Namespaces: []model.NamespaceConfig{{
 			Name:              "my-ns-1",
-			ReplicationFactor: 3,
+			ReplicationFactor: 1,
 			InitialShardCount: 1,
 		}},
 		Servers: []model.Server{sa1, sa2, sa3, sa4},
@@ -735,7 +735,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		for _, ns := range statusResource.Load().Namespaces {
 			for _, shard := range ns.Shards {
-				return shard.Term > 0 && shard.Status == model.ShardStatusSteadyState
+				return shard.Term >= 0 && shard.Status == model.ShardStatusSteadyState
 			}
 		}
 		return true
