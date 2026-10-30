@@ -890,7 +890,7 @@ func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error 
 		}
 		return nil
 	}
-	if err := s.currentElection.FinishEnsembleChange(); err != nil {
+	if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
 		return fmt.Errorf("finish the change of the ensemble: %w", err)
 	}
 	return nil

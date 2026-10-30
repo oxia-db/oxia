@@ -4207,7 +4207,7 @@ type fakeElection struct {
 	finishErr      error
 }
 
-func (f *fakeElection) FinishEnsembleChange() error {
+func (f *fakeElection) TryFinishEnsembleChange() error {
 	f.finishes++
 	return f.finishErr
 }

@@ -116,7 +116,7 @@ import (
 //	                                          that isn't committed, and to is
 //	                                          deleted
 //
-// Otherwise, the election watches to after it, and FinishEnsembleChange
+// Otherwise, the election watches to after it, and TryFinishEnsembleChange
 // finishes the change once to caught up. The shard controller calls it from its
 // periodic tasks, and refuses another change until then: with two changes, the
 // ensembles would differ by two members, and a fence quorum could miss a
@@ -130,12 +130,12 @@ type Election interface {
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
 
-	// FinishEnsembleChange finishes the pending change once to committed the
+	// TryFinishEnsembleChange finishes the pending change once to committed the
 	// head entry of the leader at the election: it moves from to the pending
 	// deletions and clears the change, in a single write, if the shard is still
 	// in the term of the election. It does nothing otherwise, and only fails if
 	// the write fails. It is called from the goroutine that called Start.
-	FinishEnsembleChange() error
+	TryFinishEnsembleChange() error
 
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any

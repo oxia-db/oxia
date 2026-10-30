@@ -77,7 +77,7 @@ type election struct {
 	started        atomic.Bool
 	quorumCaughtUp atomic.Bool
 	// toCaughtUp is set by the background watch of the to of the pending
-	// change, and read by FinishEnsembleChange
+	// change, and read by TryFinishEnsembleChange
 	toCaughtUp atomic.Bool
 
 	// metrics
@@ -287,7 +287,10 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
 		} else if change := e.meta.EnsembleChange; change != nil &&
 			slices.ContainsFunc(candidates, sharding.MatchDataServer(change.To)) {
-			e.finishEnsembleChange()
+			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
+				slog.Any("from", change.From), slog.Any("to", change.To))
+			e.meta.EnsembleChange = nil
+			e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -326,14 +329,6 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 	e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), retained)
 	e.meta.EnsembleChange = nil
 	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
-}
-
-func (e *election) finishEnsembleChange() {
-	change := e.meta.EnsembleChange
-	e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
-		slog.Any("from", change.From), slog.Any("to", change.To))
-	e.meta.EnsembleChange = nil
-	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 }
 
 func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
@@ -780,7 +775,7 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) FinishEnsembleChange() error {
+func (e *election) TryFinishEnsembleChange() error {
 	if e.meta.EnsembleChange == nil || !e.toCaughtUp.Load() {
 		return nil
 	}
@@ -800,7 +795,11 @@ func (e *election) FinishEnsembleChange() error {
 		return err
 	}
 	if finished {
-		e.finishEnsembleChange()
+		change := e.meta.EnsembleChange
+		e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
+			slog.Any("from", change.From), slog.Any("to", change.To))
+		e.meta.EnsembleChange = nil
+		e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 	}
 	return nil
 }

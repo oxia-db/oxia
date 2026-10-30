@@ -651,7 +651,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 }
 
 // The election keeps the change pending until to caught up, after a majority
-// of the ensemble did, and FinishEnsembleChange finishes it then. A canceled
+// of the ensemble did, and TryFinishEnsembleChange finishes it then. A canceled
 // election never reports a caught-up majority, nor finishes the change.
 func TestElectionStartKeepsChangePending(t *testing.T) {
 	var shard int64 = 5
@@ -694,7 +694,7 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
 				assert.False(t, e.IsQuorumCaughtUp())
-				require.NoError(t, e.FinishEnsembleChange())
+				require.NoError(t, e.TryFinishEnsembleChange())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 				return
@@ -702,13 +702,13 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
 			// The majority doesn't finish the change: to is behind
-			require.NoError(t, e.FinishEnsembleChange())
+			require.NoError(t, e.TryFinishEnsembleChange())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 
 			rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 			assert.Eventually(t, func() bool {
-				return e.FinishEnsembleChange() == nil &&
+				return e.TryFinishEnsembleChange() == nil &&
 					requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleChange() == nil
 			}, 10*time.Second, 10*time.Millisecond)
 			stored = requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
@@ -718,10 +718,10 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 	}
 }
 
-// FinishEnsembleChange finishes the change once to caught up, if the shard is
+// TryFinishEnsembleChange finishes the change once to caught up, if the shard is
 // still in the term of the election and the change is pending; a failed write
 // is returned.
-func TestElectionFinishEnsembleChange(t *testing.T) {
+func TestElectionTryFinishEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -757,7 +757,7 @@ func TestElectionFinishEnsembleChange(t *testing.T) {
 				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change})
 			e.toCaughtUp.Store(test.caughtUp)
 
-			err := e.FinishEnsembleChange()
+			err := e.TryFinishEnsembleChange()
 			if test.writeErr != nil {
 				assert.ErrorIs(t, err, test.writeErr)
 			} else {
