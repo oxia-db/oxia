@@ -182,6 +182,100 @@ func TestDataServerControllerHealthPingWithRetriesFailsNotServingDataServer(t *t
 	assert.Equal(t, NotRunning, nc.GetStatus().GetState())
 }
 
+// The connection pool closes a connection after its own health pings fail,
+// and opens a new one on the next request: the probes on the closed
+// connection fail the data server, and the ping loop's next round probes
+// through the new connection.
+func TestDataServerControllerHealthPingWithRetriesSurvivesClosedConnection(t *testing.T) {
+	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := &fakeRpcProvider{RpcProvider: rpctest.NewRpcProvider()}
+	node := rpc.GetNode(addr)
+	var connection atomic.Int64
+	rpc.getHealthClient = func(*proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
+		openedConnection := connection.Load()
+		return &fakeHealthClient{
+			HealthClient: node.HealthClient,
+			check: func(ctx context.Context, req *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (
+				*grpc_health_v1.HealthCheckResponse, error) {
+				if connection.Load() != openedConnection {
+					return nil, grpcstatus.Error(codes.Canceled, "grpc: the client connection is closing")
+				}
+				return node.HealthClient.Check(ctx, req, opts...)
+			},
+			watch: func(context.Context, *grpc_health_v1.HealthCheckRequest, ...grpc.CallOption) (
+				grpc_health_v1.Health_WatchClient, error) {
+				return nil, errors.New("watch not available")
+			},
+		}, nil
+	}
+
+	nc := NewController(context.Background(), dataServer, rpctest.NewShardAssignmentsProvider(), nal, rpc,
+		"test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().GetState() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+
+	connection.Add(1)
+
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the data server was not failed")
+	}
+
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().GetState() == Running
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+func TestDataServerControllerCloseInterruptsHealthPing(t *testing.T) {
+	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := &fakeRpcProvider{RpcProvider: rpctest.NewRpcProvider()}
+	node := rpc.GetNode(addr)
+	probing := make(chan struct{}, 1)
+	rpc.getHealthClient = func(*proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
+		return &fakeHealthClient{
+			HealthClient: node.HealthClient,
+			check: func(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (
+				*grpc_health_v1.HealthCheckResponse, error) {
+				select {
+				case probing <- struct{}{}:
+				default:
+				}
+				<-ctx.Done()
+				return nil, grpcstatus.FromContextError(ctx.Err()).Err()
+			},
+		}, nil
+	}
+
+	nc := NewController(context.Background(), dataServer, rpctest.NewShardAssignmentsProvider(), nal, rpc,
+		"test-instance", time.Second, health.CheckPolicy{
+			ProbeInterval:    time.Hour,
+			ProbeTimeout:     time.Hour,
+			FailureThreshold: 3,
+		})
+
+	select {
+	case <-probing:
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the ping loop did not probe the data server")
+	}
+
+	assert.NoError(t, nc.Close())
+	assert.Empty(t, nal.Events)
+}
+
 func TestDataServerControllerCloseInterruptsHealthCheckBackoff(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
@@ -1116,8 +1210,18 @@ func (p *fakeRpcProvider) Handshake(ctx context.Context, node *proto.DataServerI
 // embedded HealthClient otherwise.
 type fakeHealthClient struct {
 	*rpctest.HealthClient
+	check func(ctx context.Context, req *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (
+		*grpc_health_v1.HealthCheckResponse, error)
 	watch func(ctx context.Context, req *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (
 		grpc_health_v1.Health_WatchClient, error)
+}
+
+func (c *fakeHealthClient) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest,
+	opts ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
+	if c.check != nil {
+		return c.check(ctx, req, opts...)
+	}
+	return c.HealthClient.Check(ctx, req, opts...)
 }
 
 func (c *fakeHealthClient) Watch(ctx context.Context, req *grpc_health_v1.HealthCheckRequest,

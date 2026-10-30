@@ -263,9 +263,6 @@ func (n *controller) healthPingWithRetries() {
 				// is shutting down): fail it right away.
 				failureEpoch = epoch
 				return err
-			case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled:
-				// The controller is shutting down
-				return nil
 			default:
 				consecutiveFailures++
 				if consecutiveFailures >= n.healthPolicy.FailureThreshold {
