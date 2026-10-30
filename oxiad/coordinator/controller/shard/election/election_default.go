@@ -678,8 +678,6 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 			},
 		)
 	})
-	term := e.meta.Term
-	changePending := e.meta.EnsembleChange != nil
 	e.wg.Go(func() {
 		process.DoWithLabels(
 			e.ctx,
@@ -692,9 +690,6 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 					return
 				}
 				e.quorumCaughtUp.Store(true)
-				if changePending {
-					e.finishEnsembleChangeWithRetries(term)
-				}
 			},
 		)
 	})
@@ -754,24 +749,21 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) finishEnsembleChangeWithRetries(term int64) {
-	_ = backoff.RetryNotify(func() error {
-		return e.finishEnsembleChange(term)
-	}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
-		e.logger.Warn("Failed to finish the change of the ensemble, retrying later",
-			slog.Any("error", err), slog.Duration("retry-after", duration))
-	})
+func (e *election) TryFinishEnsembleChange() error {
+	if e.meta.EnsembleChange == nil || !e.quorumCaughtUp.Load() {
+		return nil
+	}
+	return e.finishEnsembleChange()
 }
 
-// finishEnsembleChange finishes the pending change, once a majority of the
-// ensemble committed the head entry of the leader at the election, if the shard
-// is still in the term of the election.
-func (e *election) finishEnsembleChange(term int64) error {
+// finishEnsembleChange finishes the pending change, if the shard is still in the
+// term of the election.
+func (e *election) finishEnsembleChange() error {
 	var finished *proto.EnsembleChangeMetadata
 	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		// During a handover, the other coordinator may have elected since,
 		// undone the change, or started another
-		if current.Term != term || current.EnsembleChange == nil {
+		if current.Term != e.meta.Term || current.EnsembleChange == nil {
 			return false, nil
 		}
 		finished = current.EnsembleChange
@@ -785,6 +777,8 @@ func (e *election) finishEnsembleChange(term int64) error {
 		e.logger.Info("A majority of the ensemble caught up, the change of the ensemble is finished",
 			slog.Any("from", finished.From), slog.Any("to", finished.To))
 	}
+	// Finished, or left to the election of a later term
+	e.meta.EnsembleChange = nil
 	return nil
 }
 

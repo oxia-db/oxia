@@ -868,7 +868,9 @@ func (s *controller) handlePeriodicTasks() {
 		s.shard).UnsafeBorrow()
 
 	if shardMeta.GetEnsembleChange() != nil {
-		s.handleEnsembleChange(shardMeta)
+		if err := s.handleEnsembleChange(shardMeta); err != nil {
+			s.logger.Warn("Failed to finish the change of the ensemble, retrying next round", slog.Any("error", err))
+		}
 	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
@@ -879,15 +881,19 @@ func (s *controller) handlePeriodicTasks() {
 	s.checkTermFeatures(shardMeta)
 }
 
-// handleEnsembleChange starts an election to finish the pending change when
-// there is none, e.g. after a restart: the election finishes it.
-func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) {
-	if s.currentElection != nil || shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
-		return
+// handleEnsembleChange finishes the pending change through the current
+// election, or starts an election to finish it when there is none, e.g. after a
+// restart.
+func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error {
+	if s.currentElection != nil {
+		return s.currentElection.TryFinishEnsembleChange()
 	}
-	s.logger.Info("Starting an election to finish the change of the ensemble",
-		slog.Any("change", shardMeta.GetEnsembleChange()))
-	channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
+	if shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
+		s.logger.Info("Starting an election to finish the change of the ensemble",
+			slog.Any("change", shardMeta.GetEnsembleChange()))
+		channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
+	}
+	return nil
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from
