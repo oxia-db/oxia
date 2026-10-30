@@ -32,6 +32,11 @@ type Options struct {
 	LoadBalancerConfig *commonproto.LoadBalancer
 
 	NodeAvailableJudger func(nodeID string) bool
+
+	// NodeRunningJudger reports whether the data server is up, unlike
+	// NodeAvailableJudger, which also leaves out a data server that recovered
+	// recently
+	NodeRunningJudger func(nodeID string) bool
 }
 
 type LoadBalancer interface {

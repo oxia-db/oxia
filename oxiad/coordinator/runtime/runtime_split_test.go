@@ -510,6 +510,7 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *fakeMetadata) {
 			Metadata:            racing,
 			LoadBalancerConfig:  loadBalancerConfig.UnsafeBorrow(),
 			NodeAvailableJudger: func(string) bool { return true },
+			NodeRunningJudger:   func(string) bool { return true },
 		}),
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 		shardControllers: map[int64]shardcontroller.Controller{},

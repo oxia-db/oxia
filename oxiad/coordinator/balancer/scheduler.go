@@ -52,6 +52,7 @@ type nodeBasedBalancer struct {
 	loadBalancerConf    *commonproto.LoadBalancer
 	metadata            coordmetadata.Metadata
 	nodeAvailableJudger func(nodeID string) bool
+	nodeRunningJudger   func(nodeID string) bool
 
 	selector           selector.Selector[*single.Context, string]
 	loadRatioAlgorithm selector.LoadRatioAlgorithm
@@ -407,7 +408,8 @@ func (r *nodeBasedBalancer) leaderBalanced(candidates *linkedhashset.Set[string]
 // leader's count and the target's count is at least 2 (each move then strictly
 // reduces the overall imbalance, so repeated moves always terminate). Only
 // available nodes are considered, both as donors and as targets. Shards in
-// quarantinedShards (may be nil) are not eligible.
+// quarantinedShards (may be nil) are not eligible, nor are the shards with a
+// member that is down: the election of the move would run without it.
 func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string],
 	status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
 	quarantinedShards *linkedhashset.Set[int64]) (move state.NamespaceAndShard, found bool) {
@@ -433,6 +435,9 @@ func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string]
 			if quarantinedShards != nil && quarantinedShards.Contains(nsAndShard.ShardID) {
 				continue
 			}
+			if !r.ensembleRunning(status, nsAndShard) {
+				continue
+			}
 			minLeaders := minEnsembleLeaders(status, nsAndShard, counts)
 			if minLeaders >= 0 && donorLeaders-minLeaders > bestGap {
 				bestGap = donorLeaders - minLeaders
@@ -442,6 +447,17 @@ func (r *nodeBasedBalancer) bestLeaderMove(candidates *linkedhashset.Set[string]
 		}
 	}
 	return move, found
+}
+
+func (r *nodeBasedBalancer) ensembleRunning(status map[string]commonobject.Borrowed[*commonproto.NamespaceStatus],
+	nsAndShard state.NamespaceAndShard) bool {
+	shardStatus := status[nsAndShard.Namespace].UnsafeBorrow().Shards[nsAndShard.ShardID]
+	for _, member := range shardStatus.Ensemble {
+		if !r.nodeRunningJudger(member.GetNameOrDefault()) {
+			return false
+		}
+	}
+	return true
 }
 
 // minEnsembleLeaders returns the smallest leader count among the available
@@ -585,6 +601,7 @@ func NewLoadBalancer(options Options) LoadBalancer {
 		loadBalancerConf:        options.LoadBalancerConfig,
 		actionCh:                make(chan action.Action, 1000),
 		nodeAvailableJudger:     options.NodeAvailableJudger,
+		nodeRunningJudger:       options.NodeRunningJudger,
 		metadata:                options.Metadata,
 		selector:                single.NewSelector(),
 		loadRatioAlgorithm:      single.DefaultShardsRank,

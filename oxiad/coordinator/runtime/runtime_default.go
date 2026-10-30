@@ -732,6 +732,12 @@ func New(
 			return status.GetState() == dataservercontroller.Running &&
 				time.Since(status.GetLastTransitionTime()) >= 5*time.Minute
 		},
+		NodeRunningJudger: func(nodeID string) bool {
+			c.RLock()
+			defer c.RUnlock()
+			nc, ok := c.dataServerControllers[nodeID]
+			return ok && nc.GetStatus().GetState() != dataservercontroller.NotRunning
+		},
 	})
 
 	c.rpc = rpcProvider(c.insID)

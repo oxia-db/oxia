@@ -303,6 +303,7 @@ func newTestBalancer(
 		actionCh:                make(chan action.Action, 1000),
 		triggerCh:               make(chan any, 1),
 		nodeAvailableJudger:     func(_ string) bool { return true },
+		nodeRunningJudger:       func(_ string) bool { return true },
 	}
 }
 
@@ -796,6 +797,7 @@ func TestNodeBasedBalancerCloseStopsBackgroundTasks(t *testing.T) {
 		Metadata:            metadata,
 		LoadBalancerConfig:  &proto.LoadBalancer{ScheduleInterval: "30s", QuarantineTime: "5m"},
 		NodeAvailableJudger: func(string) bool { return true },
+		NodeRunningJudger:   func(string) bool { return true },
 	})
 	lb.Start()
 	lb.Trigger()
@@ -1068,6 +1070,33 @@ func TestNodeBasedBalancerRebalanceLeaderSkipsQuarantinedShards(t *testing.T) {
 	b.rebalanceLeader()
 
 	assert.Empty(t, b.actionCh)
+}
+
+// A move of a leader while a member of the ensemble is down runs an election
+// without it, which can leave a healthy shard without a leader: the balancer
+// waits for the member to come back.
+func TestNodeBasedBalancerRebalanceLeaderSkipsShardWithMemberDown(t *testing.T) {
+	metadata := newBalancedMockMetadata()
+	for _, shard := range metadata.status.Namespaces["ns"].Shards {
+		shard.Leader = metadata.nodeMap["sv-1"]
+	}
+	b := newTestBalancer(t.Context(), func() {}, metadata, &alwaysErrorSelector{})
+	b.nodeAvailableJudger = func(nodeID string) bool { return nodeID != "sv-3" }
+	b.nodeRunningJudger = func(nodeID string) bool { return nodeID != "sv-3" }
+
+	rebalanced := make(chan struct{})
+	go func() {
+		b.rebalanceLeader()
+		close(rebalanced)
+	}()
+
+	select {
+	case <-rebalanced:
+	case ac := <-b.actionCh:
+		assert.Fail(t, "moved a leader while a member of the ensemble is down", "shard %d", ac.GetShard())
+		ac.Error(errors.New("the election failed"))
+		<-rebalanced
+	}
 }
 
 func TestNodeBasedBalancerRebalanceLeaderFailsOnStatusError(t *testing.T) {
