@@ -255,9 +255,10 @@ gracePeriod:
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 2. from of the       |    strictly ahead: the change is undone,
-//	           |    pending change    |    from swaps back with to, and is the
-//	           |                      |    only candidate
+//	           | 2. pending change    |    from strictly ahead: the change is
+//	           |                      |    undone, from swaps back with to, and is
+//	           |                      |    the only candidate; to tied at the
+//	           |                      |    highest: the change is finished
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
@@ -266,21 +267,29 @@ gracePeriod:
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
 	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
-	var candidates []*proto.DataServerIdentity
+	var mostUpToDate []*proto.DataServerIdentity
 	var highest *proto.EntryId
 	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
 		for server, head := range heads {
 			if highest == nil || entry.Compare(head, highest) > 0 {
-				highest, candidates = head, []*proto.DataServerIdentity{server}
+				highest, mostUpToDate = head, []*proto.DataServerIdentity{server}
 			} else if i == 0 && entry.Compare(head, highest) == 0 {
 				// Visited first, the ensemble wins a tie
-				candidates = append(candidates, server)
+				mostUpToDate = append(mostUpToDate, server)
 			}
 		}
 	}
-	if len(candidates) > 0 {
-		if _, retained := retainedHeads[candidates[0]]; retained {
-			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
+	if len(mostUpToDate) > 0 {
+		if _, retained := retainedHeads[mostUpToDate[0]]; retained {
+			e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
+		} else if change := e.meta.EnsembleChange; change != nil &&
+			slices.ContainsFunc(mostUpToDate, sharding.MatchDataServer(change.To)) {
+			// To has every committed entry: with it, the ensemble has each of them on a
+			// majority without from
+			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
+				slog.Any("from", change.From), slog.Any("to", change.To))
+			e.meta.EnsembleChange = nil
+			e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -288,7 +297,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 		return nil, nil, err
 	}
 	if leader, err = e.leaderSelector.Select(&leaderselector.Context{
-		Candidates: candidates,
+		Candidates: mostUpToDate,
 		Namespaces: namespaces,
 	}); err != nil {
 		return nil, nil, err
@@ -742,8 +751,31 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) Term() int64 {
-	return e.meta.GetTerm()
+func (e *election) TryFinishEnsembleChange() error {
+	if e.meta.EnsembleChange == nil || !e.quorumCaughtUp.Load() {
+		return nil
+	}
+	var finished *proto.EnsembleChangeMetadata
+	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
+		// During a handover, the other coordinator may have elected since,
+		// undone the change, or started another
+		if current.Term != e.meta.Term || current.EnsembleChange == nil {
+			return false, nil
+		}
+		finished = current.EnsembleChange
+		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
+		current.EnsembleChange = nil
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	if finished != nil {
+		e.logger.Info("A majority of the ensemble caught up, the change of the ensemble is finished",
+			slog.Any("from", finished.From), slog.Any("to", finished.To))
+	}
+	// Finished, or left to the election of a later term
+	e.meta.EnsembleChange = nil
+	return nil
 }
 
 func (e *election) IsQuorumCaughtUp() bool {

@@ -262,7 +262,10 @@ func (s *controller) run(bo backoff.BackOff) error {
 		// triggering elections that would interfere with the split controller.
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
-	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
+	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
+		// Only an election finishes a pending change: the catch-up of the one
+		// before the restart is lost
+		initShardMeta.GetEnsembleChange() != nil:
 		_, _ = s.electLeader(initShardMeta, nil)
 	default:
 		s.logger.Info(
@@ -867,9 +870,9 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	if shardMeta.GetEnsembleChange() != nil {
-		if err := s.handleEnsembleChange(shardMeta); err != nil {
-			s.logger.Warn("Failed to handle the change of the ensemble", slog.Any("error", err))
+	if s.currentElection != nil {
+		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
+			s.logger.Warn("Failed to finish the change of the ensemble, retrying next round", slog.Any("error", err))
 		}
 	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
@@ -879,40 +882,6 @@ func (s *controller) handlePeriodicTasks() {
 	}
 
 	s.checkTermFeatures(shardMeta)
-}
-
-func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error {
-	change := shardMeta.GetEnsembleChange()
-	if s.currentElection == nil {
-		if shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
-			s.logger.Info("Starting an election to complete the change of the ensemble", slog.Any("change", change))
-			channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
-		}
-		return nil
-	}
-	if !s.currentElection.IsQuorumCaughtUp() {
-		return nil
-	}
-	term := s.currentElection.Term()
-	completed := false
-	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
-		// A catch-up is of its election's term only: during a handover, the other
-		// coordinator may have elected since, undone the change, or started another
-		if current.Term != term || current.EnsembleChange == nil {
-			return false, nil
-		}
-		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes,
-			current.EnsembleChange.From)
-		current.EnsembleChange = nil
-		completed = true
-		return true, nil
-	}); err != nil {
-		return fmt.Errorf("complete the change of the ensemble: %w", err)
-	}
-	if completed {
-		s.logger.Info("Completed the change of the ensemble", slog.Any("change", change))
-	}
-	return nil
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from
