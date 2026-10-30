@@ -753,12 +753,6 @@ func (e *election) TryFinishEnsembleChange() error {
 	if e.meta.EnsembleChange == nil || !e.quorumCaughtUp.Load() {
 		return nil
 	}
-	return e.finishEnsembleChange()
-}
-
-// finishEnsembleChange finishes the pending change, if the shard is still in the
-// term of the election.
-func (e *election) finishEnsembleChange() error {
 	var finished *proto.EnsembleChangeMetadata
 	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		// During a handover, the other coordinator may have elected since,
