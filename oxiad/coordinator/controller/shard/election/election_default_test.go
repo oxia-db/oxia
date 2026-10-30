@@ -15,6 +15,7 @@
 package election
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"os"
@@ -154,7 +155,7 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 
 // A follower that is not added by the leader yet, behind it, or unreachable,
 // is asked again until it catches up.
-func TestElectionEnsureQuorumCaughtUpRetriesUntilCaughtUp(t *testing.T) {
+func TestElectionEnsureEnsembleCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 	leader := testDataServer("leader")
@@ -171,23 +172,21 @@ func TestElectionEnsureQuorumCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 9)
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 10)
 
-	require.NoError(t, e.ensureQuorumCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
+	require.NoError(t, e.ensureEnsembleCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
 		&proto.EntryId{Term: 2, Offset: 10}))
-	// The follower is the whole ensemble but the leader
-	assert.Eventually(t, func() bool {
-		return requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp()
-	}, 10*time.Second, 10*time.Millisecond)
+	assert.True(t, e.IsQuorumCaughtUp())
 	assert.True(t, e.IsEnsembleCaughtUp())
+	assert.True(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 
 	for range 5 {
 		rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
 	}
 }
 
-// A majority of the ensemble, the leader included, is enough, and a dead
-// follower doesn't block it; the wait for the dead follower goes on, and the
-// ensemble is never caught up.
-func TestElectionEnsureQuorumCaughtUpStopsAtMajority(t *testing.T) {
+// A majority of the ensemble, the leader included, catches up the quorum,
+// which a dead follower doesn't block; the wait goes on for the dead follower
+// until the election is canceled, and the ensemble is never caught up.
+func TestElectionEnsureEnsembleCaughtUpWaitsForEveryFollower(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 	leader := testDataServer("leader")
@@ -196,12 +195,18 @@ func TestElectionEnsureQuorumCaughtUpStopsAtMajority(t *testing.T) {
 	e := newTestElection(t, nil, rpc, shard, &proto.ShardMetadata{})
 
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 10)
+	result := make(chan error, 1)
+	go func() {
+		result <- e.ensureEnsembleCaughtUp([]*proto.DataServerIdentity{leader, follower, dead}, leader,
+			&proto.EntryId{Term: 2, Offset: 10})
+	}()
 
-	require.NoError(t, e.ensureQuorumCaughtUp([]*proto.DataServerIdentity{leader, follower, dead}, leader,
-		&proto.EntryId{Term: 2, Offset: 10}))
 	rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
+	assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
 	rpc.GetNode(dead).ExpectGetStatusRequest(t, shard)
+	assert.Empty(t, result)
 	e.Cancel()
+	assert.ErrorIs(t, <-result, context.Canceled)
 	assert.False(t, e.IsEnsembleCaughtUp())
 }
 
