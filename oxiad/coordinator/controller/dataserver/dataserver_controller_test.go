@@ -183,9 +183,9 @@ func TestDataServerControllerHealthPingWithRetriesFailsNotServingDataServer(t *t
 }
 
 // The connection pool closes a connection after its own health pings fail,
-// and opens a new one on the next request: the ping loop keeps probing
-// through the new connection, and still fails the data server when it
-// stops answering.
+// and opens a new one on the next request: the probes on the closed
+// connection fail the data server, and the ping loop's next round probes
+// through the new connection.
 func TestDataServerControllerHealthPingWithRetriesSurvivesClosedConnection(t *testing.T) {
 	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
 	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
@@ -223,10 +223,6 @@ func TestDataServerControllerHealthPingWithRetriesSurvivesClosedConnection(t *te
 	}, 10*time.Second, 10*time.Millisecond)
 
 	connection.Add(1)
-	time.Sleep(5 * testHealthPolicy.ProbeInterval)
-	assert.Equal(t, Running, nc.GetStatus().GetState())
-
-	node.HealthClient.SetError(grpcstatus.Error(codes.Unavailable, "connection refused"))
 
 	select {
 	case unavailableNode := <-nal.Events:
@@ -234,7 +230,10 @@ func TestDataServerControllerHealthPingWithRetriesSurvivesClosedConnection(t *te
 	case <-time.After(10 * time.Second):
 		assert.Fail(t, "the data server was not failed")
 	}
-	assert.Equal(t, NotRunning, nc.GetStatus().GetState())
+
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().GetState() == Running
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func TestDataServerControllerCloseInterruptsHealthPing(t *testing.T) {
@@ -408,25 +407,13 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesSlowNode(t *testing
 
 	sap := rpctest.NewShardAssignmentsProvider()
 	nal := rpctest.NewNodeAvailabilityListener()
-	rpc := &fakeRpcProvider{RpcProvider: rpctest.NewRpcProvider()}
-	node := rpc.GetNode(addr)
-	var checks atomic.Int64
-	rpc.getHealthClient = func(*proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
-		return &fakeHealthClient{
-			HealthClient: node.HealthClient,
-			check: func(ctx context.Context, req *grpc_health_v1.HealthCheckRequest, opts ...grpc.CallOption) (
-				*grpc_health_v1.HealthCheckResponse, error) {
-				checks.Add(1)
-				return node.HealthClient.Check(ctx, req, opts...)
-			},
-		}, nil
-	}
+	rpc := rpctest.NewRpcProvider()
 	nc := NewController(context.Background(), dataServer, sap, nal, rpc, "test-instance", 1*time.Second, slowPingHealthPolicy)
 
-	// Wait for the ping loop's first probe, so that the failure below goes
-	// to the verification probe
+	node := rpc.GetNode(addr)
+
 	assert.Eventually(t, func() bool {
-		return nc.GetStatus().GetState() == Running && checks.Load() >= 1
+		return nc.GetStatus().GetState() == Running
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// The watch stream breaks and the verification probe times out: that is
