@@ -50,6 +50,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
+	commonentry "github.com/oxia-db/oxia/oxiad/common/entry"
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 )
 
@@ -474,17 +475,15 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	}
 
 	// The entries of the wal are committed before the leader serves, or it
-	// could miss them. An entry of an earlier term on a majority can still be
-	// replaced by a later leader, whose head has a higher term (Raft §5.4.2):
-	// they are committed with an entry of this term
+	// could miss them: the ones not committed yet are with an entry of the term
+	commitOffset := lc.leaderElectionHeadEntryId.Offset
 	if headOffset > leaderCommitOffset {
-		termEntryOffset, err := lc.appendTermEntry(term)
-		if err != nil {
+		if commitOffset, err = lc.appendTermEntry(term); err != nil {
 			return err
 		}
-		if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, termEntryOffset); err != nil {
-			return err
-		}
+	}
+	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, commitOffset); err != nil {
+		return err
 	}
 
 	if err = lc.applyAllEntriesIntoDB(); err != nil {
@@ -543,19 +542,26 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	return nil
 }
 
-// appendTermEntry appends an empty write of the term after the head of the wal,
-// and returns its offset.
+// appendTermEntry appends an entry of the term, without any operation, after the
+// head of the wal, and returns its offset. Once a majority has it, the entries
+// before it are committed.
+//
+// The entries of earlier terms can't be committed by counting the replicas that
+// have them (Raft §5.4.2, figure 8): a replica that missed the fence of this
+// term may have a different entry at the same offset, of a later term. Its head
+// is higher, as the term comes first, so it can win a later election and
+// replace them. Once a majority has an entry of this term, any later fence
+// quorum includes a replica whose head has this term or a later one: the
+// leader it elects has the entries before it. As Raft's leader does with a
+// no-op entry, the leader only commits its entries through one of its term.
 func (lc *leaderController) appendTermEntry(term int64) (int64, error) {
 	offset := lc.quorumAckTracker.NextOffset()
-	proposal := statemachine.NewWriteProposal(offset, &proto.WriteRequest{})
-	entryValue := &proto.LogEntryValue{}
-	proposal.ToLogEntry(entryValue)
-	_, value, err := lc.marshalLogEntryValue(nil, entryValue)
+	_, value, err := lc.marshalLogEntryValue(nil, commonentry.NoOpValue)
 	if err != nil {
 		return wal.InvalidOffset, err
 	}
 	if err := lc.wal.Append(&proto.LogEntry{Term: term, Offset: offset, Value: value,
-		Timestamp: proposal.GetTimestamp()}); err != nil {
+		Timestamp: uint64(time.Now().UnixMilli())}); err != nil {
 		return wal.InvalidOffset, err
 	}
 	lc.quorumAckTracker.AdvanceHeadOffset(offset)

@@ -61,6 +61,7 @@ import (
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commonentry "github.com/oxia-db/oxia/oxiad/common/entry"
 )
 
 func AssertProtoEqual(t *testing.T, expected, actual pb.Message) {
@@ -1437,12 +1438,14 @@ func TestLeaderController_EntryVisibilityAfterBecomingLeader(t *testing.T) {
 		Term:  1,
 	})
 
-	// Respond to replication flow to follower
+	// Respond to replication flow to follower: the entry, then the one of term 1
 	go func() {
-		req := <-provider.AppendReqs
+		for i := 0; i < 2; i++ {
+			req := <-provider.AppendReqs
 
-		provider.AckResps <- &proto.Ack{
-			Offset: req.Entry.Offset,
+			provider.AckResps <- &proto.Ack{
+				Offset: req.Entry.Offset,
+			}
 		}
 	}()
 
@@ -1531,10 +1534,11 @@ func TestLeaderController_RejectedWrite(t *testing.T) {
 	_, err = lc.WriteBlock(context.Background(), sequentialPut(1))
 	assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
+	// After the 3 entries, the entry of term 2, then the rejected write
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
-	assert.EqualValues(t, 3, commitOffset)
-	assert.EqualValues(t, 3, lc.CommitOffset())
+	assert.EqualValues(t, 4, commitOffset)
+	assert.EqualValues(t, 4, lc.CommitOffset())
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -1764,10 +1768,11 @@ func TestLeaderController_FailedApplyUntilNewTerm(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("b"), results[0].Value)
 	assert.Equal(t, []byte("c"), results[1].Value)
+	// Up to the entry of term 2
 	commitOffset, err = lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
-	assert.EqualValues(t, 2, commitOffset)
-	assert.EqualValues(t, 2, lc.CommitOffset())
+	assert.EqualValues(t, 3, commitOffset)
+	assert.EqualValues(t, 3, lc.CommitOffset())
 
 	// Closing the leader stops the retries too
 	failures.Store(math.MaxInt64)
@@ -4015,6 +4020,7 @@ func TestLeaderControllerBecomeLeaderFailsWhenTheTermEntryCantBeAppended(t *test
 	for _, failure := range []string{"marshal", "append"} {
 		t.Run(failure, func(t *testing.T) {
 			kvFactory, walFactory := newHookFactories(t)
+			appendTestEntry(t, walFactory, marshalTestWrite(t, "a"))
 			walFactory.append = func(w wal.Wal, entry *proto.LogEntry) error {
 				if failure == "append" {
 					return errInjected
@@ -4027,12 +4033,12 @@ func TestLeaderControllerBecomeLeaderFailsWhenTheTermEntryCantBeAppended(t *test
 					return buf, nil, errInjected
 				}
 			}
-			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 1})
+			_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 2})
 			require.NoError(t, err)
 
 			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 				Shard:             1,
-				Term:              1,
+				Term:              2,
 				ReplicationFactor: 1,
 			})
 			assert.ErrorIs(t, err, errInjected)
@@ -4691,8 +4697,7 @@ func failMarshals(lc *leaderController, failing *atomic.Bool) {
 // isTermEntry reports whether the value is the one of the entry that
 // BecomeLeader appends for its term.
 func isTermEntry(value *proto.LogEntryValue) bool {
-	writes := value.GetRequests().GetWrites()
-	return len(writes) == 1 && pb.Equal(writes[0], &proto.WriteRequest{})
+	return pb.Equal(value, commonentry.NoOpValue)
 }
 
 // newHookedLeaderController creates a leader controller of shard 1 on the
