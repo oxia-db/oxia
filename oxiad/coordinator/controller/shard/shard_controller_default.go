@@ -242,14 +242,6 @@ func (s *controller) Dispatch(ac action.Action) {
 	}
 }
 
-// needsElectionAtStart reports whether the shard has no leader in steady
-// state, or a pending change of the ensemble, which only an election finishes:
-// the catch-up of the one before the start is lost.
-func needsElectionAtStart(shardMeta *proto.ShardMetadata) bool {
-	return shardMeta.Leader == nil || shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState ||
-		shardMeta.GetEnsembleChange() != nil
-}
-
 func (s *controller) run(bo backoff.BackOff) error {
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
@@ -270,7 +262,10 @@ func (s *controller) run(bo backoff.BackOff) error {
 		// triggering elections that would interfere with the split controller.
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
-	case needsElectionAtStart(initShardMeta):
+	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
+		// Only an election finishes a pending change: the catch-up of the one
+		// before the restart is lost
+		initShardMeta.GetEnsembleChange() != nil:
 		_, _ = s.electLeader(initShardMeta, nil)
 	default:
 		s.logger.Info(
