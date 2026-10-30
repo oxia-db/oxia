@@ -158,6 +158,89 @@ func TestWriteClientClose(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
+// A key that is not valid UTF-8 must be rejected: the key encoders would
+// otherwise fold it onto an unrelated key (e.g. the natural sorting stores
+// "\xff\xffoxia/term" on the internal key "__oxia/term", and the hierarchical
+// sorting encodes "/\xff" and "\xff/" identically), so a client bypassing the
+// SyncClient/AsyncClient check could overwrite or forge a key, or make a delete
+// range reach the internal keys.
+func TestWriteRejectsKeyThatIsNotValidUTF8(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(map[string]string{
+		"shard-id":  "0",
+		"namespace": "default",
+	}))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	shard := int64(0)
+	invalidKey := "\xff\xffoxia/term"
+
+	_, err = client.Write(ctx, &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: invalidKey, Value: []byte("v")}},
+	})
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err), "put: %v", err)
+
+	_, err = client.Write(ctx, &proto.WriteRequest{
+		Shard:   &shard,
+		Deletes: []*proto.DeleteRequest{{Key: invalidKey}},
+	})
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err), "delete: %v", err)
+
+	_, err = client.Write(ctx, &proto.WriteRequest{
+		Shard:        &shard,
+		DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "a", EndExclusive: invalidKey}},
+	})
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err), "delete range: %v", err)
+}
+
+// The streaming write path performs the same validation, and a request with an
+// invalid key must not corrupt the shard: the valid writes before it still
+// succeed, and the invalid one ends the stream with InvalidArgument.
+func TestWriteStreamRejectsKeyThatIsNotValidUTF8(t *testing.T) {
+	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := proto.NewOxiaClientClient(conn)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(map[string]string{
+		"shard-id":  "0",
+		"namespace": "default",
+	}))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := client.WriteStream(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, stream.Send(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "valid-key", Value: []byte("v")}},
+	}))
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+	require.Len(t, resp.Puts, 1)
+	assert.Equal(t, proto.Status_OK, resp.Puts[0].Status)
+
+	require.NoError(t, stream.Send(&proto.WriteRequest{
+		Puts: []*proto.PutRequest{{Key: "\xff\xffoxia/term", Value: []byte("v")}},
+	}))
+	_, err = stream.Recv()
+	assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err), "stream: %v", err)
+}
+
 // Closing the leader controller (the leadership moved, the shard was deleted
 // after a split, or the server is shutting down) ends the write streams open on
 // it: the client must see a retryable error, so that it retries the in-flight
