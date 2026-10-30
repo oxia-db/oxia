@@ -1136,8 +1136,10 @@ func TestControllerDispatchChangeEnsembleDoesNotFailIfRemoveFails(t *testing.T) 
 	rpc.GetNode(s2).ExpectBecomeLeaderRequest(t, shard, 3, 3)
 
 	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_LEADER, 1, 1)
-	// The followers catch up with the leader: s1 is pending deletion
+	// The followers catch up with the leader: s1 is pending deletion. To, s4,
+	// is asked by the watch of a majority and by its own
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 2, 2)
+	rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 2, 2)
 	rpc.GetNode(s4).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 2, 2)
 
 	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)

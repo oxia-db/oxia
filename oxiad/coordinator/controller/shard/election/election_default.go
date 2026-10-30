@@ -361,7 +361,6 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	return nil
 }
 
-//nolint:revive
 func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	leaderEntry *proto.EntryId) error {
 	ctx, cancel := context.WithCancel(e.ctx)
