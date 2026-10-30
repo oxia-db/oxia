@@ -2272,66 +2272,41 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
-// The periodic tasks complete the pending change of the ensemble once a
-// majority of the current election caught up, if the shard is still in its
-// term, and start an election when there is none, e.g. after a restart. A
-// failed write is left to the next round.
-func TestControllerHandlePeriodicTasksCompletesEnsembleChange(t *testing.T) {
+// The periodic tasks finish the pending change of the ensemble through the
+// current election, and start an election when there is none, e.g. after a
+// restart. A failed write is left to the next round.
+func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 	for _, test := range []struct {
-		name      string
-		election  *fakeElection
-		status    proto.ShardStatus
-		writeErr  error
-		pending   bool
-		elects    bool
-		releasing bool
+		name     string
+		election *fakeElection
+		status   proto.ShardStatus
+		elects   bool
 	}{
 		{name: "no election", status: proto.ShardStatusSteadyState, elects: true},
 		{name: "no election, election running", status: proto.ShardStatusElection},
-		{name: "followers catching up", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
-		{name: "followers caught up", election: &fakeElection{term: 1, quorumCaughtUp: true},
-			status: proto.ShardStatusSteadyState, releasing: true},
-		{name: "already pending deletion", election: &fakeElection{term: 1, quorumCaughtUp: true},
-			status: proto.ShardStatusSteadyState, pending: true, releasing: true},
-		{name: "caught up in an earlier term", election: &fakeElection{term: 0, quorumCaughtUp: true},
+		{name: "current election", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
+		{name: "finish failure", election: &fakeElection{finishErr: errors.New("store unavailable")},
 			status: proto.ShardStatusSteadyState},
-		{name: "release failure", election: &fakeElection{term: 1, quorumCaughtUp: true},
-			status: proto.ShardStatusSteadyState, writeErr: errors.New("store unavailable")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
-			shardMeta := &proto.ShardMetadata{
-				Status:         test.status,
-				Term:           1,
-				Leader:         s1,
-				Ensemble:       []*proto.DataServerIdentity{s1},
-				EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s1},
-			}
-			if test.pending {
-				shardMeta.PendingDeleteShardNodes = []*proto.DataServerIdentity{s2}
-			}
-			require.NoError(t, base.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
-				Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
+			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+			require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+				Shards: map[int64]*proto.ShardMetadata{shard: {
+					Status:         test.status,
+					Term:           1,
+					Leader:         s1,
+					Ensemble:       []*proto.DataServerIdentity{s1},
+					EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s1},
+				}},
 			}))
-			metadata := &hookedMetadata{Metadata: base}
-			if test.writeErr != nil {
-				metadata.patchShardStatus = func(string, int64, func(*proto.ShardMetadata) (bool, error)) error {
-					return test.writeErr
-				}
-			}
-			rpc := rpctest.NewRpcProvider()
-			if test.pending {
-				// Its copy can't be deleted yet: it stays pending
-				rpc.GetNode(s2).DeleteShardResponse(errors.New("unreachable"))
-			}
 			s := &controller{
 				namespace:     constant.DefaultNamespace,
 				shard:         shard,
 				metadataStore: metadata,
-				rpc:           rpc,
+				rpc:           rpctest.NewRpcProvider(),
 				ctx:           t.Context(),
 				logger:        slog.Default(),
 				electionOp:    make(chan *action.ElectionAction, 1),
@@ -2342,12 +2317,8 @@ func TestControllerHandlePeriodicTasksCompletesEnsembleChange(t *testing.T) {
 
 			s.handlePeriodicTasks()
 			assert.Equal(t, test.elects, len(s.electionOp) == 1)
-			stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
-			if test.releasing {
-				assert.Nil(t, stored.EnsembleChange)
-				assertShardEnsemble(t, stored.PendingDeleteShardNodes, s2)
-			} else {
-				assertEnsembleChange(t, stored.EnsembleChange, s2, s1)
+			if test.election != nil {
+				assert.Equal(t, 1, test.election.finishes)
 			}
 		})
 	}
@@ -4228,13 +4199,15 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 
 // fakeElection is an election that is already elected.
 type fakeElection struct {
-	term           int64
 	quorumCaughtUp bool
 	canceled       bool
+	finishes       int
+	finishErr      error
 }
 
-func (f *fakeElection) Term() int64 {
-	return f.term
+func (f *fakeElection) FinishEnsembleChange() error {
+	f.finishes++
+	return f.finishErr
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {

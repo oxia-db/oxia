@@ -885,32 +885,13 @@ func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error 
 	change := shardMeta.GetEnsembleChange()
 	if s.currentElection == nil {
 		if shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
-			s.logger.Info("Starting an election to complete the change of the ensemble", slog.Any("change", change))
+			s.logger.Info("Starting an election to finish the change of the ensemble", slog.Any("change", change))
 			channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
 		}
 		return nil
 	}
-	if !s.currentElection.IsQuorumCaughtUp() {
-		return nil
-	}
-	term := s.currentElection.Term()
-	completed := false
-	if err := s.metadataStore.PatchShardStatus(s.namespace, s.shard, func(current *proto.ShardMetadata) (bool, error) {
-		// A catch-up is of its election's term only: during a handover, the other
-		// coordinator may have elected since, undone the change, or started another
-		if current.Term != term || current.EnsembleChange == nil {
-			return false, nil
-		}
-		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes,
-			current.EnsembleChange.From)
-		current.EnsembleChange = nil
-		completed = true
-		return true, nil
-	}); err != nil {
-		return fmt.Errorf("complete the change of the ensemble: %w", err)
-	}
-	if completed {
-		s.logger.Info("Completed the change of the ensemble", slog.Any("change", change))
+	if err := s.currentElection.FinishEnsembleChange(); err != nil {
+		return fmt.Errorf("finish the change of the ensemble: %w", err)
 	}
 	return nil
 }

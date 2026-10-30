@@ -91,16 +91,15 @@ import (
 // pending in the shard status (EnsembleChangeMetadata). A committed entry is on
 // a majority of the ensemble before or after the change, which differ by one
 // member, so a fence quorum of the ensemble and from includes one of its
-// holders. From is thus fenced and is a candidate, until enough members of the
-// ensemble have every entry:
+// holders. From is thus fenced and is a candidate, until to has every committed
+// entry: with to, the ensemble has each of them on a majority without from.
 //
 //	ensemble {A,B,C}         ensemble {A,C,D}              ensemble {A,C,D}
 //	change   none    ---->   change {from B, to D} ---->   change none
-//	                 change                       complete pending deletion {B}
-//	                 election                     a majority of the ensemble
-//	                    |                         committed the head entry of
-//	                    |                         the leader: any later fence
-//	                    |                         quorum includes one of them
+//	                 change                       finish  pending deletion {B}
+//	                 election                     to committed the head entry
+//	                    |                         of the leader at the
+//	                    |                         election
 //	                    v
 //	           6. choose leader among the fenced members of the ensemble and
 //	              from; a member of the ensemble wins a tie
@@ -117,15 +116,12 @@ import (
 //	                                          that isn't committed, and to is
 //	                                          deleted
 //
-// Otherwise, the shard controller completes the change, and refuses another
-// one until then: with two changes, the ensembles would differ by two members, and a
-// fence quorum could miss a committed entry. It completes the change once the
-// election of the shard's current term reports IsQuorumCaughtUp, by moving
-// from to the pending deletions and clearing the change, in a single write that
-// checks the term is still the election's. The catch-up is only known in
-// memory: after a restart of the coordinator, the shard controller runs an
-// election to complete the change, which fences from again until a majority of
-// the ensemble caught up.
+// Otherwise, the election watches to after it, and FinishEnsembleChange
+// finishes the change once to caught up. The shard controller calls it from its
+// periodic tasks, and refuses another change until then: with two changes, the
+// ensembles would differ by two members, and a fence quorum could miss a
+// committed entry. The catch-up is only known in memory: after a restart of the
+// coordinator, the shard controller runs an election to finish the change.
 type Election interface {
 	// Start runs the election, and returns the elected leader. It fails if
 	// called twice.
@@ -134,9 +130,12 @@ type Election interface {
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
 
-	// Term returns the term of the election, which is only persisted once Start
-	// succeeded. It is called from the goroutine that called Start.
-	Term() int64
+	// FinishEnsembleChange finishes the pending change once to committed the
+	// head entry of the leader at the election: it moves from to the pending
+	// deletions and clears the change, in a single write, if the shard is still
+	// in the term of the election. It does nothing otherwise, and only fails if
+	// the write fails. It is called from the goroutine that called Start.
+	FinishEnsembleChange() error
 
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any

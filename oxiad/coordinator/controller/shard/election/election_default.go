@@ -76,6 +76,9 @@ type election struct {
 	meta           *proto.ShardMetadata
 	started        atomic.Bool
 	quorumCaughtUp atomic.Bool
+	// toCaughtUp is set by the background watch of the to of the pending
+	// change, and read by FinishEnsembleChange
+	toCaughtUp atomic.Bool
 
 	// metrics
 	leaderElectionLatencyHistogram metric.LatencyHistogram
@@ -379,45 +382,7 @@ func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, le
 					"shard":       fmt.Sprintf("%d", e.shard),
 					"data-server": server.GetNameOrDefault(),
 				}, func() {
-					results <- backoff.RetryNotify(func() error {
-						fs, err := e.provider.GetStatus(ctx, server, &proto.GetStatusRequest{Shard: e.shard})
-						if err != nil {
-							return err
-						}
-						// Unlike its head entry, which can be of a diverging log until
-						// the leader truncates it, the committed entries of a follower
-						// are the ones of the leader
-						if fs.CommitOffset >= leaderEntry.Offset {
-							e.logger.Info(
-								"Follower is caught-up with the leader after election",
-								slog.Any("server", server),
-							)
-							return nil
-						}
-						e.logger.Info(
-							"Follower is *not* caught-up yet with the leader",
-							slog.Any("server", server),
-							slog.Int64("leader-head-offset", leaderEntry.Offset),
-							slog.Int64("follower-commit-offset", fs.CommitOffset),
-						)
-						return errors.Wrap(errs.ErrFailedPrecondition, "follower not caught up yet")
-					}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
-						switch {
-						case errors.Is(err, errs.ErrFailedPrecondition):
-						case errors.Is(err, constant.ErrNodeIsNotMember):
-							e.logger.Info("Follower has not been added by leader yet",
-								slog.Any("server", server),
-								slog.Int64("shard", e.shard),
-								slog.Duration("retry-after", duration),
-							)
-						default:
-							e.logger.Warn("Failed to get the follower status",
-								slog.Any("server", server),
-								slog.Any("error", err),
-								slog.Duration("retry-after", duration),
-							)
-						}
-					})
+					results <- e.waitForCaughtUp(ctx, server, leaderEntry)
 				})
 		})
 	}
@@ -428,6 +393,51 @@ func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, le
 		}
 	}
 	return nil
+}
+
+// waitForCaughtUp waits until the follower committed the head entry of the
+// leader at the election.
+func (e *election) waitForCaughtUp(ctx context.Context, server *proto.DataServerIdentity,
+	leaderEntry *proto.EntryId) error {
+	return backoff.RetryNotify(func() error {
+		fs, err := e.provider.GetStatus(ctx, server, &proto.GetStatusRequest{Shard: e.shard})
+		if err != nil {
+			return err
+		}
+		// Unlike its head entry, which can be of a diverging log until
+		// the leader truncates it, the committed entries of a follower
+		// are the ones of the leader
+		if fs.CommitOffset >= leaderEntry.Offset {
+			e.logger.Info(
+				"Follower is caught-up with the leader after election",
+				slog.Any("server", server),
+			)
+			return nil
+		}
+		e.logger.Info(
+			"Follower is *not* caught-up yet with the leader",
+			slog.Any("server", server),
+			slog.Int64("leader-head-offset", leaderEntry.Offset),
+			slog.Int64("follower-commit-offset", fs.CommitOffset),
+		)
+		return errors.Wrap(errs.ErrFailedPrecondition, "follower not caught up yet")
+	}, oxiatime.NewBackOff(ctx), func(err error, duration time.Duration) {
+		switch {
+		case errors.Is(err, errs.ErrFailedPrecondition):
+		case errors.Is(err, constant.ErrNodeIsNotMember):
+			e.logger.Info("Follower has not been added by leader yet",
+				slog.Any("server", server),
+				slog.Int64("shard", e.shard),
+				slog.Duration("retry-after", duration),
+			)
+		default:
+			e.logger.Warn("Failed to get the follower status",
+				slog.Any("server", server),
+				slog.Any("error", err),
+				slog.Duration("retry-after", duration),
+			)
+		}
+	})
 }
 
 func (e *election) fenceNewTermAndAddFollower(ctx context.Context, term int64, options *proto.NewTermOptions,
@@ -698,6 +708,23 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 			},
 		)
 	})
+	if change := e.meta.EnsembleChange; change != nil {
+		e.wg.Go(func() {
+			process.DoWithLabels(
+				e.ctx,
+				map[string]string{
+					"oxia":  "election-monitor-to-caught-up",
+					"shard": fmt.Sprintf("%d", e.shard),
+				}, func() {
+					if err := e.waitForCaughtUp(e.ctx, change.To, leaderHead); err != nil {
+						e.logger.Info("Stopped waiting for to to catch up", slog.Any("error", err))
+						return
+					}
+					e.toCaughtUp.Store(true)
+				},
+			)
+		})
+	}
 	return candidateLeader, nil
 }
 
@@ -754,8 +781,29 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) Term() int64 {
-	return e.meta.GetTerm()
+func (e *election) FinishEnsembleChange() error {
+	if e.meta.EnsembleChange == nil || !e.toCaughtUp.Load() {
+		return nil
+	}
+	finished := false
+	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
+		// During a handover, the other coordinator may have elected since,
+		// undone the change, or started another
+		if current.Term != e.meta.Term || current.EnsembleChange == nil {
+			return false, nil
+		}
+		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes,
+			current.EnsembleChange.From)
+		current.EnsembleChange = nil
+		finished = true
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	if finished {
+		e.finishEnsembleChange()
+	}
+	return nil
 }
 
 func (e *election) IsQuorumCaughtUp() bool {
