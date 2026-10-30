@@ -24,3 +24,9 @@ import (
 func Compare(a *proto.EntryId, b *proto.EntryId) int {
 	return cmp.Or(cmp.Compare(a.GetTerm(), b.GetTerm()), cmp.Compare(a.GetOffset(), b.GetOffset()))
 }
+
+// NoOpValue is the marshaled value of an entry without any operation: a write
+// request without any operation, which only advances the commit offset. A
+// leader appends one for its term, to commit the entries of the earlier terms.
+// It must not be modified.
+var NoOpValue = []byte{0x0a, 0x02, 0x0a, 0x00}

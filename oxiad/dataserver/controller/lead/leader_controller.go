@@ -50,6 +50,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	commonrpc "github.com/oxia-db/oxia/common/rpc"
 	time2 "github.com/oxia-db/oxia/common/time"
+	commonentry "github.com/oxia-db/oxia/oxiad/common/entry"
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 )
 
@@ -473,11 +474,15 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 		}
 	}
 
-	// We must wait until all the entries in the leader WAL are fully
-	// committed in the quorum, to avoid missing any entries in the DB
-	// by the moment we make the leader controller accepting new propose/read
-	// requests
-	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, lc.leaderElectionHeadEntryId.Offset); err != nil {
+	// The entries of the wal are committed before the leader serves, or it
+	// could miss them: the ones not committed yet are with an entry of the term
+	commitOffset := lc.leaderElectionHeadEntryId.Offset
+	if headOffset > leaderCommitOffset {
+		if commitOffset, err = lc.appendTermEntry(term); err != nil {
+			return err
+		}
+	}
+	if err = lc.quorumAckTracker.WaitForCommitOffset(ctx, commitOffset); err != nil {
 		return err
 	}
 
@@ -535,6 +540,28 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.proposeOrphanedEphemeralsDeleteLocked(ctx, orphanedEphemerals)
 	lc.startDeferredSplitFilter(lc.termCtx, term)
 	return nil
+}
+
+// appendTermEntry appends an entry of the term, without any operation, after the
+// head of the wal, and returns its offset. Once a majority has it, the entries
+// before it are committed.
+//
+// The entries of earlier terms can't be committed by counting the replicas that
+// have them (Raft §5.4.2, figure 8): a replica that missed the fence of this
+// term may have a different entry at the same offset, of a later term. Its head
+// is higher, as the term comes first, so it can win a later election and
+// replace them. Once a majority has an entry of this term, any later fence
+// quorum includes a replica whose head has this term or a later one: the
+// leader it elects has the entries before it. As Raft's leader does with a
+// no-op entry, the leader only commits its entries through one of its term.
+func (lc *leaderController) appendTermEntry(term int64) (int64, error) {
+	offset := lc.quorumAckTracker.NextOffset()
+	if err := lc.wal.Append(&proto.LogEntry{Term: term, Offset: offset, Value: commonentry.NoOpValue,
+		Timestamp: uint64(time.Now().UnixMilli())}); err != nil {
+		return wal.InvalidOffset, err
+	}
+	lc.quorumAckTracker.AdvanceHeadOffset(offset)
+	return offset, nil
 }
 
 // BecomeLeader : Node handles a Become Leader request

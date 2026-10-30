@@ -61,6 +61,7 @@ import (
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commonentry "github.com/oxia-db/oxia/oxiad/common/entry"
 )
 
 func AssertProtoEqual(t *testing.T, expected, actual pb.Message) {
@@ -1289,6 +1290,18 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
+	// The entry of term 6 and the entries added in term 6 will be only in the
+	// leader and f1
+	go func() {
+		for i := 0; i < 11; i++ {
+			req := <-rpcClient.AppendReqs
+
+			rpcClient.AckResps <- &proto.Ack{
+				Offset: req.Entry.Offset,
+			}
+		}
+	}()
+
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
 		Shard:             shard,
 		Term:              6,
@@ -1298,18 +1311,6 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 		},
 	})
 	assert.NoError(t, err)
-
-	// Add some entries in term 6 that will be only in the
-	// leader and f1
-	go func() {
-		for i := 0; i < 10; i++ {
-			req := <-rpcClient.AppendReqs
-
-			rpcClient.AckResps <- &proto.Ack{
-				Offset: req.Entry.Offset,
-			}
-		}
-	}()
 
 	// WriteBlock entries
 	for i := 10; i < 20; i++ {
@@ -1437,12 +1438,14 @@ func TestLeaderController_EntryVisibilityAfterBecomingLeader(t *testing.T) {
 		Term:  1,
 	})
 
-	// Respond to replication flow to follower
+	// Respond to replication flow to follower: the entry, then the one of term 1
 	go func() {
-		req := <-provider.AppendReqs
+		for i := 0; i < 2; i++ {
+			req := <-provider.AppendReqs
 
-		provider.AckResps <- &proto.Ack{
-			Offset: req.Entry.Offset,
+			provider.AckResps <- &proto.Ack{
+				Offset: req.Entry.Offset,
+			}
 		}
 	}()
 
@@ -1531,10 +1534,11 @@ func TestLeaderController_RejectedWrite(t *testing.T) {
 	_, err = lc.WriteBlock(context.Background(), sequentialPut(1))
 	assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
+	// After the 3 entries, the entry of term 2, then the rejected write
 	commitOffset, err := lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
-	assert.EqualValues(t, 3, commitOffset)
-	assert.EqualValues(t, 3, lc.CommitOffset())
+	assert.EqualValues(t, 4, commitOffset)
+	assert.EqualValues(t, 4, lc.CommitOffset())
 
 	assert.NoError(t, lc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -1764,10 +1768,11 @@ func TestLeaderController_FailedApplyUntilNewTerm(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("b"), results[0].Value)
 	assert.Equal(t, []byte("c"), results[1].Value)
+	// Up to the entry of term 2
 	commitOffset, err = lc.(*leaderController).db.ReadCommitOffset()
 	require.NoError(t, err)
-	assert.EqualValues(t, 2, commitOffset)
-	assert.EqualValues(t, 2, lc.CommitOffset())
+	assert.EqualValues(t, 3, commitOffset)
+	assert.EqualValues(t, 3, lc.CommitOffset())
 
 	// Closing the leader stops the retries too
 	failures.Store(math.MaxInt64)
@@ -3958,6 +3963,76 @@ func TestLeaderControllerBecomeLeaderFailsWhenTheFeatureEnableFailsToMarshal(t *
 	assert.False(t, lc.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 }
 
+// An entry of an earlier term on a majority can still be replaced by a later
+// leader, whose head has a higher term: the leader only commits it, and serves,
+// once a majority has an entry of its own term.
+func TestLeaderControllerBecomeLeaderCommitsEarlierTermsWithAnEntryOfItsTerm(t *testing.T) {
+	kvFactory, walFactory := newHookFactories(t)
+	appendTestEntry(t, walFactory, marshalTestWrite(t, "a"))
+	provider := rpc.NewMockRpcClient()
+	lc := newHookedLeaderController(t, provider, kvFactory, walFactory)
+	_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 2})
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+			Shard:             1,
+			Term:              2,
+			ReplicationFactor: 3,
+			FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+		})
+		done <- err
+	}()
+	nextAppend := func() *proto.Append {
+		t.Helper()
+		select {
+		case req := <-provider.AppendReqs:
+			return req
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "no append to the follower")
+			return nil
+		}
+	}
+
+	req := nextAppend()
+	assert.EqualValues(t, 1, req.Entry.Term)
+	provider.AckResps <- &proto.Ack{Offset: req.Entry.Offset}
+
+	// A majority has the entry of term 1, which isn't committed yet
+	req = nextAppend()
+	assert.EqualValues(t, 2, req.Entry.Term)
+	assert.EqualValues(t, 1, req.Entry.Offset)
+	assert.Equal(t, commonentry.NoOpValue, req.Entry.Value)
+	select {
+	case err := <-done:
+		require.FailNow(t, "BecomeLeader returned before the entry of its term is committed", "error: %v", err)
+	default:
+	}
+
+	provider.AckResps <- &proto.Ack{Offset: req.Entry.Offset}
+	require.NoError(t, <-done)
+	assert.Equal(t, proto.ServingStatus_LEADER, lc.Status())
+	assert.True(t, keyExists(t, lc.(*leaderController), "a"))
+}
+
+func TestLeaderControllerBecomeLeaderFailsWhenTheTermEntryCantBeAppended(t *testing.T) {
+	kvFactory, walFactory := newHookFactories(t)
+	appendTestEntry(t, walFactory, marshalTestWrite(t, "a"))
+	walFactory.append = func(wal.Wal, *proto.LogEntry) error { return errInjected }
+	lc := newHookedLeaderController(t, rpc.NewMockRpcClient(), kvFactory, walFactory)
+	_, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 2})
+	require.NoError(t, err)
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             1,
+		Term:              2,
+		ReplicationFactor: 1,
+	})
+	assert.ErrorIs(t, err, errInjected)
+	assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
+}
+
 // A failed BecomeLeader leaves the controller fenced, as NewTerm does: it
 // doesn't keep the tracker, the follower cursors or the session manager of
 // the term it failed to lead.
@@ -3968,6 +4043,7 @@ func TestLeaderControllerBecomeLeaderReleasesTheTermItFailsToLead(t *testing.T) 
 		expected error
 	}{
 		{name: "wait for commit", canceled: true, expected: context.Canceled},
+		// Without followers, the entry of the term commits at once
 		{name: "feature enable", expected: errInjected},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -3987,13 +4063,17 @@ func TestLeaderControllerBecomeLeaderReleasesTheTermItFailsToLead(t *testing.T) 
 				cancel()
 			}
 			defer cancel()
-			_, err = lc.BecomeLeader(ctx, &proto.BecomeLeaderRequest{
+			request := &proto.BecomeLeaderRequest{
 				Shard:             1,
 				Term:              2,
-				ReplicationFactor: 2,
-				FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+				ReplicationFactor: 1,
 				FeaturesSupported: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
-			})
+			}
+			if test.canceled {
+				request.ReplicationFactor = 2
+				request.FollowerMaps = map[string]*proto.EntryId{"f1": constant2.InvalidEntryId}
+			}
+			_, err = lc.BecomeLeader(ctx, request)
 			assert.ErrorIs(t, err, test.expected)
 
 			lc.RLock()
@@ -4842,6 +4922,7 @@ type hookWalFactory struct {
 	newReader        func(w wal.Wal, after int64) (wal.Reader, error)
 	newReverseReader func(w wal.Wal) (wal.Reader, error)
 	sync             func(ctx context.Context, w wal.Wal) error
+	append           func(w wal.Wal, entry *proto.LogEntry) error
 	appendAndSync    func(w wal.Wal, entry *proto.LogEntry, callback func(entryCrc uint32, err error))
 	close            func(w wal.Wal) error
 	delete           func(w wal.Wal) error
@@ -4879,6 +4960,13 @@ func (w *hookWal) Sync(ctx context.Context) error {
 		return w.factory.sync(ctx, w.Wal)
 	}
 	return w.Wal.Sync(ctx)
+}
+
+func (w *hookWal) Append(entry *proto.LogEntry) error {
+	if w.factory.append != nil {
+		return w.factory.append(w.Wal, entry)
+	}
+	return w.Wal.Append(entry)
 }
 
 func (w *hookWal) AppendAndSync(entry *proto.LogEntry, callback func(entryCrc uint32, err error)) {
