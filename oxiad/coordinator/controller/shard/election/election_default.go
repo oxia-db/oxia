@@ -325,11 +325,6 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 }
 
-// finishEnsembleChange finishes the pending change when to has the highest
-// head entry: it has every committed entry, so the ensemble has each of them on
-// a majority without from. One committed before the change is on a majority of
-// the ensemble before it, which without from and with to is a majority of the
-// ensemble; one committed after it is on a majority of the ensemble already.
 func (e *election) finishEnsembleChange() {
 	change := e.meta.EnsembleChange
 	e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
