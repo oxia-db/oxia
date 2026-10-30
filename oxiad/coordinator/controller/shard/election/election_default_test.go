@@ -331,7 +331,7 @@ func TestElectionChooseLeaderFailsWithoutLeader(t *testing.T) {
 // The leader has the highest head entry among the fenced data servers, a
 // candidate when one ties with the from of the pending change. From, ahead of
 // every candidate, undoes the change: it swaps back with to, whatever the head
-// entry of to, and to is deleted. To with the highest head entry completes the
+// entry of to, and to is deleted. To with the highest head entry finishes the
 // change: from is deleted.
 func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 	s1 := testDataServer("s1")

@@ -258,7 +258,7 @@ gracePeriod:
 //	           | 2. pending change    |    from strictly ahead: the change is
 //	           |                      |    undone, from swaps back with to, and is
 //	           |                      |    the only candidate; to tied at the
-//	           |                      |    highest: the change is completed
+//	           |                      |    highest: the change is finished
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
@@ -284,7 +284,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
 		} else if change := e.meta.EnsembleChange; change != nil &&
 			slices.ContainsFunc(candidates, sharding.MatchDataServer(change.To)) {
-			e.completeEnsembleChange()
+			e.finishEnsembleChange()
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -325,14 +325,14 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 }
 
-// completeEnsembleChange completes the pending change when to has the highest
+// finishEnsembleChange finishes the pending change when to has the highest
 // head entry: it has every committed entry, so the ensemble has each of them on
 // a majority without from. One committed before the change is on a majority of
 // the ensemble before it, which without from and with to is a majority of the
 // ensemble; one committed after it is on a majority of the ensemble already.
-func (e *election) completeEnsembleChange() {
+func (e *election) finishEnsembleChange() {
 	change := e.meta.EnsembleChange
-	e.logger.Info("The data server added by the change of the ensemble caught up, the change is completed",
+	e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
 		slog.Any("from", change.From), slog.Any("to", change.To))
 	e.meta.EnsembleChange = nil
 	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)

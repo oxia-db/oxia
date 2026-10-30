@@ -110,7 +110,7 @@ import (
 //	 a member of the ensemble                 from, ahead of every member of
 //	 has the highest head entry               the ensemble
 //	       |                                        |
-//	 it leads; the change is completed if     it goes back into the ensemble in
+//	 it leads; the change is finished if      it goes back into the ensemble in
 //	 to has the highest head entry too, as    place of to, and leads: the change
 //	 to has every committed entry then,       is undone, as Raft rolls back to
 //	 and stays pending otherwise              the configuration before a change
