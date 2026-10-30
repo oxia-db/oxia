@@ -242,6 +242,14 @@ func (s *controller) Dispatch(ac action.Action) {
 	}
 }
 
+// needsElectionAtStart reports whether the shard has no leader in steady
+// state, or a pending change of the ensemble, which only an election finishes:
+// the catch-up of the one before the start is lost.
+func needsElectionAtStart(shardMeta *proto.ShardMetadata) bool {
+	return shardMeta.Leader == nil || shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState ||
+		shardMeta.GetEnsembleChange() != nil
+}
+
 func (s *controller) run(bo backoff.BackOff) error {
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
@@ -262,7 +270,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		// triggering elections that would interfere with the split controller.
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
-	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState:
+	case needsElectionAtStart(initShardMeta):
 		_, _ = s.electLeader(initShardMeta, nil)
 	default:
 		s.logger.Info(
@@ -867,8 +875,8 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	if shardMeta.GetEnsembleChange() != nil {
-		if err := s.handleEnsembleChange(shardMeta); err != nil {
+	if s.currentElection != nil {
+		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
 			s.logger.Warn("Failed to finish the change of the ensemble, retrying next round", slog.Any("error", err))
 		}
 	}
@@ -879,21 +887,6 @@ func (s *controller) handlePeriodicTasks() {
 	}
 
 	s.checkTermFeatures(shardMeta)
-}
-
-// handleEnsembleChange finishes the pending change through the current
-// election, or starts an election to finish it when there is none, e.g. after a
-// restart.
-func (s *controller) handleEnsembleChange(shardMeta *proto.ShardMetadata) error {
-	if s.currentElection != nil {
-		return s.currentElection.TryFinishEnsembleChange()
-	}
-	if shardMeta.GetStatusOrDefault() == proto.ShardStatusSteadyState {
-		s.logger.Info("Starting an election to finish the change of the ensemble",
-			slog.Any("change", shardMeta.GetEnsembleChange()))
-		channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard))
-	}
-	return nil
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from

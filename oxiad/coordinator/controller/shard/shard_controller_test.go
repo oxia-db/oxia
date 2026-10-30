@@ -1977,20 +1977,28 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	s5 := &proto.DataServerIdentity{Public: "s5:9091", Internal: "s5:8191"}
 
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
-	rpc.GetNode(s1).GetStatusResponse(2, proto.ServingStatus_LEADER, 1, 1)
-	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
-	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
-	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:         proto.ShardStatusSteadyState,
-		Term:           2,
-		Leader:         s1,
-		Ensemble:       []*proto.DataServerIdentity{s1, s2, s3},
-		EnsembleChange: &proto.EnsembleChangeMetadata{From: s4, To: s3},
-	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
-	defer sc.Close()
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:         proto.ShardStatusSteadyState,
+			Term:           2,
+			Leader:         s1,
+			Ensemble:       []*proto.DataServerIdentity{s1, s2, s3},
+			EnsembleChange: &proto.EnsembleChangeMetadata{From: s4, To: s3},
+		}},
+	}))
+	// The election of the term caught up, but didn't finish the change yet
+	sc := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		rpc:             rpc,
+		ctx:             t.Context(),
+		logger:          slog.Default(),
+		currentElection: &fakeElection{quorumCaughtUp: true},
+	}
 
 	change := action.NewChangeEnsembleAction(shard, s2, s5)
-	sc.Dispatch(change)
+	sc.onChangeEnsemble(change)
 	_, err := change.Wait()
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
 
@@ -2273,8 +2281,8 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 }
 
 // The periodic tasks finish the pending change of the ensemble through the
-// current election, and start an election when there is none, e.g. after a
-// restart. A failed write is left to the next round.
+// current election, and never start one. A failed write is left to the next
+// round.
 func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
@@ -2282,20 +2290,16 @@ func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		election *fakeElection
-		status   proto.ShardStatus
-		elects   bool
 	}{
-		{name: "no election", status: proto.ShardStatusSteadyState, elects: true},
-		{name: "no election, election running", status: proto.ShardStatusElection},
-		{name: "current election", election: &fakeElection{}, status: proto.ShardStatusSteadyState},
-		{name: "finish failure", election: &fakeElection{finishErr: errors.New("store unavailable")},
-			status: proto.ShardStatusSteadyState},
+		{name: "no election"},
+		{name: "current election", election: &fakeElection{}},
+		{name: "finish failure", election: &fakeElection{finishErr: errors.New("store unavailable")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 			require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 				Shards: map[int64]*proto.ShardMetadata{shard: {
-					Status:         test.status,
+					Status:         proto.ShardStatusSteadyState,
 					Term:           1,
 					Leader:         s1,
 					Ensemble:       []*proto.DataServerIdentity{s1},
@@ -2316,12 +2320,35 @@ func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 			}
 
 			s.handlePeriodicTasks()
-			assert.Equal(t, test.elects, len(s.electionOp) == 1)
+			assert.Empty(t, s.electionOp)
 			if test.election != nil {
 				assert.Equal(t, 1, test.election.finishes)
 			}
 		})
 	}
+}
+
+// After a restart of the coordinator, a pending change of the ensemble starts
+// an election, even with a leader: only an election finishes it.
+func TestControllerRunElectsToFinishPendingEnsembleChange(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:         proto.ShardStatusSteadyState,
+		Term:           3,
+		Leader:         s1,
+		Ensemble:       []*proto.DataServerIdentity{s1, s2},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: s3, To: s2},
+	}, newTestFeaturesSupplier().supply, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 4, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 4, true)
+	assert.NoError(t, sc.Close())
 }
 
 // assertPeriodicTasksKeepUpdate runs the periodic tasks of the shard, which
