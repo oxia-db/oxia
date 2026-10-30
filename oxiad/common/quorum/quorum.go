@@ -21,3 +21,9 @@ import "golang.org/x/exp/constraints"
 func Majority[T constraints.Integer](n T) T {
 	return n/2 + 1
 }
+
+// MajorityOverlap is the smallest number of the n members that overlaps every
+// majority of them: a majority leaves out n - Majority(n) members at most.
+func MajorityOverlap[T constraints.Integer](n T) T {
+	return n - Majority(n) + 1
+}
