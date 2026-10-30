@@ -145,4 +145,10 @@ type Election interface {
 	// fence quorum of a later election includes one of them. It stays false
 	// once the election is canceled. Any goroutine can call it.
 	IsQuorumCaughtUp() bool
+
+	// IsEnsembleCaughtUp reports whether every member of the ensemble committed
+	// the head entry of the leader at the election, as ensemble_caught_up does
+	// once persisted. It stays false once the election is canceled. Any
+	// goroutine can call it.
+	IsEnsembleCaughtUp() bool
 }
