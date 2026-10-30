@@ -307,12 +307,11 @@ func (sm *sessionManager) Close() error {
 	}
 	sm.Unlock()
 
-	// Close the sessions outside the manager lock: closing a session waits
-	// for its goroutine, and the expiry path of that goroutine acquires the
-	// manager lock — closing under the lock can deadlock with an in-flight
-	// expiry (same ordering as CloseSession above).
+	// Don't wait for the session goroutines: the leader controller closes the
+	// manager under the leader lock, which an expiring session takes to delete
+	// its record. That delete is rejected once the manager context is canceled.
 	for _, s := range sessions {
-		s.Close()
+		s.close()
 	}
 
 	sm.activeSessions.Unregister()

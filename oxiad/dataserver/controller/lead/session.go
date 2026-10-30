@@ -97,7 +97,7 @@ func (s *session) close() {
 }
 
 func (s *session) delete() error {
-	_, err := s.sm.leaderController.WriteBlock(context.Background(), &proto.WriteRequest{
+	_, err := s.sm.leaderController.WriteBlock(s.sm.ctx, &proto.WriteRequest{
 		Shard:        &s.shardId,
 		Puts:         nil,
 		Deletes:      []*proto.DeleteRequest{{Key: SessionKey(s.id)}},

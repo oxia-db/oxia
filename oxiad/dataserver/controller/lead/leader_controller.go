@@ -1009,6 +1009,11 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 		cb.OnCompleteError(err)
 		return
 	}
+	if err := ctx.Err(); err != nil {
+		lc.Unlock()
+		cb.OnCompleteError(err)
+		return
+	}
 	newOffset := lc.quorumAckTracker.NextOffset()
 	walLog := lc.wal
 	tracker := lc.quorumAckTracker
