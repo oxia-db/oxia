@@ -110,15 +110,15 @@ import (
 //	 a member of the ensemble                 from, ahead of every member of
 //	 has the highest head entry               the ensemble
 //	       |                                        |
-//	 it leads, the change stays pending       it goes back into the ensemble in
-//	                                          place of to, and leads: the change
-//	                                          is undone, as Raft rolls back to
-//	                                          the configuration before a change
+//	 it leads; the change is completed if     it goes back into the ensemble in
+//	 to has the highest head entry too, as    place of to, and leads: the change
+//	 to has every committed entry then,       is undone, as Raft rolls back to
+//	 and stays pending otherwise              the configuration before a change
 //	                                          that isn't committed, and to is
 //	                                          deleted
 //
-// The shard controller completes the change, and refuses another one until
-// then: with two changes, the ensembles would differ by two members, and a
+// Otherwise, the shard controller completes the change, and refuses another
+// one until then: with two changes, the ensembles would differ by two members, and a
 // fence quorum could miss a committed entry. It completes the change once the
 // election of the shard's current term reports IsQuorumCaughtUp, by moving
 // from to the pending deletions and clearing the change, in a single write that

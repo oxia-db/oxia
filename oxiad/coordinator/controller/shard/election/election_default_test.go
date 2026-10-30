@@ -331,7 +331,8 @@ func TestElectionChooseLeaderFailsWithoutLeader(t *testing.T) {
 // The leader has the highest head entry among the fenced data servers, a
 // candidate when one ties with the from of the pending change. From, ahead of
 // every candidate, undoes the change: it swaps back with to, whatever the head
-// entry of to, and to is deleted.
+// entry of to, and to is deleted. To with the highest head entry completes the
+// change: from is deleted.
 func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -364,6 +365,14 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		changeFrom:    s2,
 		changeTo:      s4,
 		followers:     []*proto.DataServerIdentity{s3, s4},
+	}, {
+		name:          "to has the highest head entry",
+		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 6}},
+		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		leader:        s4,
+		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
+		pending:       []*proto.DataServerIdentity{s2},
+		followers:     []*proto.DataServerIdentity{s1, s3},
 	}, {
 		name:          "from ahead by offset",
 		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 1, Offset: 9}},

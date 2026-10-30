@@ -255,9 +255,10 @@ gracePeriod:
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 2. from of the       |    strictly ahead: the change is undone,
-//	           |    pending change    |    from swaps back with to, and is the
-//	           |                      |    only candidate
+//	           | 2. pending change    |    from strictly ahead: the change is
+//	           |                      |    undone, from swaps back with to, and is
+//	           |                      |    the only candidate; to tied at the
+//	           |                      |    highest: the change is completed
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
@@ -281,6 +282,9 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	if len(candidates) > 0 {
 		if _, retained := retainedHeads[candidates[0]]; retained {
 			e.undoEnsembleChange(candidates[0], ensembleHeads, retainedHeads)
+		} else if change := e.meta.EnsembleChange; change != nil &&
+			slices.ContainsFunc(candidates, sharding.MatchDataServer(change.To)) {
+			e.completeEnsembleChange()
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -319,6 +323,19 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 	e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), retained)
 	e.meta.EnsembleChange = nil
 	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
+}
+
+// completeEnsembleChange completes the pending change when to has the highest
+// head entry: it has every committed entry, so the ensemble has each of them on
+// a majority without from. One committed before the change is on a majority of
+// the ensemble before it, which without from and with to is a majority of the
+// ensemble; one committed after it is on a majority of the ensemble already.
+func (e *election) completeEnsembleChange() {
+	change := e.meta.EnsembleChange
+	e.logger.Info("The data server added by the change of the ensemble caught up, the change is completed",
+		slog.Any("from", change.From), slog.Any("to", change.To))
+	e.meta.EnsembleChange = nil
+	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 }
 
 func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
