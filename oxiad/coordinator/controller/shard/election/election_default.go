@@ -72,8 +72,8 @@ type election struct {
 	changeEnsemble   *action.ChangeEnsembleAction
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
-	// signaler is signaled on each step of the catch-up, see Tick
-	signaler async.Signaler
+	// mailbox is posted to on each step of the catch-up, see Tick
+	mailbox async.Mailbox
 
 	// mutable
 	meta           *proto.ShardMetadata
@@ -437,7 +437,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 	for caughtUp := 1; ; caughtUp++ {
 		if caughtUp == quorum.Majority(len(ensemble)) {
 			e.quorumCaughtUp.Store(true)
-			e.signaler.Signal()
+			e.mailbox.Post()
 		}
 		if caughtUp == len(ensemble) {
 			break
@@ -447,7 +447,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 		}
 	}
 	e.ensembleCaughtUp.Store(true)
-	e.signaler.Signal()
+	e.mailbox.Post()
 	return nil
 }
 
@@ -825,7 +825,7 @@ func (e *election) Cancel() {
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
-	signaler async.Signaler,
+	mailbox async.Mailbox,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
@@ -843,7 +843,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		metadataStore:                  metadataStore,
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
-		signaler:                       signaler,
+		mailbox:                        mailbox,
 		leaderSelector:                 leaderSelector,
 		provider:                       provider,
 		namespace:                      namespace,

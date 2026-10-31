@@ -77,9 +77,9 @@ type controller struct {
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
-	// electionTick is signaled by the current election, which the event loop
-	// ticks then
-	electionTick chan async.Signal
+	// electionMailbox receives the mail of the current election, which the
+	// event loop ticks then
+	electionMailbox chan async.Mail
 
 	// The features of a data server are reported only when they change, so
 	// unlike the other notifications they must not be dropped when the event
@@ -165,7 +165,7 @@ func NewController(
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
-		electionTick:          make(chan async.Signal, 1),
+		electionMailbox:       make(chan async.Mail, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -315,12 +315,12 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
-		case <-s.electionTick:
-			// A failed tick signals the loop again a second later
+		case <-s.electionMailbox:
+			// A failed tick posts to the mailbox again a second later
 			if s.currentElection != nil {
 				if err := s.currentElection.Tick(); err != nil {
 					s.logger.Warn("Failed to tick the election, retrying later", slog.Any("error", err))
-					time.AfterFunc(time.Second, async.Signaler(s.electionTick).Signal)
+					time.AfterFunc(time.Second, async.Mailbox(s.electionMailbox).Post)
 				}
 			}
 		case <-periodicTasksTimer.C:
@@ -641,7 +641,7 @@ func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
 	if s.currentElection != nil {
 		s.currentElection.Cancel()
 	}
-	s.currentElection = election.New(s.ctx, s.logger, s.eventListener, s.electionTick,
+	s.currentElection = election.New(s.ctx, s.logger, s.eventListener, s.electionMailbox,
 		s.metadataStore, s.featureSupplier, s.leaderSelector,
 		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, s.requiredFeatures,
 		s.leaderElectionLatencyHistogram,

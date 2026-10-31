@@ -120,11 +120,11 @@ import (
 //	                                          deleted
 //
 // Otherwise, Tick finishes the change once a majority of the ensemble caught up
-// (IsQuorumCaughtUp). The shard controller ticks the election when it signals,
-// and refuses another change until then: with two changes, the ensembles would
-// differ by two members, and a fence quorum could miss a committed entry. The catch-up is only known in
-// memory: after a restart of the coordinator, the shard controller runs an
-// election to finish the change.
+// (IsQuorumCaughtUp). The shard controller ticks the election on its mail, and
+// refuses another change until then: with two changes, the ensembles would
+// differ by two members, and a fence quorum could miss a committed entry. The
+// catch-up is only known in memory: after a restart of the coordinator, the
+// shard controller runs an election to finish the change.
 type Election interface {
 	// Tick persists what the catch-up of the followers allows: once a majority
 	// of the ensemble committed the head entry of the leader at the election,
@@ -132,7 +132,7 @@ type Election interface {
 	// once every member did, it sets ensemble_caught_up, which the new term
 	// reset. It does both in a single write, if the shard is still in the term
 	// of the election, and nothing otherwise; it only fails if the write fails.
-	// The election signals the channel it was created with on each step of the
+	// The election posts to the mailbox it was created with on each step of the
 	// catch-up, and the goroutine that called Start ticks it then.
 	async.Tickable
 

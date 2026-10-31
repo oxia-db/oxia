@@ -711,7 +711,7 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 }
 
 // The new term resets ensemble_caught_up; the ensemble is caught up once every
-// follower is, not at the majority, and Tick persists it, on a signal.
+// follower is, not at the majority, and Tick persists it, on a mail.
 func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -728,8 +728,8 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 3, nil)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	e := newTestElection(t, metadata, rpc, shard, shardMeta)
-	signals := make(chan async.Signal, 1)
-	e.signaler = signals
+	mailbox := make(chan async.Mail, 1)
+	e.mailbox = mailbox
 
 	_, err := e.Start()
 	require.NoError(t, err)
@@ -737,12 +737,12 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 
 	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 4, 4)
-	<-signals
+	<-mailbox
 	assert.True(t, e.IsQuorumCaughtUp())
 	assert.False(t, e.ensembleCaughtUp.Load())
 
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-	<-signals
+	<-mailbox
 	assert.True(t, e.ensembleCaughtUp.Load())
 	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 	require.NoError(t, e.Tick())

@@ -20,11 +20,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A signal already pending covers the next, which doesn't block.
-func TestSignalerSignalCoalesces(t *testing.T) {
-	signals := make(chan Signal, 1)
+// A mail already pending covers the next, which doesn't block.
+func TestMailboxPostCoalesces(t *testing.T) {
+	mailbox := make(chan Mail, 1)
 
-	Signaler(signals).Signal()
-	Signaler(signals).Signal()
-	assert.Len(t, signals, 1)
+	Mailbox(mailbox).Post()
+	Mailbox(mailbox).Post()
+	assert.Len(t, mailbox, 1)
 }

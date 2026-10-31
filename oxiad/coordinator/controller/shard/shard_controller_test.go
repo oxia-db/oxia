@@ -693,7 +693,7 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 
 // The catch-up of the ensemble is only known to the election that waited for
 // it: a restarted coordinator elects a leader, and ticks it to persist the
-// catch-up once the election signals it.
+// catch-up once the election posts to its mailbox.
 func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -2442,8 +2442,8 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
-// A failed tick of the election signals the event loop again, which persists
-// the catch-up then.
+// A failed tick of the election posts to the mailbox again, and the event loop
+// persists the catch-up then.
 func TestControllerRunRetriesFailedElectionTick(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
