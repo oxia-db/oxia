@@ -15,6 +15,7 @@ This spec includes:
 - Multiple nodes
 - Leader election
 - Data replication
+- Changes of the ensemble: a one-for-one swap of a member, from -> to
 
 Not modelling:
 - Failure detection. There is no need to as:
@@ -192,11 +193,15 @@ Message ==
 \* Metadata store state
 ShardStatus == { NIL, STEADY_STATE, ELECTION }
 
+\* A pending change of the ensemble: to replaced from in the ensemble
+EnsembleChange == [from: Nodes, to: Nodes]
+
 Metadata == [shard_status: ShardStatus,
              term:        Term,
              ensemble:     SUBSET Nodes,
              rep_factor:   Nat,
-             leader:       NodesOrNil]
+             leader:       NodesOrNil,
+             change:       EnsembleChange \union {NIL}]
 
 \* Node and Coordinator state
 NodeState == [id:              Nodes,
@@ -217,6 +222,7 @@ CoordinatorState == [id:                        Coordinators,
                   md:                        Metadata \union {NIL},
                   election_phase:            ElectionPhases,
                   election_leader:           Nodes \union {NIL},
+                  election_leader_head:      EntryId,
                   election_fence_responses:  SUBSET NewTermResponse]
 
 \* Type invariant
@@ -247,7 +253,8 @@ Init ==
                        term        |-> 0,
                        ensemble     |-> ensemble,
                        rep_factor   |-> RepFactor,
-                       leader       |-> NIL]
+                       leader       |-> NIL,
+                       change       |-> NIL]
         /\ node_state = [n \in Nodes |->
                             [id              |-> n,
                              status          |-> NOT_MEMBER,
@@ -265,6 +272,7 @@ Init ==
                              md                        |-> NIL,
                              election_phase            |-> NIL,
                              election_leader           |-> NIL,
+                             election_leader_head      |-> NoEntryId,
                              election_fence_responses  |-> {}]]
         /\ confirmed = <<>>
         /\ messages = <<>>
@@ -274,9 +282,26 @@ Init ==
    HELPER OPERATORS
    -----------------------------------------*)
 
-\* Does this set of nodes consistitute a quorum?
-IsQuorum(nodes, ensemble) ==
-    Cardinality(nodes) >= (Cardinality(ensemble) \div 2) + 1
+Majority(n) == (n \div 2) + 1
+
+\* The smallest number of the n members that overlaps every majority of them:
+\* a majority leaves out n - Majority(n) members at most.
+MajorityOverlap(n) == n - Majority(n) + 1
+
+\* The ensemble before the pending change: from instead of to
+OldEnsemble(md) ==
+    IF md.change = NIL
+    THEN md.ensemble
+    ELSE (md.ensemble \ {md.change.to}) \union {md.change.from}
+
+\* Does this set of fenced nodes reach the quorum of the fence? As Raft's joint
+\* consensus, it overlaps every majority of the ensemble before the change,
+\* which holds the entries committed before it, and every majority of the
+\* ensemble, which holds the ones committed since.
+IsFenceQuorum(nodes, md) ==
+    LET n == Cardinality(md.ensemble)
+    IN /\ Cardinality(nodes \intersect OldEnsemble(md)) >= MajorityOverlap(n)
+       /\ Cardinality(nodes \intersect md.ensemble) >= Majority(n)
 
 \* Compare two entry ids:
 \*  entry_id1 > entry_id2 = 1
@@ -331,6 +356,7 @@ CoordinatorStarts ==
              md                        |-> metadata,
              election_phase            |-> NIL,
              election_leader           |-> NIL,
+             election_leader_head      |-> NoEntryId,
              election_fence_responses  |-> {}]]
         /\ UNCHANGED << confirmed, metadata, metadata_version, node_state, messages, coordinator_stop_ctr >>
 
@@ -351,6 +377,7 @@ CoordinatorStops ==
                                                     ![o].md                        = NIL,
                                                     ![o].election_phase            = NIL,
                                                     ![o].election_leader           = NIL,
+                                                    ![o].election_leader_head      = NoEntryId,
                                                     ![o].election_fence_responses  = {}]
         /\ coordinator_stop_ctr' = coordinator_stop_ctr + 1
         /\ CoordinatorMessagesLost(o)
@@ -389,6 +416,13 @@ CoordinatorStops ==
 
   - The metadata update will fail if the version does not match the version
     held by the coordinator.
+
+  - The election may change the ensemble, when no change is pending: it
+    replaces a member, from, with a node outside of the ensemble, to. As the
+    implementation, the election persists only the new term at first, and
+    the change with the new leader: until then, the change only lives in the
+    election. Once persisted, the change stays pending until it is finished,
+    and each election fences from too, until then.
 ----------------------------------------------------------*)
 
 GetNewTermRequests(o, new_term, ensemble) ==
@@ -396,6 +430,19 @@ GetNewTermRequests(o, new_term, ensemble) ==
        node     |-> n,
        coordinator |-> o,
        term    |-> new_term] : n \in ensemble }
+
+\* No change, or a change of the ensemble when none is pending
+ElectionChanges(md) ==
+    {NIL} \union
+    IF md.change = NIL
+    THEN { [from |-> from, to |-> to] : from \in md.ensemble, to \in Nodes \ md.ensemble }
+    ELSE {}
+
+ApplyChange(md, change) ==
+    IF change = NIL
+    THEN md
+    ELSE [md EXCEPT !.ensemble = (@ \ {change.from}) \union {change.to},
+                    !.change   = change]
 
 CoordinatorStartsElection ==
     \* enabling conditions
@@ -405,22 +452,26 @@ CoordinatorStartsElection ==
             /\ metadata.term < MaxTerms \* state space reduction
             /\ ostate.status = RUNNING
             /\ ostate.md_version = metadata_version
-            \* state changes
-            /\ LET new_term      == ostate.md.term + 1
-                   new_metadata   == [metadata EXCEPT !.term        = new_term,
-                                                      !.shard_status = ELECTION,
-                                                      !.leader       = NIL]
-                   new_md_version == metadata_version + 1
-               IN
-                   /\ metadata_version' = new_md_version
-                   /\ metadata' = new_metadata
-                   /\ coordinator_state' = [coordinator_state EXCEPT ![o].id                        = o,
-                                                               ![o].md_version                = new_md_version,
-                                                               ![o].md                        = new_metadata,
-                                                               ![o].election_phase            = FENCING,
-                                                               ![o].election_leader           = NIL,
-                                                               ![o].election_fence_responses  = {}]
-                   /\ SendMessages(GetNewTermRequests(o, new_term, ostate.md.ensemble))
+            /\ \E change \in ElectionChanges(metadata) :
+                \* state changes
+                /\ LET new_term      == metadata.term + 1
+                       new_metadata   == [metadata EXCEPT !.term        = new_term,
+                                                          !.shard_status = ELECTION,
+                                                          !.leader       = NIL]
+                       election_md    == ApplyChange(new_metadata, change)
+                       new_md_version == metadata_version + 1
+                   IN
+                       /\ metadata_version' = new_md_version
+                       /\ metadata' = new_metadata
+                       /\ coordinator_state' = [coordinator_state EXCEPT ![o].id                        = o,
+                                                                   ![o].md_version                = new_md_version,
+                                                                   ![o].md                        = election_md,
+                                                                   ![o].election_phase            = FENCING,
+                                                                   ![o].election_leader           = NIL,
+                                                                   ![o].election_leader_head      = NoEntryId,
+                                                                   ![o].election_fence_responses  = {}]
+                       /\ SendMessages(GetNewTermRequests(o, new_term,
+                                                          election_md.ensemble \union OldEnsemble(election_md)))
     /\ UNCHANGED << node_state, confirmed, coordinator_stop_ctr >>
 
 
@@ -488,14 +539,17 @@ CoordinatorHandlesFencingResponse ==
 (*---------------------------------------------------------
   Coordinator elects a leader once the fence reaches quorum
 
-  The coordinator chooses the leader among the fenced nodes with
-  the highest head entry_id, which has every committed entry.
+  The coordinator chooses the leader among the fenced members of
+  the ensemble with the highest head entry_id, which has every
+  committed entry. With a pending change of the ensemble:
+  - from strictly ahead of the fenced members: the change is
+    undone, from swaps back with to, and is the leader.
+  - to tied at the highest: the change is finished.
 
-  As the implementation, the coordinator persists the new leader
-  and that the shard is back in steady state before it notifies
-  the leader. The election is only able to complete if the
-  metadata hasn't been modified since the beginning of the
-  election. Any concurrent change will cause this election to fail.
+  As the implementation, the coordinator persists the new leader,
+  the ensemble and the change before it notifies the leader: once
+  the leader commits entries on a majority of the new ensemble, the
+  next elections must fence it.
 ----------------------------------------------------------*)
 
 FollowerResponse(responses, f) ==
@@ -523,34 +577,55 @@ HighestResponses(responses) ==
     { r1 \in responses :
         ~\E r2 \in responses : IsHigherId(r2.head_entry_id, r1.head_entry_id) }
 
+\* The ensemble and the change once the leader is chosen
+UndoChange(md) ==
+    [md EXCEPT !.ensemble = (@ \ {md.change.to}) \union {md.change.from},
+               !.change   = NIL]
+
+FinishChange(md) ==
+    [md EXCEPT !.change = NIL]
+
 CoordinatorElectsLeader ==
     \* enabling conditions
     \E o \in Coordinators :
-        LET ostate    == coordinator_state[o]
-            md        == ostate.md
-            responses == { r \in ostate.election_fence_responses : r.node \in md.ensemble }
+        LET ostate             == coordinator_state[o]
+            md                 == ostate.md
+            responses          == ostate.election_fence_responses
+            ensemble_responses == { r \in responses : r.node \in md.ensemble }
+            from_responses     == { r \in responses : md.change # NIL /\ r.node = md.change.from }
+            \* the ensemble wins a tie
+            undo               == /\ from_responses # {}
+                                  /\ HighestResponses(ensemble_responses \union from_responses) = from_responses
+            candidates         == IF undo THEN from_responses ELSE HighestResponses(ensemble_responses)
+            finish             == /\ ~undo
+                                  /\ md.change # NIL
+                                  /\ \E r \in candidates : r.node = md.change.to
+            final_md           == IF undo THEN UndoChange(md)
+                                  ELSE IF finish THEN FinishChange(md)
+                                  ELSE md
         IN
             /\ ostate.status = RUNNING
             /\ md.shard_status = ELECTION
             /\ ostate.election_phase = FENCING
             /\ metadata_version = ostate.md_version
-            /\ IsQuorum(responses, md.ensemble)
+            /\ IsFenceQuorum({ r.node : r \in responses }, md)
             \* the implementation chooses any of them
-            /\ \E leader_res \in HighestResponses(responses) :
+            /\ \E leader_res \in candidates :
                 LET new_leader   == leader_res.node
-                    new_md       == [md EXCEPT !.shard_status = STEADY_STATE,
-                                               !.leader       = new_leader,
-                                               !.rep_factor   = Cardinality(md.ensemble)]
-                    follower_map == GetFollowerMap(new_leader, responses, md.ensemble)
+                    new_md       == [final_md EXCEPT !.shard_status = STEADY_STATE,
+                                                     !.leader       = new_leader,
+                                                     !.rep_factor   = Cardinality(final_md.ensemble)]
+                    follower_map == GetFollowerMap(new_leader, responses, new_md.ensemble)
                 IN
                     \* state changes
                     /\ metadata' = new_md
                     /\ metadata_version' = metadata_version + 1
                     /\ coordinator_state' = [coordinator_state EXCEPT ![o] =
-                                                [@ EXCEPT !.election_phase  = NOTIFY_LEADER,
-                                                          !.election_leader = new_leader,
-                                                          !.md_version      = metadata_version + 1,
-                                                          !.md              = new_md]]
+                                                [@ EXCEPT !.election_phase       = NOTIFY_LEADER,
+                                                          !.election_leader      = new_leader,
+                                                          !.election_leader_head = leader_res.head_entry_id,
+                                                          !.md_version           = metadata_version + 1,
+                                                          !.md                   = new_md]]
                     /\ SendMessage(GetBecomeLeaderRequest(new_leader,
                                                           md.term,
                                                           o,
@@ -728,6 +803,47 @@ CoordinatorHandlesPostQuorumFencingResponse ==
                                                                     msg.node,
                                                                     msg.head_entry_id))
             /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  Coordinator finishes the change of the ensemble
+
+  Once a majority of the ensemble, the leader included, has
+  committed up to the head of the leader at the election, the
+  ensemble holds every committed entry on a majority without
+  from: the coordinator finishes the pending change, and the next
+  elections no longer fence from.
+
+  Key points:
+  - As the implementation, the coordinator reads the commit offset
+    of the followers, whatever their term, and compares offsets only.
+  - The metadata update only checks that the term hasn't changed,
+    as the implementation: another coordinator may have elected a
+    leader since.
+----------------------------------------------------------*)
+
+IsQuorumCaughtUp(ostate) ==
+    Cardinality({ n \in ostate.md.ensemble :
+                    /\ n # ostate.election_leader
+                    /\ node_state[n].commit_entry_id.offset >= ostate.election_leader_head.offset })
+        >= Majority(Cardinality(ostate.md.ensemble)) - 1
+
+CoordinatorFinishesEnsembleChange ==
+    \* enabling conditions
+    \E o \in Coordinators :
+        LET ostate == coordinator_state[o]
+        IN
+            /\ ostate.status = RUNNING
+            /\ ostate.election_phase = LEADER_ELECTED
+            /\ ostate.md.change # NIL
+            /\ IsQuorumCaughtUp(ostate)
+            /\ metadata.term = ostate.md.term
+            /\ metadata.change # NIL
+            \* state changes
+            /\ metadata' = FinishChange(metadata)
+            /\ metadata_version' = metadata_version + 1
+            /\ coordinator_state' = [coordinator_state EXCEPT ![o].md_version = metadata_version + 1,
+                                                               ![o].md         = FinishChange(metadata)]
+            /\ UNCHANGED << node_state, confirmed, messages, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Leader handles an Add Follower request
@@ -1104,6 +1220,7 @@ Next ==
     \/ LeaderHandlesTruncateResponse              \* leader receives truncation response
     \/ CoordinatorHandlesPostQuorumFencingResponse   \* coordinator handles fence response after leader elected, adds as a follower
     \/ LeaderHandlesAddFollowerRequest            \* leader notified of follower (post election)
+    \/ CoordinatorFinishesEnsembleChange          \* a majority of the ensemble caught up, the change is finished
     \* Writes and replication
     \/ Write                                      \* a client writes an entry to the leader
     \/ LeaderSendsEntriesToFollowers              \* leader sends entries to followers via cursors
@@ -1172,6 +1289,14 @@ LegalLeaderAndEnsemble ==
         THEN coordinator_state[o].md.leader \in coordinator_state[o].md.ensemble
         ELSE TRUE
     /\ metadata.rep_factor = Cardinality(metadata.ensemble)
+
+\* A change of the ensemble swaps one member, the ensemble keeps its size
+LegalEnsembleChange ==
+    /\ Cardinality(metadata.ensemble) = RepFactor
+    /\ IF metadata.change # NIL
+       THEN /\ metadata.change.to \in metadata.ensemble
+            /\ metadata.change.from \notin metadata.ensemble
+       ELSE TRUE
 
 (*-------------------------------------------------    
   LIVENESS
