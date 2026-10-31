@@ -16,6 +16,7 @@ package election
 
 import (
 	"github.com/oxia-db/oxia/common/proto"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 )
 
 // Election elects the leader of a shard in a new term. An election runs once:
@@ -118,12 +119,13 @@ import (
 //	                                          that isn't committed, and to is
 //	                                          deleted
 //
-// Otherwise, TryPersistCatchUp finishes the change once a majority of the
-// ensemble caught up (IsQuorumCaughtUp). The shard controller calls it from its
-// periodic tasks and before another change, which it refuses until then: with
-// two changes, the ensembles would differ by two members, and a fence quorum
-// could miss a committed entry. The catch-up is only known in memory: after a restart of the
-// coordinator, the shard controller runs an election to finish the change.
+// Otherwise, Tick finishes the change once a majority of the ensemble caught up
+// (IsQuorumCaughtUp). The shard controller ticks the election when it signals,
+// from its periodic tasks, and before another change, which it refuses until
+// then: with two changes, the ensembles would differ by two members, and a
+// fence quorum could miss a committed entry. The catch-up is only known in
+// memory: after a restart of the coordinator, the shard controller runs an
+// election to finish the change.
 type Election interface {
 	// Start runs the election, and returns the elected leader. It fails if
 	// called twice.
@@ -132,14 +134,15 @@ type Election interface {
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
 
-	// TryPersistCatchUp persists what the catch-up of the followers allows: once
-	// a majority of the ensemble committed the head entry of the leader at the
-	// election, it finishes the pending change, moving from to the pending
-	// deletions; once every member did, it sets ensemble_caught_up, which the new
-	// term reset. It does both in a single write, if the shard is still in the
-	// term of the election, and nothing otherwise; it only fails if the write
-	// fails. It is called from the goroutine that called Start.
-	TryPersistCatchUp() error
+	// Tick persists what the catch-up of the followers allows: once a majority
+	// of the ensemble committed the head entry of the leader at the election,
+	// it finishes the pending change, moving from to the pending deletions;
+	// once every member did, it sets ensemble_caught_up, which the new term
+	// reset. It does both in a single write, if the shard is still in the term
+	// of the election, and nothing otherwise; it only fails if the write fails.
+	// The election signals the channel it was created with on each step of the
+	// catch-up, and the goroutine that called Start ticks it then.
+	controllerapi.Tickable
 
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any

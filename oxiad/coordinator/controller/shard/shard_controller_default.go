@@ -76,6 +76,9 @@ type controller struct {
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	// electionTick is signaled by the current election, which the event loop
+	// ticks then
+	electionTick chan controllerapi.Signal
 
 	// The features of a data server are reported only when they change, so
 	// unlike the other notifications they must not be dropped when the event
@@ -161,6 +164,7 @@ func NewController(
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
+		electionTick:          make(chan controllerapi.Signal, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -277,6 +281,8 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
+		case <-s.electionTick:
+			s.tickElection()
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
@@ -634,7 +640,7 @@ func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
 	if s.currentElection != nil {
 		s.currentElection.Cancel()
 	}
-	s.currentElection = election.New(s.ctx, s.logger, s.eventListener,
+	s.currentElection = election.New(s.ctx, s.logger, s.eventListener, s.electionTick,
 		s.metadataStore, s.featureSupplier, s.leaderSelector,
 		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, s.requiredFeatures,
 		s.leaderElectionLatencyHistogram,
@@ -790,8 +796,8 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
 		}
-		// Don't wait for the periodic tasks to finish the pending change
-		if err := s.currentElection.TryPersistCatchUp(); err != nil {
+		// Don't wait for a tick to finish the pending change
+		if err := s.currentElection.Tick(); err != nil {
 			changeEnsembleAction.Error(err)
 			return
 		}
@@ -888,11 +894,8 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	if s.currentElection != nil {
-		if err := s.currentElection.TryPersistCatchUp(); err != nil {
-			s.logger.Warn("Failed to persist the catch-up of the ensemble, retrying next round", slog.Any("error", err))
-		}
-	}
+	// Retries a failed tick
+	s.tickElection()
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
@@ -900,6 +903,17 @@ func (s *controller) handlePeriodicTasks() {
 	}
 
 	s.checkTermFeatures(shardMeta)
+}
+
+// tickElection ticks the current election, if any; a failed tick is retried by
+// the periodic tasks.
+func (s *controller) tickElection() {
+	if s.currentElection == nil {
+		return
+	}
+	if err := s.currentElection.Tick(); err != nil {
+		s.logger.Warn("Failed to tick the election, retrying next round", slog.Any("error", err))
+	}
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from

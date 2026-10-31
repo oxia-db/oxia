@@ -45,6 +45,7 @@ import (
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
+	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -710,7 +711,7 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 }
 
 // The new term resets ensemble_caught_up; the ensemble is caught up once every
-// follower is, not at the majority, and TryPersistCatchUp persists it.
+// follower is, not at the majority, and Tick persists it, on a signal.
 func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -727,6 +728,8 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 3, nil)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	e := newTestElection(t, metadata, rpc, shard, shardMeta)
+	tick := make(chan controllerapi.Signal, 1)
+	e.tick = tick
 
 	_, err := e.Start()
 	require.NoError(t, err)
@@ -734,14 +737,15 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 
 	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 4, 4)
-	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
-	assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
+	<-tick
+	assert.True(t, e.IsQuorumCaughtUp())
 	assert.False(t, e.IsEnsembleCaughtUp())
 
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-	assert.Eventually(t, e.IsEnsembleCaughtUp, 10*time.Second, 10*time.Millisecond)
+	<-tick
+	assert.True(t, e.IsEnsembleCaughtUp())
 	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
-	require.NoError(t, e.TryPersistCatchUp())
+	require.NoError(t, e.Tick())
 	assert.True(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 }
 
@@ -764,7 +768,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
+	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
@@ -782,7 +786,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 }
 
 // The election keeps the change pending until a majority of the ensemble caught
-// up, which a dead follower doesn't block, and TryPersistCatchUp finishes
+// up, which a dead follower doesn't block, and Tick finishes
 // it then. A canceled election never reports a caught-up majority, nor finishes
 // the change.
 func TestElectionStartKeepsChangePending(t *testing.T) {
@@ -810,7 +814,7 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 			rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 			rpc.GetNode(s1).BecomeLeaderResponse(nil)
-			e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
+			e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
 				metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
@@ -826,14 +830,14 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
 				assert.False(t, e.IsQuorumCaughtUp())
-				require.NoError(t, e.TryPersistCatchUp())
+				require.NoError(t, e.Tick())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 				return
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
-			require.NoError(t, e.TryPersistCatchUp())
+			require.NoError(t, e.Tick())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
 			assert.Nil(t, stored.GetEnsembleChange())
@@ -842,10 +846,10 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 	}
 }
 
-// TryPersistCatchUp finishes the change once a majority caught up, and
+// Tick finishes the change once a majority caught up, and
 // persists ensemble_caught_up once every member did, once, if the shard is still
 // in the term of the election; a failed write is returned.
-func TestElectionTryPersistCatchUp(t *testing.T) {
+func TestElectionTick(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -896,7 +900,7 @@ func TestElectionTryPersistCatchUp(t *testing.T) {
 			e.quorumCaughtUp.Store(test.caughtUp)
 			e.ensembleCaughtUp.Store(test.ensembleCaughtUp)
 
-			err := e.TryPersistCatchUp()
+			err := e.Tick()
 			if test.writeErr != nil {
 				assert.ErrorIs(t, err, test.writeErr)
 			} else {
@@ -934,7 +938,7 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
+	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 		rpc, constant.DefaultNamespace, shard, shardMeta, nil, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),

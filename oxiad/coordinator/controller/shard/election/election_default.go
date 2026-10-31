@@ -43,6 +43,7 @@ import (
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
+	"github.com/oxia-db/oxia/common/channel"
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
@@ -71,6 +72,8 @@ type election struct {
 	changeEnsemble   *action.ChangeEnsembleAction
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
+	// tick is signaled on each step of the catch-up, see Tick
+	tick chan<- controllerapi.Signal
 
 	// mutable
 	meta           *proto.ShardMetadata
@@ -434,6 +437,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 	for caughtUp := 1; ; caughtUp++ {
 		if caughtUp == quorum.Majority(len(ensemble)) {
 			e.quorumCaughtUp.Store(true)
+			channel.PushNoBlock(e.tick, controllerapi.Signal{})
 		}
 		if caughtUp == len(ensemble) {
 			break
@@ -443,6 +447,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 		}
 	}
 	e.ensembleCaughtUp.Store(true)
+	channel.PushNoBlock(e.tick, controllerapi.Signal{})
 	return nil
 }
 
@@ -770,7 +775,7 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) TryPersistCatchUp() error {
+func (e *election) Tick() error {
 	finishChange := e.meta.EnsembleChange != nil && e.quorumCaughtUp.Load()
 	persistCaughtUp := !e.meta.EnsembleCaughtUp && e.ensembleCaughtUp.Load()
 	if !finishChange && !persistCaughtUp {
@@ -824,6 +829,7 @@ func (e *election) Cancel() {
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
+	tick chan<- controllerapi.Signal,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
@@ -841,6 +847,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		metadataStore:                  metadataStore,
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
+		tick:                           tick,
 		leaderSelector:                 leaderSelector,
 		provider:                       provider,
 		namespace:                      namespace,

@@ -692,8 +692,8 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 }
 
 // The catch-up of the ensemble is only known to the election that waited for
-// it: a restarted coordinator elects a leader, and the periodic tasks persist
-// it (TryPersistCatchUp).
+// it: a restarted coordinator elects a leader, and ticks it to persist the
+// catch-up once the election signals it.
 func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -714,7 +714,7 @@ func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
 		Term:     1,
 		Leader:   s1,
 		Ensemble: ensemble,
-	}, feature.NoOpSupplier, rpc, 100*time.Millisecond)
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 	defer func() { assert.NoError(t, sc.Close()) }()
 
 	for _, member := range ensemble {
@@ -740,7 +740,7 @@ func TestNewControllerElectsSplitChildOnceSplitCompletes(t *testing.T) {
 		Leader:   s1,
 		Ensemble: ensemble,
 		Split:    &proto.SplitMetadata{ParentShardId: 4},
-	}, feature.NoOpSupplier, rpc, 100*time.Millisecond)
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 	defer func() { assert.NoError(t, sc.Close()) }()
 
 	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
@@ -2076,7 +2076,7 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	sc.onChangeEnsemble(change)
 	_, err := change.Wait()
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
-	assert.Equal(t, 1, current.persists)
+	assert.Equal(t, 1, current.ticks)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.EqualValues(t, 2, metaSnap.Term)
@@ -2441,8 +2441,10 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 
 // The periodic tasks persist the catch-up of the current election, e.g. finish
 // the pending change of the ensemble, and never start one. A failed write is
-// left to the next round.
-func TestControllerHandlePeriodicTasksPersistsCatchUp(t *testing.T) {
+// The periodic tasks tick the current election, which retries what a failed
+// tick left, e.g. finishing the pending change of the ensemble, and never start
+// one. A failed tick is left to the next round.
+func TestControllerHandlePeriodicTasksTicksElection(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
@@ -2452,7 +2454,7 @@ func TestControllerHandlePeriodicTasksPersistsCatchUp(t *testing.T) {
 	}{
 		{name: "no election"},
 		{name: "current election", election: &fakeElection{}},
-		{name: "write failure", election: &fakeElection{persistErr: errors.New("store unavailable")}},
+		{name: "write failure", election: &fakeElection{tickErr: errors.New("store unavailable")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
@@ -2481,7 +2483,7 @@ func TestControllerHandlePeriodicTasksPersistsCatchUp(t *testing.T) {
 			s.handlePeriodicTasks()
 			assert.Empty(t, s.electionOp)
 			if test.election != nil {
-				assert.Equal(t, 1, test.election.persists)
+				assert.Equal(t, 1, test.election.ticks)
 			}
 		})
 	}
@@ -4064,7 +4066,7 @@ func TestControllerOnChangeEnsembleReturnsFinishError(t *testing.T) {
 		namespace:       constant.DefaultNamespace,
 		shard:           5,
 		logger:          slog.Default(),
-		currentElection: &fakeElection{quorumCaughtUp: true, persistErr: errors.New("store unavailable")},
+		currentElection: &fakeElection{quorumCaughtUp: true, tickErr: errors.New("store unavailable")},
 	}
 
 	changeEnsemble := action.NewChangeEnsembleAction(5, testDataServer("s1"), testDataServer("s2"))
@@ -4405,13 +4407,13 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 type fakeElection struct {
 	quorumCaughtUp bool
 	canceled       bool
-	persists       int
-	persistErr     error
+	ticks          int
+	tickErr        error
 }
 
-func (f *fakeElection) TryPersistCatchUp() error {
-	f.persists++
-	return f.persistErr
+func (f *fakeElection) Tick() error {
+	f.ticks++
+	return f.tickErr
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {

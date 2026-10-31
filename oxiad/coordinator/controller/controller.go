@@ -48,3 +48,16 @@ type DataServerEventListener interface {
 	// with a binary that supports other features, e.g. in a rolling upgrade
 	FeaturesDiscovered(dataServer *commonproto.DataServerIdentity)
 }
+
+// Tickable is a component whose background tasks make progress that its owner
+// applies from its own event loop: they send a Signal to the loop, which then
+// calls Tick.
+type Tickable interface {
+	// Tick applies the progress made since the last tick. It is called from
+	// the event loop of the owner, which calls it again later if it fails.
+	Tick() error
+}
+
+// Signal asks an event loop to tick a Tickable. It is sent without blocking,
+// to a channel with a buffer of one: a signal already pending covers the next.
+type Signal struct{}
