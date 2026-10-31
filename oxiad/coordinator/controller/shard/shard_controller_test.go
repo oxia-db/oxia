@@ -3369,15 +3369,15 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	// stale if its ping loop changed the status while the watch waited for
 	// it: the data server reports its health until the controller acts on it.
 	setHealth := func(dataServer *proto.DataServerIdentity, servingStatus grpc_health_v1.HealthCheckResponse_ServingStatus,
-		status proto.DataServerState) {
+		available bool) {
 		t.Helper()
 		require.Eventually(t, func() bool {
 			rpc.GetNode(dataServer).HealthClient.SetStatus(servingStatus)
-			return dataServers[dataServer.GetNameOrDefault()].GetStatus().GetState() == status
+			return dataServers[dataServer.GetNameOrDefault()].GetStatus().IsAvailable() == available
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 	for _, dataServer := range ensemble {
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, true)
 	}
 	supply := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
 		features := make(map[string][]proto.Feature, len(servers))
@@ -3388,12 +3388,12 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	}
 	stop := func(dataServer *proto.DataServerIdentity) {
 		t.Helper()
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, false)
 	}
 	startUpgraded := func(dataServer *proto.DataServerIdentity) {
 		t.Helper()
 		rpc.GetNode(dataServer).SetNodeFeatures(upgraded)
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, true)
 	}
 
 	steadyInTerm := func(term int64) {

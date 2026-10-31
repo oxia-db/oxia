@@ -28,30 +28,22 @@ import (
 //   - binds a data server that becomes available to this coordinator with a
 //     handshake, which reports the features it supports, and tells the
 //     listener when they change;
-//   - pushes the shard assignments to the data server while it is RUNNING or
-//     DRAINING, retrying with a backoff when the stream fails;
+//   - pushes the shard assignments to the data server while it is available
+//     and RUNNING or DRAINING, retrying with a backoff when the stream fails;
 //   - once the data server is DRAINING, checks on every probe interval
 //     whether it is drained, and stores it DRAINED.
 //
-// The lifecycle of the data server, as GetStatus reports it:
+// The status of the data server has two parts. Its state is the stage of its
+// lifecycle, which the metadata stores, so that a drain is reported, and
+// resumes after a restart of the coordinator:
 //
-//	              handshake
-//	UNAVAILABLE ------------> RUNNING
-//	  (start)   <------------    |
-//	    |       health check     |
-//	    |       fails            |
-//	    | Drain            Drain |
-//	    v                        |
-//	DRAINING <-------------------+
-//	    |
-//	    | no shard references it, and every shard caught up
-//	    v
-//	DRAINED
+//	        Drain                 no shard references it,
+//	RUNNING -------> DRAINING ------------------------------> DRAINED
+//	                           and every shard caught up
 //
-// A DRAINING data server stays DRAINING when its health check fails, and
-// DRAINED is final. The status of the data server in the metadata stores
-// RUNNING, DRAINING and DRAINED, so that a drain is reported, and resumes
-// after a restart of the coordinator; UNAVAILABLE is only observed here.
+// Its availability is observed by this controller only, and never stored: a
+// data server becomes available with a handshake, at any stage, and
+// unavailable when its health check fails. It starts RUNNING and unavailable.
 //
 // The runtime creates a controller for each data server of the configuration,
 // or still referenced by a shard or stored DRAINING. It calls Drain when the

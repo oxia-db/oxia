@@ -24,7 +24,6 @@ import (
 
 func TestIsRemoved(t *testing.T) {
 	assert.False(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_RUNNING))
-	assert.False(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE))
 	assert.True(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_DRAINING))
 	assert.True(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_DRAINED))
 }

@@ -20,19 +20,22 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// Status is the state of a data server, and when it last changed. The state
-// combines where the data server is in its lifecycle with whether it is
-// available: a data server is UNAVAILABLE only while it is RUNNING, and a
-// DRAINING one stays DRAINING, so that it is still drained.
+// Status is the state of a data server, whether it is available, and when
+// either last changed.
+//
+// A Status isn't safe for concurrent use: one goroutine at a time changes it.
+// The controller changes a copy under its mu, then publishes it, and
+// GetStatus returns a copy to each reader.
 type Status struct {
-	// lifecycle is RUNNING, DRAINING or DRAINED.
-	lifecycle proto.DataServerState
+	// state is RUNNING, DRAINING or DRAINED: the stage of the lifecycle that
+	// the metadata stores.
+	state proto.DataServerState
 	// available is whether the data server answered its health checks since
-	// its last handshake.
+	// its last handshake. It is never stored.
 	available bool
-	// lastTransitionTime is when the state last changed: zero until it changes
-	// after the data server joined, as a data server that never failed doesn't
-	// need to prove that it's stable.
+	// lastTransitionTime is when the status last changed: zero until it
+	// changes after the data server joined, as a data server that never
+	// failed doesn't need to prove that it's stable.
 	lastTransitionTime time.Time
 	// epoch increments on every transition, so that a probe observation (a
 	// SERVING answer or a failure) obtained before a concurrent transition can
@@ -40,22 +43,15 @@ type Status struct {
 	epoch int64
 }
 
-// NewStatus returns the status of a data server that GetState reports in
-// state, before any transition: UNAVAILABLE is a RUNNING data server that
-// isn't available, and any other state an available one.
+// NewStatus returns the status of a data server in state, before any
+// transition: it isn't available until its first handshake.
 func NewStatus(state proto.DataServerState) Status {
-	if state == proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE {
-		return Status{lifecycle: proto.DataServerState_DATA_SERVER_STATE_RUNNING}
-	}
-	return Status{lifecycle: state, available: true}
+	return Status{state: state}
 }
 
-// GetState returns the state of the data server.
+// GetState returns the stage of the lifecycle of the data server.
 func (s Status) GetState() proto.DataServerState {
-	if s.lifecycle == proto.DataServerState_DATA_SERVER_STATE_RUNNING && !s.available {
-		return proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE
-	}
-	return s.lifecycle
+	return s.state
 }
 
 // IsAvailable reports whether the data server answered its health checks
@@ -64,7 +60,7 @@ func (s Status) IsAvailable() bool {
 	return s.available
 }
 
-// GetLastTransitionTime returns when the state last changed, or zero if it
+// GetLastTransitionTime returns when the status last changed, or zero if it
 // didn't change since the data server joined.
 func (s Status) GetLastTransitionTime() time.Time {
 	return s.lastTransitionTime
@@ -72,11 +68,11 @@ func (s Status) GetLastTransitionTime() time.Time {
 
 // Advance moves the data server to the DRAINING or DRAINED stage of its
 // lifecycle.
-func (s *Status) Advance(lifecycle proto.DataServerState) {
+func (s *Status) Advance(state proto.DataServerState) {
 	if s.epoch > 0 {
 		s.lastTransitionTime = time.Now()
 	}
-	s.lifecycle = lifecycle
+	s.state = state
 	s.epoch++
 }
 

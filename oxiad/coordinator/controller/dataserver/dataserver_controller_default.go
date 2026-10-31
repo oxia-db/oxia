@@ -76,7 +76,7 @@ type controller struct {
 	// supportedFeatures are the features that the last handshake reported.
 	supportedFeatures []proto.Feature
 	// handshaking is set while a handshake is in flight: the health paths keep
-	// observing SERVING while the node is UNAVAILABLE, and at most one of them
+	// observing SERVING while the node is unavailable, and at most one of them
 	// handshakes it at a time.
 	handshaking bool
 }
@@ -598,7 +598,7 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 		listener:            dataServerEventListener,
 		rpc:                 rpcProvider,
 		insID:               insID,
-		status:              commonwatch.New(NewStatus(proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE)),
+		status:              commonwatch.New(NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)),
 		supportedFeatures:   make([]proto.Feature, 0),
 		logger:              logger,
 		healthPolicy:        healthPolicy,
@@ -609,7 +609,7 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 	}
 	nc.runningGauge = metric.NewGauge("oxia_coordinator_node_running",
 		"Whether the dataServer is considered to be running by the coordinator", "count", labels, func() int64 {
-			if nc.GetStatus().GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING {
+			if status := nc.GetStatus(); status.IsAvailable() && status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING {
 				return 1
 			}
 			return 0

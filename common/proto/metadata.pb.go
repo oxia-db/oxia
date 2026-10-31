@@ -35,21 +35,19 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// The state of a data server. The coordinator stores RUNNING, DRAINING and
-// DRAINED in the cluster status; UNAVAILABLE is only known while it runs.
+// The stage of a data server in its lifecycle, which the coordinator stores
+// in the cluster status:
 //
-//	             health check failed
-//	RUNNING  <----------------------->  UNAVAILABLE
-//	             handshake succeeded
+//	RUNNING --> DRAINING --> DRAINED
 //
-//	removed from the configuration: RUNNING or UNAVAILABLE --> DRAINING
-//	no shard references it, and every shard caught up: DRAINING --> DRAINED
+// A data server removed from the configuration is DRAINING, and DRAINED once
+// no shard references it and every shard caught up. Whether it is reachable
+// isn't stored: only the coordinator that runs observes it.
 type DataServerState int32
 
 const (
 	DataServerState_DATA_SERVER_STATE_UNSPECIFIED DataServerState = 0
 	DataServerState_DATA_SERVER_STATE_RUNNING     DataServerState = 1
-	DataServerState_DATA_SERVER_STATE_UNAVAILABLE DataServerState = 2
 	DataServerState_DATA_SERVER_STATE_DRAINING    DataServerState = 3
 	DataServerState_DATA_SERVER_STATE_DRAINED     DataServerState = 4
 )
@@ -59,14 +57,12 @@ var (
 	DataServerState_name = map[int32]string{
 		0: "DATA_SERVER_STATE_UNSPECIFIED",
 		1: "DATA_SERVER_STATE_RUNNING",
-		2: "DATA_SERVER_STATE_UNAVAILABLE",
 		3: "DATA_SERVER_STATE_DRAINING",
 		4: "DATA_SERVER_STATE_DRAINED",
 	}
 	DataServerState_value = map[string]int32{
 		"DATA_SERVER_STATE_UNSPECIFIED": 0,
 		"DATA_SERVER_STATE_RUNNING":     1,
-		"DATA_SERVER_STATE_UNAVAILABLE": 2,
 		"DATA_SERVER_STATE_DRAINING":    3,
 		"DATA_SERVER_STATE_DRAINED":     4,
 	}
@@ -205,10 +201,13 @@ func (ShardStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 type DataServerIdentity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty" yaml:"name,omitempty"`
-	Public        string                 `protobuf:"bytes,2,opt,name=public,proto3" json:"public,omitempty" yaml:"public"`
-	Internal      string                 `protobuf:"bytes,3,opt,name=internal,proto3" json:"internal,omitempty" yaml:"internal"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty" yaml:"name,omitempty"`
+	 
+	Public string `protobuf:"bytes,2,opt,name=public,proto3" json:"public,omitempty" yaml:"public"`
+	 
+	Internal      string `protobuf:"bytes,3,opt,name=internal,proto3" json:"internal,omitempty" yaml:"internal"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -265,9 +264,11 @@ func (x *DataServerIdentity) GetInternal() string {
 }
 
 type Coordinator struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
-	PublicAddress string                 `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty" yaml:"publicAddress,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	 
+	PublicAddress string `protobuf:"bytes,2,opt,name=public_address,json=publicAddress,proto3" json:"public_address,omitempty" yaml:"publicAddress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -317,8 +318,9 @@ func (x *Coordinator) GetPublicAddress() string {
 }
 
 type DataServerMetadata struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Labels        map[string]string      `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"labels,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Labels        map[string]string `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"labels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -361,9 +363,11 @@ func (x *DataServerMetadata) GetLabels() map[string]string {
 }
 
 type DataServer struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Identity      *DataServerIdentity    `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty" yaml:"identity,omitempty"`
-	Metadata      *DataServerMetadata    `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Identity *DataServerIdentity `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty" yaml:"identity,omitempty"`
+	 
+	Metadata      *DataServerMetadata `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata,omitempty" yaml:"metadata,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -413,9 +417,11 @@ func (x *DataServer) GetMetadata() *DataServerMetadata {
 }
 
 type DataServerStatus struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	State             DataServerState        `protobuf:"varint,1,opt,name=state,proto3,enum=io.oxia.proto.v1.DataServerState" json:"state,omitempty" yaml:"state,omitempty"`
-	SupportedFeatures []Feature              `protobuf:"varint,2,rep,packed,name=supported_features,json=supportedFeatures,proto3,enum=replication.Feature" json:"supported_features,omitempty" yaml:"supportedFeatures,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	State DataServerState `protobuf:"varint,1,opt,name=state,proto3,enum=io.oxia.proto.v1.DataServerState" json:"state,omitempty" yaml:"state,omitempty"`
+	 
+	SupportedFeatures []Feature `protobuf:"varint,2,rep,packed,name=supported_features,json=supportedFeatures,proto3,enum=replication.Feature" json:"supported_features,omitempty" yaml:"supportedFeatures,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -465,9 +471,11 @@ func (x *DataServerStatus) GetSupportedFeatures() []Feature {
 }
 
 type AntiAffinity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Labels        []string               `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty" yaml:"labels,omitempty"`
-	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty" yaml:"mode,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Labels []string `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty" yaml:"labels,omitempty"`
+	 
+	Mode          string `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty" yaml:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -517,15 +525,21 @@ func (x *AntiAffinity) GetMode() string {
 }
 
 type Namespace struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Name                 string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
-	InitialShardCount    uint32                 `protobuf:"varint,2,opt,name=initial_shard_count,json=initialShardCount,proto3" json:"initial_shard_count,omitempty" yaml:"initialShardCount,omitempty"`
-	ReplicationFactor    uint32                 `protobuf:"varint,3,opt,name=replication_factor,json=replicationFactor,proto3" json:"replication_factor,omitempty" yaml:"replicationFactor,omitempty"`
-	NotificationsEnabled *bool                  `protobuf:"varint,4,opt,name=notifications_enabled,json=notificationsEnabled,proto3,oneof" json:"notifications_enabled,omitempty" yaml:"notificationsEnabled,omitempty"`
-	KeySorting           string                 `protobuf:"bytes,5,opt,name=key_sorting,json=keySorting,proto3" json:"key_sorting,omitempty" yaml:"keySorting,omitempty"`
-	AntiAffinities       []*AntiAffinity        `protobuf:"bytes,6,rep,name=anti_affinities,json=antiAffinities,proto3" json:"anti_affinities,omitempty" yaml:"antiAffinities,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty" yaml:"name,omitempty"`
+	 
+	InitialShardCount uint32 `protobuf:"varint,2,opt,name=initial_shard_count,json=initialShardCount,proto3" json:"initial_shard_count,omitempty" yaml:"initialShardCount,omitempty"`
+	 
+	ReplicationFactor uint32 `protobuf:"varint,3,opt,name=replication_factor,json=replicationFactor,proto3" json:"replication_factor,omitempty" yaml:"replicationFactor,omitempty"`
+	 
+	NotificationsEnabled *bool `protobuf:"varint,4,opt,name=notifications_enabled,json=notificationsEnabled,proto3,oneof" json:"notifications_enabled,omitempty" yaml:"notificationsEnabled,omitempty"`
+	 
+	KeySorting string `protobuf:"bytes,5,opt,name=key_sorting,json=keySorting,proto3" json:"key_sorting,omitempty" yaml:"keySorting,omitempty"`
+	 
+	AntiAffinities []*AntiAffinity `protobuf:"bytes,6,rep,name=anti_affinities,json=antiAffinities,proto3" json:"anti_affinities,omitempty" yaml:"antiAffinities,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Namespace) Reset() {
@@ -601,11 +615,13 @@ func (x *Namespace) GetAntiAffinities() []*AntiAffinity {
 }
 
 type LoadBalancer struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	ScheduleInterval string                 `protobuf:"bytes,1,opt,name=schedule_interval,json=scheduleInterval,proto3" json:"schedule_interval,omitempty" yaml:"scheduleInterval,omitempty"`
-	QuarantineTime   string                 `protobuf:"bytes,2,opt,name=quarantine_time,json=quarantineTime,proto3" json:"quarantine_time,omitempty" yaml:"quarantineTime,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	ScheduleInterval string `protobuf:"bytes,1,opt,name=schedule_interval,json=scheduleInterval,proto3" json:"schedule_interval,omitempty" yaml:"scheduleInterval,omitempty"`
+	 
+	QuarantineTime string `protobuf:"bytes,2,opt,name=quarantine_time,json=quarantineTime,proto3" json:"quarantine_time,omitempty" yaml:"quarantineTime,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *LoadBalancer) Reset() {
@@ -653,16 +669,23 @@ func (x *LoadBalancer) GetQuarantineTime() string {
 }
 
 type AutoSplitConfig struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	Enabled               bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	MaxShardSizeMb        uint32                 `protobuf:"varint,2,opt,name=max_shard_size_mb,json=maxShardSizeMb,proto3" json:"max_shard_size_mb,omitempty" yaml:"maxShardSizeMb,omitempty"`
-	MaxThroughputOps      uint32                 `protobuf:"varint,3,opt,name=max_throughput_ops,json=maxThroughputOps,proto3" json:"max_throughput_ops,omitempty" yaml:"maxThroughputOps,omitempty"`
-	StabilizationPeriod   string                 `protobuf:"bytes,4,opt,name=stabilization_period,json=stabilizationPeriod,proto3" json:"stabilization_period,omitempty" yaml:"stabilizationPeriod,omitempty"`
-	CooldownPeriod        string                 `protobuf:"bytes,5,opt,name=cooldown_period,json=cooldownPeriod,proto3" json:"cooldown_period,omitempty" yaml:"cooldownPeriod,omitempty"`
-	MaxShardsPerNamespace uint32                 `protobuf:"varint,6,opt,name=max_shards_per_namespace,json=maxShardsPerNamespace,proto3" json:"max_shards_per_namespace,omitempty" yaml:"maxShardsPerNamespace,omitempty"`
-	CollectionInterval    string                 `protobuf:"bytes,7,opt,name=collection_interval,json=collectionInterval,proto3" json:"collection_interval,omitempty" yaml:"collectionInterval,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Enabled bool `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	 
+	MaxShardSizeMb uint32 `protobuf:"varint,2,opt,name=max_shard_size_mb,json=maxShardSizeMb,proto3" json:"max_shard_size_mb,omitempty" yaml:"maxShardSizeMb,omitempty"`
+	 
+	MaxThroughputOps uint32 `protobuf:"varint,3,opt,name=max_throughput_ops,json=maxThroughputOps,proto3" json:"max_throughput_ops,omitempty" yaml:"maxThroughputOps,omitempty"`
+	 
+	StabilizationPeriod string `protobuf:"bytes,4,opt,name=stabilization_period,json=stabilizationPeriod,proto3" json:"stabilization_period,omitempty" yaml:"stabilizationPeriod,omitempty"`
+	 
+	CooldownPeriod string `protobuf:"bytes,5,opt,name=cooldown_period,json=cooldownPeriod,proto3" json:"cooldown_period,omitempty" yaml:"cooldownPeriod,omitempty"`
+	 
+	MaxShardsPerNamespace uint32 `protobuf:"varint,6,opt,name=max_shards_per_namespace,json=maxShardsPerNamespace,proto3" json:"max_shards_per_namespace,omitempty" yaml:"maxShardsPerNamespace,omitempty"`
+	 
+	CollectionInterval string `protobuf:"bytes,7,opt,name=collection_interval,json=collectionInterval,proto3" json:"collection_interval,omitempty" yaml:"collectionInterval,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AutoSplitConfig) Reset() {
@@ -745,16 +768,23 @@ func (x *AutoSplitConfig) GetCollectionInterval() string {
 }
 
 type ClusterConfiguration struct {
-	state                 protoimpl.MessageState         `protogen:"open.v1"`
-	Namespaces            []*Namespace                   `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" yaml:"namespaces,omitempty"`
-	Servers               []*DataServerIdentity          `protobuf:"bytes,2,rep,name=servers,proto3" json:"servers,omitempty" yaml:"servers,omitempty"`
-	AllowExtraAuthorities []string                       `protobuf:"bytes,3,rep,name=allow_extra_authorities,json=allowExtraAuthorities,proto3" json:"allow_extra_authorities,omitempty" yaml:"allowExtraAuthorities,omitempty"`
-	ServerMetadata        map[string]*DataServerMetadata `protobuf:"bytes,4,rep,name=server_metadata,json=serverMetadata,proto3" json:"server_metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"serverMetadata,omitempty"`
-	LoadBalancer          *LoadBalancer                  `protobuf:"bytes,5,opt,name=load_balancer,json=loadBalancer,proto3" json:"load_balancer,omitempty" yaml:"loadBalancer,omitempty"`
-	Coordinators          []*Coordinator                 `protobuf:"bytes,6,rep,name=coordinators,proto3" json:"coordinators,omitempty" yaml:"coordinators,omitempty"`
-	AutoSplit             *AutoSplitConfig               `protobuf:"bytes,7,opt,name=auto_split,json=autoSplit,proto3" json:"auto_split,omitempty" yaml:"autoSplit,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Namespaces []*Namespace `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" yaml:"namespaces,omitempty"`
+	 
+	Servers []*DataServerIdentity `protobuf:"bytes,2,rep,name=servers,proto3" json:"servers,omitempty" yaml:"servers,omitempty"`
+	 
+	AllowExtraAuthorities []string `protobuf:"bytes,3,rep,name=allow_extra_authorities,json=allowExtraAuthorities,proto3" json:"allow_extra_authorities,omitempty" yaml:"allowExtraAuthorities,omitempty"`
+	 
+	ServerMetadata map[string]*DataServerMetadata `protobuf:"bytes,4,rep,name=server_metadata,json=serverMetadata,proto3" json:"server_metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"serverMetadata,omitempty"`
+	 
+	LoadBalancer *LoadBalancer `protobuf:"bytes,5,opt,name=load_balancer,json=loadBalancer,proto3" json:"load_balancer,omitempty" yaml:"loadBalancer,omitempty"`
+	 
+	Coordinators []*Coordinator `protobuf:"bytes,6,rep,name=coordinators,proto3" json:"coordinators,omitempty" yaml:"coordinators,omitempty"`
+	 
+	AutoSplit     *AutoSplitConfig `protobuf:"bytes,7,opt,name=auto_split,json=autoSplit,proto3" json:"auto_split,omitempty" yaml:"autoSplit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClusterConfiguration) Reset() {
@@ -837,9 +867,11 @@ func (x *ClusterConfiguration) GetAutoSplit() *AutoSplitConfig {
 }
 
 type HashRange struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Min           uint32                 `protobuf:"varint,1,opt,name=min,proto3" json:"min,omitempty" yaml:"min"`
-	Max           uint32                 `protobuf:"varint,2,opt,name=max,proto3" json:"max,omitempty" yaml:"max"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Min uint32 `protobuf:"varint,1,opt,name=min,proto3" json:"min,omitempty" yaml:"min"`
+	 
+	Max           uint32 `protobuf:"varint,2,opt,name=max,proto3" json:"max,omitempty" yaml:"max"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -889,14 +921,21 @@ func (x *HashRange) GetMax() uint32 {
 }
 
 type SplitMetadata struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	Phase                   SplitPhase             `protobuf:"varint,1,opt,name=phase,proto3,enum=io.oxia.proto.v1.SplitPhase" json:"phase,omitempty" yaml:"phase"`
-	ParentShardId           int64                  `protobuf:"varint,2,opt,name=parent_shard_id,json=parentShardId,proto3" json:"parent_shard_id,omitempty" yaml:"parentShardId"`
-	ChildShardIds           []int64                `protobuf:"varint,3,rep,packed,name=child_shard_ids,json=childShardIds,proto3" json:"child_shard_ids,omitempty" yaml:"childShardIds,omitempty"`
-	SplitPoint              uint32                 `protobuf:"varint,4,opt,name=split_point,json=splitPoint,proto3" json:"split_point,omitempty" yaml:"splitPoint"`
-	SnapshotOffset          int64                  `protobuf:"varint,5,opt,name=snapshot_offset,json=snapshotOffset,proto3" json:"snapshot_offset,omitempty" yaml:"snapshotOffset,omitempty"`
-	ParentTermAtBootstrap   int64                  `protobuf:"varint,6,opt,name=parent_term_at_bootstrap,json=parentTermAtBootstrap,proto3" json:"parent_term_at_bootstrap,omitempty" yaml:"parentTermAtBootstrap,omitempty"`
-	ChildLeadersAtBootstrap map[int64]string       `protobuf:"bytes,7,rep,name=child_leaders_at_bootstrap,json=childLeadersAtBootstrap,proto3" json:"child_leaders_at_bootstrap,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"childLeadersAtBootstrap,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Phase SplitPhase `protobuf:"varint,1,opt,name=phase,proto3,enum=io.oxia.proto.v1.SplitPhase" json:"phase,omitempty" yaml:"phase"`
+	 
+	ParentShardId int64 `protobuf:"varint,2,opt,name=parent_shard_id,json=parentShardId,proto3" json:"parent_shard_id,omitempty" yaml:"parentShardId"`
+	 
+	ChildShardIds []int64 `protobuf:"varint,3,rep,packed,name=child_shard_ids,json=childShardIds,proto3" json:"child_shard_ids,omitempty" yaml:"childShardIds,omitempty"`
+	 
+	SplitPoint uint32 `protobuf:"varint,4,opt,name=split_point,json=splitPoint,proto3" json:"split_point,omitempty" yaml:"splitPoint"`
+	 
+	SnapshotOffset int64 `protobuf:"varint,5,opt,name=snapshot_offset,json=snapshotOffset,proto3" json:"snapshot_offset,omitempty" yaml:"snapshotOffset,omitempty"`
+	 
+	ParentTermAtBootstrap int64 `protobuf:"varint,6,opt,name=parent_term_at_bootstrap,json=parentTermAtBootstrap,proto3" json:"parent_term_at_bootstrap,omitempty" yaml:"parentTermAtBootstrap,omitempty"`
+	 
+	ChildLeadersAtBootstrap map[int64]string `protobuf:"bytes,7,rep,name=child_leaders_at_bootstrap,json=childLeadersAtBootstrap,proto3" json:"child_leaders_at_bootstrap,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"childLeadersAtBootstrap,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -984,9 +1023,11 @@ func (x *SplitMetadata) GetChildLeadersAtBootstrap() map[int64]string {
 // ensemble has every entry: until then, from is fenced and a leader candidate,
 // and the ensemble before the change is the ensemble without to, with from.
 type EnsembleChangeMetadata struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	From          *DataServerIdentity    `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty" yaml:"from"`
-	To            *DataServerIdentity    `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty" yaml:"to"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	From *DataServerIdentity `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty" yaml:"from"`
+	 
+	To            *DataServerIdentity `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty" yaml:"to"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1036,23 +1077,33 @@ func (x *EnsembleChangeMetadata) GetTo() *DataServerIdentity {
 }
 
 type ShardMetadata struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	Status   ShardStatus            `protobuf:"varint,1,opt,name=status,proto3,enum=io.oxia.proto.v1.ShardStatus" json:"status,omitempty" yaml:"status"`
-	Term     int64                  `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty" yaml:"term"`
-	Leader   *DataServerIdentity    `protobuf:"bytes,3,opt,name=leader,proto3" json:"leader,omitempty" yaml:"leader,omitempty"`
-	Ensemble []*DataServerIdentity  `protobuf:"bytes,4,rep,name=ensemble,proto3" json:"ensemble,omitempty" yaml:"ensemble,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Status ShardStatus `protobuf:"varint,1,opt,name=status,proto3,enum=io.oxia.proto.v1.ShardStatus" json:"status,omitempty" yaml:"status"`
+	 
+	Term int64 `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty" yaml:"term"`
+	 
+	Leader *DataServerIdentity `protobuf:"bytes,3,opt,name=leader,proto3" json:"leader,omitempty" yaml:"leader,omitempty"`
+	 
+	Ensemble []*DataServerIdentity `protobuf:"bytes,4,rep,name=ensemble,proto3" json:"ensemble,omitempty" yaml:"ensemble,omitempty"`
 	// Replaced by ensemble_change.
+	 
 	//
 	// Deprecated: Marked as deprecated in metadata.proto.
-	RemovedNodes            []*DataServerIdentity `protobuf:"bytes,5,rep,name=removed_nodes,json=removedNodes,proto3" json:"removed_nodes,omitempty" yaml:"removedNodes,omitempty"`
+	RemovedNodes []*DataServerIdentity `protobuf:"bytes,5,rep,name=removed_nodes,json=removedNodes,proto3" json:"removed_nodes,omitempty" yaml:"removedNodes,omitempty"`
+	 
 	PendingDeleteShardNodes []*DataServerIdentity `protobuf:"bytes,6,rep,name=pending_delete_shard_nodes,json=pendingDeleteShardNodes,proto3" json:"pending_delete_shard_nodes,omitempty" yaml:"pendingDeleteShardNodes,omitempty"`
-	Int32HashRange          *HashRange            `protobuf:"bytes,7,opt,name=int32_hash_range,json=int32HashRange,proto3" json:"int32_hash_range,omitempty" yaml:"int32HashRange,omitempty"`
-	Split                   *SplitMetadata        `protobuf:"bytes,8,opt,name=split,proto3" json:"split,omitempty" yaml:"split,omitempty"`
+	 
+	Int32HashRange *HashRange `protobuf:"bytes,7,opt,name=int32_hash_range,json=int32HashRange,proto3" json:"int32_hash_range,omitempty" yaml:"int32HashRange,omitempty"`
+	 
+	Split *SplitMetadata `protobuf:"bytes,8,opt,name=split,proto3" json:"split,omitempty" yaml:"split,omitempty"`
 	// Unset when no change of the ensemble is pending.
+	 
 	EnsembleChange *EnsembleChangeMetadata `protobuf:"bytes,9,opt,name=ensemble_change,json=ensembleChange,proto3" json:"ensemble_change,omitempty" yaml:"ensembleChange,omitempty"`
 	// False from each new term, until every member of the ensemble has committed
 	// the head entry of the leader at the election, so has every entry committed
 	// before it: e.g. the data server added by a change of the ensemble.
+	 
 	EnsembleCaughtUp bool `protobuf:"varint,10,opt,name=ensemble_caught_up,json=ensembleCaughtUp,proto3" json:"ensemble_caught_up,omitempty" yaml:"ensembleCaughtUp,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -1160,11 +1211,13 @@ func (x *ShardMetadata) GetEnsembleCaughtUp() bool {
 }
 
 type NamespaceStatus struct {
-	state             protoimpl.MessageState   `protogen:"open.v1"`
-	ReplicationFactor uint32                   `protobuf:"varint,1,opt,name=replication_factor,json=replicationFactor,proto3" json:"replication_factor,omitempty" yaml:"replicationFactor"`
-	Shards            map[int64]*ShardMetadata `protobuf:"bytes,2,rep,name=shards,proto3" json:"shards,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"shards"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	ReplicationFactor uint32 `protobuf:"varint,1,opt,name=replication_factor,json=replicationFactor,proto3" json:"replication_factor,omitempty" yaml:"replicationFactor"`
+	 
+	Shards        map[int64]*ShardMetadata `protobuf:"bytes,2,rep,name=shards,proto3" json:"shards,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"shards"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NamespaceStatus) Reset() {
@@ -1212,12 +1265,17 @@ func (x *NamespaceStatus) GetShards() map[int64]*ShardMetadata {
 }
 
 type ClusterStatus struct {
-	state            protoimpl.MessageState      `protogen:"open.v1"`
-	Namespaces       map[string]*NamespaceStatus `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"namespaces,omitempty"`
-	ShardIdGenerator int64                       `protobuf:"varint,2,opt,name=shard_id_generator,json=shardIdGenerator,proto3" json:"shard_id_generator,omitempty" yaml:"shardIdGenerator,omitempty"`
-	ServerIdx        uint32                      `protobuf:"varint,3,opt,name=server_idx,json=serverIdx,proto3" json:"server_idx,omitempty" yaml:"serverIdx,omitempty"`
-	InstanceId       string                      `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty" yaml:"instanceId,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	 
+	Namespaces map[string]*NamespaceStatus `protobuf:"bytes,1,rep,name=namespaces,proto3" json:"namespaces,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"namespaces,omitempty"`
+	 
+	ShardIdGenerator int64 `protobuf:"varint,2,opt,name=shard_id_generator,json=shardIdGenerator,proto3" json:"shard_id_generator,omitempty" yaml:"shardIdGenerator,omitempty"`
+	 
+	ServerIdx uint32 `protobuf:"varint,3,opt,name=server_idx,json=serverIdx,proto3" json:"server_idx,omitempty" yaml:"serverIdx,omitempty"`
+	 
+	InstanceId string `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty" yaml:"instanceId,omitempty"`
 	// The data servers, by name, with their stored state.
+	 
 	DataServers   map[string]*DataServerStatus `protobuf:"bytes,5,rep,name=data_servers,json=dataServers,proto3" json:"data_servers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"dataServers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1401,13 +1459,12 @@ const file_metadata_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2!.io.oxia.proto.v1.NamespaceStatusR\x05value:\x028\x01\x1ab\n" +
 	"\x10DataServersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
-	"\x05value\x18\x02 \x01(\v2\".io.oxia.proto.v1.DataServerStatusR\x05value:\x028\x01*\xb5\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\".io.oxia.proto.v1.DataServerStatusR\x05value:\x028\x01*\xb7\x01\n" +
 	"\x0fDataServerState\x12!\n" +
 	"\x1dDATA_SERVER_STATE_UNSPECIFIED\x10\x00\x12\x1d\n" +
-	"\x19DATA_SERVER_STATE_RUNNING\x10\x01\x12!\n" +
-	"\x1dDATA_SERVER_STATE_UNAVAILABLE\x10\x02\x12\x1e\n" +
+	"\x19DATA_SERVER_STATE_RUNNING\x10\x01\x12\x1e\n" +
 	"\x1aDATA_SERVER_STATE_DRAINING\x10\x03\x12\x1d\n" +
-	"\x19DATA_SERVER_STATE_DRAINED\x10\x04*C\n" +
+	"\x19DATA_SERVER_STATE_DRAINED\x10\x04\"\x04\b\x02\x10\x02*\x1dDATA_SERVER_STATE_UNAVAILABLE*C\n" +
 	"\n" +
 	"SplitPhase\x12\r\n" +
 	"\tBootstrap\x10\x00\x12\v\n" +
