@@ -43,7 +43,6 @@ import (
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -744,8 +743,8 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "", nil,
+	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier,
+		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "", nil, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -790,8 +789,10 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 			rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 			rpc.GetNode(s1).BecomeLeaderResponse(nil)
-			e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "", nil,
+			caughtUp := make(chan struct{})
+			e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier,
+				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "",
+				func() { close(caughtUp) }, nil,
 				metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -812,7 +813,8 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 				return
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
+			<-caughtUp
+			assert.True(t, e.IsQuorumCaughtUp())
 			require.NoError(t, e.TryFinishEnsembleChange())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
@@ -901,8 +903,8 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-		rpc, constant.DefaultNamespace, shard, shardMeta, nil, "", nil,
+	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier,
+		rpc, constant.DefaultNamespace, shard, shardMeta, nil, "", nil, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",

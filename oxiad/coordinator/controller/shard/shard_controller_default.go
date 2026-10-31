@@ -33,8 +33,6 @@ import (
 
 	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller/shard/election"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -68,7 +66,6 @@ type controller struct {
 	namespaceConfig       *proto.Namespace
 	periodicTasksInterval time.Duration
 	rpc                   rpc.ControllerRPCProvider
-	leaderSelector        selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener         controllerapi.ShardEventListener
 	metadataStore         coordmetadata.Metadata
 	featureSupplier       featurepkg.Supplier
@@ -77,6 +74,9 @@ type controller struct {
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	// quorumCaughtUpOp is notified when a majority of the ensemble of the
+	// current election caught up, to finish a pending change right away.
+	quorumCaughtUpOp chan struct{}
 
 	// The features of a data server are reported only when they change, so
 	// unlike the other notifications they must not be dropped when the event
@@ -155,11 +155,11 @@ func NewController(
 		metadataStore:         metadataStore,
 		featureSupplier:       featureSupplier,
 		eventListener:         eventListener,
-		leaderSelector:        leaderselector.NewSelector(),
 		electionOp:            make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:              make(chan any, chanBufferSize),
 		dataServerFailureOp:   make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
+		quorumCaughtUpOp:      make(chan struct{}, 1),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
 
@@ -284,7 +284,12 @@ func (s *controller) run(bo backoff.BackOff) error {
 	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
 	// A failure from now on is retried from the initial interval
 	bo.Reset()
+	s.loop()
+	return nil
+}
 
+// loop handles the events of the shard until the controller closes.
+func (s *controller) loop() {
 	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
 	defer periodicTasksTimer.Stop()
 
@@ -296,7 +301,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 	for !s.terminating.Load() {
 		select {
 		case <-s.ctx.Done():
-			return nil
+			return
 		case <-s.deleteOp:
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
@@ -305,6 +310,8 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
+		case <-s.quorumCaughtUpOp:
+			s.finishEnsembleChange()
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
@@ -313,7 +320,6 @@ func (s *controller) run(bo backoff.BackOff) error {
 		}
 	}
 	s.logger.Info("Shard controller is stopped, stopping event loop")
-	return nil
 }
 
 // waitForSplitComplete blocks until the Split metadata is cleared from this
@@ -623,8 +629,9 @@ func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
 		s.currentElection.Cancel()
 	}
 	s.currentElection = election.New(s.ctx, s.logger, s.eventListener,
-		s.metadataStore, s.featureSupplier, s.leaderSelector,
-		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, preferredLeader, s.requiredFeatures,
+		s.metadataStore, s.featureSupplier,
+		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, preferredLeader,
+		func() { channel.PushNoBlock(s.quorumCaughtUpOp, struct{}{}) }, s.requiredFeatures,
 		s.leaderElectionLatencyHistogram,
 		s.newTermQuorumLatencyHistogram,
 		s.becomeLeaderLatencyHistogram)
@@ -863,6 +870,20 @@ func (s *controller) Refresh() {
 	s.logger.Info("server address changed, start a new leader election")
 	if !channel.PushNoBlock(s.electionOp, action.NewElectionAction(s.shard)) {
 		s.logger.Debug("Discarding refresh election because queue is full")
+	}
+}
+
+// finishEnsembleChange finishes the pending change of the ensemble once a
+// majority caught up, rather than at the next periodic tasks: until then, the
+// shard fences the joint quorum, and no other change can start. A failure is
+// retried a second later.
+func (s *controller) finishEnsembleChange() {
+	if s.currentElection == nil {
+		return
+	}
+	if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
+		s.logger.Warn("Failed to finish the change of the ensemble, retrying later", slog.Any("error", err))
+		time.AfterFunc(time.Second, func() { channel.PushNoBlock(s.quorumCaughtUpOp, struct{}{}) })
 	}
 }
 

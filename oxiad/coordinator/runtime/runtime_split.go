@@ -87,7 +87,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 	if err != nil {
 		return 0, 0, err
 	}
-	leftEnsemble, err := c.selectNewEnsemble(namespace, leftChildId, nsConfig, status, supportsParentFeatures)
+	leftEnsemble, err := c.placeShard(namespace, nsConfig, status, supportsParentFeatures)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for left child")
 	}
@@ -101,7 +101,7 @@ func (c *runtime) InitiateSplit(namespace string, parentShardId int64, splitPoin
 			Max: sp,
 		},
 	}
-	rightEnsemble, err := c.selectNewEnsemble(namespace, rightChildId, nsConfig, status, supportsParentFeatures)
+	rightEnsemble, err := c.placeShard(namespace, nsConfig, status, supportsParentFeatures)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to select ensemble for right child")
 	}

@@ -19,7 +19,6 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
@@ -44,7 +43,6 @@ type Runtime interface {
 	CreateNamespace(name string, namespaceConfig *proto.Namespace) error
 	DeleteNamespace(namespace string)
 
-	LoadBalancer() balancer.LoadBalancer
 	Metadata() coordmetadata.Metadata
 
 	RecomputeAssignments()

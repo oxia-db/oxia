@@ -39,8 +39,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -497,20 +495,13 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *fakeMetadata) {
 	}))
 
 	racing := &fakeMetadata{Metadata: metadata}
-	loadBalancerConfig, err := racing.GetLoadBalancerConfig()
-	require.NoError(t, err)
 	r := &runtime{
 		logger:           slog.With(slog.String("component", "coordinator")),
 		ctx:              t.Context(),
 		metadata:         racing,
 		rpc:              rpctest.NewRpcProvider(),
-		ensembleSelector: ensemble.NewSelector(),
-		loadBalancer: balancer.NewLoadBalancer(balancer.Options{
-			Context:             t.Context(),
-			Metadata:            racing,
-			LoadBalancerConfig:  loadBalancerConfig.UnsafeBorrow(),
-			NodeAvailableJudger: func(string) bool { return true },
-		}),
+		scheduler:        newTestScheduler(t, racing),
+		planner:          defaultPlanner(),
 		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
 		shardControllers: map[int64]shardcontroller.Controller{},
 		splitControllers: map[int64]*shardcontroller.SplitController{},
@@ -738,10 +729,10 @@ func TestRuntimeInitiateSplitFailsWithoutChanges(t *testing.T) {
 			}
 		}, err: metadataErr.Error()},
 		{name: "no ensemble for the left child", setup: func(r *runtime, _ *fakeMetadata) {
-			r.ensembleSelector = failingEnsembleSelector{succeeding: 0, calls: new(0)}
+			r.planner = failingPlanner(0, new(0))
 		}, err: "failed to select ensemble for left child"},
 		{name: "no ensemble for the right child", setup: func(r *runtime, _ *fakeMetadata) {
-			r.ensembleSelector = failingEnsembleSelector{succeeding: 1, calls: new(0)}
+			r.planner = failingPlanner(1, new(0))
 		}, err: "failed to select ensemble for right child"},
 		{name: "status write failed", setup: func(_ *runtime, m *fakeMetadata) {
 			m.patchNamespaceStatus = func(string, func(*proto.NamespaceStatus) (bool, error)) error { return metadataErr }

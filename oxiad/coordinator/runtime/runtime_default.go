@@ -38,15 +38,15 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/autosplit"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/state"
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
@@ -81,9 +81,10 @@ type runtime struct {
 	// because they might be still reachable to clients.
 	drainingNodes map[string]dataservercontroller.Controller
 
-	loadBalancer     balancer.LoadBalancer
+	scheduler scheduler.Scheduler
+	// planner places the new shards and the children of the splits.
+	planner          planner.Planner
 	autoSplitMonitor *autosplit.Monitor
-	ensembleSelector selector.Selector[*ensemble.Context, []string]
 
 	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
 
@@ -119,10 +120,6 @@ func (c *runtime) ShardDeleted(shard int64) {
 			c.logger.Error("Failed to close shard controller", slog.Int64("shard", shard), slog.Any("error", err))
 		}
 	}
-}
-
-func (c *runtime) LoadBalancer() balancer.LoadBalancer {
-	return c.loadBalancer
 }
 
 func (c *runtime) Metadata() coordmetadata.Metadata {
@@ -252,7 +249,7 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	status[name] = commonobject.Borrow(namespaceStatus)
 
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
-		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status, nil)
+		esm, err := c.placeShard(name, namespaceConfig, status, nil)
 		if err != nil {
 			return errors.Wrapf(err, "failed to select the ensemble of shard %d", shard.Id)
 		}
@@ -325,7 +322,6 @@ func (c *runtime) RecomputeAssignments() {
 	c.Lock()
 	defer c.Unlock()
 	c.computeNewAssignments()
-	c.loadBalancer.Trigger()
 }
 
 func (c *runtime) findDataServerFeatures(dataServers []*proto.DataServerIdentity) map[string][]proto.Feature {
@@ -353,24 +349,6 @@ func (c *runtime) findDataServerFeaturesLocked(dataServers []*proto.DataServerId
 	return features
 }
 
-func dataServersToCandidatesAndMetadata(dataServers map[string]commonobject.Borrowed[*proto.DataServer]) (
-	*linkedhashset.Set[string],
-	map[string]*proto.DataServerMetadata,
-) {
-	candidates := linkedhashset.New[string]()
-	metadata := make(map[string]*proto.DataServerMetadata, len(dataServers))
-	for name, borrowedDataServer := range dataServers {
-		dataServer := borrowedDataServer.UnsafeBorrow()
-		candidates.Add(name)
-		if dataServer.GetMetadata() != nil {
-			metadata[name] = dataServer.GetMetadata()
-			continue
-		}
-		metadata[name] = &proto.DataServerMetadata{}
-	}
-	return candidates, metadata
-}
-
 func cloneNamespaceStatuses(namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus]) map[string]commonobject.Borrowed[*proto.NamespaceStatus] {
 	statuses := make(map[string]commonobject.Borrowed[*proto.NamespaceStatus], len(namespaces))
 	for namespace, status := range namespaces {
@@ -379,51 +357,31 @@ func cloneNamespaceStatuses(namespaces map[string]commonobject.Borrowed[*proto.N
 	return statuses
 }
 
-// selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
-// It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
-// When eligible is set, only the data servers that it accepts can be selected.
-func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Namespace, editingStatus map[string]commonobject.Borrowed[*proto.NamespaceStatus],
-	eligible func(dataServer *proto.DataServerIdentity) bool) ([]*proto.DataServerIdentity, error) {
+// placeShard returns the ensemble of a new shard of namespace, configured by
+// config, on statuses: every namespace, with the shards being created. Only
+// the data servers that eligible accepts are picked, unless it is nil.
+func (c *runtime) placeShard(namespace string, config *proto.Namespace,
+	statuses map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+	eligible func(*proto.DataServerIdentity) bool) ([]*proto.DataServerIdentity, error) {
 	dataServers, err := c.metadata.ListDataServer()
 	if err != nil {
 		return nil, err
 	}
-	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
-	candidates := nodes
+	snapshot := model.NewSnapshot(dataServers, nil, statuses)
+	var accepts func(*model.DataServer) bool
 	if eligible != nil {
-		candidates = nodes.Select(func(_ int, name string) bool {
-			return eligible(dataServers[name].UnsafeBorrow().GetIdentity())
-		})
+		accepts = func(dataServer *model.DataServer) bool { return eligible(dataServer.Identity) }
 	}
-	ensembleContext := &ensemble.Context{
-		Candidates:         candidates,
-		CandidatesMetadata: metadata,
-		AntiAffinities:     ns.GetAntiAffinities(),
-		Namespace:          namespace,
-		Shard:              shard,
-		Replicas:           int(ns.GetReplicationFactor()),
-		LoadRatioSupplier: func() *model.Ratio {
-			groupedStatus, historyNodes := state.GroupingShardsNodeByStatus(nodes, editingStatus)
-			return c.loadBalancer.LoadRatioAlgorithm()(&model.RatioParams{NodeShardsInfos: groupedStatus, HistoryNodes: historyNodes})
-		},
-	}
-	var ensembles []string
-	if ensembles, err = c.ensembleSelector.Select(ensembleContext); err != nil {
+	names, err := c.planner.Place(snapshot, namespace, int(config.GetReplicationFactor()), config.GetAntiAffinities(),
+		accepts)
+	if err != nil {
 		return nil, err
 	}
-	esm := make([]*proto.DataServerIdentity, 0)
-	for _, id := range ensembles {
-		borrowedDataServer, exist := dataServers[id]
-		if !exist {
-			return nil, fmt.Errorf("failed to find node %s", id)
-		}
-		dataServer := borrowedDataServer.UnsafeBorrow()
-		if !exist || dataServer.GetIdentity() == nil {
-			return nil, fmt.Errorf("failed to find node %s", id)
-		}
-		esm = append(esm, dataServer.GetIdentity())
+	ensemble := make([]*proto.DataServerIdentity, 0, len(names))
+	for _, name := range names {
+		ensemble = append(ensemble, snapshot.DataServers[name].Identity)
 	}
-	return esm, nil
+	return ensemble, nil
 }
 
 func (c *runtime) Close() error {
@@ -432,6 +390,8 @@ func (c *runtime) Close() error {
 	if c.autoSplitMonitor != nil {
 		c.autoSplitMonitor.Close()
 	}
+	// The scheduler stops sending actions before the action worker exits
+	err := c.scheduler.Close()
 
 	// Snapshot the controller maps under the lock: shard-controller callbacks
 	// (e.g. ShardDeleted, running on a detached goroutine) mutate them
@@ -448,7 +408,6 @@ func (c *runtime) Close() error {
 	// The shard controllers must be closed before waiting for the action
 	// worker: the worker blocks on in-flight election actions, which only
 	// complete once the shard controllers' retry loops get canceled
-	var err error
 	for _, sc := range splitControllers {
 		sc.Close()
 	}
@@ -515,7 +474,7 @@ func (c *runtime) SubscribeShardAssignments() *commonwatch.Receiver[*proto.Shard
 func (c *runtime) startBackgroundActionWorker() {
 	for {
 		select {
-		case ac := <-c.loadBalancer.Action():
+		case ac := <-c.scheduler.Actions():
 			c.dispatchAction(ac)
 
 		case <-c.ctx.Done():
@@ -685,10 +644,6 @@ func New(
 	if err != nil {
 		return nil, err
 	}
-	loadBalancerConfig, err := metadata.GetLoadBalancerConfig()
-	if err != nil {
-		return nil, err
-	}
 	namespaces := make(map[string]*proto.Namespace, len(config.UnsafeBorrow().GetNamespaces()))
 	for _, namespace := range config.UnsafeBorrow().GetNamespaces() {
 		namespaces[namespace.GetName()] = namespace
@@ -698,7 +653,6 @@ func New(
 		logger: slog.With(
 			slog.String("component", "coordinator"),
 		),
-		ensembleSelector:      ensemble.NewSelector(),
 		shardControllers:      make(map[int64]shardcontroller.Controller),
 		splitControllers:      make(map[int64]*shardcontroller.SplitController),
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
@@ -706,31 +660,32 @@ func New(
 		metadata:              metadata,
 		insID:                 insID,
 		assignmentsWatch:      commonwatch.New[*proto.ShardAssignments](nil),
+		planner:               planner.New(filter.Defaults(), tier.Defaults()),
 	}
 
 	c.ctx, c.ctxCancel = context.WithCancel(ctx)
 
-	c.loadBalancer = balancer.NewLoadBalancer(balancer.Options{
-		Context:            c.ctx,
-		Metadata:           c.metadata,
-		LoadBalancerConfig: loadBalancerConfig.UnsafeBorrow(),
-		NodeAvailableJudger: func(nodeID string) bool {
+	//nolint:contextcheck // the scheduler owns its context, from c.ctx
+	c.scheduler = scheduler.New(scheduler.Options{
+		Context:  c.ctx,
+		Metadata: c.metadata,
+		Health: func(name string) (bool, time.Time) {
 			c.RLock()
 			defer c.RUnlock()
-			nc, ok := c.dataServerControllers[nodeID]
+			nc, ok := c.dataServerControllers[name]
+			if !ok {
+				// A data server removed from the configuration drains
+				nc, ok = c.drainingNodes[name]
+			}
 			if !ok {
 				// The controller might not have been created yet for a
 				// data server that was just registered
-				return false
+				return false, time.Time{}
 			}
-			// A node that just recovered from a health-check failure is left
-			// out of leader rebalancing until it has been stable for 5
-			// minutes: moving leaders straight back onto it is what turns one
-			// flap into a rebalancing loop. The re-election of leaders away
-			// from a dead node is not affected.
 			status := nc.GetStatus()
-			return status.GetState() == dataservercontroller.Running &&
-				time.Since(status.GetLastTransitionTime()) >= 5*time.Minute
+			state := status.GetState()
+			return state == dataservercontroller.Running || state == dataservercontroller.Draining,
+				status.GetLastTransitionTime()
 		},
 	})
 
@@ -781,7 +736,7 @@ func New(
 			"component": "coordinator-action-worker",
 		}, c.startBackgroundActionWorker)
 	})
-	c.loadBalancer.Start()
+	c.scheduler.Start()
 
 	autoSplitInterval := config.UnsafeBorrow().GetAutoSplitWithDefaults().GetCollectionIntervalDurationOrDefault()
 	c.autoSplitMonitor = autosplit.NewMonitor(c.metadata, c.rpc, c, autoSplitInterval)

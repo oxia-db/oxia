@@ -33,7 +33,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -782,8 +781,6 @@ func (*mockNamespaceRuntime) ListDataServerStatus() map[string]*proto.DataServer
 func (*mockNamespaceRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) {
 	return nil, false
 }
-
-func (*mockNamespaceRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
 
 func (m *mockNamespaceRuntime) Metadata() coordmetadata.Metadata { return m.metadata }
 

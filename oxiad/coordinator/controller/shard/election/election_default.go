@@ -37,8 +37,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -63,14 +61,16 @@ type election struct {
 	ctxCancel      context.CancelFunc
 	wg             sync.WaitGroup
 	metadataStore  coordmetadata.Metadata
-	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener  controllerapi.ShardEventListener
 	provider       rpc.ControllerRPCProvider
 	namespace      string
 	shard          int64
 	changeEnsemble *action.ChangeEnsembleAction
 	// preferredLeader is elected if it is among the most up-to-date members.
-	preferredLeader  string
+	preferredLeader string
+	// onQuorumCaughtUp is called once a majority of the ensemble caught up,
+	// unless it is nil.
+	onQuorumCaughtUp func()
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
 
@@ -307,11 +307,8 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 		return server.GetNameOrDefault() == e.preferredLeader
 	}); i >= 0 {
 		leader = mostUpToDate[i]
-	} else if leader, err = e.leaderSelector.Select(&leaderselector.Context{
-		Candidates: mostUpToDate,
-		Namespaces: namespaces,
-	}); err != nil {
-		return nil, nil, err
+	} else if leader = fewestLeaders(mostUpToDate, namespaces, e.namespace); leader == nil {
+		return nil, nil, fmt.Errorf("%w: no data server can lead the shard", errs.ErrNotFound)
 	}
 	followers = make(sharding.HeadEntries)
 	for server, head := range ensembleHeads {
@@ -703,6 +700,9 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 					return
 				}
 				e.quorumCaughtUp.Store(true)
+				if e.onQuorumCaughtUp != nil {
+					e.onQuorumCaughtUp()
+				}
 			},
 		)
 	})
@@ -800,17 +800,19 @@ func (e *election) Cancel() {
 }
 
 // New returns an election of the shard. It elects preferredLeader if it is
-// among the most up-to-date members, unless it is empty. requiredFeatures are
-// pinned in its term (see feature.EnabledError).
+// among the most up-to-date members, unless it is empty, and calls
+// onQuorumCaughtUp, unless it is nil, once a majority of the ensemble caught
+// up: from then on, TryFinishEnsembleChange finishes a pending change.
+// requiredFeatures are pinned in its term (see feature.EnabledError).
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
-	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction, preferredLeader string, requiredFeatures []proto.Feature,
+	changeEnsembleAction *action.ChangeEnsembleAction, preferredLeader string, onQuorumCaughtUp func(),
+	requiredFeatures []proto.Feature,
 	leaderElectionLatencyHistogram metric.LatencyHistogram, newTermQuorumLatencyHistogram metric.LatencyHistogram,
 	becomeLeaderLatencyHistogram metric.LatencyHistogram) Election {
 	current, cancelFunc := context.WithCancel(ctx)
@@ -822,13 +824,13 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		metadataStore:                  metadataStore,
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
-		leaderSelector:                 leaderSelector,
 		provider:                       provider,
 		namespace:                      namespace,
 		shard:                          shard,
 		meta:                           gproto.CloneOf(shardMetadata),
 		changeEnsemble:                 changeEnsembleAction,
 		preferredLeader:                preferredLeader,
+		onQuorumCaughtUp:               onQuorumCaughtUp,
 		requiredFeatures:               requiredFeatures,
 		leaderElectionLatencyHistogram: leaderElectionLatencyHistogram,
 		newTermQuorumLatencyHistogram:  newTermQuorumLatencyHistogram,

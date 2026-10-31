@@ -59,7 +59,6 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 )
 
 var namespaceConfig = &proto.Namespace{
@@ -271,7 +270,6 @@ func TestControllerElectLeaderReturnsNewLeader(t *testing.T) {
 		shard:           shard,
 		metadataStore:   metadata,
 		featureSupplier: feature.NoOpSupplier,
-		leaderSelector:  leaderselector.NewSelector(),
 		rpc:             rpc,
 		logger:          slog.Default(),
 		leaderElectionLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
@@ -318,7 +316,6 @@ func TestControllerElectLeaderQueuesElectionOnFailure(t *testing.T) {
 		shard:           shard,
 		metadataStore:   metadata,
 		featureSupplier: feature.NoOpSupplier,
-		leaderSelector:  leaderselector.NewSelector(),
 		rpc:             rpc,
 		logger:          slog.Default(),
 		electionOp:      make(chan *action.ElectionAction, 1),
@@ -2368,6 +2365,39 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 // The periodic tasks finish the pending change of the ensemble through the
 // current election, and never start one. A failed write is left to the next
 // round.
+// A majority that caught up finishes the pending change right away, and a
+// failure to finish it is retried a second later.
+func TestControllerFinishEnsembleChange(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		election *fakeElection
+		retried  bool
+	}{
+		{name: "no election"},
+		{name: "finished", election: &fakeElection{}},
+		{name: "finish failure", election: &fakeElection{finishErr: errors.New("store unavailable")}, retried: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := &controller{logger: slog.Default(), quorumCaughtUpOp: make(chan struct{}, 1)}
+			if test.election != nil {
+				s.currentElection = test.election
+			}
+
+			s.finishEnsembleChange()
+
+			if test.election != nil {
+				assert.Equal(t, 1, test.election.finishes)
+			}
+			if test.retried {
+				assert.Eventually(t, func() bool { return len(s.quorumCaughtUpOp) == 1 }, 5*time.Second, 10*time.Millisecond)
+			} else {
+				assert.Never(t, func() bool { return len(s.quorumCaughtUpOp) == 1 }, 1500*time.Millisecond,
+					100*time.Millisecond)
+			}
+		})
+	}
+}
+
 func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
@@ -4219,7 +4249,6 @@ func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.C
 		shard:           shard,
 		metadataStore:   metadata,
 		featureSupplier: feature.NoOpSupplier,
-		leaderSelector:  leaderselector.NewSelector(),
 		rpc:             rpc,
 		logger:          slog.Default(),
 		leaderElectionLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
