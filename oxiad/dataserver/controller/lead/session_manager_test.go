@@ -299,6 +299,22 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.ErrorIs(t, err, expectedErr)
 }
 
+func TestSessionUpdateOperationCallbackOnPutKeepsShadowOfSameSession(t *testing.T) {
+	sessionId := int64(12345)
+	shadowKey := ShadowKey(SessionId(sessionId), "a/b/c")
+	// Any write to the shadow key fails: the callback must leave it alone.
+	writeBatch := mockWriteBatch{
+		SessionKey(SessionId(sessionId)): []byte{},
+		shadowKey:                        errors.New("the shadow key must not be touched"),
+	}
+	existing := &proto.StorageEntry{Value: []byte("value"), SessionId: &sessionId}
+	request := &proto.PutRequest{Key: "a/b/c", Value: []byte("b"), SessionId: &sessionId}
+
+	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, request, existing, testFeatureChecker{})
+	assert.NoError(t, err)
+	assert.Equal(t, proto.Status_OK, status)
+}
+
 func TestSessionUpdateOperationCallback_OnDeleteWithEntry(t *testing.T) {
 	sessionId := int64(12345)
 
