@@ -80,7 +80,8 @@ import (
 //	  - fence the members of the ensemble that missed the fence, and add them as
 //	    followers
 //	  - wait for a majority of the ensemble to commit the head entry of the
-//	    leader (see IsQuorumCaughtUp)
+//	    leader (see IsQuorumCaughtUp), then for all of it, and post to the
+//	    mailbox each time (see Tick)
 //
 // A failed step (x) fails the election, and the caller retries with a new
 // election from the current shard status, except after
@@ -124,14 +125,19 @@ import (
 // differ by two members, and a fence quorum could miss a committed entry. The
 // catch-up is only known in memory: after a restart of the coordinator, the
 // shard controller runs an election to finish the change.
+//
+// An election isn't safe for concurrent use: a single goroutine, the event loop
+// of its owner, starts it, ticks it and cancels it. Only IsQuorumCaughtUp can be
+// called from any goroutine.
 type Election interface {
-	// Tick finishes the pending change once a majority of the ensemble
-	// committed the head entry of the leader at the election: it moves from to
-	// the pending deletions and clears the change, in a single write, if the
-	// shard is still in the term of the election. It does nothing otherwise,
-	// and only fails if the write fails. The election posts to the mailbox it
-	// was created with once the majority caught up, and the goroutine that
-	// called Start ticks it then.
+	// Tick persists what the catch-up of the followers allows: once a majority
+	// of the ensemble committed the head entry of the leader at the election,
+	// it finishes the pending change, moving from to the pending deletions;
+	// once every member did, it sets ensemble_caught_up, which the new term
+	// reset. It does both in a single write, if the shard is still in the term
+	// of the election, and nothing otherwise; it only fails if the write fails.
+	// The election posts to the mailbox it was created with on each step of the
+	// catch-up, and the event loop that started it ticks it then.
 	async.Tickable
 
 	// Start runs the election, and returns the elected leader. It fails if

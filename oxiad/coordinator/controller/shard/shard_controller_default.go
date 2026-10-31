@@ -270,9 +270,10 @@ func (s *controller) run(bo backoff.BackOff) error {
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
-		// Only an election finishes a pending change: the catch-up of the one
-		// before the restart is lost
-		initShardMeta.GetEnsembleChange() != nil:
+		// Only an election finishes a pending change, or reports the catch-up
+		// of the ensemble: the catch-up of the one before the restart is lost
+		initShardMeta.GetEnsembleChange() != nil,
+		!initShardMeta.GetEnsembleCaughtUp():
 		_, _ = s.electLeader(initShardMeta, nil)
 	default:
 		s.logger.Info(
