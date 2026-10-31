@@ -723,44 +723,6 @@ func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
 	expectEnsembleCaughtUp(t, metadata, rpc, shard, 2, ensemble...)
 }
 
-// A child of a split, which the split controller elected, elects a leader once
-// the split completes, to report the catch-up of its ensemble.
-func TestNewControllerElectsSplitChildOnceSplitCompletes(t *testing.T) {
-	var shard int64 = 5
-	rpc := rpctest.NewRpcProvider()
-	s1 := testDataServer("s1")
-	s2 := testDataServer("s2")
-	s3 := testDataServer("s3")
-	ensemble := []*proto.DataServerIdentity{s1, s2, s3}
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
-		&proto.ClusterConfiguration{})
-	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     1,
-		Leader:   s1,
-		Ensemble: ensemble,
-		Split:    &proto.SplitMetadata{ParentShardId: 4},
-	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
-	defer func() { assert.NoError(t, sc.Close()) }()
-
-	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
-	// s1 has the highest head entry, and leads
-	rpc.GetNode(s1).NewTermResponse(1, 10, nil)
-	rpc.GetNode(s2).NewTermResponse(1, 9, nil)
-	rpc.GetNode(s3).NewTermResponse(1, 9, nil)
-	rpc.GetNode(s1).BecomeLeaderResponse(nil)
-	require.NoError(t, metadata.PatchShardStatus(constant.DefaultNamespace, shard,
-		func(current *proto.ShardMetadata) (bool, error) {
-			current.Split = nil
-			return true, nil
-		}))
-
-	for _, member := range ensemble {
-		rpc.GetNode(member).ExpectNewTermRequest(t, shard, 2, true)
-	}
-	expectEnsembleCaughtUp(t, metadata, rpc, shard, 2, ensemble...)
-}
-
 // TestNewControllerDoesNotElectFinalizingSplitParent verifies that the parent
 // of a split past the point of no return is never elected again: neither when
 // its controller starts, e.g. on a coordinator restart, nor on an election

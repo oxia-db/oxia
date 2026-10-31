@@ -268,11 +268,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		// entering the normal event loop, to prevent the load balancer from
 		// triggering elections that would interfere with the split controller.
 		s.logger.Info("Child shard during split, waiting for split to complete")
-		// The split controller elected the child: only an election reports its
-		// catch-up
-		if meta := s.waitForSplitComplete(); meta != nil && !meta.GetEnsembleCaughtUp() {
-			_, _ = s.electLeader(meta, nil)
-		}
+		s.waitForSplitComplete()
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
 		// Only an election finishes a pending change, or reports the catch-up
 		// of the ensemble: the catch-up of the one before the restart is lost
@@ -338,16 +334,15 @@ func (s *controller) run(bo backoff.BackOff) error {
 // waitForSplitComplete blocks until the Split metadata is cleared from this
 // shard in the status resource, indicating the split controller has finished
 // and the shard can operate normally. This prevents the load balancer from
-// triggering elections that would interfere with the split controller. It
-// returns the shard metadata then, or nil if the controller closes first.
-func (s *controller) waitForSplitComplete() *proto.ShardMetadata {
+// triggering elections that would interfere with the split controller.
+func (s *controller) waitForSplitComplete() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			return nil
+			return
 		case <-ticker.C:
 			borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 			if err != nil {
@@ -362,7 +357,7 @@ func (s *controller) waitForSplitComplete() *proto.ShardMetadata {
 				s.logger.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
 				)
-				return meta
+				return
 			}
 		}
 	}
