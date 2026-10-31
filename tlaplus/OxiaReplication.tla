@@ -15,7 +15,9 @@ This spec includes:
 - Multiple nodes
 - Leader election
 - Data replication
-- Changes of the ensemble: a one-for-one swap of a member, from -> to
+- Changes of the ensemble: a one-for-one swap of a member, from -> to, with
+  a joint fence of the ensembles before and after the change, as Raft's joint
+  consensus
 
 Not modelling:
 - Failure detection. There is no need to as:
@@ -422,7 +424,9 @@ CoordinatorStops ==
     implementation, the election persists only the new term at first, and
     the change with the new leader: until then, the change only lives in the
     election. Once persisted, the change stays pending until it is finished,
-    and each election fences from too, until then.
+    and each election fences from too, until then: as Raft's joint consensus,
+    the fence reaches a quorum of both the ensemble before the change and the
+    ensemble after it.
 ----------------------------------------------------------*)
 
 GetNewTermRequests(o, new_term, ensemble) ==
