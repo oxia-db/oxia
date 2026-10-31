@@ -164,6 +164,13 @@ tla:
 			-deadlock -workers auto -simulate num=20000 -depth 80 \
 			OxiaReplication.tla
 
+# Checks every state of a small model, in about 15 minutes
+tla-full:
+	cd tlaplus && \
+		java -XX:+UseParallelGC -DTLA-Library=.tools/CommunityModules-deps.jar -jar .tools/tla2tools.jar \
+			-deadlock -workers auto -checkpoint 0 -config OxiaReplicationSmall.cfg \
+			OxiaReplication.tla
+
 license-check:
 	@command -v go-license > /dev/null || go install github.com/palantir/go-license@latest
 	find . -type f -name '*.go' | grep -v '.pb.go' | xargs go-license --config=.github/license.yml --verify

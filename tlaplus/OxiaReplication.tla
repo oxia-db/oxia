@@ -79,6 +79,10 @@ VARIABLES
 vars == << metadata_version, metadata, node_state, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
 view == << metadata_version, metadata, node_state, coordinator_state, confirmed, messages >>
 
+\* The values and the coordinators are interchangeable: a state checked once
+\* covers its permutations. Only sound for the safety properties
+symmetry == Permutations(Values) \union Permutations(Coordinators)
+
 (* -----------------------------------------
    TYPE DEFINITIONS
 
