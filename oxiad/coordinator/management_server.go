@@ -143,39 +143,27 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 		if _, exists := config.GetDataServer(name); exists {
 			continue
 		}
-		if view, left := leftDataServerView(runtime, name, storedStatuses[name].UnsafeBorrow()); left {
-			views = append(views, view)
+		// A data server that left the configuration: only its name is known.
+		// Its controller stores it DRAINING once it starts draining it: until
+		// then, only the runtime reports it
+		state := storedStatuses[name].UnsafeBorrow().GetState()
+		live := statuses[name]
+		if !dataserver.IsRemoved(state) && live != nil {
+			state = live.GetState()
 		}
+		if !dataserver.IsRemoved(state) {
+			continue
+		}
+		views = append(views, &proto.DataServerView{
+			DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{Name: &name},
+				Metadata: &proto.DataServerMetadata{},
+			},
+			DataServerStatus: &proto.DataServerStatus{State: state, SupportedFeatures: live.GetSupportedFeatures()},
+		})
 	}
 
 	return &proto.ListDataServersResponse{DataServers: views}, nil
-}
-
-// leftDataServerView returns the view of a data server that left the
-// configuration, and false if it isn't draining or drained. Only its name is
-// known. Its controller stores it DRAINING once it starts draining it: until
-// then, only the runtime reports it.
-func leftDataServerView(runtime coordruntime.Runtime, name string,
-	stored *proto.DataServerStatus) (*proto.DataServerView, bool) {
-	state := stored.GetState()
-	live, found := runtime.GetDataServerStatus(name)
-	if !dataserver.IsRemoved(state) && found {
-		state = live.GetState()
-	}
-	if !dataserver.IsRemoved(state) {
-		return nil, false
-	}
-	status := &proto.DataServerStatus{State: state}
-	if found {
-		status.SupportedFeatures = live.GetSupportedFeatures()
-	}
-	return &proto.DataServerView{
-		DataServer: &proto.DataServer{
-			Identity: &proto.DataServerIdentity{Name: &name},
-			Metadata: &proto.DataServerMetadata{},
-		},
-		DataServerStatus: status,
-	}, true
 }
 
 func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
@@ -196,11 +184,24 @@ func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.
 		if err != nil {
 			return nil, grpcstatus.Errorf(codes.Internal, "failed to get data server %q: %v", req.DataServer, err)
 		}
-		view, left := leftDataServerView(runtime, req.DataServer, stored.UnsafeBorrow())
-		if !left {
+		// A data server that left the configuration: only its name is known.
+		// Its controller stores it DRAINING once it starts draining it: until
+		// then, only the runtime reports it
+		state := stored.UnsafeBorrow().GetState()
+		live, _ := runtime.GetDataServerStatus(req.DataServer)
+		if !dataserver.IsRemoved(state) && live != nil {
+			state = live.GetState()
+		}
+		if !dataserver.IsRemoved(state) {
 			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
 		}
-		return &proto.GetDataServerResponse{DataServer: view}, nil
+		return &proto.GetDataServerResponse{DataServer: &proto.DataServerView{
+			DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{Name: &req.DataServer},
+				Metadata: &proto.DataServerMetadata{},
+			},
+			DataServerStatus: &proto.DataServerStatus{State: state, SupportedFeatures: live.GetSupportedFeatures()},
+		}}, nil
 	}
 
 	status, _ := runtime.GetDataServerStatus(req.DataServer)
