@@ -27,6 +27,7 @@ import (
 	"golang.org/x/exp/maps"
 	gproto "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/async"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
@@ -45,7 +46,6 @@ import (
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
-	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider/memory"
@@ -728,8 +728,8 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 3, nil)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	e := newTestElection(t, metadata, rpc, shard, shardMeta)
-	tick := make(chan controllerapi.Signal, 1)
-	e.signaler = tick
+	signals := make(chan async.Signal, 1)
+	e.signaler = signals
 
 	_, err := e.Start()
 	require.NoError(t, err)
@@ -737,12 +737,12 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 
 	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 4, 4)
-	<-tick
+	<-signals
 	assert.True(t, e.IsQuorumCaughtUp())
 	assert.False(t, e.ensembleCaughtUp.Load())
 
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-	<-tick
+	<-signals
 	assert.True(t, e.ensembleCaughtUp.Load())
 	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 	require.NoError(t, e.Tick())

@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/async"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
@@ -78,7 +79,7 @@ type controller struct {
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
 	// electionTick is signaled by the current election, which the event loop
 	// ticks then
-	electionTick chan controllerapi.Signal
+	electionTick chan async.Signal
 
 	// The features of a data server are reported only when they change, so
 	// unlike the other notifications they must not be dropped when the event
@@ -164,7 +165,7 @@ func NewController(
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
-		electionTick:          make(chan controllerapi.Signal, 1),
+		electionTick:          make(chan async.Signal, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -246,6 +247,7 @@ func (s *controller) Dispatch(ac action.Action) {
 	}
 }
 
+//nolint:revive
 func (s *controller) run(bo backoff.BackOff) error {
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
@@ -255,50 +257,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		"bug: shard metadata missing while starting shard controller: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	s.start(initShardMeta)
-
-	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
-	// A failure from now on is retried from the initial interval
-	bo.Reset()
-
-	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
-	defer periodicTasksTimer.Stop()
-
-	// The event loop must not block on a failure. A handler that can't
-	// complete, e.g. because the shard metadata can't be loaded, sends its
-	// notification to the channel again a second later instead of retrying
-	// in place. A change of the ensemble fails fast instead: its caller gets
-	// the error and retries it.
-	for !s.terminating.Load() {
-		select {
-		case <-s.ctx.Done():
-			return nil
-		case <-s.deleteOp:
-			s.deleteShardWithRetries()
-		case n := <-s.dataServerFailureOp:
-			s.handleDataServerFailureWithRetries(n)
-		case <-s.featuresDiscoveredOp:
-			s.handleFeaturesDiscoveredWithRetries()
-		case op := <-s.changeEnsembleOp:
-			s.onChangeEnsemble(op)
-		case <-s.electionTick:
-			s.tickElection()
-		case <-periodicTasksTimer.C:
-			s.handlePeriodicTasks()
-			periodicTasksTimer.Reset(s.periodicTasksInterval)
-		case electionAction := <-s.electionOp:
-			s.handleElectionWithRetries(electionAction)
-		}
-	}
-	s.logger.Info("Shard controller is stopped, stopping event loop")
-	return nil
-}
-
-// start brings the shard to a leader from the status the controller starts
-// with: it deletes a shard being deleted, waits for the split of a child, or
-// elects a leader, unless the current one is in place with an ensemble caught
-// up.
-func (s *controller) start(initShardMeta *proto.ShardMetadata) {
+	// Do initial check or leader election
 	switch {
 	case initShardMeta.GetStatusOrDefault() == proto.ShardStatusDeleting:
 		s.Delete()
@@ -331,6 +290,48 @@ func (s *controller) start(initShardMeta *proto.ShardMetadata) {
 			s.Refresh()
 		}
 	}
+
+	s.logger.Info("Shard is ready", slog.Any("leader", initShardMeta.Leader))
+	// A failure from now on is retried from the initial interval
+	bo.Reset()
+
+	periodicTasksTimer := time.NewTimer(s.periodicTasksInterval)
+	defer periodicTasksTimer.Stop()
+
+	// The event loop must not block on a failure. A handler that can't
+	// complete, e.g. because the shard metadata can't be loaded, sends its
+	// notification to the channel again a second later instead of retrying
+	// in place. A change of the ensemble fails fast instead: its caller gets
+	// the error and retries it.
+	for !s.terminating.Load() {
+		select {
+		case <-s.ctx.Done():
+			return nil
+		case <-s.deleteOp:
+			s.deleteShardWithRetries()
+		case n := <-s.dataServerFailureOp:
+			s.handleDataServerFailureWithRetries(n)
+		case <-s.featuresDiscoveredOp:
+			s.handleFeaturesDiscoveredWithRetries()
+		case op := <-s.changeEnsembleOp:
+			s.onChangeEnsemble(op)
+		case <-s.electionTick:
+			// A failed tick signals the loop again a second later
+			if s.currentElection != nil {
+				if err := s.currentElection.Tick(); err != nil {
+					s.logger.Warn("Failed to tick the election, retrying later", slog.Any("error", err))
+					time.AfterFunc(time.Second, async.Signaler(s.electionTick).Signal)
+				}
+			}
+		case <-periodicTasksTimer.C:
+			s.handlePeriodicTasks()
+			periodicTasksTimer.Reset(s.periodicTasksInterval)
+		case electionAction := <-s.electionOp:
+			s.handleElectionWithRetries(electionAction)
+		}
+	}
+	s.logger.Info("Shard controller is stopped, stopping event loop")
+	return nil
 }
 
 // waitForSplitComplete blocks until the Split metadata is cleared from this
@@ -796,11 +797,6 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
 		}
-		// Don't wait for a tick to finish the pending change
-		if err := s.currentElection.Tick(); err != nil {
-			changeEnsembleAction.Error(err)
-			return
-		}
 	}
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
@@ -894,8 +890,6 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	// Retries a failed tick
-	s.tickElection()
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
@@ -903,17 +897,6 @@ func (s *controller) handlePeriodicTasks() {
 	}
 
 	s.checkTermFeatures(shardMeta)
-}
-
-// tickElection ticks the current election, if any; a failed tick is retried by
-// the periodic tasks.
-func (s *controller) tickElection() {
-	if s.currentElection == nil {
-		return
-	}
-	if err := s.currentElection.Tick(); err != nil {
-		s.logger.Warn("Failed to tick the election, retrying next round", slog.Any("error", err))
-	}
 }
 
 // handlePendingDeleteShard deletes the shard from the data servers removed from

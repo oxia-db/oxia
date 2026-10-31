@@ -2076,7 +2076,6 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	sc.onChangeEnsemble(change)
 	_, err := change.Wait()
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
-	assert.Equal(t, 1, current.ticks)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.EqualValues(t, 2, metaSnap.Term)
@@ -2086,7 +2085,8 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 }
 
 // A change of the ensemble finishes the pending one once a majority of the
-// ensemble caught up, without waiting for the periodic tasks.
+// ensemble caught up, on the signal of the election, without waiting for the
+// periodic tasks.
 func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -2144,6 +2144,9 @@ func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
 	require.NoError(t, wg.Wait(ctx))
 	assertEnsembleChange(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).EnsembleChange, s2, s3)
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 0, 0)
+	require.Eventually(t, func() bool {
+		return requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).EnsembleChange == nil
+	}, 10*time.Second, 10*time.Millisecond)
 
 	wg = concurrent.NewWaitGroup(1)
 	wg.Go(func() error { return changeEnsemble(s3, s4) })
@@ -2439,54 +2442,44 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
-// The periodic tasks persist the catch-up of the current election, e.g. finish
-// the pending change of the ensemble, and never start one. A failed write is
-// The periodic tasks tick the current election, which retries what a failed
-// tick left, e.g. finishing the pending change of the ensemble, and never start
-// one. A failed tick is left to the next round.
-func TestControllerHandlePeriodicTasksTicksElection(t *testing.T) {
+// A failed tick of the election signals the event loop again, which persists
+// the catch-up then.
+func TestControllerRunRetriesFailedElectionTick(t *testing.T) {
 	var shard int64 = 5
-	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
-	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
-	for _, test := range []struct {
-		name     string
-		election *fakeElection
-	}{
-		{name: "no election"},
-		{name: "current election", election: &fakeElection{}},
-		{name: "write failure", election: &fakeElection{tickErr: errors.New("store unavailable")}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
-			require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
-				Shards: map[int64]*proto.ShardMetadata{shard: {
-					Status:         proto.ShardStatusSteadyState,
-					Term:           1,
-					Leader:         s1,
-					Ensemble:       []*proto.DataServerIdentity{s1},
-					EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s1},
-				}},
-			}))
-			s := &controller{
-				namespace:     constant.DefaultNamespace,
-				shard:         shard,
-				metadataStore: metadata,
-				rpc:           rpctest.NewRpcProvider(),
-				ctx:           t.Context(),
-				logger:        slog.Default(),
-				electionOp:    make(chan *action.ElectionAction, 1),
+	rpc := rpctest.NewRpcProvider()
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	ensemble := []*proto.DataServerIdentity{s1, s2}
+	base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	var failed atomic.Bool
+	metadata := &hookedMetadata{Metadata: base}
+	metadata.patchShardStatus = func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error {
+		return base.PatchShardStatus(namespace, shard, func(current *proto.ShardMetadata) (bool, error) {
+			changed, err := modify(current)
+			if current.EnsembleCaughtUp && failed.CompareAndSwap(false, true) {
+				return false, errors.New("store unavailable")
 			}
-			if test.election != nil {
-				s.currentElection = test.election
-			}
-
-			s.handlePeriodicTasks()
-			assert.Empty(t, s.electionOp)
-			if test.election != nil {
-				assert.Equal(t, 1, test.election.ticks)
-			}
+			return changed, err
 		})
 	}
+	rpc.GetNode(s1).NewTermResponse(1, 10, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 9, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   s1,
+		Ensemble: ensemble,
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer func() { assert.NoError(t, sc.Close()) }()
+
+	for _, member := range ensemble {
+		rpc.GetNode(member).ExpectNewTermRequest(t, shard, 2, true)
+	}
+	expectEnsembleCaughtUp(t, base, rpc, shard, 2, ensemble...)
+	assert.True(t, failed.Load())
 }
 
 // After a restart of the coordinator, a pending change of the ensemble starts
@@ -4059,22 +4052,6 @@ func TestControllerOnChangeEnsembleReturnsShardStatusLoadError(t *testing.T) {
 	assert.Nil(t, s.currentElection)
 }
 
-// A change of the ensemble fails fast when the caught-up pending change can't be
-// finished: its caller retries it.
-func TestControllerOnChangeEnsembleReturnsFinishError(t *testing.T) {
-	s := &controller{
-		namespace:       constant.DefaultNamespace,
-		shard:           5,
-		logger:          slog.Default(),
-		currentElection: &fakeElection{quorumCaughtUp: true, tickErr: errors.New("store unavailable")},
-	}
-
-	changeEnsemble := action.NewChangeEnsembleAction(5, testDataServer("s1"), testDataServer("s2"))
-	s.onChangeEnsemble(changeEnsemble)
-	_, err := changeEnsemble.Wait()
-	assert.ErrorContains(t, err, "store unavailable")
-}
-
 func TestControllerRefreshSkipsTerminatedController(t *testing.T) {
 	s := &controller{
 		namespace:     constant.DefaultNamespace,
@@ -4407,13 +4384,10 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 type fakeElection struct {
 	quorumCaughtUp bool
 	canceled       bool
-	ticks          int
-	tickErr        error
 }
 
-func (f *fakeElection) Tick() error {
-	f.ticks++
-	return f.tickErr
+func (*fakeElection) Tick() error {
+	return nil
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {

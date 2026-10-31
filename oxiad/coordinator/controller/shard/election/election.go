@@ -16,7 +16,7 @@ package election
 
 import (
 	"github.com/oxia-db/oxia/common/proto"
-	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	"github.com/oxia-db/oxia/oxiad/common/async"
 )
 
 // Election elects the leader of a shard in a new term. An election runs once:
@@ -121,9 +121,8 @@ import (
 //
 // Otherwise, Tick finishes the change once a majority of the ensemble caught up
 // (IsQuorumCaughtUp). The shard controller ticks the election when it signals,
-// from its periodic tasks, and before another change, which it refuses until
-// then: with two changes, the ensembles would differ by two members, and a
-// fence quorum could miss a committed entry. The catch-up is only known in
+// and refuses another change until then: with two changes, the ensembles would
+// differ by two members, and a fence quorum could miss a committed entry. The catch-up is only known in
 // memory: after a restart of the coordinator, the shard controller runs an
 // election to finish the change.
 type Election interface {
@@ -135,7 +134,7 @@ type Election interface {
 	// of the election, and nothing otherwise; it only fails if the write fails.
 	// The election signals the channel it was created with on each step of the
 	// catch-up, and the goroutine that called Start ticks it then.
-	controllerapi.Tickable
+	async.Tickable
 
 	// Start runs the election, and returns the elected leader. It fails if
 	// called twice.

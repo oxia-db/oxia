@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/async"
 	"github.com/oxia-db/oxia/oxiad/common/entry"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/quorum"
@@ -72,7 +73,7 @@ type election struct {
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
 	// signaler is signaled on each step of the catch-up, see Tick
-	signaler controllerapi.Signaler
+	signaler async.Signaler
 
 	// mutable
 	meta           *proto.ShardMetadata
@@ -824,7 +825,7 @@ func (e *election) Cancel() {
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
-	signaler controllerapi.Signaler,
+	signaler async.Signaler,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
