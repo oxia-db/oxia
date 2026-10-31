@@ -814,10 +814,6 @@ func (e *election) IsQuorumCaughtUp() bool {
 	return e.quorumCaughtUp.Load()
 }
 
-func (e *election) IsEnsembleCaughtUp() bool {
-	return e.ensembleCaughtUp.Load()
-}
-
 func (e *election) Cancel() {
 	e.ctxCancel()
 	e.wg.Wait()

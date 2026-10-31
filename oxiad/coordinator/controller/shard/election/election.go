@@ -80,8 +80,8 @@ import (
 //	  - fence the members of the ensemble that missed the fence, and add them as
 //	    followers
 //	  - wait for a majority of the ensemble to commit the head entry of the
-//	    leader (see IsQuorumCaughtUp), then for all of it (see
-//	    IsEnsembleCaughtUp)
+//	    leader (see IsQuorumCaughtUp), then for all of it, which Tick
+//	    persists
 //
 // A failed step (x) fails the election, and the caller retries with a new
 // election from the current shard status, except after
@@ -127,13 +127,6 @@ import (
 // memory: after a restart of the coordinator, the shard controller runs an
 // election to finish the change.
 type Election interface {
-	// Start runs the election, and returns the elected leader. It fails if
-	// called twice.
-	Start() (*proto.DataServerIdentity, error)
-
-	// Cancel stops the election, and waits for its background tasks.
-	Cancel()
-
 	// Tick persists what the catch-up of the followers allows: once a majority
 	// of the ensemble committed the head entry of the leader at the election,
 	// it finishes the pending change, moving from to the pending deletions;
@@ -144,14 +137,16 @@ type Election interface {
 	// catch-up, and the goroutine that called Start ticks it then.
 	controllerapi.Tickable
 
+	// Start runs the election, and returns the elected leader. It fails if
+	// called twice.
+	Start() (*proto.DataServerIdentity, error)
+
+	// Cancel stops the election, and waits for its background tasks.
+	Cancel()
+
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any
 	// fence quorum of a later election includes one of them. It stays false
 	// once the election is canceled. Any goroutine can call it.
 	IsQuorumCaughtUp() bool
-
-	// IsEnsembleCaughtUp reports whether every member of the ensemble committed
-	// the head entry of the leader at the election. It stays false once the
-	// election is canceled. Any goroutine can call it.
-	IsEnsembleCaughtUp() bool
 }

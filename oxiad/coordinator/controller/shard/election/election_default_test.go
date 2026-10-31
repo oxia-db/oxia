@@ -172,7 +172,7 @@ func TestElectionEnsureEnsembleCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 	require.NoError(t, e.ensureEnsembleCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
 		&proto.EntryId{Term: 2, Offset: 10}))
 	assert.True(t, e.IsQuorumCaughtUp())
-	assert.True(t, e.IsEnsembleCaughtUp())
+	assert.True(t, e.ensembleCaughtUp.Load())
 
 	for range 5 {
 		rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
@@ -203,7 +203,7 @@ func TestElectionEnsureEnsembleCaughtUpWaitsForEveryFollower(t *testing.T) {
 	assert.Empty(t, result)
 	e.Cancel()
 	assert.ErrorIs(t, <-result, context.Canceled)
-	assert.False(t, e.IsEnsembleCaughtUp())
+	assert.False(t, e.ensembleCaughtUp.Load())
 }
 
 // The addresses of the ensemble are loaded before persisting a new term: a
@@ -739,11 +739,11 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 4, 4)
 	<-tick
 	assert.True(t, e.IsQuorumCaughtUp())
-	assert.False(t, e.IsEnsembleCaughtUp())
+	assert.False(t, e.ensembleCaughtUp.Load())
 
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	<-tick
-	assert.True(t, e.IsEnsembleCaughtUp())
+	assert.True(t, e.ensembleCaughtUp.Load())
 	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 	require.NoError(t, e.Tick())
 	assert.True(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())

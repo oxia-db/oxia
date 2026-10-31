@@ -4428,10 +4428,6 @@ func (f *fakeElection) IsQuorumCaughtUp() bool {
 	return f.quorumCaughtUp
 }
 
-func (*fakeElection) IsEnsembleCaughtUp() bool {
-	return false
-}
-
 // expectEnsembleCaughtUp answers the wait of the election in term for the
 // followers of the ensemble, led by its first member at offset 10, and waits
 // for the catch-up to be persisted.
