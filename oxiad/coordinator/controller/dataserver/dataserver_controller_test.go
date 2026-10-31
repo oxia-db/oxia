@@ -1259,37 +1259,6 @@ func TestDataServerControllerDrainRetriesOnNextInterval(t *testing.T) {
 	assert.EqualValues(t, 3, patches.Load())
 }
 
-func TestIsDrained(t *testing.T) {
-	drained := &proto.DataServerIdentity{Name: pb.String("drained"), Public: "drained:9190", Internal: "drained:8190"}
-	other := &proto.DataServerIdentity{Public: "other:9190", Internal: "other:8190"}
-	for _, test := range []struct {
-		name     string
-		shard    *proto.ShardMetadata
-		expected bool
-	}{
-		{"caught up without it", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other}, EnsembleCaughtUp: true}, true},
-		{"not caught up", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other}}, false},
-		{"deleting", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other}, Status: proto.ShardStatusDeleting}, true},
-		{"leader", &proto.ShardMetadata{Leader: drained, EnsembleCaughtUp: true}, false},
-		{"ensemble", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other, drained}, EnsembleCaughtUp: true}, false},
-		{"removed by a change", &proto.ShardMetadata{
-			EnsembleChange: &proto.EnsembleChangeMetadata{From: drained, To: other}, EnsembleCaughtUp: true}, false},
-		{"added by a change", &proto.ShardMetadata{
-			EnsembleChange: &proto.EnsembleChangeMetadata{From: other, To: drained}, EnsembleCaughtUp: true}, false},
-		{"pending delete", &proto.ShardMetadata{
-			PendingDeleteShardNodes: []*proto.DataServerIdentity{drained}, EnsembleCaughtUp: true}, false},
-		{"deleting with it", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{drained}, Status: proto.ShardStatusDeleting}, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			namespaces := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
-				"ns": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{0: test.shard}}),
-			}
-			assert.Equal(t, test.expected, isDrained("drained", namespaces))
-		})
-	}
-	assert.True(t, isDrained("drained", nil))
-}
-
 func TestDataServerControllerCloseIsIdempotent(t *testing.T) {
 	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
 	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}

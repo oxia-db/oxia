@@ -1115,65 +1115,6 @@ func TestDataServersToCandidatesAndMetadataDefaultsMissingMetadata(t *testing.T)
 	assert.Empty(t, metadata["s2"].GetLabels())
 }
 
-// The data servers of a shard are its leader, the members of its ensemble,
-// and the ones being removed from it.
-func TestDataServersFromStatusIncludesAllShardMembers(t *testing.T) {
-	leader := &proto.DataServerIdentity{Public: "leader:9091", Internal: "leader:8191"}
-	member := &proto.DataServerIdentity{Public: "member:9091", Internal: "member:8191"}
-	removed := &proto.DataServerIdentity{Public: "removed:9091", Internal: "removed:8191"}
-	pendingDelete := &proto.DataServerIdentity{Public: "pending:9091", Internal: "pending:8191"}
-	status := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
-		"ns": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
-			0: {
-				Leader:                  leader,
-				Ensemble:                []*proto.DataServerIdentity{leader, member},
-				EnsembleChange:          &proto.EnsembleChangeMetadata{From: removed, To: member},
-				PendingDeleteShardNodes: []*proto.DataServerIdentity{pendingDelete},
-			},
-			// Without a leader
-			1: {Ensemble: []*proto.DataServerIdentity{member}},
-		}}),
-	}
-
-	var names []string
-	for _, server := range dataServersFromStatus(status, nil) {
-		names = append(names, server.GetNameOrDefault())
-	}
-	assert.ElementsMatch(t, []string{
-		leader.GetNameOrDefault(), member.GetNameOrDefault(),
-		removed.GetNameOrDefault(), pendingDelete.GetNameOrDefault(),
-	}, names)
-}
-
-// A data server stored DRAINING has to be stored DRAINED by its controller,
-// even once no shard references it: only its name is known then. The other
-// stored data servers are left out.
-func TestDataServersFromStatusIncludesDrainingDataServers(t *testing.T) {
-	member := &proto.DataServerIdentity{Name: new("member"), Public: "member:9091", Internal: "member:8191"}
-	status := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
-		"ns": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
-			0: {Ensemble: []*proto.DataServerIdentity{member}},
-		}}),
-	}
-	stored := func(state proto.DataServerState) commonobject.Borrowed[*proto.DataServerStatus] {
-		return commonobject.Borrow(&proto.DataServerStatus{State: state})
-	}
-	dataServerStatus := map[string]commonobject.Borrowed[*proto.DataServerStatus]{
-		"member":   stored(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
-		"draining": stored(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
-		"drained":  stored(proto.DataServerState_DATA_SERVER_STATE_DRAINED),
-		"running":  stored(proto.DataServerState_DATA_SERVER_STATE_RUNNING),
-	}
-
-	servers := map[string]*proto.DataServerIdentity{}
-	for _, server := range dataServersFromStatus(status, dataServerStatus) {
-		servers[server.GetNameOrDefault()] = server
-	}
-	assert.Len(t, servers, 2)
-	assert.Same(t, member, servers["member"])
-	assert.Equal(t, &proto.DataServerIdentity{Name: new("draining")}, servers["draining"])
-}
-
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 

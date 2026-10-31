@@ -277,7 +277,7 @@ func (n *controller) drain() (bool, error) {
 	case state == proto.DataServerState_DATA_SERVER_STATE_DRAINED:
 		return true, nil
 	case state != proto.DataServerState_DATA_SERVER_STATE_DRAINING:
-	case isDrained(name, namespaces):
+	case commondataserver.IsDrained(name, namespaces):
 		next = proto.DataServerState_DATA_SERVER_STATE_DRAINED
 	default:
 		return false, nil
@@ -296,28 +296,6 @@ func (n *controller) drain() (bool, error) {
 		return false, err
 	}
 	return written && next == proto.DataServerState_DATA_SERVER_STATE_DRAINED, nil
-}
-
-// isDrained reports whether no shard references a data server, and every
-// shard caught up: a change of the ensemble opens a new term, which resets
-// the flag of the shard, so the shards that the data server left hold a full
-// copy on every member of their new ensembles. The shards being deleted are
-// left out of the second check: they don't catch up again, and their copies
-// don't matter any more.
-func isDrained(name string, namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus]) bool {
-	for _, namespace := range namespaces {
-		for _, shard := range namespace.UnsafeBorrow().GetShards() {
-			for server := range commondataserver.ShardDataServers(shard) {
-				if server.GetNameOrDefault() == name {
-					return false
-				}
-			}
-			if shard.GetStatusOrDefault() != proto.ShardStatusDeleting && !shard.GetEnsembleCaughtUp() {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func (n *controller) doHealthPing(observedEpoch int64, healthClient grpc_health_v1.HealthClient) error {

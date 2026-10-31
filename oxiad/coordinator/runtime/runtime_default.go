@@ -620,37 +620,6 @@ func mergedAuthorities(status map[string]commonobject.Borrowed[*proto.NamespaceS
 	return authorities.Values()
 }
 
-// dataServersFromStatus returns the data servers that the shards reference,
-// and the ones stored as DRAINING: once no shard references a draining data
-// server, only its stored status tells that it still has to be stored
-// DRAINED, and its controller does it. The configuration isn't read: the
-// reconciler drains the data servers that it doesn't have.
-func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.NamespaceStatus],
-	dataServerStatus map[string]commonobject.Borrowed[*proto.DataServerStatus]) []*proto.DataServerIdentity {
-	servers := make(map[string]*proto.DataServerIdentity)
-	for _, borrowedNamespace := range status {
-		for _, shard := range borrowedNamespace.UnsafeBorrow().GetShards() {
-			for server := range dataserver.ShardDataServers(shard) {
-				servers[server.GetNameOrDefault()] = server
-			}
-		}
-	}
-
-	for name, borrowedStatus := range dataServerStatus {
-		if _, exists := servers[name]; exists ||
-			borrowedStatus.UnsafeBorrow().GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINING {
-			continue
-		}
-		servers[name] = &proto.DataServerIdentity{Name: &name}
-	}
-
-	result := make([]*proto.DataServerIdentity, 0, len(servers))
-	for _, server := range servers {
-		result = append(result, server)
-	}
-	return result
-}
-
 // New starts a runtime whose controllers stop when ctx is cancelled or the
 // runtime is closed.
 func New(
@@ -666,7 +635,7 @@ func New(
 	if err != nil {
 		return nil, err
 	}
-	dataServers := dataServersFromStatus(clusterStatus, dataServerStatus)
+	dataServers := dataserver.FromStatus(clusterStatus, dataServerStatus)
 	insID, err := metadata.GetInstanceID()
 	if err != nil {
 		return nil, err
