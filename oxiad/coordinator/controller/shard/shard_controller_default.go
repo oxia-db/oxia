@@ -892,9 +892,6 @@ func (s *controller) handlePeriodicTasks() {
 		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
 			s.logger.Warn("Failed to finish the change of the ensemble, retrying next round", slog.Any("error", err))
 		}
-		if err := s.currentElection.TryPersistEnsembleCaughtUp(); err != nil {
-			s.logger.Warn("Failed to persist the catch-up of the ensemble, retrying next round", slog.Any("error", err))
-		}
 	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {

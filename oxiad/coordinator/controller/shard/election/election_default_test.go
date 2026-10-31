@@ -710,7 +710,7 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 }
 
 // The new term resets ensemble_caught_up; the ensemble is caught up once every
-// follower is, not at the majority, and TryPersistEnsembleCaughtUp persists it.
+// follower is, not at the majority, and TryFinishEnsembleChange persists it.
 func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -741,7 +741,7 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	assert.Eventually(t, e.IsEnsembleCaughtUp, 10*time.Second, 10*time.Millisecond)
 	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
-	require.NoError(t, e.TryPersistEnsembleCaughtUp())
+	require.NoError(t, e.TryFinishEnsembleChange())
 	assert.True(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 }
 
@@ -842,9 +842,9 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 	}
 }
 
-// TryFinishEnsembleChange finishes the change once a majority caught up, if the
-// shard is still in the term of the election and the change is pending; a
-// failed write is returned.
+// TryFinishEnsembleChange finishes the change once a majority caught up, and
+// persists ensemble_caught_up once every member did, once, if the shard is still
+// in the term of the election; a failed write is returned.
 func TestElectionTryFinishEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -859,6 +859,10 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 		storedTerm   int64
 		writeErr     error
 		finished     bool
+		// every member caught up, and persisted ensemble_caught_up
+		ensembleCaughtUp bool
+		persisted        bool
+		storedCaughtUp   bool
 	}{
 		{name: "majority caught up", change: change, caughtUp: true, storedChange: change, storedTerm: 3, finished: true},
 		{name: "majority behind", change: change, storedChange: change, storedTerm: 3},
@@ -867,6 +871,12 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 		{name: "already finished", change: change, caughtUp: true, storedTerm: 3},
 		{name: "write failure", change: change, caughtUp: true, storedChange: change, storedTerm: 3,
 			writeErr: errors.New("store unavailable")},
+		{name: "ensemble caught up", caughtUp: true, ensembleCaughtUp: true, storedTerm: 3, storedCaughtUp: true},
+		{name: "ensemble caught up with a change", change: change, caughtUp: true, ensembleCaughtUp: true,
+			storedChange: change, storedTerm: 3, finished: true, storedCaughtUp: true},
+		{name: "ensemble caught up already persisted", caughtUp: true, ensembleCaughtUp: true, persisted: true,
+			storedTerm: 3},
+		{name: "ensemble caught up in a later term", caughtUp: true, ensembleCaughtUp: true, storedTerm: 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
@@ -881,8 +891,10 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 				}
 			}
 			e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, &proto.ShardMetadata{
-				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change})
+				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change,
+				EnsembleCaughtUp: test.persisted})
 			e.quorumCaughtUp.Store(test.caughtUp)
+			e.ensembleCaughtUp.Store(test.ensembleCaughtUp)
 
 			err := e.TryFinishEnsembleChange()
 			if test.writeErr != nil {
@@ -891,6 +903,7 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 				require.NoError(t, err)
 			}
 			stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
+			assert.Equal(t, test.storedCaughtUp, stored.GetEnsembleCaughtUp())
 			if test.finished {
 				assert.Nil(t, stored.GetEnsembleChange())
 				assertShardEnsemble(t, stored.GetPendingDeleteShardNodes(), s2)
@@ -900,63 +913,6 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 			}
 			assert.Empty(t, stored.GetPendingDeleteShardNodes())
-		})
-	}
-}
-
-// TryPersistEnsembleCaughtUp persists the flag once the ensemble caught up, if
-// the shard is still in the term of the election, and only once; a failed write
-// is returned, and retried by the next call.
-func TestElectionTryPersistEnsembleCaughtUp(t *testing.T) {
-	var shard int64 = 5
-	for _, test := range []struct {
-		name       string
-		caughtUp   bool
-		persisted  bool
-		storedTerm int64
-		writeErr   error
-		stored     bool
-	}{
-		{name: "ensemble caught up", caughtUp: true, storedTerm: 3, stored: true},
-		{name: "ensemble behind", storedTerm: 3},
-		{name: "already persisted", caughtUp: true, persisted: true, storedTerm: 3},
-		{name: "later term", caughtUp: true, storedTerm: 4},
-		{name: "write failure", caughtUp: true, storedTerm: 3, writeErr: errors.New("store unavailable")},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
-				&proto.ClusterConfiguration{})
-			storeTestShardMetadata(t, base, constant.DefaultNamespace, shard, namespaceConfig,
-				&proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: test.storedTerm})
-			writes := 0
-			metadata := &hookedMetadata{Metadata: base}
-			metadata.patchShardStatus = func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error {
-				writes++
-				if test.writeErr != nil {
-					return test.writeErr
-				}
-				return base.PatchShardStatus(namespace, shard, modify)
-			}
-			e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard,
-				&proto.ShardMetadata{Term: 3, EnsembleCaughtUp: test.persisted})
-			e.ensembleCaughtUp.Store(test.caughtUp)
-
-			err := e.TryPersistEnsembleCaughtUp()
-			if test.writeErr != nil {
-				assert.ErrorIs(t, err, test.writeErr)
-			} else {
-				require.NoError(t, err)
-			}
-			assert.Equal(t, test.stored, requireShardMetadata(t, base, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
-
-			// Written once, or retried after a failure
-			wrote := writes
-			_ = e.TryPersistEnsembleCaughtUp()
-			if test.writeErr != nil {
-				assert.Equal(t, wrote+1, writes)
-			} else {
-				assert.Equal(t, wrote, writes)
-			}
 		})
 	}
 }

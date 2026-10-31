@@ -693,7 +693,7 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 
 // The catch-up of the ensemble is only known to the election that waited for
 // it: a restarted coordinator elects a leader, and the periodic tasks persist
-// it.
+// it (TryFinishEnsembleChange).
 func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -2439,10 +2439,10 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
-// The periodic tasks finish the pending change of the ensemble, and persist the
-// catch-up of the ensemble, through the current election, and never start one.
-// A failed write is left to the next round.
-func TestControllerHandlePeriodicTasksTriesElectionWrites(t *testing.T) {
+// The periodic tasks finish the pending change of the ensemble through the
+// current election, and never start one. A failed write is left to the next
+// round.
+func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
@@ -2453,7 +2453,6 @@ func TestControllerHandlePeriodicTasksTriesElectionWrites(t *testing.T) {
 		{name: "no election"},
 		{name: "current election", election: &fakeElection{}},
 		{name: "finish failure", election: &fakeElection{finishErr: errors.New("store unavailable")}},
-		{name: "persist failure", election: &fakeElection{persistErr: errors.New("store unavailable")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
@@ -2483,7 +2482,6 @@ func TestControllerHandlePeriodicTasksTriesElectionWrites(t *testing.T) {
 			assert.Empty(t, s.electionOp)
 			if test.election != nil {
 				assert.Equal(t, 1, test.election.finishes)
-				assert.Equal(t, 1, test.election.persists)
 			}
 		})
 	}
@@ -4409,13 +4407,6 @@ type fakeElection struct {
 	canceled       bool
 	finishes       int
 	finishErr      error
-	persists       int
-	persistErr     error
-}
-
-func (f *fakeElection) TryPersistEnsembleCaughtUp() error {
-	f.persists++
-	return f.persistErr
 }
 
 func (f *fakeElection) TryFinishEnsembleChange() error {

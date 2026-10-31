@@ -771,19 +771,24 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 }
 
 func (e *election) TryFinishEnsembleChange() error {
-	if e.meta.EnsembleChange == nil || !e.quorumCaughtUp.Load() {
+	finishChange := e.meta.EnsembleChange != nil && e.quorumCaughtUp.Load()
+	persistCaughtUp := !e.meta.EnsembleCaughtUp && e.ensembleCaughtUp.Load()
+	if !finishChange && !persistCaughtUp {
 		return nil
 	}
 	var finished *proto.EnsembleChangeMetadata
 	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		// During a handover, the other coordinator may have elected since,
 		// undone the change, or started another
-		if current.Term != e.meta.Term || current.EnsembleChange == nil {
+		if current.Term != e.meta.Term {
 			return false, nil
 		}
-		finished = current.EnsembleChange
-		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
-		current.EnsembleChange = nil
+		if finishChange && current.EnsembleChange != nil {
+			finished = current.EnsembleChange
+			current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
+			current.EnsembleChange = nil
+		}
+		current.EnsembleCaughtUp = current.EnsembleCaughtUp || persistCaughtUp
 		return true, nil
 	}); err != nil {
 		return err
@@ -792,27 +797,11 @@ func (e *election) TryFinishEnsembleChange() error {
 		e.logger.Info("A majority of the ensemble caught up, the change of the ensemble is finished",
 			slog.Any("from", finished.From), slog.Any("to", finished.To))
 	}
-	// Finished, or left to the election of a later term
-	e.meta.EnsembleChange = nil
-	return nil
-}
-
-func (e *election) TryPersistEnsembleCaughtUp() error {
-	if e.meta.EnsembleCaughtUp || !e.ensembleCaughtUp.Load() {
-		return nil
+	// Done, or left to the election of a later term
+	if finishChange {
+		e.meta.EnsembleChange = nil
 	}
-	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
-		// A later election may have started since
-		if current.Term != e.meta.Term {
-			return false, nil
-		}
-		current.EnsembleCaughtUp = true
-		return true, nil
-	}); err != nil {
-		return err
-	}
-	// Persisted, or left to the election of a later term
-	e.meta.EnsembleCaughtUp = true
+	e.meta.EnsembleCaughtUp = e.meta.EnsembleCaughtUp || persistCaughtUp
 	return nil
 }
 

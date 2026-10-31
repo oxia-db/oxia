@@ -134,18 +134,12 @@ type Election interface {
 
 	// TryFinishEnsembleChange finishes the pending change once a majority of the
 	// ensemble committed the head entry of the leader at the election: it moves
-	// from to the pending deletions and clears the change, in a single write, if
-	// the shard is still in the term of the election. It does nothing otherwise,
-	// and only fails if the write fails. It is called from the goroutine that
-	// called Start.
+	// from to the pending deletions and clears the change. It also persists
+	// ensemble_caught_up, which the new term reset, once every member of the
+	// ensemble did. It does both in a single write, if the shard is still in the
+	// term of the election, and nothing otherwise; it only fails if the write
+	// fails. It is called from the goroutine that called Start.
 	TryFinishEnsembleChange() error
-
-	// TryPersistEnsembleCaughtUp persists ensemble_caught_up, which the new term
-	// reset, once every member of the ensemble committed the head entry of the
-	// leader at the election, if the shard is still in the term of the
-	// election. It does nothing otherwise, and only fails if the write fails.
-	// It is called from the goroutine that called Start.
-	TryPersistEnsembleCaughtUp() error
 
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any
@@ -154,7 +148,7 @@ type Election interface {
 	IsQuorumCaughtUp() bool
 
 	// IsEnsembleCaughtUp reports whether every member of the ensemble committed
-	// the head entry of the leader at the election. It stays false once the election is canceled. Any
-	// goroutine can call it.
+	// the head entry of the leader at the election. It stays false once the
+	// election is canceled. Any goroutine can call it.
 	IsEnsembleCaughtUp() bool
 }
