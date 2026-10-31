@@ -164,7 +164,7 @@ tla:
 			-deadlock -workers auto -simulate num=20000 -depth 80 \
 			OxiaReplication.tla
 
-# Checks every state of a small model, in about 15 minutes
+# Checks every state of a small model, in about 30 minutes
 tla-full:
 	cd tlaplus && \
 		java -XX:+UseParallelGC -DTLA-Library=.tools/CommunityModules-deps.jar -jar .tools/tla2tools.jar \
