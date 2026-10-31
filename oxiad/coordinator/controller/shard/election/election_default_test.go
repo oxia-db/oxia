@@ -875,7 +875,7 @@ func TestElectionTick(t *testing.T) {
 	}{
 		{name: "majority caught up", change: change, caughtUp: true, storedChange: change, storedTerm: 3, finished: true},
 		{name: "majority behind", change: change, storedChange: change, storedTerm: 3},
-		{name: "no change", caughtUp: true, storedChange: change, storedTerm: 3},
+		{name: "no change", caughtUp: true, storedTerm: 3},
 		{name: "later term", change: change, caughtUp: true, storedChange: change, storedTerm: 4},
 		{name: "already finished", change: change, caughtUp: true, storedTerm: 3},
 		{name: "write failure", change: change, caughtUp: true, storedChange: change, storedTerm: 3,
@@ -884,7 +884,7 @@ func TestElectionTick(t *testing.T) {
 		{name: "ensemble caught up with a change", change: change, caughtUp: true, ensembleCaughtUp: true,
 			storedChange: change, storedTerm: 3, finished: true, storedCaughtUp: true},
 		{name: "ensemble caught up already persisted", caughtUp: true, ensembleCaughtUp: true, persisted: true,
-			storedTerm: 3},
+			storedTerm: 3, storedCaughtUp: true},
 		{name: "ensemble caught up in a later term", caughtUp: true, ensembleCaughtUp: true, storedTerm: 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -892,7 +892,8 @@ func TestElectionTick(t *testing.T) {
 				&proto.ClusterConfiguration{})
 			storeTestShardMetadata(t, base, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
 				Status: proto.ShardStatusSteadyState, Term: test.storedTerm, Leader: s1,
-				Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.storedChange})
+				Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.storedChange,
+				EnsembleCaughtUp: test.persisted})
 			metadata := &hookedMetadata{Metadata: base}
 			if test.writeErr != nil {
 				metadata.patchShardStatus = func(string, int64, func(*proto.ShardMetadata) (bool, error)) error {

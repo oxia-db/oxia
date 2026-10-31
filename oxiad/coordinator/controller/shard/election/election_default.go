@@ -769,13 +769,6 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 }
 
 func (e *election) Tick() error {
-	next := gproto.CloneOf(e.meta)
-	// The whole ensemble caught up after its majority did, so it is read first
-	e.markEnsembleCaughtUp(next)
-	e.finishEnsembleChange(next)
-	if gproto.Equal(next, e.meta) {
-		return nil
-	}
 	var finished *proto.EnsembleChangeMetadata
 	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		// During a handover, the other coordinator may have elected since,
@@ -783,9 +776,10 @@ func (e *election) Tick() error {
 		if current.Term != e.meta.Term {
 			return false, nil
 		}
-		e.markEnsembleCaughtUp(current)
+		// The whole ensemble caught up after its majority did, so it is read first
+		caughtUp := e.markEnsembleCaughtUp(current)
 		finished = e.finishEnsembleChange(current)
-		return true, nil
+		return caughtUp || finished != nil, nil
 	}); err != nil {
 		return err
 	}
@@ -794,16 +788,19 @@ func (e *election) Tick() error {
 			slog.Any("from", finished.From), slog.Any("to", finished.To))
 	}
 	// Done, or left to the election of a later term
-	e.meta.EnsembleCaughtUp = next.EnsembleCaughtUp
-	e.meta.EnsembleChange = next.EnsembleChange
-	e.meta.PendingDeleteShardNodes = next.PendingDeleteShardNodes
+	e.markEnsembleCaughtUp(e.meta)
+	e.finishEnsembleChange(e.meta)
 	return nil
 }
 
-func (e *election) markEnsembleCaughtUp(meta *proto.ShardMetadata) {
-	if e.ensembleCaughtUp.Load() {
-		meta.EnsembleCaughtUp = true
+// markEnsembleCaughtUp sets ensemble_caught_up in meta once every member of
+// the ensemble caught up, and returns whether it changed.
+func (e *election) markEnsembleCaughtUp(meta *proto.ShardMetadata) bool {
+	if meta.EnsembleCaughtUp || !e.ensembleCaughtUp.Load() {
+		return false
 	}
+	meta.EnsembleCaughtUp = true
+	return true
 }
 
 // finishEnsembleChange finishes the pending change of meta once a majority of
