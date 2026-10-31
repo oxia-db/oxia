@@ -80,8 +80,7 @@ import (
 //	  - fence the members of the ensemble that missed the fence, and add them as
 //	    followers
 //	  - wait for a majority of the ensemble to commit the head entry of the
-//	    leader (see IsQuorumCaughtUp), then for all of it, which Tick
-//	    persists
+//	    leader, then for all of it, which Tick persists
 //
 // A failed step (x) fails the election, and the caller retries with a new
 // election from the current shard status, except after
@@ -119,12 +118,13 @@ import (
 //	                                          that isn't committed, and to is
 //	                                          deleted
 //
-// Otherwise, Tick finishes the change once a majority of the ensemble caught up
-// (IsQuorumCaughtUp). The shard controller ticks the election on its mail, and
-// refuses another change until then: with two changes, the ensembles would
-// differ by two members, and a fence quorum could miss a committed entry. The
-// catch-up is only known in memory: after a restart of the coordinator, the
-// shard controller runs an election to finish the change.
+// Otherwise, Tick finishes the change once a majority of the ensemble caught up:
+// any fence quorum of a later election includes one of them. The shard
+// controller ticks the election on its mail, and refuses another change until
+// then: with two changes, the ensembles would differ by two members, and a fence
+// quorum could miss a committed entry. The catch-up is only known in memory:
+// after a restart of the coordinator, the shard controller runs an election to
+// finish the change.
 type Election interface {
 	// Tick persists what the catch-up of the followers allows: once a majority
 	// of the ensemble committed the head entry of the leader at the election,
@@ -142,10 +142,4 @@ type Election interface {
 
 	// Cancel stops the election, and waits for its background tasks.
 	Cancel()
-
-	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
-	// included, committed the head entry of the leader at the election: any
-	// fence quorum of a later election includes one of them. It stays false
-	// once the election is canceled. Any goroutine can call it.
-	IsQuorumCaughtUp() bool
 }

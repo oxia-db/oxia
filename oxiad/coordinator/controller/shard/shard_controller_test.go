@@ -2059,9 +2059,8 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 			EnsembleChange: &proto.EnsembleChangeMetadata{From: s4, To: s3},
 		}},
 	}))
-	// The election caught up, but leaves the change pending, as one of an
-	// earlier term does
-	current := &fakeElection{quorumCaughtUp: true}
+	// The election leaves the change pending, as one of an earlier term does
+	current := &fakeElection{}
 	sc := &controller{
 		namespace:       constant.DefaultNamespace,
 		shard:           shard,
@@ -4382,8 +4381,7 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 
 // fakeElection is an election that is already elected.
 type fakeElection struct {
-	quorumCaughtUp bool
-	canceled       bool
+	canceled bool
 }
 
 func (*fakeElection) Tick() error {
@@ -4396,10 +4394,6 @@ func (*fakeElection) Start() (*proto.DataServerIdentity, error) {
 
 func (f *fakeElection) Cancel() {
 	f.canceled = true
-}
-
-func (f *fakeElection) IsQuorumCaughtUp() bool {
-	return f.quorumCaughtUp
 }
 
 // expectEnsembleCaughtUp answers the wait of the election in term for the

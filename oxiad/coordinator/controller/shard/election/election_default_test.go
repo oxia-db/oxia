@@ -171,7 +171,7 @@ func TestElectionEnsureEnsembleCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 
 	require.NoError(t, e.ensureEnsembleCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
 		&proto.EntryId{Term: 2, Offset: 10}))
-	assert.True(t, e.IsQuorumCaughtUp())
+	assert.True(t, e.quorumCaughtUp.Load())
 	assert.True(t, e.ensembleCaughtUp.Load())
 
 	for range 5 {
@@ -198,7 +198,7 @@ func TestElectionEnsureEnsembleCaughtUpWaitsForEveryFollower(t *testing.T) {
 	}()
 
 	rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
-	assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
+	assert.Eventually(t, e.quorumCaughtUp.Load, 10*time.Second, 10*time.Millisecond)
 	rpc.GetNode(dead).ExpectGetStatusRequest(t, shard)
 	assert.Empty(t, result)
 	e.Cancel()
@@ -738,7 +738,7 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 4, 4)
 	<-mailbox
-	assert.True(t, e.IsQuorumCaughtUp())
+	assert.True(t, e.quorumCaughtUp.Load())
 	assert.False(t, e.ensembleCaughtUp.Load())
 
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
@@ -829,14 +829,14 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			if !test.caughtUp {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
-				assert.False(t, e.IsQuorumCaughtUp())
+				assert.False(t, e.(*election).quorumCaughtUp.Load())
 				require.NoError(t, e.Tick())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 				return
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
+			assert.Eventually(t, e.(*election).quorumCaughtUp.Load, 10*time.Second, 10*time.Millisecond)
 			require.NoError(t, e.Tick())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)

@@ -791,13 +791,6 @@ func (s *controller) Close() error {
 }
 
 func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembleAction) {
-	if s.currentElection != nil {
-		if !s.currentElection.IsQuorumCaughtUp() {
-			s.logger.Warn("Change ensemble rejected: shard is not ready (quorum catch-up still in progress)")
-			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
-			return
-		}
-	}
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
 		changeEnsembleAction.Error(err)
@@ -832,9 +825,6 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			slog.Any("to", changeEnsembleAction.To),
 			slog.Any("error", err),
 		)
-		// Drop it, or it rejects the next changes as not ready
-		s.currentElection.Cancel()
-		s.currentElection = nil
 		changeEnsembleAction.Error(err)
 		return
 	}
