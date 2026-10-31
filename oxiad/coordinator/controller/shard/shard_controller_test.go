@@ -693,7 +693,7 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 
 // The catch-up of the ensemble is only known to the election that waited for
 // it: a restarted coordinator elects a leader, and the periodic tasks persist
-// it (TryFinishEnsembleChange).
+// it (TryPersistCatchUp).
 func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -2076,7 +2076,7 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	sc.onChangeEnsemble(change)
 	_, err := change.Wait()
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
-	assert.Equal(t, 1, current.finishes)
+	assert.Equal(t, 1, current.persists)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 	assert.EqualValues(t, 2, metaSnap.Term)
@@ -2439,10 +2439,10 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
 }
 
-// The periodic tasks finish the pending change of the ensemble through the
-// current election, and never start one. A failed write is left to the next
-// round.
-func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
+// The periodic tasks persist the catch-up of the current election, e.g. finish
+// the pending change of the ensemble, and never start one. A failed write is
+// left to the next round.
+func TestControllerHandlePeriodicTasksPersistsCatchUp(t *testing.T) {
 	var shard int64 = 5
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
@@ -2452,7 +2452,7 @@ func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 	}{
 		{name: "no election"},
 		{name: "current election", election: &fakeElection{}},
-		{name: "finish failure", election: &fakeElection{finishErr: errors.New("store unavailable")}},
+		{name: "write failure", election: &fakeElection{persistErr: errors.New("store unavailable")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
@@ -2481,7 +2481,7 @@ func TestControllerHandlePeriodicTasksFinishesEnsembleChange(t *testing.T) {
 			s.handlePeriodicTasks()
 			assert.Empty(t, s.electionOp)
 			if test.election != nil {
-				assert.Equal(t, 1, test.election.finishes)
+				assert.Equal(t, 1, test.election.persists)
 			}
 		})
 	}
@@ -4064,7 +4064,7 @@ func TestControllerOnChangeEnsembleReturnsFinishError(t *testing.T) {
 		namespace:       constant.DefaultNamespace,
 		shard:           5,
 		logger:          slog.Default(),
-		currentElection: &fakeElection{quorumCaughtUp: true, finishErr: errors.New("store unavailable")},
+		currentElection: &fakeElection{quorumCaughtUp: true, persistErr: errors.New("store unavailable")},
 	}
 
 	changeEnsemble := action.NewChangeEnsembleAction(5, testDataServer("s1"), testDataServer("s2"))
@@ -4405,13 +4405,13 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 type fakeElection struct {
 	quorumCaughtUp bool
 	canceled       bool
-	finishes       int
-	finishErr      error
+	persists       int
+	persistErr     error
 }
 
-func (f *fakeElection) TryFinishEnsembleChange() error {
-	f.finishes++
-	return f.finishErr
+func (f *fakeElection) TryPersistCatchUp() error {
+	f.persists++
+	return f.persistErr
 }
 
 func (*fakeElection) Start() (*proto.DataServerIdentity, error) {

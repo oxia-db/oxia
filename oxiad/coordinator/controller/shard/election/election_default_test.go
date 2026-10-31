@@ -710,7 +710,7 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 }
 
 // The new term resets ensemble_caught_up; the ensemble is caught up once every
-// follower is, not at the majority, and TryFinishEnsembleChange persists it.
+// follower is, not at the majority, and TryPersistCatchUp persists it.
 func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -741,7 +741,7 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 	assert.Eventually(t, e.IsEnsembleCaughtUp, 10*time.Second, 10*time.Millisecond)
 	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
-	require.NoError(t, e.TryFinishEnsembleChange())
+	require.NoError(t, e.TryPersistCatchUp())
 	assert.True(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
 }
 
@@ -782,7 +782,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 }
 
 // The election keeps the change pending until a majority of the ensemble caught
-// up, which a dead follower doesn't block, and TryFinishEnsembleChange finishes
+// up, which a dead follower doesn't block, and TryPersistCatchUp finishes
 // it then. A canceled election never reports a caught-up majority, nor finishes
 // the change.
 func TestElectionStartKeepsChangePending(t *testing.T) {
@@ -826,14 +826,14 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
 				assert.False(t, e.IsQuorumCaughtUp())
-				require.NoError(t, e.TryFinishEnsembleChange())
+				require.NoError(t, e.TryPersistCatchUp())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 				return
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
-			require.NoError(t, e.TryFinishEnsembleChange())
+			require.NoError(t, e.TryPersistCatchUp())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
 			assert.Nil(t, stored.GetEnsembleChange())
@@ -842,10 +842,10 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 	}
 }
 
-// TryFinishEnsembleChange finishes the change once a majority caught up, and
+// TryPersistCatchUp finishes the change once a majority caught up, and
 // persists ensemble_caught_up once every member did, once, if the shard is still
 // in the term of the election; a failed write is returned.
-func TestElectionTryFinishEnsembleChange(t *testing.T) {
+func TestElectionTryPersistCatchUp(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -896,7 +896,7 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 			e.quorumCaughtUp.Store(test.caughtUp)
 			e.ensembleCaughtUp.Store(test.ensembleCaughtUp)
 
-			err := e.TryFinishEnsembleChange()
+			err := e.TryPersistCatchUp()
 			if test.writeErr != nil {
 				assert.ErrorIs(t, err, test.writeErr)
 			} else {

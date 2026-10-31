@@ -770,7 +770,7 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) TryFinishEnsembleChange() error {
+func (e *election) TryPersistCatchUp() error {
 	finishChange := e.meta.EnsembleChange != nil && e.quorumCaughtUp.Load()
 	persistCaughtUp := !e.meta.EnsembleCaughtUp && e.ensembleCaughtUp.Load()
 	if !finishChange && !persistCaughtUp {

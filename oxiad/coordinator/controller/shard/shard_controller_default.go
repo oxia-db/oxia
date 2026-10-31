@@ -791,7 +791,7 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			return
 		}
 		// Don't wait for the periodic tasks to finish the pending change
-		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
+		if err := s.currentElection.TryPersistCatchUp(); err != nil {
 			changeEnsembleAction.Error(err)
 			return
 		}
@@ -889,8 +889,8 @@ func (s *controller) handlePeriodicTasks() {
 		s.shard).UnsafeBorrow()
 
 	if s.currentElection != nil {
-		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
-			s.logger.Warn("Failed to finish the change of the ensemble, retrying next round", slog.Any("error", err))
+		if err := s.currentElection.TryPersistCatchUp(); err != nil {
+			s.logger.Warn("Failed to persist the catch-up of the ensemble, retrying next round", slog.Any("error", err))
 		}
 	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
