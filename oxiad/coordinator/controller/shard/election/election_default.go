@@ -769,6 +769,13 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 }
 
 func (e *election) Tick() error {
+	// The whole ensemble caught up after its majority did
+	ensembleCaughtUp := e.ensembleCaughtUp.Load()
+	finishChange := e.meta.EnsembleChange != nil && (ensembleCaughtUp || e.quorumCaughtUp.Load())
+	markCaughtUp := ensembleCaughtUp && !e.meta.EnsembleCaughtUp
+	if !finishChange && !markCaughtUp {
+		return nil
+	}
 	var finished *proto.EnsembleChangeMetadata
 	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		// During a handover, the other coordinator may have elected since,
@@ -776,10 +783,13 @@ func (e *election) Tick() error {
 		if current.Term != e.meta.Term {
 			return false, nil
 		}
-		// The whole ensemble caught up after its majority did, so it is read first
-		caughtUp := e.markEnsembleCaughtUp(current)
-		finished = e.finishEnsembleChange(current)
-		return caughtUp || finished != nil, nil
+		if finishChange && current.EnsembleChange != nil {
+			finished = current.EnsembleChange
+			current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
+			current.EnsembleChange = nil
+		}
+		current.EnsembleCaughtUp = current.EnsembleCaughtUp || markCaughtUp
+		return true, nil
 	}); err != nil {
 		return err
 	}
@@ -788,31 +798,11 @@ func (e *election) Tick() error {
 			slog.Any("from", finished.From), slog.Any("to", finished.To))
 	}
 	// Done, or left to the election of a later term
-	e.markEnsembleCaughtUp(e.meta)
-	e.finishEnsembleChange(e.meta)
+	if finishChange {
+		e.meta.EnsembleChange = nil
+	}
+	e.meta.EnsembleCaughtUp = e.meta.EnsembleCaughtUp || markCaughtUp
 	return nil
-}
-
-// markEnsembleCaughtUp sets ensemble_caught_up in meta once every member of
-// the ensemble caught up, and returns whether it changed.
-func (e *election) markEnsembleCaughtUp(meta *proto.ShardMetadata) bool {
-	if meta.EnsembleCaughtUp || !e.ensembleCaughtUp.Load() {
-		return false
-	}
-	meta.EnsembleCaughtUp = true
-	return true
-}
-
-// finishEnsembleChange finishes the pending change of meta once a majority of
-// the ensemble caught up, and returns it.
-func (e *election) finishEnsembleChange(meta *proto.ShardMetadata) *proto.EnsembleChangeMetadata {
-	finished := meta.EnsembleChange
-	if finished == nil || !e.quorumCaughtUp.Load() {
-		return nil
-	}
-	meta.PendingDeleteShardNodes = sharding.AddDataServer(meta.PendingDeleteShardNodes, finished.From)
-	meta.EnsembleChange = nil
-	return finished
 }
 
 func (e *election) IsQuorumCaughtUp() bool {
