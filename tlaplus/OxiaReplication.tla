@@ -663,6 +663,13 @@ CoordinatorElectsLeader ==
     the new leader will be informed of these followers and it is
     possible that their head entry_id is higher than the leader and
     therefore need truncating.
+  - As Raft's figure 8, the new leader can't commit the entries of
+    prior terms by counting the followers that have them: another
+    leader may still overwrite them. They are only committed with an
+    entry of its term, see EntryIsCommitted. The implementation
+    appends a no-op entry of its term on becoming leader, to commit
+    them without waiting for a write; the spec leaves it to the next
+    write.
 ----------------------------------------------------------*)
 
 GetHighestEntryOfTerm(nstate, target_term) ==
@@ -883,6 +890,11 @@ LeaderHandlesAddFollowerRequest ==
   has been selected as a follower. It truncates its log
   to the indicates entry id, updates its term and changes
   to a Follower.
+
+  The leader never truncates a committed entry, as it holds every
+  committed entry: NoLossOfConfirmedWrite checks it. The
+  implementation also refuses a truncation below the commit offset
+  of the follower, as a guard.
 ----------------------------------------------------------*)
 
 GetTruncateResponse(msg, head_entry_id) ==
