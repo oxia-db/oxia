@@ -15,6 +15,7 @@
 package election
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"os"
@@ -155,7 +156,7 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 
 // A follower that is not added by the leader yet, behind it, or unreachable,
 // is asked again until it catches up.
-func TestElectionEnsureQuorumCaughtUpRetriesUntilCaughtUp(t *testing.T) {
+func TestElectionEnsureEnsembleCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 	leader := testDataServer("leader")
@@ -169,17 +170,20 @@ func TestElectionEnsureQuorumCaughtUpRetriesUntilCaughtUp(t *testing.T) {
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 9)
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 10)
 
-	require.NoError(t, e.ensureQuorumCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
+	require.NoError(t, e.ensureEnsembleCaughtUp([]*proto.DataServerIdentity{leader, follower}, leader,
 		&proto.EntryId{Term: 2, Offset: 10}))
+	assert.True(t, e.IsQuorumCaughtUp())
+	assert.True(t, e.ensembleCaughtUp.Load())
 
 	for range 5 {
 		rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
 	}
 }
 
-// A majority of the ensemble, the leader included, is enough: the wait for the
-// other followers stops, and a dead follower doesn't block it.
-func TestElectionEnsureQuorumCaughtUpStopsAtMajority(t *testing.T) {
+// A majority of the ensemble, the leader included, catches up the quorum,
+// which a dead follower doesn't block; the wait goes on for the dead follower
+// until the election is canceled, and the ensemble is never caught up.
+func TestElectionEnsureEnsembleCaughtUpWaitsForEveryFollower(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
 	leader := testDataServer("leader")
@@ -188,10 +192,19 @@ func TestElectionEnsureQuorumCaughtUpStopsAtMajority(t *testing.T) {
 	e := newTestElection(t, nil, rpc, shard, &proto.ShardMetadata{})
 
 	rpc.GetNode(follower).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 10, 10)
+	result := make(chan error, 1)
+	go func() {
+		result <- e.ensureEnsembleCaughtUp([]*proto.DataServerIdentity{leader, follower, dead}, leader,
+			&proto.EntryId{Term: 2, Offset: 10})
+	}()
 
-	require.NoError(t, e.ensureQuorumCaughtUp([]*proto.DataServerIdentity{leader, follower, dead}, leader,
-		&proto.EntryId{Term: 2, Offset: 10}))
 	rpc.GetNode(follower).ExpectGetStatusRequest(t, shard)
+	assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
+	rpc.GetNode(dead).ExpectGetStatusRequest(t, shard)
+	assert.Empty(t, result)
+	e.Cancel()
+	assert.ErrorIs(t, <-result, context.Canceled)
+	assert.False(t, e.ensembleCaughtUp.Load())
 }
 
 // The addresses of the ensemble are loaded before persisting a new term: a
@@ -698,6 +711,45 @@ func TestElectionStartPersistsLeaderBeforeBecomeLeader(t *testing.T) {
 	assert.Equal(t, s1.GetPublic(), stored.GetLeader().GetPublic())
 }
 
+// The new term resets ensemble_caught_up; the ensemble is caught up once every
+// follower is, not at the majority, and Tick persists it, on a mail.
+func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
+	var shard int64 = 5
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
+		Ensemble: []*proto.DataServerIdentity{s1, s2, s3}, EnsembleCaughtUp: true}
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
+	rpc := rpctest.NewRpcProvider()
+	rpc.GetNode(s1).NewTermResponse(2, 5, nil)
+	rpc.GetNode(s2).NewTermResponse(2, 4, nil)
+	rpc.GetNode(s3).NewTermResponse(2, 3, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	e := newTestElection(t, metadata, rpc, shard, shardMeta)
+	mailbox := make(chan async.Mail, 1)
+	e.mailbox = mailbox
+
+	_, err := e.Start()
+	require.NoError(t, err)
+	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
+
+	rpc.GetNode(s2).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
+	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 4, 4)
+	<-mailbox
+	assert.True(t, e.IsQuorumCaughtUp())
+	assert.False(t, e.ensembleCaughtUp.Load())
+
+	rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
+	<-mailbox
+	assert.True(t, e.ensembleCaughtUp.Load())
+	assert.False(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
+	require.NoError(t, e.Tick())
+	assert.True(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp())
+}
+
 // From, ahead of every candidate, undoes the change: the ensemble is the one
 // before it again, and to is deleted.
 func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
@@ -799,9 +851,9 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 	}
 }
 
-// Tick finishes the change once a majority caught up, if the
-// shard is still in the term of the election and the change is pending; a
-// failed write is returned.
+// Tick finishes the change once a majority caught up, and persists
+// ensemble_caught_up once every member did, once, if the shard is still in the
+// term of the election; a failed write is returned.
 func TestElectionTick(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -816,6 +868,10 @@ func TestElectionTick(t *testing.T) {
 		storedTerm   int64
 		writeErr     error
 		finished     bool
+		// every member caught up, and persisted ensemble_caught_up
+		ensembleCaughtUp bool
+		persisted        bool
+		storedCaughtUp   bool
 	}{
 		{name: "majority caught up", change: change, caughtUp: true, storedChange: change, storedTerm: 3, finished: true},
 		{name: "majority behind", change: change, storedChange: change, storedTerm: 3},
@@ -824,6 +880,12 @@ func TestElectionTick(t *testing.T) {
 		{name: "already finished", change: change, caughtUp: true, storedTerm: 3},
 		{name: "write failure", change: change, caughtUp: true, storedChange: change, storedTerm: 3,
 			writeErr: errors.New("store unavailable")},
+		{name: "ensemble caught up", caughtUp: true, ensembleCaughtUp: true, storedTerm: 3, storedCaughtUp: true},
+		{name: "ensemble caught up with a change", change: change, caughtUp: true, ensembleCaughtUp: true,
+			storedChange: change, storedTerm: 3, finished: true, storedCaughtUp: true},
+		{name: "ensemble caught up already persisted", caughtUp: true, ensembleCaughtUp: true, persisted: true,
+			storedTerm: 3},
+		{name: "ensemble caught up in a later term", caughtUp: true, ensembleCaughtUp: true, storedTerm: 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
@@ -838,8 +900,10 @@ func TestElectionTick(t *testing.T) {
 				}
 			}
 			e := newTestElection(t, metadata, rpctest.NewRpcProvider(), shard, &proto.ShardMetadata{
-				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change})
+				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change,
+				EnsembleCaughtUp: test.persisted})
 			e.quorumCaughtUp.Store(test.caughtUp)
+			e.ensembleCaughtUp.Store(test.ensembleCaughtUp)
 
 			err := e.Tick()
 			if test.writeErr != nil {
@@ -848,6 +912,7 @@ func TestElectionTick(t *testing.T) {
 				require.NoError(t, err)
 			}
 			stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
+			assert.Equal(t, test.storedCaughtUp, stored.GetEnsembleCaughtUp())
 			if test.finished {
 				assert.Nil(t, stored.GetEnsembleChange())
 				assertShardEnsemble(t, stored.GetPendingDeleteShardNodes(), s2)

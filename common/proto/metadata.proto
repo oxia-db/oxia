@@ -193,6 +193,11 @@ message ShardMetadata {
   // Unset when no change of the ensemble is pending.
   // @gotags: yaml:"ensembleChange,omitempty"
   EnsembleChangeMetadata ensemble_change = 9;
+  // False from each new term, until every member of the ensemble has committed
+  // the head entry of the leader at the election, so has every entry committed
+  // before it: e.g. the data server added by a change of the ensemble.
+  // @gotags: yaml:"ensembleCaughtUp,omitempty"
+  bool ensemble_caught_up = 10;
 }
 
 message NamespaceStatus {

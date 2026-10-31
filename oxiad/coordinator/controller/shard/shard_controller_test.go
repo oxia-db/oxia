@@ -670,10 +670,11 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
 	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     1,
-		Leader:   s1,
-		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
 	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	n1.ExpectGetStatusRequest(t, shard)
@@ -688,6 +689,76 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 	n3.ExpectNoMoreNewTermRequest(t)
 
 	assert.NoError(t, sc.Close())
+}
+
+// The catch-up of the ensemble is only known to the election that waited for
+// it: a restarted coordinator elects a leader, and ticks it to persist the
+// catch-up once the election posts to its mailbox.
+func TestNewControllerElectsLeaderWhenEnsembleNotCaughtUp(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	ensemble := []*proto.DataServerIdentity{s1, s2, s3}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	// s1 has the highest head entry, and leads
+	rpc.GetNode(s1).NewTermResponse(1, 10, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 9, nil)
+	rpc.GetNode(s3).NewTermResponse(1, 9, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   s1,
+		Ensemble: ensemble,
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer func() { assert.NoError(t, sc.Close()) }()
+
+	for _, member := range ensemble {
+		rpc.GetNode(member).ExpectNewTermRequest(t, shard, 2, true)
+	}
+	expectEnsembleCaughtUp(t, metadata, rpc, shard, 2, ensemble...)
+}
+
+// A child of a split, which the split controller elected, elects a leader once
+// the split completes, to report the catch-up of its ensemble.
+func TestNewControllerElectsSplitChildOnceSplitCompletes(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	ensemble := []*proto.DataServerIdentity{s1, s2, s3}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   s1,
+		Ensemble: ensemble,
+		Split:    &proto.SplitMetadata{ParentShardId: 4},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer func() { assert.NoError(t, sc.Close()) }()
+
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+	// s1 has the highest head entry, and leads
+	rpc.GetNode(s1).NewTermResponse(1, 10, nil)
+	rpc.GetNode(s2).NewTermResponse(1, 9, nil)
+	rpc.GetNode(s3).NewTermResponse(1, 9, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	require.NoError(t, metadata.PatchShardStatus(constant.DefaultNamespace, shard,
+		func(current *proto.ShardMetadata) (bool, error) {
+			current.Split = nil
+			return true, nil
+		}))
+
+	for _, member := range ensemble {
+		rpc.GetNode(member).ExpectNewTermRequest(t, shard, 2, true)
+	}
+	expectEnsembleCaughtUp(t, metadata, rpc, shard, 2, ensemble...)
 }
 
 // TestNewControllerDoesNotElectFinalizingSplitParent verifies that the parent
@@ -895,10 +966,11 @@ func TestNewControllerElectsLeaderWhenFollowerNotFenced(t *testing.T) {
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 
 	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     4,
-		Leader:   s1,
-		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             4,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
 	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 
 	n1.ExpectGetStatusRequest(t, 5)
@@ -1932,10 +2004,11 @@ func TestControllerDispatchChangeEnsembleRejectsFeatureSupportRegression(t *test
 	rpc.GetNode(s3).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 1, 1)
 
 	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     2,
-		Leader:   s1,
-		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             2,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
 	}, featureSupplier, rpc, DefaultPeriodicTasksInterval)
 	defer sc.Close()
 
@@ -2242,11 +2315,12 @@ func TestControllerDispatchChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	rpc.GetNode(ps2).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 0, 0)
 	rpc.GetNode(ps3).GetStatusResponse(5, proto.ServingStatus_FOLLOWER, 0, 0)
 	sc := newTestController(t, election, constant.DefaultNamespace, 0, namespaceConfig, &proto.ShardMetadata{
-		Status:         proto.ShardStatusSteadyState,
-		Term:           5,
-		Leader:         ps1,
-		Ensemble:       []*proto.DataServerIdentity{ps1, ps2, ps3},
-		Int32HashRange: &proto.HashRange{Min: 0, Max: 1000},
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             5,
+		Leader:           ps1,
+		Ensemble:         []*proto.DataServerIdentity{ps1, ps2, ps3},
+		Int32HashRange:   &proto.HashRange{Min: 0, Max: 1000},
 	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 	defer func() {
 		assert.NoError(t, sc.Close())
@@ -3439,10 +3513,11 @@ func newRestartedTestController(t *testing.T, metadata coordmetadata.Metadata, s
 		rpc.GetNode(dataServer).GetStatusResponse(3, status, 10, 10)
 	}
 	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     3,
-		Leader:   ensemble[0],
-		Ensemble: ensemble,
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             3,
+		Leader:           ensemble[0],
+		Ensemble:         ensemble,
 	}, supplier.supply, rpc, periodicTasksInterval)
 	for _, dataServer := range ensemble {
 		rpc.GetNode(dataServer).ExpectGetStatusRequest(t, shard)
@@ -4160,10 +4235,11 @@ func TestNewControllerReportsTermGauge(t *testing.T) {
 	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
 		&proto.ClusterConfiguration{})
 	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
-		Status:   proto.ShardStatusSteadyState,
-		Term:     1,
-		Leader:   s1,
-		Ensemble: []*proto.DataServerIdentity{s1},
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1},
 	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
 	t.Cleanup(func() {
 		assert.NoError(t, sc.Close())
@@ -4370,4 +4446,18 @@ func (f *fakeElection) Cancel() {
 
 func (f *fakeElection) IsQuorumCaughtUp() bool {
 	return f.quorumCaughtUp
+}
+
+// expectEnsembleCaughtUp answers the wait of the election in term for the
+// followers of the ensemble, led by its first member at offset 10, and waits
+// for the catch-up to be persisted.
+func expectEnsembleCaughtUp(t *testing.T, metadata coordmetadata.Metadata, rpc *rpctest.RpcProvider, shard int64,
+	term int64, ensemble ...*proto.DataServerIdentity) {
+	t.Helper()
+	for _, follower := range ensemble[1:] {
+		rpc.GetNode(follower).GetStatusResponse(term, proto.ServingStatus_FOLLOWER, 10, 10)
+	}
+	require.Eventually(t, func() bool {
+		return requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp()
+	}, 10*time.Second, 10*time.Millisecond)
 }

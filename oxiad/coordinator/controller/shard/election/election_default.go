@@ -72,13 +72,17 @@ type election struct {
 	changeEnsemble   *action.ChangeEnsembleAction
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
-	// mailbox is posted to once a majority of the ensemble caught up, see Tick
+	// mailbox is posted to once a majority of the ensemble caught up, and once
+	// all of it did, see Tick
 	mailbox async.Mailbox
 
 	// mutable
 	meta           *proto.ShardMetadata
 	started        atomic.Bool
 	quorumCaughtUp atomic.Bool
+	// ensembleCaughtUp is set once every member of the ensemble caught up,
+	// after quorumCaughtUp
+	ensembleCaughtUp atomic.Bool
 
 	// metrics
 	leaderElectionLatencyHistogram metric.LatencyHistogram
@@ -363,8 +367,14 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	return nil
 }
 
+// ensureEnsembleCaughtUp waits for every follower of the ensemble to commit
+// the head entry of the leader, until the election is canceled. It sets
+// quorumCaughtUp once a majority of the ensemble, the leader included, did,
+// and ensembleCaughtUp once all of them did, and posts to the mailbox each
+// time.
+//
 //nolint:revive
-func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
+func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	leaderEntry *proto.EntryId) error {
 	ctx, cancel := context.WithCancel(e.ctx)
 	waitGroup := sync.WaitGroup{}
@@ -426,12 +436,21 @@ func (e *election) ensureQuorumCaughtUp(ensemble []*proto.DataServerIdentity, le
 				})
 		})
 	}
-	// The leader is one of the majority
-	for range quorum.Majority(len(ensemble)) - 1 {
+	// The leader is caught up
+	for caughtUp := 1; ; caughtUp++ {
+		if caughtUp == quorum.Majority(len(ensemble)) {
+			e.quorumCaughtUp.Store(true)
+			e.mailbox.Post()
+		}
+		if caughtUp == len(ensemble) {
+			break
+		}
 		if err := <-results; err != nil {
 			return err
 		}
 	}
+	e.ensembleCaughtUp.Store(true)
+	e.mailbox.Post()
 	return nil
 }
 
@@ -572,6 +591,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 	e.meta.Status = proto.ShardStatusElection
 	e.meta.Leader = nil
 	e.meta.Term++
+	e.meta.EnsembleCaughtUp = false
 	e.meta.Ensemble = refreshedEnsemble
 	e.meta.EnsembleChange = refreshedChange
 	if err = e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
@@ -587,6 +607,7 @@ func (e *election) newTerm() (*proto.NewTermOptions, error) {
 		}
 		current.Status = e.meta.Status
 		current.Term = e.meta.Term
+		current.EnsembleCaughtUp = e.meta.EnsembleCaughtUp
 		current.Leader = e.meta.Leader
 		current.Ensemble = e.meta.Ensemble
 		current.EnsembleChange = e.meta.EnsembleChange
@@ -695,12 +716,9 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 				"oxia":  "election-monitor-followers-caught-up",
 				"shard": fmt.Sprintf("%d", e.shard),
 			}, func() {
-				if err := e.ensureQuorumCaughtUp(e.meta.Ensemble, candidateLeader, leaderHead); err != nil {
+				if err := e.ensureEnsembleCaughtUp(e.meta.Ensemble, candidateLeader, leaderHead); err != nil {
 					e.logger.Info("Stopped waiting for the followers to catch up", slog.Any("error", err))
-					return
 				}
-				e.quorumCaughtUp.Store(true)
-				e.mailbox.Post()
 			},
 		)
 	})
@@ -761,19 +779,26 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 }
 
 func (e *election) Tick() error {
-	if e.meta.EnsembleChange == nil || !e.quorumCaughtUp.Load() {
+	// The whole ensemble caught up after its majority did
+	ensembleCaughtUp := e.ensembleCaughtUp.Load()
+	finishChange := e.meta.EnsembleChange != nil && (ensembleCaughtUp || e.quorumCaughtUp.Load())
+	persistCaughtUp := !e.meta.EnsembleCaughtUp && ensembleCaughtUp
+	if !finishChange && !persistCaughtUp {
 		return nil
 	}
 	var finished *proto.EnsembleChangeMetadata
 	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
 		// During a handover, the other coordinator may have elected since,
 		// undone the change, or started another
-		if current.Term != e.meta.Term || current.EnsembleChange == nil {
+		if current.Term != e.meta.Term {
 			return false, nil
 		}
-		finished = current.EnsembleChange
-		current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
-		current.EnsembleChange = nil
+		if finishChange && current.EnsembleChange != nil {
+			finished = current.EnsembleChange
+			current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
+			current.EnsembleChange = nil
+		}
+		current.EnsembleCaughtUp = current.EnsembleCaughtUp || persistCaughtUp
 		return true, nil
 	}); err != nil {
 		return err
@@ -782,8 +807,11 @@ func (e *election) Tick() error {
 		e.logger.Info("A majority of the ensemble caught up, the change of the ensemble is finished",
 			slog.Any("from", finished.From), slog.Any("to", finished.To))
 	}
-	// Finished, or left to the election of a later term
-	e.meta.EnsembleChange = nil
+	// Done, or left to the election of a later term
+	if finishChange {
+		e.meta.EnsembleChange = nil
+	}
+	e.meta.EnsembleCaughtUp = e.meta.EnsembleCaughtUp || persistCaughtUp
 	return nil
 }
 

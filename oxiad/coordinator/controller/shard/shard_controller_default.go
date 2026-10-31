@@ -268,11 +268,16 @@ func (s *controller) run(bo backoff.BackOff) error {
 		// entering the normal event loop, to prevent the load balancer from
 		// triggering elections that would interfere with the split controller.
 		s.logger.Info("Child shard during split, waiting for split to complete")
-		s.waitForSplitComplete()
+		// The split controller elected the child: only an election reports its
+		// catch-up
+		if meta := s.waitForSplitComplete(); meta != nil && !meta.GetEnsembleCaughtUp() {
+			_, _ = s.electLeader(meta, nil)
+		}
 	case initShardMeta.Leader == nil || initShardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState,
-		// Only an election finishes a pending change: the catch-up of the one
-		// before the restart is lost
-		initShardMeta.GetEnsembleChange() != nil:
+		// Only an election finishes a pending change, or reports the catch-up
+		// of the ensemble: the catch-up of the one before the restart is lost
+		initShardMeta.GetEnsembleChange() != nil,
+		!initShardMeta.GetEnsembleCaughtUp():
 		_, _ = s.electLeader(initShardMeta, nil)
 	default:
 		s.logger.Info(
@@ -333,15 +338,16 @@ func (s *controller) run(bo backoff.BackOff) error {
 // waitForSplitComplete blocks until the Split metadata is cleared from this
 // shard in the status resource, indicating the split controller has finished
 // and the shard can operate normally. This prevents the load balancer from
-// triggering elections that would interfere with the split controller.
-func (s *controller) waitForSplitComplete() {
+// triggering elections that would interfere with the split controller. It
+// returns the shard metadata then, or nil if the controller closes first.
+func (s *controller) waitForSplitComplete() *proto.ShardMetadata {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 			if err != nil {
@@ -356,7 +362,7 @@ func (s *controller) waitForSplitComplete() {
 				s.logger.Info("Split complete, child shard entering normal operation",
 					slog.Any("leader", meta.Leader),
 				)
-				return
+				return meta
 			}
 		}
 	}
