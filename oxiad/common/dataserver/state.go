@@ -16,14 +16,6 @@ package dataserver
 
 import "github.com/oxia-db/oxia/common/proto"
 
-// IsServing reports whether a data server in the state serves its shards: it
-// is RUNNING, or DRAINING while the shards move away from it. An UNAVAILABLE
-// one is in the cluster but can't be reached, and a DRAINED one has left it.
-func IsServing(state proto.DataServerState) bool {
-	return state == proto.DataServerState_DATA_SERVER_STATE_RUNNING ||
-		state == proto.DataServerState_DATA_SERVER_STATE_DRAINING
-}
-
 // IsRemoved reports whether a data server in the state was removed from the
 // cluster: it is DRAINING, or DRAINED.
 func IsRemoved(state proto.DataServerState) bool {

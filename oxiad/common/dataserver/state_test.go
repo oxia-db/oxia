@@ -22,13 +22,6 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestIsServing(t *testing.T) {
-	assert.True(t, IsServing(proto.DataServerState_DATA_SERVER_STATE_RUNNING))
-	assert.True(t, IsServing(proto.DataServerState_DATA_SERVER_STATE_DRAINING))
-	assert.False(t, IsServing(proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE))
-	assert.False(t, IsServing(proto.DataServerState_DATA_SERVER_STATE_DRAINED))
-}
-
 func TestIsRemoved(t *testing.T) {
 	assert.False(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_RUNNING))
 	assert.False(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE))

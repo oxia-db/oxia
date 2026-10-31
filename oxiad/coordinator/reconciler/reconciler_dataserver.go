@@ -21,7 +21,6 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/proto"
-	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
@@ -44,12 +43,12 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 		serverName := dataServer.GetNameOrDefault()
 		desired.Add(serverName)
 		r.runtime.CreateDataServer(serverName, dataServer)
-		if dataserver.IsServing(statuses[serverName].UnsafeBorrow().GetState()) {
+		if !needsRunning(statuses[serverName].UnsafeBorrow().GetState()) {
 			continue
 		}
 		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
 			func(status *proto.DataServerStatus) (bool, error) {
-				if dataserver.IsServing(status.GetState()) {
+				if !needsRunning(status.GetState()) {
 					return false, nil
 				}
 				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
@@ -65,4 +64,13 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 
 	r.runtime.RefreshShardControllers()
 	return err
+}
+
+// needsRunning reports whether a data server of the configuration must be
+// stored RUNNING: it has no stored state, as it was added before the
+// coordinator stored them, or it is DRAINED and was added again. A DRAINING
+// one keeps its state while its delete removes it from the configuration.
+func needsRunning(state proto.DataServerState) bool {
+	return state == proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED ||
+		state == proto.DataServerState_DATA_SERVER_STATE_DRAINED
 }

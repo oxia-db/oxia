@@ -29,7 +29,6 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
-	commondataserver "github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
@@ -135,7 +134,7 @@ func (n *controller) Close() error {
 func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	receiver := n.status.Subscribe()
 	for {
-		if status := receiver.Load(); status.IsAvailable() && commondataserver.IsServing(status.GetState()) {
+		if status := receiver.Load(); status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
 			n.logger.Debug("Ready to send assignments")
 			return n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
 		}
