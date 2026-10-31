@@ -77,11 +77,9 @@ type election struct {
 	mailbox async.Mailbox
 
 	// mutable
-	meta           *proto.ShardMetadata
-	started        atomic.Bool
-	quorumCaughtUp atomic.Bool
-	// ensembleCaughtUp is set once every member of the ensemble caught up,
-	// after quorumCaughtUp
+	meta             *proto.ShardMetadata
+	started          atomic.Bool
+	quorumCaughtUp   atomic.Bool
 	ensembleCaughtUp atomic.Bool
 
 	// metrics
