@@ -149,19 +149,17 @@ type Metadata interface {
 	GetNamespaceTermOptions(name string) (*commonproto.NewTermOptions, error)
 
 	// CreateDataServer adds a data server to the configuration, or returns
-	// ErrAlreadyExists, also while a data server of the same name is draining
-	// or drained.
+	// ErrAlreadyExists, also while a data server of the same name is
+	// draining.
 	CreateDataServer(dataServer *commonproto.DataServer) error
 	// PatchDataServer updates the addresses and the labels of a data server,
 	// and returns it, or ErrNotFound.
 	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
-	// DeleteDataServer starts draining a data server: it stores its status as
-	// DRAINING, then removes it from the configuration, and returns it. It
-	// returns ErrFailedPrecondition if a namespace would be left with fewer
-	// data servers than its replication factor. A data server that is out of
-	// the configuration already is draining, and DeleteDataServer returns
-	// ErrFailedPrecondition, or drained, and it deletes its status so that its
-	// name can be used again. It returns ErrNotFound otherwise.
+	// DeleteDataServer starts draining a data server of the configuration:
+	// it stores it DRAINING, then removes it from the configuration, and
+	// returns it. It returns ErrNotFound if the configuration doesn't have it,
+	// and ErrFailedPrecondition if a namespace would keep fewer data servers
+	// than its replication factor.
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
 	// ListDataServer returns every data server, with its identity and its
 	// metadata, by name: the internal address of a data server without a

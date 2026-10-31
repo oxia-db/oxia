@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,7 +33,6 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
-	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -568,14 +568,14 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
 	name := dataServer.GetIdentity().GetName()
 
-	// The name of a data server that left stays taken until its status is
-	// deleted: shards could otherwise take it into their ensembles while it
-	// drains, or once it is reported drained
-	status, exists, err := m.GetDataServerStatus(name)
+	// The name of a draining data server stays taken: shards could otherwise
+	// take it into their ensembles while it drains. A drained one can be
+	// added again
+	status, _, err := m.GetDataServerStatus(name)
 	if err != nil {
 		return err
 	}
-	if state := status.UnsafeBorrow().GetState(); exists && dataserver.IsRemoved(state) {
+	if state := status.UnsafeBorrow().GetState(); state == commonproto.DataServerState_DATA_SERVER_STATE_DRAINING {
 		return fmt.Errorf("%w: data server %q is %s", errs.ErrAlreadyExists, name, state)
 	}
 
@@ -638,78 +638,66 @@ func (m *defaultMetadata) PatchDataServer(desireDataServer *commonproto.DataServ
 }
 
 func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer, error) {
-	var deleted *commonproto.DataServer
-	inConfig := true
-	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
-		for i, identity := range config.GetServers() {
-			if identity.GetNameOrDefault() != name {
-				continue
-			}
-
-			dataServer, _ := config.GetDataServer(name)
-			deleted = dataServer
-			remainingServerCount := len(config.GetServers()) - 1
-			for _, namespace := range config.GetNamespaces() {
-				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
-					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
-						errs.ErrFailedPrecondition,
-						name,
-						namespace.GetName(),
-						namespace.GetReplicationFactor(),
-						remainingServerCount)
-				}
-			}
-			// Stored before the data server leaves the configuration: once it
-			// left, only its status tells that it is draining. If the write of
-			// the configuration fails, the data server stays in it, and serves
-			// as before until the delete is retried. The configuration lock is
-			// held, then the status lock: never the other way around.
-			if err := m.PatchDataServerStatus(name, func(status *commonproto.DataServerStatus) (bool, error) {
-				if status.GetState() == commonproto.DataServerState_DATA_SERVER_STATE_DRAINING {
-					return false, nil
-				}
-				status.State = commonproto.DataServerState_DATA_SERVER_STATE_DRAINING
-				return true, nil
-			}); err != nil {
-				return nil, err
-			}
-			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
-			if config.ServerMetadata != nil {
-				delete(config.ServerMetadata, name)
-			}
-			return config, nil
-		}
-		inConfig = false
-		return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
-	}); err != nil {
-		if !inConfig {
-			return m.deleteDrainedDataServer(name)
-		}
+	config, err := m.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := removableDataServer(config.UnsafeBorrow(), name); err != nil {
 		return nil, err
 	}
 
+	// Stored before the data server leaves the configuration: once it left,
+	// only its status tells that it is draining. If the configuration isn't
+	// written, the data server stays in it, stored DRAINING, and serves as
+	// before until the delete is retried.
+	if err := m.PatchDataServerStatus(name, func(status *commonproto.DataServerStatus) (bool, error) {
+		if status.GetState() == commonproto.DataServerState_DATA_SERVER_STATE_DRAINING {
+			return false, nil
+		}
+		status.State = commonproto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	var deleted *commonproto.DataServer
+	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		dataServer, err := removableDataServer(config, name)
+		if err != nil {
+			return nil, err
+		}
+		deleted = dataServer
+		config.Servers = slices.DeleteFunc(config.Servers, func(identity *commonproto.DataServerIdentity) bool {
+			return identity.GetNameOrDefault() == name
+		})
+		delete(config.ServerMetadata, name)
+		return config, nil
+	}); err != nil {
+		return nil, err
+	}
 	return deleted, nil
 }
 
-// deleteDrainedDataServer deletes the status of a drained data server, which
-// is out of the configuration.
-func (m *defaultMetadata) deleteDrainedDataServer(name string) (*commonproto.DataServer, error) {
-	var deleted *commonproto.DataServer
-	if err := m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
-		switch clusterStatus.GetDataServers()[name].GetState() {
-		case commonproto.DataServerState_DATA_SERVER_STATE_DRAINED:
-			delete(clusterStatus.DataServers, name)
-			deleted = &commonproto.DataServer{Identity: &commonproto.DataServerIdentity{Name: &name}}
-			return clusterStatus, true, nil
-		case commonproto.DataServerState_DATA_SERVER_STATE_DRAINING:
-			return clusterStatus, false, fmt.Errorf("%w: data server %q is draining", errs.ErrFailedPrecondition, name)
-		default:
-			return clusterStatus, false, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
-		}
-	}); err != nil {
-		return nil, err
+// removableDataServer returns the data server of the configuration, or
+// ErrNotFound, or ErrFailedPrecondition if a namespace would keep fewer data
+// servers than its replication factor without it.
+func removableDataServer(config *commonproto.ClusterConfiguration, name string) (*commonproto.DataServer, error) {
+	dataServer, exists := config.GetDataServer(name)
+	if !exists {
+		return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
 	}
-	return deleted, nil
+	remainingServerCount := len(config.GetServers()) - 1
+	for _, namespace := range config.GetNamespaces() {
+		if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
+			return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
+				errs.ErrFailedPrecondition,
+				name,
+				namespace.GetName(),
+				namespace.GetReplicationFactor(),
+				remainingServerCount)
+		}
+	}
+	return dataServer, nil
 }
 
 func (m *defaultMetadata) ListDataServer() (map[string]commonobject.Borrowed[*commonproto.DataServer], error) {

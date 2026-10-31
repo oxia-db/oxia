@@ -901,12 +901,8 @@ func TestMetadataCreateDataServerRejectsNameOfLeftDataServer(t *testing.T) {
 	}
 
 	require.ErrorIs(t, metadata.CreateDataServer(dataServer("draining")), errs.ErrAlreadyExists)
-	require.ErrorIs(t, metadata.CreateDataServer(dataServer("drained")), errs.ErrAlreadyExists)
-	require.NoError(t, metadata.CreateDataServer(dataServer("running")))
-
-	_, err := metadata.DeleteDataServer("drained")
-	require.NoError(t, err)
 	require.NoError(t, metadata.CreateDataServer(dataServer("drained")))
+	require.NoError(t, metadata.CreateDataServer(dataServer("running")))
 	require.Len(t, loaded(t, configProvider).Value.GetServers(), 4)
 }
 
@@ -989,15 +985,14 @@ func TestMetadataDeleteDataServerKeepsDataServer(t *testing.T) {
 	}
 }
 
-// A data server out of the configuration can only be deleted once drained:
-// its status is deleted then.
+// A data server out of the configuration isn't found, whatever its stored
+// state.
 func TestMetadataDeleteDataServerOfLeftDataServer(t *testing.T) {
 	statusProvider := newStatusProvider()
 	metadata := newTestMetadata(t, statusProvider, newStoredConfigProvider(t, nil), "")
 	for name, state := range map[string]commonproto.DataServerState{
 		"draining": commonproto.DataServerState_DATA_SERVER_STATE_DRAINING,
 		"drained":  commonproto.DataServerState_DATA_SERVER_STATE_DRAINED,
-		"running":  commonproto.DataServerState_DATA_SERVER_STATE_RUNNING,
 	} {
 		require.NoError(t, metadata.PatchDataServerStatus(name, func(status *commonproto.DataServerStatus) (bool, error) {
 			status.State = state
@@ -1005,19 +1000,33 @@ func TestMetadataDeleteDataServerOfLeftDataServer(t *testing.T) {
 		}))
 	}
 
-	_, err := metadata.DeleteDataServer("draining")
-	require.ErrorIs(t, err, errs.ErrFailedPrecondition)
-	_, err = metadata.DeleteDataServer("running")
-	require.ErrorIs(t, err, errs.ErrNotFound)
-	_, err = metadata.DeleteDataServer("unknown")
-	require.ErrorIs(t, err, errs.ErrNotFound)
+	for _, name := range []string{"draining", "drained", "unknown"} {
+		_, err := metadata.DeleteDataServer(name)
+		require.ErrorIs(t, err, errs.ErrNotFound)
+	}
+	require.Len(t, loaded(t, statusProvider).Value.GetDataServers(), 2)
+}
 
-	deleted, err := metadata.DeleteDataServer("drained")
-	require.NoError(t, err)
-	require.Equal(t, "drained", deleted.GetIdentity().GetName())
-	require.NotContains(t, loaded(t, statusProvider).Value.GetDataServers(), "drained")
-	_, err = metadata.DeleteDataServer("drained")
+// A data server deleted concurrently, after it was stored DRAINING, isn't
+// found when the configuration is written.
+func TestMetadataDeleteDataServerOfDataServerDeletedConcurrently(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	statusProvider := newStatusProvider()
+	metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
+		Provider: statusProvider,
+		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
+			config := loaded(t, configProvider)
+			config.Value.Servers = config.Value.Servers[:1]
+			_, err := configProvider.Store(*config)
+			require.NoError(t, err)
+			return statusProvider.Store(snapshot)
+		},
+	}, configProvider, "")
+
+	_, err := metadata.DeleteDataServer("s2")
 	require.ErrorIs(t, err, errs.ErrNotFound)
+	require.Equal(t, commonproto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		loaded(t, statusProvider).Value.GetDataServers()["s2"].GetState())
 }
 
 func TestMetadataDeleteDataServerReturnsConfigurationLoadError(t *testing.T) {

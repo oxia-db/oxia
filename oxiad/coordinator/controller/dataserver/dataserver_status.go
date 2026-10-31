@@ -73,22 +73,20 @@ func (s Status) GetLastTransitionTime() time.Time {
 // Advance moves the data server to the DRAINING or DRAINED stage of its
 // lifecycle.
 func (s *Status) Advance(lifecycle proto.DataServerState) {
-	s.lifecycle = lifecycle
-	s.transition()
-}
-
-// SetAvailable records whether the data server is available, even if it
-// already was: the epoch still increments.
-func (s *Status) SetAvailable(available bool) {
-	s.available = available
-	s.transition()
-}
-
-// transition increments the epoch, and records the transition time, except
-// for the first transition, the data server joining.
-func (s *Status) transition() {
 	if s.epoch > 0 {
 		s.lastTransitionTime = time.Now()
 	}
+	s.lifecycle = lifecycle
+	s.epoch++
+}
+
+// SetAvailable records whether the data server is available, even if it
+// already was: the epoch still increments. The first transition, the data
+// server joining, isn't timed.
+func (s *Status) SetAvailable(available bool) {
+	if s.epoch > 0 {
+		s.lastTransitionTime = time.Now()
+	}
+	s.available = available
 	s.epoch++
 }
