@@ -736,8 +736,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 
 // The election keeps the change pending until a majority of the ensemble caught
 // up, which a dead follower doesn't block, and Tick finishes it on the mail of
-// the election. A canceled election never reports a caught-up majority, nor
-// finishes the change.
+// the election. A canceled election posts nothing, nor finishes the change.
 func TestElectionStartKeepsChangePending(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -780,7 +779,6 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			if !test.caughtUp {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
-				assert.False(t, e.IsQuorumCaughtUp())
 				assert.Empty(t, mailbox)
 				require.NoError(t, e.Tick())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
@@ -789,7 +787,6 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
 			<-mailbox
-			assert.True(t, e.IsQuorumCaughtUp())
 			require.NoError(t, e.Tick())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)

@@ -787,10 +787,6 @@ func (e *election) Tick() error {
 	return nil
 }
 
-func (e *election) IsQuorumCaughtUp() bool {
-	return e.quorumCaughtUp.Load()
-}
-
 func (e *election) Cancel() {
 	e.ctxCancel()
 	e.wg.Wait()

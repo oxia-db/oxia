@@ -1986,9 +1986,8 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 			EnsembleChange: &proto.EnsembleChangeMetadata{From: s4, To: s3},
 		}},
 	}))
-	// The election caught up, but leaves the change pending, as one of an
-	// earlier term does
-	current := &fakeElection{quorumCaughtUp: true}
+	// The election leaves the change pending, as one of an earlier term does
+	current := &fakeElection{}
 	sc := &controller{
 		namespace:       constant.DefaultNamespace,
 		shard:           shard,
@@ -2011,8 +2010,9 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s5)))
 }
 
-// The mail of the election finishes the pending change once a majority of the
-// ensemble caught up, and the next change starts then.
+// A change starts before a majority of the ensemble caught up after the
+// election, and the mail of its own election finishes it once they did: the
+// next change starts then.
 func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -2040,7 +2040,6 @@ func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
 	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 2)
-	rpc.GetNode(s2).GetStatusResponse(2, proto.ServingStatus_FOLLOWER, 0, 0)
 
 	changeEnsemble := func(from, to *proto.DataServerIdentity) error {
 		for {
@@ -2054,7 +2053,9 @@ func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
 		}
 	}
 
-	// s3 is behind at the fence: the change stays pending until it caught up
+	// s2 never reports its catch-up of term 2: the change starts anyway, as its
+	// joint fence includes a holder of every committed entry. s3 is behind at
+	// the fence: the change stays pending until it caught up
 	wg := concurrent.NewWaitGroup(1)
 	wg.Go(func() error { return changeEnsemble(s2, s3) })
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
@@ -4352,8 +4353,7 @@ func (m *hookedMetadata) PatchShardStatus(namespace string, shard int64,
 
 // fakeElection is an election that is already elected.
 type fakeElection struct {
-	quorumCaughtUp bool
-	canceled       bool
+	canceled bool
 }
 
 func (*fakeElection) Tick() error {
@@ -4366,8 +4366,4 @@ func (*fakeElection) Start() (*proto.DataServerIdentity, error) {
 
 func (f *fakeElection) Cancel() {
 	f.canceled = true
-}
-
-func (f *fakeElection) IsQuorumCaughtUp() bool {
-	return f.quorumCaughtUp
 }
