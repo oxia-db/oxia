@@ -155,11 +155,10 @@ type Metadata interface {
 	// PatchDataServer updates the addresses and the labels of a data server,
 	// and returns it, or ErrNotFound.
 	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
-	// DeleteDataServer starts draining a data server of the configuration:
-	// it stores it DRAINING, then removes it from the configuration, and
-	// returns it. It returns ErrNotFound if the configuration doesn't have it,
-	// and ErrFailedPrecondition if a namespace would keep fewer data servers
-	// than its replication factor.
+	// DeleteDataServer removes a data server from the configuration, which
+	// starts its drain, and returns it, or ErrNotFound, or
+	// ErrFailedPrecondition if a namespace would be left with fewer data
+	// servers than its replication factor.
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
 	// ListDataServer returns every data server, with its identity and its
 	// metadata, by name: the internal address of a data server without a

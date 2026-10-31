@@ -259,8 +259,8 @@ func (n *controller) monitorDraining() {
 }
 
 // drain moves the stored status of the data server one step towards DRAINED,
-// and reports whether it is DRAINED. It stores it DRAINING first if it isn't
-// yet: e.g. a drain that started before the coordinator stored the states.
+// and reports whether it is DRAINED: it stores it DRAINING first, then
+// DRAINED once it is drained.
 func (n *controller) drain() (bool, error) {
 	name := n.dataServer.GetIdentity().GetNameOrDefault()
 	namespaces, err := n.metadata.ListNamespaceStatus()

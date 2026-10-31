@@ -25,8 +25,7 @@ import (
 )
 
 // The data servers of the configuration are stored RUNNING: the ones without
-// a stored status, and the drained ones added again. A DRAINING one, whose
-// delete is in progress, is left as it is.
+// a stored status, and the draining or drained ones added again.
 func TestDataServerReconcilerReconcileStoresRunningDataServers(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
 	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
@@ -44,24 +43,23 @@ func TestDataServerReconcilerReconcileStoresRunningDataServers(t *testing.T) {
 	}
 	assert.Equal(t, map[string]proto.DataServerState{
 		"new":      proto.DataServerState_DATA_SERVER_STATE_RUNNING,
-		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		"draining": proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		"drained":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		"running":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 	}, states)
 }
 
-// A data server whose delete stored it DRAINING since its status was read
-// stays DRAINING.
-func TestDataServerReconcilerReconcileKeepsDrainingStoredSinceRead(t *testing.T) {
+// A data server stored RUNNING since its status was read isn't written again.
+func TestDataServerReconcilerReconcileKeepsRunningStoredSinceRead(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
 	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
-		"s1": {State: proto.DataServerState_DATA_SERVER_STATE_DRAINING},
+		"s1": {State: proto.DataServerState_DATA_SERVER_STATE_RUNNING},
 	}
 	runtime.metadata.staleDataServerStatus = map[string]*proto.DataServerStatus{}
 	reconciler := &dataServerReconciler{runtime: runtime}
 
 	require.NoError(t, reconciler.Reconcile(t.Context(), dataServersConfig("s1")))
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		runtime.metadata.status.GetDataServers()["s1"].GetState())
 }
 
