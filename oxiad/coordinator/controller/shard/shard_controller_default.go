@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/async"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
@@ -77,6 +78,9 @@ type controller struct {
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
 	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	// electionMailbox receives the mail of the current election, which the
+	// event loop ticks then
+	electionMailbox chan async.Mail
 
 	// The features of a data server are reported only when they change, so
 	// unlike the other notifications they must not be dropped when the event
@@ -162,6 +166,7 @@ func NewController(
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
+		electionMailbox:       make(chan async.Mail, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
 		logger: slog.With(
@@ -243,6 +248,7 @@ func (s *controller) Dispatch(ac action.Action) {
 	}
 }
 
+//nolint:revive
 func (s *controller) run(bo backoff.BackOff) error {
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
@@ -305,6 +311,14 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
 			s.onChangeEnsemble(op)
+		case <-s.electionMailbox:
+			// A failed tick posts to the mailbox again a second later
+			if s.currentElection != nil {
+				if err := s.currentElection.Tick(); err != nil {
+					s.logger.Warn("Failed to tick the election, retrying later", slog.Any("error", err))
+					time.AfterFunc(time.Second, async.Mailbox(s.electionMailbox).Post)
+				}
+			}
 		case <-periodicTasksTimer.C:
 			s.handlePeriodicTasks()
 			periodicTasksTimer.Reset(s.periodicTasksInterval)
@@ -622,7 +636,7 @@ func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
 	if s.currentElection != nil {
 		s.currentElection.Cancel()
 	}
-	s.currentElection = election.New(s.ctx, s.logger, s.eventListener,
+	s.currentElection = election.New(s.ctx, s.logger, s.eventListener, s.electionMailbox,
 		s.metadataStore, s.featureSupplier, s.leaderSelector,
 		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, s.requiredFeatures,
 		s.leaderElectionLatencyHistogram,
@@ -778,11 +792,6 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			changeEnsembleAction.Error(errors.Wrap(errs.ErrUnavailable, "shard is not ready for change ensemble"))
 			return
 		}
-		// Don't wait for the periodic tasks to finish the pending change
-		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
-			changeEnsembleAction.Error(err)
-			return
-		}
 	}
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
@@ -876,11 +885,6 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	if s.currentElection != nil {
-		if err := s.currentElection.TryFinishEnsembleChange(); err != nil {
-			s.logger.Warn("Failed to finish the change of the ensemble, retrying next round", slog.Any("error", err))
-		}
-	}
 	if len(shardMeta.PendingDeleteShardNodes) > 0 {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
