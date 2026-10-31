@@ -32,6 +32,7 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -567,14 +568,14 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
 	name := dataServer.GetIdentity().GetName()
 
-	// The name of a draining data server stays taken: shards could otherwise
-	// take it into their ensembles while it drains. A drained one can be
-	// added again
+	// The name of a data server that left stays taken: shards could otherwise
+	// take it into their ensembles while it drains, or once it is reported
+	// drained
 	status, _, err := m.GetDataServerStatus(name)
 	if err != nil {
 		return err
 	}
-	if state := status.UnsafeBorrow().GetState(); state == commonproto.DataServerState_DATA_SERVER_STATE_DRAINING {
+	if state := status.UnsafeBorrow().GetState(); dataserver.IsRemoved(state) {
 		return fmt.Errorf("%w: data server %q is %s", errs.ErrAlreadyExists, name, state)
 	}
 

@@ -243,20 +243,16 @@ func TestRuntimeCreateDataServerRejectsMissingIdentity(t *testing.T) {
 	assert.Empty(t, c.dataServerControllers)
 }
 
-// A data server added back while it drains gets a new controller, and its
-// draining one is closed.
-func TestRuntimeCreateDataServerReplacesDrainingController(t *testing.T) {
+// A data server that has a controller, also a draining one, keeps it.
+func TestRuntimeCreateDataServerKeepsExistingController(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
 	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
 	c.dataServerControllers["s1"] = draining
 	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
 
-	require.True(t, c.CreateDataServer("s1", &proto.DataServer{Identity: server}))
-
-	assert.EqualValues(t, 1, draining.closes.Load())
-	require.Contains(t, c.dataServerControllers, "s1")
-	assert.NotSame(t, draining, c.dataServerControllers["s1"])
 	assert.False(t, c.CreateDataServer("s1", &proto.DataServer{Identity: server}))
+	assert.Same(t, draining, c.dataServerControllers["s1"])
+	assert.Zero(t, draining.closes.Load())
 }
 
 func TestRuntimeDeleteDataServerIgnoresUnknownDataServer(t *testing.T) {
@@ -706,7 +702,7 @@ func TestRuntimeBecameUnavailableKeepsDrainingNode(t *testing.T) {
 }
 
 // A drained data server's controller is closed, even if closing it fails.
-func TestRuntimeDrainedClosesDrainingNode(t *testing.T) {
+func TestRuntimeBecameDrainedClosesDrainingNode(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
 	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
 	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)

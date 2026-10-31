@@ -21,6 +21,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
@@ -43,13 +44,12 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 		serverName := dataServer.GetNameOrDefault()
 		desired.Add(serverName)
 		r.runtime.CreateDataServer(serverName, dataServer)
-		// Also a drained or draining data server added again
-		if statuses[serverName].UnsafeBorrow().GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING {
+		if !dataserver.NeedsRunning(statuses[serverName].UnsafeBorrow().GetState()) {
 			continue
 		}
 		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
 			func(status *proto.DataServerStatus) (bool, error) {
-				if status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING {
+				if !dataserver.NeedsRunning(status.GetState()) {
 					return false, nil
 				}
 				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING

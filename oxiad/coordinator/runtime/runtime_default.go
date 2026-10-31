@@ -170,18 +170,15 @@ func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, boo
 }
 
 func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {
-	c.Lock()
-	defer c.Unlock()
-
 	identity := dataServer.GetIdentity()
 	if identity == nil {
 		return false
 	}
-	if nc, ok := c.dataServerControllers[name]; ok {
-		if !dataserver.IsRemoved(nc.GetStatus().GetState()) {
-			return false
-		}
-		_ = nc.Close()
+
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.dataServerControllers[name]; ok {
+		return false
 	}
 	c.logger.Info("Detected new node", slog.Any("server", identity))
 	c.dataServerControllers[name] = dataservercontroller.NewController(
@@ -687,7 +684,7 @@ func New(
 			// flap into a rebalancing loop. The re-election of leaders away
 			// from a dead node is not affected.
 			status := nc.GetStatus()
-			return status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING &&
+			return status.IsAvailable() && status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING &&
 				time.Since(status.GetLastTransitionTime()) >= 5*time.Minute
 		},
 	})

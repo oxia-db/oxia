@@ -48,7 +48,8 @@ import (
 // The runtime creates a controller for each data server of the configuration,
 // or still referenced by a shard or stored DRAINING. It calls Drain when the
 // data server is removed from the configuration, and closes the controller
-// once it is DRAINED, or replaces it when the data server is added again.
+// once it is DRAINED. A data server added again while it drains keeps its
+// controller, and its drain.
 type Controller interface {
 	// Close stops the health checks and the assignments stream.
 	io.Closer

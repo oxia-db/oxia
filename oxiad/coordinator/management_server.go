@@ -132,7 +132,14 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 			DataServerStatus: status,
 		})
 	}
-	for _, name := range slices.Sorted(maps.Keys(storedStatuses)) {
+	names := slices.Collect(maps.Keys(storedStatuses))
+	for name := range statuses {
+		if _, stored := storedStatuses[name]; !stored {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
 		if _, exists := config.GetDataServer(name); exists {
 			continue
 		}
@@ -145,16 +152,21 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 }
 
 // leftDataServerView returns the view of a data server that left the
-// configuration, from its stored status, and false if it isn't draining or
-// drained. Only its name is known.
+// configuration, and false if it isn't draining or drained. Only its name is
+// known. Its controller stores it DRAINING once it starts draining it: until
+// then, only the runtime reports it.
 func leftDataServerView(runtime coordruntime.Runtime, name string,
 	stored *proto.DataServerStatus) (*proto.DataServerView, bool) {
 	state := stored.GetState()
+	live, found := runtime.GetDataServerStatus(name)
+	if !dataserver.IsRemoved(state) && found {
+		state = live.GetState()
+	}
 	if !dataserver.IsRemoved(state) {
 		return nil, false
 	}
 	status := &proto.DataServerStatus{State: state}
-	if live, found := runtime.GetDataServerStatus(name); found {
+	if found {
 		status.SupportedFeatures = live.GetSupportedFeatures()
 	}
 	return &proto.DataServerView{
@@ -224,6 +236,13 @@ func (management *ManagementServer) CreateDataServer(_ context.Context, req *pro
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server internal address must not be empty")
 	}
 
+	// Its controller stores a draining data server DRAINING once it starts
+	// draining it: until then, only the runtime knows it
+	if live, found := runtime.GetDataServerStatus(req.DataServer.GetNameOrDefault()); found &&
+		dataserver.IsRemoved(live.GetState()) {
+		return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q is %s",
+			req.DataServer.GetNameOrDefault(), live.GetState())
+	}
 	err = runtime.Metadata().CreateDataServer(req.DataServer)
 	if err != nil {
 		if errors.Is(err, errs.ErrAlreadyExists) {

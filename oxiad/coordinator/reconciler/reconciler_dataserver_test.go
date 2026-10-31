@@ -25,7 +25,8 @@ import (
 )
 
 // The data servers of the configuration are stored RUNNING: the ones without
-// a stored status, and the draining or drained ones added again.
+// a stored status, and the drained ones added again. A draining one added
+// again keeps draining.
 func TestDataServerReconcilerReconcileStoresRunningDataServers(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
 	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
@@ -43,7 +44,7 @@ func TestDataServerReconcilerReconcileStoresRunningDataServers(t *testing.T) {
 	}
 	assert.Equal(t, map[string]proto.DataServerState{
 		"new":      proto.DataServerState_DATA_SERVER_STATE_RUNNING,
-		"draining": proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
 		"drained":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		"running":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 	}, states)

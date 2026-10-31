@@ -27,3 +27,10 @@ func TestIsRemoved(t *testing.T) {
 	assert.True(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_DRAINING))
 	assert.True(t, IsRemoved(proto.DataServerState_DATA_SERVER_STATE_DRAINED))
 }
+
+func TestNeedsRunning(t *testing.T) {
+	assert.True(t, NeedsRunning(proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED))
+	assert.True(t, NeedsRunning(proto.DataServerState_DATA_SERVER_STATE_DRAINED))
+	assert.False(t, NeedsRunning(proto.DataServerState_DATA_SERVER_STATE_RUNNING))
+	assert.False(t, NeedsRunning(proto.DataServerState_DATA_SERVER_STATE_DRAINING))
+}

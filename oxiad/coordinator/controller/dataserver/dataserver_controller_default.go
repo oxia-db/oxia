@@ -260,7 +260,9 @@ func (n *controller) monitorDraining() {
 
 // drain moves the stored status of the data server one step towards DRAINED,
 // and reports whether it is DRAINED: it stores it DRAINING first, then
-// DRAINED once it is drained.
+// DRAINED once it is drained. A DRAINED status left from an earlier drain, of
+// a data server added again since, is stored DRAINING again until the new
+// drain completes.
 func (n *controller) drain() (bool, error) {
 	name := n.dataServer.GetIdentity().GetNameOrDefault()
 	namespaces, err := n.metadata.ListNamespaceStatus()
@@ -272,15 +274,17 @@ func (n *controller) drain() (bool, error) {
 		return false, err
 	}
 	state := stored.UnsafeBorrow().GetState()
-	next := proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	drained := commondataserver.IsDrained(name, namespaces)
+	var next proto.DataServerState
 	switch {
-	case state == proto.DataServerState_DATA_SERVER_STATE_DRAINED:
+	case state == proto.DataServerState_DATA_SERVER_STATE_DRAINED && drained:
 		return true, nil
-	case state != proto.DataServerState_DATA_SERVER_STATE_DRAINING:
-	case commondataserver.IsDrained(name, namespaces):
+	case state == proto.DataServerState_DATA_SERVER_STATE_DRAINING && drained:
 		next = proto.DataServerState_DATA_SERVER_STATE_DRAINED
-	default:
+	case state == proto.DataServerState_DATA_SERVER_STATE_DRAINING:
 		return false, nil
+	default:
+		next = proto.DataServerState_DATA_SERVER_STATE_DRAINING
 	}
 
 	written := false

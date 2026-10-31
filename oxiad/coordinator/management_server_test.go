@@ -534,6 +534,34 @@ func TestManagementServerGetDataServerReportsLeftDataServer(t *testing.T) {
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }
 
+// A deleted data server is reported DRAINING by the runtime before its
+// controller stores it.
+func TestManagementServerGetDataServerReportsDrainingBeforeStored(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	storeDataServerStates(t, metadata, map[string]proto.DataServerState{
+		"removed": proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+	})
+	draining := &proto.DataServerStatus{State: proto.DataServerState_DATA_SERVER_STATE_DRAINING}
+	management := newReadyManagementServer(metadata, &testRuntime{
+		metadata: metadata,
+		statuses: map[string]*proto.DataServerStatus{"removed": draining, "unstored": draining},
+	})
+
+	for _, name := range []string{"removed", "unstored"} {
+		res, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: name})
+		require.NoError(t, err)
+		assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, res.GetDataServer().GetDataServerStatus().GetState())
+	}
+
+	res, err := management.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	require.NoError(t, err)
+	var names []string
+	for _, view := range res.GetDataServers() {
+		names = append(names, view.GetDataServer().GetIdentity().GetName())
+	}
+	assert.Equal(t, []string{"removed", "unstored"}, names)
+}
+
 func TestManagementServerGetDataServerStatusLoadError(t *testing.T) {
 	management := newReadyManagementServer(&failingMetadata{
 		Metadata:  newTestMetadata(t, &proto.ClusterConfiguration{}),
@@ -1247,6 +1275,28 @@ func TestManagementServerCreateDataServerAlreadyExists(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(err))
+}
+
+// A data server that the runtime drains can't be created again, also before
+// its controller stores it DRAINING.
+func TestManagementServerCreateDataServerRejectsDrainingDataServer(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	management := newReadyManagementServer(metadata, &testRuntime{
+		metadata: metadata,
+		statuses: map[string]*proto.DataServerStatus{
+			"draining": {State: proto.DataServerState_DATA_SERVER_STATE_DRAINING},
+		},
+	})
+
+	_, err := management.CreateDataServer(context.Background(), &proto.CreateDataServerRequest{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{Name: new("draining"), Public: "public-1", Internal: "internal-1"},
+		},
+	})
+	assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(err))
+	_, exists, err := metadata.GetDataServer("draining")
+	require.NoError(t, err)
+	assert.False(t, exists)
 }
 
 func TestManagementServerPatchDataServer(t *testing.T) {

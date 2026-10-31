@@ -150,7 +150,7 @@ type Metadata interface {
 
 	// CreateDataServer adds a data server to the configuration, or returns
 	// ErrAlreadyExists, also while a data server of the same name is
-	// draining.
+	// draining or drained.
 	CreateDataServer(dataServer *commonproto.DataServer) error
 	// PatchDataServer updates the addresses and the labels of a data server,
 	// and returns it, or ErrNotFound.

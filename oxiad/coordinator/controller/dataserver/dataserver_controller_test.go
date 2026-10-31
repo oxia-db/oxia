@@ -1211,6 +1211,32 @@ func TestDataServerControllerDrainCompletesStoredDrained(t *testing.T) {
 	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINED, nc.GetStatus().GetState())
 }
 
+// A DRAINED status left from an earlier drain doesn't complete a new one while
+// a shard references the data server: it is stored DRAINING again.
+func TestDataServerControllerDrainRestartsStaleDrained(t *testing.T) {
+	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
+	metadata := newTestMetadata(t)
+	storeShard(t, metadata, &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{addr}, EnsembleCaughtUp: true})
+	require.NoError(t, metadata.PatchDataServerStatus(addr.GetNameOrDefault(),
+		func(status *proto.DataServerStatus) (bool, error) {
+			status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINED
+			return true, nil
+		}))
+	nal := rpctest.NewNodeAvailabilityListener()
+	nc := NewController(context.Background(), &proto.DataServer{Identity: addr}, metadata,
+		rpctest.NewShardAssignmentsProvider(), nal, rpctest.NewRpcProvider(), "test-instance", time.Second,
+		testHealthPolicy)
+	defer func() { assert.NoError(t, nc.Close()) }()
+
+	nc.Drain()
+	assert.Eventually(t, func() bool {
+		stored, _, err := metadata.GetDataServerStatus(addr.GetNameOrDefault())
+		return err == nil && stored.UnsafeBorrow().GetState() == proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, nc.GetStatus().GetState())
+	assert.Empty(t, nal.DrainedEvents)
+}
+
 // A check that fails, or whose write finds the status changed since it was
 // read, is left to the next probe interval.
 func TestDataServerControllerDrainRetriesOnNextInterval(t *testing.T) {

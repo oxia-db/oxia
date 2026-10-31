@@ -901,9 +901,9 @@ func TestMetadataCreateDataServerRejectsNameOfLeftDataServer(t *testing.T) {
 	}
 
 	require.ErrorIs(t, metadata.CreateDataServer(dataServer("draining")), errs.ErrAlreadyExists)
-	require.NoError(t, metadata.CreateDataServer(dataServer("drained")))
+	require.ErrorIs(t, metadata.CreateDataServer(dataServer("drained")), errs.ErrAlreadyExists)
 	require.NoError(t, metadata.CreateDataServer(dataServer("running")))
-	require.Len(t, loaded(t, configProvider).Value.GetServers(), 4)
+	require.Len(t, loaded(t, configProvider).Value.GetServers(), 3)
 }
 
 // --- Helpers ---
