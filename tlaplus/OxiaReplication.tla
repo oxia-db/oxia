@@ -79,6 +79,10 @@ VARIABLES
 vars == << metadata_version, metadata, node_state, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
 view == << metadata_version, metadata, node_state, coordinator_state, confirmed, messages >>
 
+\* The values and the coordinators are interchangeable: a state checked once
+\* covers its permutations. Only sound for the safety properties
+symmetry == Permutations(Values) \union Permutations(Coordinators)
+
 (* -----------------------------------------
    TYPE DEFINITIONS
 
@@ -369,10 +373,9 @@ CoordinatorStops ==
   - An election increments the term of the shard.
 
   - The message passing module assumes all sent messages are
-    retried until abandoned by the sender. To simulate some nodes not
-    responding during an election, a non-deterministic subset of the fencing
-    ensemble that constitutes an majority is used, this simulates
-    message loss and dead nodes of a minority.
+    retried until abandoned by the sender. The coordinator elects a leader
+    once any majority responded, which simulates message loss and dead
+    nodes of a minority.
 
   - In this spec, updating the metadata in the metadata store and sending
     fencing requests is one atomic action. In an implementation, the
@@ -402,24 +405,22 @@ CoordinatorStartsElection ==
             /\ metadata.term < MaxTerms \* state space reduction
             /\ ostate.status = RUNNING
             /\ ostate.md_version = metadata_version
-            /\ \E visible_nodes \in SUBSET metadata.ensemble :
-                /\ IsQuorum(visible_nodes, metadata.ensemble)
-                \* state changes
-                /\ LET new_term      == ostate.md.term + 1
-                       new_metadata   == [metadata EXCEPT !.term        = new_term,
-                                                          !.shard_status = ELECTION,
-                                                          !.leader       = NIL]
-                       new_md_version == metadata_version + 1
-                   IN
-                       /\ metadata_version' = new_md_version
-                       /\ metadata' = new_metadata
-                       /\ coordinator_state' = [coordinator_state EXCEPT ![o].id                        = o,
-                                                                   ![o].md_version                = new_md_version,
-                                                                   ![o].md                        = new_metadata,
-                                                                   ![o].election_phase            = FENCING,
-                                                                   ![o].election_leader           = NIL,
-                                                                   ![o].election_fence_responses  = {}]
-                       /\ SendMessages(GetNewTermRequests(o, new_term, ostate.md.ensemble))
+            \* state changes
+            /\ LET new_term      == ostate.md.term + 1
+                   new_metadata   == [metadata EXCEPT !.term        = new_term,
+                                                      !.shard_status = ELECTION,
+                                                      !.leader       = NIL]
+                   new_md_version == metadata_version + 1
+               IN
+                   /\ metadata_version' = new_md_version
+                   /\ metadata' = new_metadata
+                   /\ coordinator_state' = [coordinator_state EXCEPT ![o].id                        = o,
+                                                               ![o].md_version                = new_md_version,
+                                                               ![o].md                        = new_metadata,
+                                                               ![o].election_phase            = FENCING,
+                                                               ![o].election_leader           = NIL,
+                                                               ![o].election_fence_responses  = {}]
+                   /\ SendMessages(GetNewTermRequests(o, new_term, ostate.md.ensemble))
     /\ UNCHANGED << node_state, confirmed, coordinator_stop_ctr >>
 
 
@@ -460,13 +461,14 @@ NodeHandlesFencingRequest ==
 
 
 (*---------------------------------------------------------
-  Coordinator handles fence response not yet reaching quorum
+  Coordinator handles a fence response during the fencing
 
-  The coordinator handles a fence response but has not reached
-  quorum yet so simply stores the response.
+  The coordinator stores the fence response. It may keep storing
+  responses after reaching the quorum, as the implementation waits
+  a grace period for the remaining nodes.
 ----------------------------------------------------------*)
 
-CoordinatorHandlesPreQuorumFencingResponse ==
+CoordinatorHandlesFencingResponse ==
     \* enabling conditions
     \E o \in Coordinators :
         LET ostate == coordinator_state[o]
@@ -478,17 +480,28 @@ CoordinatorHandlesPreQuorumFencingResponse ==
                 /\ ReceivableMessageOfType(messages, msg, NEW_TERM_RESPONSE)
                 /\ msg.coordinator = o
                 /\ ostate.md.term = msg.term
-                /\ LET fenced_res    == ostate.election_fence_responses \union { msg }
-                   IN /\ ~IsQuorum(fenced_res, ostate.md.ensemble)
-                      \* state changes
-                      /\ coordinator_state' = [coordinator_state EXCEPT ![o].election_fence_responses = fenced_res]
-                      /\ MessageProcessed(msg)
-                      /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
+                \* state changes
+                /\ coordinator_state' = [coordinator_state EXCEPT ![o].election_fence_responses = @ \union { msg }]
+                /\ MessageProcessed(msg)
+                /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  Coordinator elects a leader once the fence reaches quorum
+
+  The coordinator chooses the leader among the fenced nodes with
+  the highest head entry_id, which has every committed entry.
+
+  As the implementation, the coordinator persists the new leader
+  and that the shard is back in steady state before it notifies
+  the leader. The election is only able to complete if the
+  metadata hasn't been modified since the beginning of the
+  election. Any concurrent change will cause this election to fail.
+----------------------------------------------------------*)
 
 FollowerResponse(responses, f) ==
     CHOOSE r \in responses : r.node = f
 
-GetFollowerMap(ostate, leader, responses, final_ensemble) ==
+GetFollowerMap(leader, responses, final_ensemble) ==
     LET followers == { f \in final_ensemble :
                         /\ f # leader
                         /\ \E r \in responses : r.node = f }
@@ -505,44 +518,45 @@ GetBecomeLeaderRequest(n, term, o, follower_map, rep_factor) ==
      rep_factor   |-> rep_factor,
      term        |-> term]
 
-WinnerResponse(responses, final_ensemble) ==
-    CHOOSE r1 \in responses :
-        /\ r1.node \in final_ensemble
-        /\ ~\E r2 \in responses :
-            /\ IsHigherId(r2.head_entry_id, r1.head_entry_id)
-            /\ r2.node \in final_ensemble
+\* The responses with the highest head entry_id
+HighestResponses(responses) ==
+    { r1 \in responses :
+        ~\E r2 \in responses : IsHigherId(r2.head_entry_id, r1.head_entry_id) }
 
-CoordinatorHandlesQuorumFencingResponse ==
+CoordinatorElectsLeader ==
     \* enabling conditions
     \E o \in Coordinators :
-        LET ostate == coordinator_state[o]
+        LET ostate    == coordinator_state[o]
+            md        == ostate.md
+            responses == { r \in ostate.election_fence_responses : r.node \in md.ensemble }
         IN
             /\ ostate.status = RUNNING
-            /\ ostate.md.shard_status = ELECTION
+            /\ md.shard_status = ELECTION
             /\ ostate.election_phase = FENCING
-            /\ \E msg \in DOMAIN messages :
-                /\ ReceivableMessageOfType(messages, msg, NEW_TERM_RESPONSE)
-                /\ msg.coordinator = o
-                /\ ostate.md.term = msg.term
-                /\ LET fenced_res          == ostate.election_fence_responses \union { msg }
-                       max_head_res        == WinnerResponse(fenced_res, metadata.ensemble)
-                       new_leader          == max_head_res.node
-                       last_term_entry_id == max_head_res.head_entry_id
-                       follower_map        == GetFollowerMap(ostate, new_leader, fenced_res, metadata.ensemble)
-                   IN
-                      /\ IsQuorum(fenced_res, metadata.ensemble)
-                      \* state changes
-                      /\ coordinator_state' = [coordinator_state EXCEPT ![o] =
-                                                [@ EXCEPT !.election_phase           = NOTIFY_LEADER,
-                                                          !.election_leader          = new_leader,
-                                                          !.election_fence_responses = fenced_res]]
-                      /\ ProcessedOneAndSendAnother(msg,
-                                                    GetBecomeLeaderRequest(new_leader,
-                                                                           ostate.md.term,
-                                                                           o,
-                                                                           follower_map,
-                                                                           ostate.md.rep_factor))
-                      /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
+            /\ metadata_version = ostate.md_version
+            /\ IsQuorum(responses, md.ensemble)
+            \* the implementation chooses any of them
+            /\ \E leader_res \in HighestResponses(responses) :
+                LET new_leader   == leader_res.node
+                    new_md       == [md EXCEPT !.shard_status = STEADY_STATE,
+                                               !.leader       = new_leader,
+                                               !.rep_factor   = Cardinality(md.ensemble)]
+                    follower_map == GetFollowerMap(new_leader, responses, md.ensemble)
+                IN
+                    \* state changes
+                    /\ metadata' = new_md
+                    /\ metadata_version' = metadata_version + 1
+                    /\ coordinator_state' = [coordinator_state EXCEPT ![o] =
+                                                [@ EXCEPT !.election_phase  = NOTIFY_LEADER,
+                                                          !.election_leader = new_leader,
+                                                          !.md_version      = metadata_version + 1,
+                                                          !.md              = new_md]]
+                    /\ SendMessage(GetBecomeLeaderRequest(new_leader,
+                                                          md.term,
+                                                          o,
+                                                          follower_map,
+                                                          new_md.rep_factor))
+                    /\ UNCHANGED << node_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Node handles a Become Leader request
@@ -649,13 +663,7 @@ NodeHandlesBecomeLeaderRequest ==
   Coordinator handles Become Leader response
 
   The election is completed on receiving the Become Leader
-  response. The coordinator updates the metadata with the
-  new leader, the ensemble and that the shard is now back
-  in steady state.
-
-  The election is only able to complete if the metadata
-  hasn't been modified since the beginning of the election.
-  Any concurrent change will cause this election to fail.
+  response. The metadata already holds the new leader.
 
   Key points:
   - A minority of followers may still not have been fenced yet.
@@ -670,24 +678,15 @@ CoordinatorHandlesBecomeLeaderResponse ==
         LET ostate == coordinator_state[o]
         IN
             /\ ostate.status = RUNNING
-            /\ ostate.md.shard_status = ELECTION
             /\ \E msg \in DOMAIN messages :
                 /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_RESPONSE)
                 /\ msg.coordinator = o
                 /\ ostate.election_phase = NOTIFY_LEADER
                 /\ ostate.md.term = msg.term
-                /\ metadata_version = ostate.md_version
                 \* state changes
-                /\ LET new_md   == [ostate.md EXCEPT !.shard_status = STEADY_STATE,
-                                                     !.leader       = msg.node,
-                                                     !.rep_factor   = Cardinality(metadata.ensemble)]
-                   IN /\ coordinator_state' = [coordinator_state EXCEPT ![o].election_phase = LEADER_ELECTED,
-                                                                  ![o].md_version     = metadata_version + 1,
-                                                                  ![o].md             = new_md]
-                      /\ metadata' = new_md
-                      /\ metadata_version' = metadata_version + 1
-                      /\ MessageProcessed(msg)
-                      /\ UNCHANGED << node_state, confirmed, coordinator_stop_ctr >>
+                /\ coordinator_state' = [coordinator_state EXCEPT ![o].election_phase = LEADER_ELECTED]
+                /\ MessageProcessed(msg)
+                /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Coordinator handles post quorum fence response
@@ -1097,8 +1096,8 @@ Next ==
     \/ CoordinatorStops                              \* a running coordinator stops, losing all local state
     \/ CoordinatorStartsElection                     \* election starts, fencing requests sent
     \/ NodeHandlesFencingRequest                  \* node fences itself, responds with head entry_id
-    \/ CoordinatorHandlesPreQuorumFencingResponse    \* coordinator handles fence response, not reached quorum yet
-    \/ CoordinatorHandlesQuorumFencingResponse       \* coordinator handles fence response, reaching quorum, choosing leader
+    \/ CoordinatorHandlesFencingResponse             \* coordinator handles fence response, during the fencing
+    \/ CoordinatorElectsLeader                       \* fence reached quorum, coordinator chooses and persists the leader
     \/ NodeHandlesBecomeLeaderRequest             \* new leader receives notification of leadership
     \/ CoordinatorHandlesBecomeLeaderResponse        \* coordinator handles new leader confirmation
     \/ NodeHandlesTruncateRequest                 \* follower truncates it log to safe point

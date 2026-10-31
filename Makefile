@@ -153,14 +153,22 @@ proto_quality: proto_format proto_lint
 fetch-tla-tools:
 	mkdir -p tlaplus/.tools
 	cd tlaplus/.tools && \
-		wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar && \
-		wget https://github.com/tlaplus/CommunityModules/releases/download/202211012231/CommunityModules-deps.jar
+		curl -fsSLO https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar && \
+		curl -fsSLO https://github.com/tlaplus/CommunityModules/releases/download/202211012231/CommunityModules-deps.jar
 
 
+# The state space is too large to check exhaustively: simulate random traces
 tla:
 	cd tlaplus && \
 		java -XX:+UseParallelGC -DTLA-Library=.tools/CommunityModules-deps.jar -jar .tools/tla2tools.jar \
-			-deadlock -workers auto\
+			-deadlock -workers auto -simulate num=20000 -depth 80 \
+			OxiaReplication.tla
+
+# Checks every state of a small model, in about 30 minutes
+tla-full:
+	cd tlaplus && \
+		java -XX:+UseParallelGC -DTLA-Library=.tools/CommunityModules-deps.jar -jar .tools/tla2tools.jar \
+			-deadlock -workers auto -checkpoint 0 -config OxiaReplicationSmall.cfg \
 			OxiaReplication.tla
 
 license-check:
