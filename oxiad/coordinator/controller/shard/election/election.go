@@ -79,8 +79,8 @@ import (
 //	  - fence the members of the ensemble that missed the fence, and add them as
 //	    followers
 //	  - wait for a majority of the ensemble to commit the head entry of the
-//	    leader (see IsQuorumCaughtUp), then for all of it, and persist
-//	    ensemble_caught_up, which the new term reset
+//	    leader (see IsQuorumCaughtUp), then for all of it (see
+//	    IsEnsembleCaughtUp)
 //
 // A failed step (x) fails the election, and the caller retries with a new
 // election from the current shard status, except after
@@ -140,6 +140,13 @@ type Election interface {
 	// called Start.
 	TryFinishEnsembleChange() error
 
+	// TryPersistEnsembleCaughtUp persists ensemble_caught_up, which the new term
+	// reset, once every member of the ensemble committed the head entry of the
+	// leader at the election, if the shard is still in the term of the
+	// election. It does nothing otherwise, and only fails if the write fails.
+	// It is called from the goroutine that called Start.
+	TryPersistEnsembleCaughtUp() error
+
 	// IsQuorumCaughtUp reports whether a majority of the ensemble, the leader
 	// included, committed the head entry of the leader at the election: any
 	// fence quorum of a later election includes one of them. It stays false
@@ -147,8 +154,7 @@ type Election interface {
 	IsQuorumCaughtUp() bool
 
 	// IsEnsembleCaughtUp reports whether every member of the ensemble committed
-	// the head entry of the leader at the election, as ensemble_caught_up does
-	// once persisted. It stays false once the election is canceled. Any
+	// the head entry of the leader at the election. It stays false once the election is canceled. Any
 	// goroutine can call it.
 	IsEnsembleCaughtUp() bool
 }

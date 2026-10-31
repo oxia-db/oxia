@@ -365,13 +365,11 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 // ensureEnsembleCaughtUp waits for every follower of the ensemble to commit
 // the head entry of the leader, until the election is canceled. It sets
 // quorumCaughtUp once a majority of the ensemble, the leader included, did,
-// and ensembleCaughtUp once all of them did, then persists
-// ensemble_caught_up, unless a later election started.
+// and ensembleCaughtUp once all of them did.
 //
 //nolint:revive
 func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	leaderEntry *proto.EntryId) error {
-	term := e.meta.Term
 	ctx, cancel := context.WithCancel(e.ctx)
 	waitGroup := sync.WaitGroup{}
 	defer waitGroup.Wait()
@@ -445,19 +443,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 		}
 	}
 	e.ensembleCaughtUp.Store(true)
-	return backoff.RetryNotify(func() error {
-		return e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
-			// A later election may have started since
-			if current.Term != term {
-				return false, nil
-			}
-			current.EnsembleCaughtUp = true
-			return true, nil
-		})
-	}, oxiatime.NewBackOff(e.ctx), func(err error, duration time.Duration) {
-		e.logger.Warn("Failed to persist the catch-up of the ensemble, retrying later",
-			slog.Any("error", err), slog.Duration("retry-after", duration))
-	})
+	return nil
 }
 
 func (e *election) fenceNewTermAndAddFollower(ctx context.Context, term int64, options *proto.NewTermOptions,
@@ -808,6 +794,25 @@ func (e *election) TryFinishEnsembleChange() error {
 	}
 	// Finished, or left to the election of a later term
 	e.meta.EnsembleChange = nil
+	return nil
+}
+
+func (e *election) TryPersistEnsembleCaughtUp() error {
+	if e.meta.EnsembleCaughtUp || !e.ensembleCaughtUp.Load() {
+		return nil
+	}
+	if err := e.metadataStore.PatchShardStatus(e.namespace, e.shard, func(current *proto.ShardMetadata) (bool, error) {
+		// A later election may have started since
+		if current.Term != e.meta.Term {
+			return false, nil
+		}
+		current.EnsembleCaughtUp = true
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	// Persisted, or left to the election of a later term
+	e.meta.EnsembleCaughtUp = true
 	return nil
 }
 
