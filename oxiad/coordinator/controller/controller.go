@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"github.com/oxia-db/oxia/common/channel"
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 )
@@ -58,6 +59,14 @@ type Tickable interface {
 	Tick() error
 }
 
-// Signal asks an event loop to tick a Tickable. It is sent without blocking,
-// to a channel with a buffer of one: a signal already pending covers the next.
+// Signal asks an event loop to tick a Tickable.
 type Signal struct{}
+
+// Signaler is the channel, with a buffer of one, that the owner of a Tickable
+// creates and receives from in its event loop, and passes to the Tickable.
+type Signaler chan<- Signal
+
+// Signal sends a Signal without blocking: a signal already pending covers it.
+func (s Signaler) Signal() {
+	channel.PushNoBlock(s, Signal{})
+}

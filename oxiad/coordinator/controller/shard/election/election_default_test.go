@@ -729,7 +729,7 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	e := newTestElection(t, metadata, rpc, shard, shardMeta)
 	tick := make(chan controllerapi.Signal, 1)
-	e.tick = tick
+	e.signaler = tick
 
 	_, err := e.Start()
 	require.NoError(t, err)
