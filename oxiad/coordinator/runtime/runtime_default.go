@@ -630,7 +630,7 @@ func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.Namesp
 	servers := make(map[string]*proto.DataServerIdentity)
 	for _, borrowedNamespace := range status {
 		for _, shard := range borrowedNamespace.UnsafeBorrow().GetShards() {
-			for server := range sharding.ShardDataServers(shard) {
+			for server := range dataserver.ShardDataServers(shard) {
 				servers[server.GetNameOrDefault()] = server
 			}
 		}

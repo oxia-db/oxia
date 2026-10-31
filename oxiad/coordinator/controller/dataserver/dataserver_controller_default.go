@@ -29,9 +29,9 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	commondataserver "github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
-	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -307,7 +307,7 @@ func (n *controller) drain() (bool, error) {
 func isDrained(name string, namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus]) bool {
 	for _, namespace := range namespaces {
 		for _, shard := range namespace.UnsafeBorrow().GetShards() {
-			for server := range sharding.ShardDataServers(shard) {
+			for server := range commondataserver.ShardDataServers(shard) {
 				if server.GetNameOrDefault() == name {
 					return false
 				}

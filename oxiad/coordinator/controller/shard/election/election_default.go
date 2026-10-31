@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/async"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/entry"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/quorum"
@@ -116,7 +117,7 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 	// Capped, so that an append to the ensemble doesn't overwrite from
 	ensemble = refreshed[:len(meta.Ensemble):len(meta.Ensemble)]
 	if meta.EnsembleChange != nil {
-		idx := slices.IndexFunc(ensemble, sharding.MatchDataServer(meta.EnsembleChange.To))
+		idx := slices.IndexFunc(ensemble, dataserver.MatchDataServer(meta.EnsembleChange.To))
 		if idx < 0 {
 			return nil, nil, fmt.Errorf("%w: the pending change of the ensemble adds %q, which isn't a member of it",
 				errs.ErrShardNotElectable, meta.EnsembleChange.To.GetNameOrDefault())
@@ -146,7 +147,7 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 	majority := quorum.Majority(len(ensemble))
 	oldEnsembleQuorum := quorum.MajorityOverlap(len(ensemble))
 	inOldEnsemble := func(server *proto.DataServerIdentity) bool {
-		return change == nil || !sharding.MatchDataServer(change.To)(server)
+		return change == nil || !dataserver.MatchDataServer(change.To)(server)
 	}
 
 	// Use a new context, so we can cancel the pending requests
@@ -291,13 +292,13 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 		if _, retained := retainedHeads[mostUpToDate[0]]; retained {
 			e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
 		} else if change := e.meta.EnsembleChange; change != nil &&
-			slices.ContainsFunc(mostUpToDate, sharding.MatchDataServer(change.To)) {
+			slices.ContainsFunc(mostUpToDate, dataserver.MatchDataServer(change.To)) {
 			// To has every committed entry: with it, the ensemble has each of them on a
 			// majority without from
 			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
 				slog.Any("from", change.From), slog.Any("to", change.To))
 			e.meta.EnsembleChange = nil
-			e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
+			e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 		}
 	}
 	namespaces, err := e.metadataStore.ListNamespaceStatus()
@@ -333,9 +334,9 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 		return server.GetNameOrDefault() == change.To.GetNameOrDefault()
 	})
 	retainedHeads.Move(retained, ensembleHeads)
-	e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, sharding.MatchDataServer(change.To)), retained)
+	e.meta.Ensemble = append(slices.DeleteFunc(e.meta.Ensemble, dataserver.MatchDataServer(change.To)), retained)
 	e.meta.EnsembleChange = nil
-	e.meta.PendingDeleteShardNodes = sharding.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
+	e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 }
 
 func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
@@ -550,14 +551,14 @@ func (e *election) prepareIfChangeEnsemble(mutShardMeta *proto.ShardMetadata) {
 	}
 	from := e.changeEnsemble.From
 	to := e.changeEnsemble.To
-	if slices.ContainsFunc(mutShardMeta.Ensemble, sharding.MatchDataServer(to)) {
+	if slices.ContainsFunc(mutShardMeta.Ensemble, dataserver.MatchDataServer(to)) {
 		return
 	}
 	// A dataServer might get re-added to the ensemble after it was swapped out and be in
 	// pending delete state. We don't want a background task to attempt deletion anymore
 	mutShardMeta.PendingDeleteShardNodes = slices.DeleteFunc(mutShardMeta.PendingDeleteShardNodes,
-		sharding.MatchDataServer(to))
-	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, sharding.MatchDataServer(from))
+		dataserver.MatchDataServer(to))
+	mutShardMeta.Ensemble = slices.DeleteFunc(mutShardMeta.Ensemble, dataserver.MatchDataServer(from))
 	mutShardMeta.Ensemble = append(mutShardMeta.Ensemble, to)
 	mutShardMeta.EnsembleChange = &proto.EnsembleChangeMetadata{From: from, To: to}
 	e.logger.Info(
@@ -785,7 +786,7 @@ func (e *election) Tick() error {
 		}
 		if finishChange && current.EnsembleChange != nil {
 			finished = current.EnsembleChange
-			current.PendingDeleteShardNodes = sharding.AddDataServer(current.PendingDeleteShardNodes, finished.From)
+			current.PendingDeleteShardNodes = dataserver.AddDataServer(current.PendingDeleteShardNodes, finished.From)
 			current.EnsembleChange = nil
 		}
 		current.EnsembleCaughtUp = current.EnsembleCaughtUp || markCaughtUp
