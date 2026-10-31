@@ -520,6 +520,35 @@ func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 	assertShardEnsemble(t, e.meta.Ensemble, s1, s2, s3)
 }
 
+// The election elects the preferred leader when it is among the most
+// up-to-date members, and otherwise chooses as usual: a member that is behind
+// may lack committed entries.
+func TestElectionChooseLeaderPrefersAnUpToDateLeader(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	heads := sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}}
+	for _, test := range []struct {
+		preferred string
+		leaders   []*proto.DataServerIdentity
+	}{
+		{"s2", []*proto.DataServerIdentity{s2}},
+		{"s3", []*proto.DataServerIdentity{s1, s2}},
+	} {
+		e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{
+			Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		})
+		e.preferredLeader = test.preferred
+
+		leader, _, err := e.chooseLeader(heads, nil)
+
+		require.NoError(t, err)
+		assert.Contains(t, test.leaders, leader, test.preferred)
+	}
+}
+
 // The election retries an attempt whose leader can't be selected, or whose
 // leader can't be persisted.
 func TestElectionStartReturnsLeaderSelectionErrors(t *testing.T) {
@@ -716,7 +745,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
 	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
+		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "", nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -762,7 +791,7 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 			rpc.GetNode(s1).BecomeLeaderResponse(nil)
 			e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
+				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "", nil,
 				metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -873,7 +902,7 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
 	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-		rpc, constant.DefaultNamespace, shard, shardMeta, nil, nil,
+		rpc, constant.DefaultNamespace, shard, shardMeta, nil, "", nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",

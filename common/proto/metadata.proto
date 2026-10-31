@@ -89,6 +89,41 @@ message LoadBalancer {
   string quarantine_time = 2;
 }
 
+// SchedulerPolicy tunes how the scheduler moves the replicas of the shards. A
+// field left unset takes its default.
+message SchedulerPolicy {
+  // The time between two rounds when nothing triggers one. Default 30s.
+  // @gotags: yaml:"interval,omitempty"
+  string interval = 1;
+  // The share of the mean load that the gap between two data servers must
+  // reach before a replica moves, at least 2 replicas. Default 0.05.
+  // @gotags: yaml:"tolerance,omitempty"
+  double tolerance = 2;
+  // The moves in flight. Default 2 per data server.
+  // @gotags: yaml:"maxMoves,omitempty"
+  uint32 max_moves = 3;
+  // The moves in flight onto each data server. Default 1.
+  // @gotags: yaml:"maxMovesPerDataServer,omitempty"
+  uint32 max_moves_per_data_server = 4;
+  // The moves in flight in each namespace. Default 2.
+  // @gotags: yaml:"maxMovesPerNamespace,omitempty"
+  uint32 max_moves_per_namespace = 5;
+  // How long a move may run before the scheduler drops it and backs its
+  // shard off. Default 5m.
+  // @gotags: yaml:"moveTimeout,omitempty"
+  string move_timeout = 6;
+  // How long the scheduler waits before it moves a shard again after a failed
+  // move. The wait doubles after each failure, up to the move timeout.
+  // Default 10s.
+  // @gotags: yaml:"moveBackoff,omitempty"
+  string move_backoff = 7;
+  // How long a data server must have been running before it takes a replica
+  // or a leader: moving them onto a data server that flaps turns one failure
+  // into a loop of moves. Default 5m.
+  // @gotags: yaml:"stableTime,omitempty"
+  string stable_time = 8;
+}
+
 message AutoSplitConfig {
   // @gotags: yaml:"enabled,omitempty"
   bool enabled = 1;
@@ -121,6 +156,8 @@ message ClusterConfiguration {
   repeated Coordinator coordinators = 6;
   // @gotags: yaml:"autoSplit,omitempty"
   AutoSplitConfig auto_split = 7;
+  // @gotags: yaml:"schedulerPolicy,omitempty"
+  SchedulerPolicy scheduler_policy = 8;
 }
 
 message HashRange {

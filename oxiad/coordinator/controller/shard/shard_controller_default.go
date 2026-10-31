@@ -267,7 +267,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		// Only an election finishes a pending change: the catch-up of the one
 		// before the restart is lost
 		initShardMeta.GetEnsembleChange() != nil:
-		_, _ = s.electLeader(initShardMeta, nil)
+		_, _ = s.electLeader(initShardMeta, nil, "")
 	default:
 		s.logger.Info(
 			"There is already a data server marked as leader on the shard, verifying",
@@ -275,7 +275,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 		)
 
 		if !s.verifyCurrentEnsemble(initShardMeta) {
-			_, _ = s.electLeader(initShardMeta, nil)
+			_, _ = s.electLeader(initShardMeta, nil, "")
 		} else {
 			s.Refresh()
 		}
@@ -374,7 +374,7 @@ func (s *controller) handleDataServerFailureWithRetries(failedDataServer *proto.
 			"Detected failure on shard leader",
 			slog.Any("leader", failedDataServer.GetNameOrDefault()),
 		)
-		_, _ = s.electLeader(shardMeta, nil)
+		_, _ = s.electLeader(shardMeta, nil, "")
 	}
 }
 
@@ -461,7 +461,7 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 		slog.Any("pinned-features", pinned),
 		slog.Any("features", features),
 	)
-	_, _ = s.electLeader(shardMeta, nil)
+	_, _ = s.electLeader(shardMeta, nil, "")
 }
 
 // termFeatures returns the features pinned by the current term of the shard,
@@ -606,7 +606,7 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while starting election: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-	leader, err := s.electLeader(shardMeta, nil)
+	leader, err := s.electLeader(shardMeta, nil, electionAction.PreferredLeader)
 	if err != nil {
 		electionAction.Error(errors.Wrap(errs.ErrUnavailable, "the election failed to elect a leader"))
 		return
@@ -615,16 +615,16 @@ func (s *controller) handleElectionWithRetries(electionAction *action.ElectionAc
 }
 
 // electLeader runs a new election of the shard, from shardMeta, in place of the
-// current one. If it fails, a new election is queued, from the stored shard
+// current one, that elects preferredLeader if it can. If it fails, a new election is queued, from the stored shard
 // status, unless the shard can't be elected.
 func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction) (*proto.DataServerIdentity, error) {
+	changeEnsembleAction *action.ChangeEnsembleAction, preferredLeader string) (*proto.DataServerIdentity, error) {
 	if s.currentElection != nil {
 		s.currentElection.Cancel()
 	}
 	s.currentElection = election.New(s.ctx, s.logger, s.eventListener,
 		s.metadataStore, s.featureSupplier, s.leaderSelector,
-		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, s.requiredFeatures,
+		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, preferredLeader, s.requiredFeatures,
 		s.leaderElectionLatencyHistogram,
 		s.newTermQuorumLatencyHistogram,
 		s.becomeLeaderLatencyHistogram)
@@ -805,7 +805,7 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 		return
 	}
 	// todo: support optimized ensemble change to avoid start a new election
-	leader, err := s.electLeader(shardMeta, changeEnsembleAction)
+	leader, err := s.electLeader(shardMeta, changeEnsembleAction, "")
 	if err == nil && leader.GetNameOrDefault() == changeEnsembleAction.From.GetNameOrDefault() {
 		changeEnsembleAction.Error(fmt.Errorf("%w: data server %q is ahead of the new ensemble, the change is undone",
 			errs.ErrFailedPrecondition, leader.GetNameOrDefault()))

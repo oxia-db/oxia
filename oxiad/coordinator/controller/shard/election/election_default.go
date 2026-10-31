@@ -58,17 +58,19 @@ const quorumFencingGracePeriod = 100 * time.Millisecond
 var _ Election = &election{}
 
 type election struct {
-	logger           *slog.Logger
-	ctx              context.Context
-	ctxCancel        context.CancelFunc
-	wg               sync.WaitGroup
-	metadataStore    coordmetadata.Metadata
-	leaderSelector   selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
-	eventListener    controllerapi.ShardEventListener
-	provider         rpc.ControllerRPCProvider
-	namespace        string
-	shard            int64
-	changeEnsemble   *action.ChangeEnsembleAction
+	logger         *slog.Logger
+	ctx            context.Context
+	ctxCancel      context.CancelFunc
+	wg             sync.WaitGroup
+	metadataStore  coordmetadata.Metadata
+	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
+	eventListener  controllerapi.ShardEventListener
+	provider       rpc.ControllerRPCProvider
+	namespace      string
+	shard          int64
+	changeEnsemble *action.ChangeEnsembleAction
+	// preferredLeader is elected if it is among the most up-to-date members.
+	preferredLeader  string
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
 
@@ -301,7 +303,11 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	if err != nil {
 		return nil, nil, err
 	}
-	if leader, err = e.leaderSelector.Select(&leaderselector.Context{
+	if i := slices.IndexFunc(mostUpToDate, func(server *proto.DataServerIdentity) bool {
+		return server.GetNameOrDefault() == e.preferredLeader
+	}); i >= 0 {
+		leader = mostUpToDate[i]
+	} else if leader, err = e.leaderSelector.Select(&leaderselector.Context{
 		Candidates: mostUpToDate,
 		Namespaces: namespaces,
 	}); err != nil {
@@ -793,8 +799,9 @@ func (e *election) Cancel() {
 	e.logger.Info("stopped the election", slog.Any("term", e.meta.GetTerm()))
 }
 
-// New returns an election of the shard. requiredFeatures are pinned in its
-// term (see feature.EnabledError).
+// New returns an election of the shard. It elects preferredLeader if it is
+// among the most up-to-date members, unless it is empty. requiredFeatures are
+// pinned in its term (see feature.EnabledError).
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
@@ -803,7 +810,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction, requiredFeatures []proto.Feature,
+	changeEnsembleAction *action.ChangeEnsembleAction, preferredLeader string, requiredFeatures []proto.Feature,
 	leaderElectionLatencyHistogram metric.LatencyHistogram, newTermQuorumLatencyHistogram metric.LatencyHistogram,
 	becomeLeaderLatencyHistogram metric.LatencyHistogram) Election {
 	current, cancelFunc := context.WithCancel(ctx)
@@ -821,6 +828,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		shard:                          shard,
 		meta:                           gproto.CloneOf(shardMetadata),
 		changeEnsemble:                 changeEnsembleAction,
+		preferredLeader:                preferredLeader,
 		requiredFeatures:               requiredFeatures,
 		leaderElectionLatencyHistogram: leaderElectionLatencyHistogram,
 		newTermQuorumLatencyHistogram:  newTermQuorumLatencyHistogram,

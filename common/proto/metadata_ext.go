@@ -289,6 +289,10 @@ func (cc *ClusterConfiguration) Validate() error {
 		return err
 	}
 
+	if err := cc.GetSchedulerPolicy().Validate(); err != nil {
+		return fmt.Errorf("cluster configuration: invalid schedulerPolicy: %w", err)
+	}
+
 	return cc.validateCoordinators()
 }
 

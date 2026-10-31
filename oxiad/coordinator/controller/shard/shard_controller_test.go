@@ -290,7 +290,7 @@ func TestControllerElectLeaderReturnsNewLeader(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
-	newLeader, err := s.electLeader(shardMeta, nil)
+	newLeader, err := s.electLeader(shardMeta, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, newLeader)
 	assert.True(t, gproto.Equal(s1, newLeader))
@@ -336,7 +336,7 @@ func TestControllerElectLeaderQueuesElectionOnFailure(t *testing.T) {
 
 	rpc.GetNode(s1).NewTermResponse(0, 0, errors.New("unreachable"))
 	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
-	leader, err := s.electLeader(shardMeta, nil)
+	leader, err := s.electLeader(shardMeta, nil, "")
 	assert.ErrorContains(t, err, "unreachable")
 	assert.Nil(t, leader)
 
@@ -4238,7 +4238,7 @@ func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.C
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		leader, _ := s.electLeader(shardMeta, nil)
+		leader, _ := s.electLeader(shardMeta, nil, "")
 		elected <- leader
 	}()
 	t.Cleanup(func() {
