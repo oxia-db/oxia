@@ -363,12 +363,6 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	return nil
 }
 
-// ensureEnsembleCaughtUp waits for every follower of the ensemble to commit
-// the head entry of the leader, until the election is canceled. It sets
-// quorumCaughtUp once a majority of the ensemble, the leader included, did,
-// and ensembleCaughtUp once all of them did, and posts to the mailbox each
-// time.
-//
 //nolint:revive
 func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, leader *proto.DataServerIdentity,
 	leaderEntry *proto.EntryId) error {
