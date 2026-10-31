@@ -886,7 +886,9 @@ func (s *controller) handlePeriodicTasks() {
 		"bug: shard metadata missing while handling periodic tasks: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
 
-	if len(shardMeta.PendingDeleteShardNodes) > 0 {
+	// A data server removed from the ensemble keeps its copy until every member
+	// of the ensemble has each entry it holds
+	if len(shardMeta.PendingDeleteShardNodes) > 0 && shardMeta.EnsembleCaughtUp {
 		if err := s.handlePendingDeleteShard(shardMeta); err != nil {
 			s.logger.Warn("Failed to handle pending delete shard", slog.Any("error", err))
 		}

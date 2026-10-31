@@ -2352,9 +2352,10 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	pendingDeleteNode := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
 
 	shardMeta := &proto.ShardMetadata{
-		Status: proto.ShardStatusSteadyState,
-		Term:   1,
-		Leader: &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"},
+		Status:           proto.ShardStatusSteadyState,
+		Term:             1,
+		Leader:           &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"},
+		EnsembleCaughtUp: true,
 	}
 	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
 		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
@@ -2401,6 +2402,46 @@ func TestControllerHandlePeriodicTasksPersistsOnlyDirtyState(t *testing.T) {
 	borrowedAfter, _, err = metadata.GetShardStatus(constant.DefaultNamespace, shard)
 	require.NoError(t, err)
 	assert.Same(t, borrowedBefore.UnsafeBorrow(), borrowedAfter.UnsafeBorrow())
+}
+
+// A data server removed from the ensemble keeps its copy of the shard until
+// every member of the ensemble caught up.
+func TestControllerHandlePeriodicTasksKeepsPendingDeletionUntilEnsembleCaughtUp(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	removed := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	rpc := rpctest.NewRpcProvider()
+	shardMeta := &proto.ShardMetadata{
+		Status:                  proto.ShardStatusSteadyState,
+		Term:                    1,
+		Leader:                  s1,
+		Ensemble:                []*proto.DataServerIdentity{s1},
+		PendingDeleteShardNodes: []*proto.DataServerIdentity{removed},
+	}
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: shardMeta},
+	}))
+	s := &controller{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadataStore: metadata,
+		rpc:           rpc,
+		ctx:           t.Context(),
+		logger:        slog.Default(),
+	}
+	rpc.GetNode(removed).DeleteShardResponse(nil)
+
+	s.handlePeriodicTasks()
+	assertShardEnsemble(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).PendingDeleteShardNodes,
+		removed)
+
+	caughtUp := gproto.CloneOf(shardMeta)
+	caughtUp.EnsembleCaughtUp = true
+	require.NoError(t, metadata.UpdateShardStatus(constant.DefaultNamespace, shard, caughtUp))
+	s.handlePeriodicTasks()
+	rpc.GetNode(removed).ExpectDeleteShardRequest(t, shard, shardMeta.Term)
+	assert.Empty(t, requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).PendingDeleteShardNodes)
 }
 
 // A failed tick of the election posts to the mailbox again, and the event loop
@@ -2530,6 +2571,7 @@ func TestControllerHandlePeriodicTasksKeepsNamespaceDeletion(t *testing.T) {
 			Leader:                  s1,
 			Ensemble:                []*proto.DataServerIdentity{s1, s2, s3},
 			PendingDeleteShardNodes: []*proto.DataServerIdentity{removed},
+			EnsembleCaughtUp:        true,
 		}},
 	}))
 
@@ -2583,6 +2625,7 @@ func TestControllerHandlePeriodicTasksKeepsSplitUpdates(t *testing.T) {
 			}
 			updateParent(func(parent *proto.ShardMetadata) {
 				parent.PendingDeleteShardNodes = []*proto.DataServerIdentity{removed}
+				parent.EnsembleCaughtUp = true
 			})
 
 			assertPeriodicTasksKeepUpdate(t, metadata, 0, removed, func() { updateParent(test.update) })
