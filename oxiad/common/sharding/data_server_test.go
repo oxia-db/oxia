@@ -43,3 +43,30 @@ func TestAddDataServerSkipsTheSameDataServer(t *testing.T) {
 	servers = AddDataServer(servers, s2)
 	assert.Equal(t, []*proto.DataServerIdentity{s1, s2}, servers)
 }
+
+func TestShardDataServersYieldsEveryReference(t *testing.T) {
+	server := func(name string) *proto.DataServerIdentity { return &proto.DataServerIdentity{Name: &name} }
+	shard := &proto.ShardMetadata{
+		Leader:                  server("leader"),
+		Ensemble:                []*proto.DataServerIdentity{server("e1"), server("e2")},
+		EnsembleChange:          &proto.EnsembleChangeMetadata{From: server("from"), To: server("to")},
+		PendingDeleteShardNodes: []*proto.DataServerIdentity{server("pending")},
+	}
+
+	var names []string
+	for s := range ShardDataServers(shard) {
+		names = append(names, s.GetNameOrDefault())
+	}
+	assert.ElementsMatch(t, []string{"leader", "from", "to", "e1", "e2", "pending"}, names)
+
+	for s := range ShardDataServers(shard) {
+		assert.Equal(t, "leader", s.GetNameOrDefault())
+		break
+	}
+}
+
+func TestShardDataServersSkipsMissingReferences(t *testing.T) {
+	for range ShardDataServers(&proto.ShardMetadata{}) {
+		assert.Fail(t, "a shard without data servers yields none")
+	}
+}

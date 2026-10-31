@@ -485,6 +485,21 @@ func TestMetadataReadsReturnStatusLoadError(t *testing.T) {
 			require.False(t, exists)
 			return err
 		}},
+		{"ListDataServerStatus", func(_ *testing.T, metadata Metadata) error {
+			_, err := metadata.ListDataServerStatus()
+			return err
+		}},
+		{"GetDataServerStatus", func(t *testing.T, metadata Metadata) error {
+			t.Helper()
+			_, exists, err := metadata.GetDataServerStatus("s1")
+			require.False(t, exists)
+			return err
+		}},
+		{"CreateDataServer", func(_ *testing.T, metadata Metadata) error {
+			return metadata.CreateDataServer(&commonproto.DataServer{
+				Identity: &commonproto.DataServerIdentity{Name: gproto.String("s3")},
+			})
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
@@ -519,6 +534,12 @@ func TestMetadataStatusWritesReturnWriteError(t *testing.T) {
 		{"AllocateShardIDs", func(metadata Metadata) error {
 			_, err := metadata.AllocateShardIDs(2)
 			return err
+		}},
+		{"PatchDataServerStatus", func(metadata Metadata) error {
+			return metadata.PatchDataServerStatus("s1", func(status *commonproto.DataServerStatus) (bool, error) {
+				status.State = commonproto.DataServerState_DATA_SERVER_STATE_RUNNING
+				return true, nil
+			})
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -822,6 +843,191 @@ func TestMetadataPatchDataServerUpdatesAddresses(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "s2", deleted.GetIdentity().GetName())
 	require.Len(t, loaded(t, configProvider).Value.GetServers(), 1)
+}
+
+// A data server without a stored status gets one, and nothing is stored when
+// the update returns false or an error.
+func TestMetadataPatchDataServerStatusCreatesMissingStatus(t *testing.T) {
+	statusProvider := newStatusProvider()
+	metadata := newTestMetadata(t, statusProvider, newConfigProvider(), "")
+	running := func(status *commonproto.DataServerStatus) (bool, error) {
+		status.State = commonproto.DataServerState_DATA_SERVER_STATE_RUNNING
+		return true, nil
+	}
+
+	require.NoError(t, metadata.PatchDataServerStatus("s1", running))
+	status, exists, err := metadata.GetDataServerStatus("s1")
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, commonproto.DataServerState_DATA_SERVER_STATE_RUNNING, status.UnsafeBorrow().GetState())
+
+	version := loaded(t, statusProvider).Version
+	require.NoError(t, metadata.PatchDataServerStatus("s2", func(*commonproto.DataServerStatus) (bool, error) {
+		return false, nil
+	}))
+	require.ErrorIs(t, metadata.PatchDataServerStatus("s2", func(*commonproto.DataServerStatus) (bool, error) {
+		return true, errs.ErrConflict
+	}), errs.ErrConflict)
+	require.Equal(t, version, loaded(t, statusProvider).Version, "nothing to store: nothing is written")
+
+	_, exists, err = metadata.GetDataServerStatus("s2")
+	require.NoError(t, err)
+	require.False(t, exists)
+	statuses, err := metadata.ListDataServerStatus()
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.Equal(t, commonproto.DataServerState_DATA_SERVER_STATE_RUNNING, statuses["s1"].UnsafeBorrow().GetState())
+}
+
+// The name of a data server that is draining or drained can't be used by
+// another one, until the drained one is deleted.
+func TestMetadataCreateDataServerRejectsNameOfLeftDataServer(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	metadata := newTestMetadata(t, newStatusProvider(), configProvider, "")
+	for name, state := range map[string]commonproto.DataServerState{
+		"draining": commonproto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		"drained":  commonproto.DataServerState_DATA_SERVER_STATE_DRAINED,
+		"running":  commonproto.DataServerState_DATA_SERVER_STATE_RUNNING,
+	} {
+		require.NoError(t, metadata.PatchDataServerStatus(name, func(status *commonproto.DataServerStatus) (bool, error) {
+			status.State = state
+			return true, nil
+		}))
+	}
+	dataServer := func(name string) *commonproto.DataServer {
+		return &commonproto.DataServer{
+			Identity: &commonproto.DataServerIdentity{Name: gproto.String(name), Public: name + ":6648", Internal: name + ":6649"},
+		}
+	}
+
+	require.ErrorIs(t, metadata.CreateDataServer(dataServer("draining")), errs.ErrAlreadyExists)
+	require.ErrorIs(t, metadata.CreateDataServer(dataServer("drained")), errs.ErrAlreadyExists)
+	require.NoError(t, metadata.CreateDataServer(dataServer("running")))
+
+	_, err := metadata.DeleteDataServer("drained")
+	require.NoError(t, err)
+	require.NoError(t, metadata.CreateDataServer(dataServer("drained")))
+	require.Len(t, loaded(t, configProvider).Value.GetServers(), 4)
+}
+
+// The status of the data server is stored DRAINING before it leaves the
+// configuration, and a delete that failed to write the configuration can be
+// retried.
+func TestMetadataDeleteDataServerStoresDrainingFirst(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	statusProvider := newStatusProvider()
+	var configWrites atomic.Int32
+	metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
+		Provider: statusProvider,
+		store: func(snapshot provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error) {
+			// The data server is still in the configuration
+			_, exists := loaded(t, configProvider).Value.GetDataServer("s2")
+			require.True(t, exists)
+			return statusProvider.Store(snapshot)
+		},
+	}, fakeProvider[*commonproto.ClusterConfiguration]{
+		Provider: configProvider,
+		store: func(snapshot provider.Versioned[*commonproto.ClusterConfiguration]) (metadataconstant.Version, error) {
+			if configWrites.Add(1) == 1 {
+				return metadataconstant.NotExists, errors.New("store unavailable")
+			}
+			return configProvider.Store(snapshot)
+		},
+	}, "")
+
+	_, err := metadata.DeleteDataServer("s2")
+	require.ErrorContains(t, err, "store unavailable")
+	_, exists := loaded(t, configProvider).Value.GetDataServer("s2")
+	require.True(t, exists)
+	require.Equal(t, commonproto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		loaded(t, statusProvider).Value.GetDataServers()["s2"].GetState())
+
+	version := loaded(t, statusProvider).Version
+	deleted, err := metadata.DeleteDataServer("s2")
+	require.NoError(t, err)
+	require.Equal(t, "s2", deleted.GetIdentity().GetName())
+	_, exists = loaded(t, configProvider).Value.GetDataServer("s2")
+	require.False(t, exists)
+	require.Equal(t, version, loaded(t, statusProvider).Version, "stored DRAINING already: nothing is written")
+}
+
+// A data server stays in the configuration if its status can't be stored, or
+// if the replication factor of a namespace needs it.
+func TestMetadataDeleteDataServerKeepsDataServer(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		namespaces     []*commonproto.Namespace
+		statusStore    func(provider.Versioned[*commonproto.ClusterStatus]) (metadataconstant.Version, error)
+		expectedErrMsg string
+		expectedErr    error
+	}{
+		{name: "status write fails", statusStore: failStore("store unavailable"), expectedErrMsg: "store unavailable"},
+		{
+			name:        "replication factor",
+			namespaces:  []*commonproto.Namespace{{Name: "default", ReplicationFactor: 2, InitialShardCount: 1}},
+			expectedErr: errs.ErrFailedPrecondition,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configProvider := newStoredConfigProvider(t, test.namespaces)
+			statusProvider := newStatusProvider()
+			metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
+				Provider: statusProvider,
+				store:    test.statusStore,
+			}, configProvider, "")
+
+			_, err := metadata.DeleteDataServer("s2")
+			if test.expectedErr != nil {
+				require.ErrorIs(t, err, test.expectedErr)
+			} else {
+				require.ErrorContains(t, err, test.expectedErrMsg)
+			}
+			_, exists := loaded(t, configProvider).Value.GetDataServer("s2")
+			require.True(t, exists)
+			require.Empty(t, loaded(t, statusProvider).Value.GetDataServers())
+		})
+	}
+}
+
+// A data server out of the configuration can only be deleted once drained:
+// its status is deleted then.
+func TestMetadataDeleteDataServerOfLeftDataServer(t *testing.T) {
+	statusProvider := newStatusProvider()
+	metadata := newTestMetadata(t, statusProvider, newStoredConfigProvider(t, nil), "")
+	for name, state := range map[string]commonproto.DataServerState{
+		"draining": commonproto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		"drained":  commonproto.DataServerState_DATA_SERVER_STATE_DRAINED,
+		"running":  commonproto.DataServerState_DATA_SERVER_STATE_RUNNING,
+	} {
+		require.NoError(t, metadata.PatchDataServerStatus(name, func(status *commonproto.DataServerStatus) (bool, error) {
+			status.State = state
+			return true, nil
+		}))
+	}
+
+	_, err := metadata.DeleteDataServer("draining")
+	require.ErrorIs(t, err, errs.ErrFailedPrecondition)
+	_, err = metadata.DeleteDataServer("running")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+	_, err = metadata.DeleteDataServer("unknown")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+
+	deleted, err := metadata.DeleteDataServer("drained")
+	require.NoError(t, err)
+	require.Equal(t, "drained", deleted.GetIdentity().GetName())
+	require.NotContains(t, loaded(t, statusProvider).Value.GetDataServers(), "drained")
+	_, err = metadata.DeleteDataServer("drained")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestMetadataDeleteDataServerReturnsConfigurationLoadError(t *testing.T) {
+	metadata := newTestMetadata(t, newStatusProvider(), fakeProvider[*commonproto.ClusterConfiguration]{
+		Provider: newConfigProvider(),
+		load:     failLoad[*commonproto.ClusterConfiguration]("configuration unavailable"),
+	}, "")
+
+	_, err := metadata.DeleteDataServer("s1")
+	require.ErrorContains(t, err, "configuration unavailable")
 }
 
 // --- Helpers ---

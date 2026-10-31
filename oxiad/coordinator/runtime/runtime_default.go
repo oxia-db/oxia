@@ -36,6 +36,7 @@ import (
 	oxiadcommonrpc "github.com/oxia-db/oxia/oxiad/common/rpc"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
@@ -73,13 +74,12 @@ type runtime struct {
 
 	metadata coordmetadata.Metadata
 
-	shardControllers      map[int64]shardcontroller.Controller
-	splitControllers      map[int64]*shardcontroller.SplitController // keyed by parent shard ID
+	shardControllers map[int64]shardcontroller.Controller
+	splitControllers map[int64]*shardcontroller.SplitController // keyed by parent shard ID
+	// dataServerControllers keeps the controller of a data server removed
+	// from the configuration until it is stored DRAINED: it keeps sending
+	// the assignments, which clients may still ask it for.
 	dataServerControllers map[string]dataservercontroller.Controller
-	// Draining nodes are nodes that were removed from the
-	// nodes list. We keep sending them assignments updates
-	// because they might be still reachable to clients.
-	drainingNodes map[string]dataservercontroller.Controller
 
 	loadBalancer     balancer.LoadBalancer
 	autoSplitMonitor *autosplit.Monitor
@@ -134,7 +134,9 @@ func (c *runtime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataS
 	defer c.RUnlock()
 	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], len(c.dataServerControllers))
 	for name, dataServerController := range c.dataServerControllers {
-		dataServers[name] = dataServerController.GetDataServer()
+		if !dataserver.IsRemoved(dataServerController.GetStatus().GetState()) {
+			dataServers[name] = dataServerController.GetDataServer()
+		}
 	}
 	return dataServers
 }
@@ -143,16 +145,10 @@ func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
 	c.RLock()
 	defer c.RUnlock()
 
-	statuses := make(map[string]*proto.DataServerStatus, len(c.dataServerControllers)+len(c.drainingNodes))
+	statuses := make(map[string]*proto.DataServerStatus, len(c.dataServerControllers))
 	for name, dataServerController := range c.dataServerControllers {
 		statuses[name] = &proto.DataServerStatus{
-			State:             dataServerController.GetStatus().GetState().ToProto(),
-			SupportedFeatures: dataServerController.GetFeatures(),
-		}
-	}
-	for name, dataServerController := range c.drainingNodes {
-		statuses[name] = &proto.DataServerStatus{
-			State:             dataServerController.GetStatus().GetState().ToProto(),
+			State:             dataServerController.GetStatus().GetState(),
 			SupportedFeatures: dataServerController.GetFeatures(),
 		}
 	}
@@ -165,13 +161,10 @@ func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, boo
 
 	dataServerController, found := c.dataServerControllers[name]
 	if !found {
-		dataServerController, found = c.drainingNodes[name]
-	}
-	if !found {
 		return nil, false
 	}
 	return &proto.DataServerStatus{
-		State:             dataServerController.GetStatus().GetState().ToProto(),
+		State:             dataServerController.GetStatus().GetState(),
 		SupportedFeatures: dataServerController.GetFeatures(),
 	}, true
 }
@@ -184,17 +177,17 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 	if identity == nil {
 		return false
 	}
-	if _, ok := c.dataServerControllers[name]; ok {
-		return false
+	if nc, ok := c.dataServerControllers[name]; ok {
+		if !dataserver.IsRemoved(nc.GetStatus().GetState()) {
+			return false
+		}
+		_ = nc.Close()
 	}
 	c.logger.Info("Detected new node", slog.Any("server", identity))
-	if nc, ok := c.drainingNodes[name]; ok {
-		_ = nc.Close()
-		delete(c.drainingNodes, name)
-	}
 	c.dataServerControllers[name] = dataservercontroller.NewController(
 		c.ctx,
 		dataServer,
+		c.metadata,
 		c,
 		c,
 		c.rpc,
@@ -210,13 +203,11 @@ func (c *runtime) DeleteDataServer(name string) {
 	defer c.Unlock()
 
 	nc, exist := c.dataServerControllers[name]
-	if !exist {
+	if !exist || dataserver.IsRemoved(nc.GetStatus().GetState()) {
 		return
 	}
 	c.logger.Info("Detected a removed node", slog.Any("server", name))
-	delete(c.dataServerControllers, name)
 	nc.Drain()
-	c.drainingNodes[name] = nc
 }
 
 func (c *runtime) RefreshShardControllers() {
@@ -342,12 +333,6 @@ func (c *runtime) findDataServerFeaturesLocked(dataServers []*proto.DataServerId
 		dataServerID := dataServer.GetNameOrDefault()
 		if serverController, exist := c.dataServerControllers[dataServerID]; exist {
 			features[dataServerID] = serverController.GetFeatures()
-			continue
-		}
-		// fallback to draining node if alive not found
-		if serverController, exist := c.drainingNodes[dataServerID]; exist {
-			features[dataServerID] = serverController.GetFeatures()
-			continue
 		}
 	}
 	return features
@@ -442,7 +427,6 @@ func (c *runtime) Close() error {
 	splitControllers := maps.Clone(c.splitControllers)
 	shardControllers := maps.Clone(c.shardControllers)
 	dataServerControllers := maps.Clone(c.dataServerControllers)
-	drainingNodes := maps.Clone(c.drainingNodes)
 	c.Unlock()
 
 	// The shard controllers must be closed before waiting for the action
@@ -467,36 +451,36 @@ func (c *runtime) Close() error {
 		err = multierr.Append(err, nc.Close())
 	}
 
-	for _, nc := range drainingNodes {
-		err = multierr.Append(err, nc.Close())
-	}
 	err = multierr.Append(err, c.rpc.Close())
 	return err
 }
 
 func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
-	c.Lock()
-	if nc, ok := c.drainingNodes[node.GetNameOrDefault()]; ok {
-		// The draining node became unavailable. Let's remove it
-		delete(c.drainingNodes, node.GetNameOrDefault())
-		go func() {
-			// the callback will come from the node controller internal health check goroutine,
-			// we should close it in the background goroutines to avoid any unexpected deadlock here
-			if err := nc.Close(); err != nil {
-				c.logger.Error("Failed to close node controller", slog.String("node", node.GetNameOrDefault()), slog.Any("error", err))
-			}
-		}()
-	}
-
-	ctrls := make(map[int64]shardcontroller.Controller)
-	for k, sc := range c.shardControllers {
-		ctrls[k] = sc
-	}
-	c.Unlock()
+	c.RLock()
+	ctrls := maps.Clone(c.shardControllers)
+	c.RUnlock()
 
 	for _, sc := range ctrls {
 		sc.BecameUnavailable(node)
 	}
+}
+
+func (c *runtime) BecameDrained(node *proto.DataServerIdentity) {
+	c.Lock()
+	defer c.Unlock()
+	// A controller created since for the name, when the data server was
+	// added again, isn't DRAINED
+	nc, ok := c.dataServerControllers[node.GetNameOrDefault()]
+	if !ok || nc.GetStatus().GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
+		return
+	}
+	delete(c.dataServerControllers, node.GetNameOrDefault())
+	// The callback comes from a goroutine of the controller, which Close waits for
+	go func() {
+		if err := nc.Close(); err != nil {
+			c.logger.Error("Failed to close node controller", slog.String("node", node.GetNameOrDefault()), slog.Any("error", err))
+		}
+	}()
 }
 
 func (c *runtime) FeaturesDiscovered(node *proto.DataServerIdentity) {
@@ -636,27 +620,28 @@ func mergedAuthorities(status map[string]commonobject.Borrowed[*proto.NamespaceS
 	return authorities.Values()
 }
 
-func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.NamespaceStatus]) []*proto.DataServerIdentity {
+// dataServersFromStatus returns the data servers that the shards reference,
+// and the ones stored as DRAINING: once no shard references a draining data
+// server, only its stored status tells that it still has to be stored
+// DRAINED, and its controller does it. The configuration isn't read: the
+// reconciler drains the data servers that it doesn't have.
+func dataServersFromStatus(status map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+	dataServerStatus map[string]commonobject.Borrowed[*proto.DataServerStatus]) []*proto.DataServerIdentity {
 	servers := make(map[string]*proto.DataServerIdentity)
-	addServer := func(server *proto.DataServerIdentity) {
-		if server == nil {
-			return
+	for _, borrowedNamespace := range status {
+		for _, shard := range borrowedNamespace.UnsafeBorrow().GetShards() {
+			for server := range sharding.ShardDataServers(shard) {
+				servers[server.GetNameOrDefault()] = server
+			}
 		}
-		servers[server.GetNameOrDefault()] = server
 	}
 
-	for _, borrowedNamespace := range status {
-		namespace := borrowedNamespace.UnsafeBorrow()
-		for _, shard := range namespace.Shards {
-			addServer(shard.Leader)
-			for _, server := range shard.Ensemble {
-				addServer(server)
-			}
-			addServer(shard.GetEnsembleChange().GetFrom())
-			for _, server := range shard.PendingDeleteShardNodes {
-				addServer(server)
-			}
+	for name, borrowedStatus := range dataServerStatus {
+		if _, exists := servers[name]; exists ||
+			borrowedStatus.UnsafeBorrow().GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINING {
+			continue
 		}
+		servers[name] = &proto.DataServerIdentity{Name: &name}
 	}
 
 	result := make([]*proto.DataServerIdentity, 0, len(servers))
@@ -677,6 +662,11 @@ func New(
 	if err != nil {
 		return nil, err
 	}
+	dataServerStatus, err := metadata.ListDataServerStatus()
+	if err != nil {
+		return nil, err
+	}
+	dataServers := dataServersFromStatus(clusterStatus, dataServerStatus)
 	insID, err := metadata.GetInstanceID()
 	if err != nil {
 		return nil, err
@@ -702,7 +692,6 @@ func New(
 		shardControllers:      make(map[int64]shardcontroller.Controller),
 		splitControllers:      make(map[int64]*shardcontroller.SplitController),
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
-		drainingNodes:         make(map[string]dataservercontroller.Controller),
 		metadata:              metadata,
 		insID:                 insID,
 		assignmentsWatch:      commonwatch.New[*proto.ShardAssignments](nil),
@@ -729,7 +718,7 @@ func New(
 			// flap into a rebalancing loop. The re-election of leaders away
 			// from a dead node is not affected.
 			status := nc.GetStatus()
-			return status.GetState() == dataservercontroller.Running &&
+			return status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING &&
 				time.Since(status.GetLastTransitionTime()) >= 5*time.Minute
 		},
 	})
@@ -742,11 +731,12 @@ func New(
 	c.Lock()
 
 	// init node controller
-	for _, node := range dataServersFromStatus(clusterStatus) {
+	for _, node := range dataServers {
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
 		c.dataServerControllers[node.GetNameOrDefault()] = dataservercontroller.NewController(
 			c.ctx,
 			dataServer,
+			c.metadata,
 			c,
 			c,
 			c.rpc,

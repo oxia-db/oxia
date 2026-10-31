@@ -47,4 +47,8 @@ type DataServerEventListener interface {
 	// known before: at the first handshake, and when the data server restarts
 	// with a binary that supports other features, e.g. in a rolling upgrade
 	FeaturesDiscovered(dataServer *commonproto.DataServerIdentity)
+
+	// BecameDrained is called once a draining data server is stored DRAINED: its
+	// controller has nothing left to do.
+	BecameDrained(dataServer *commonproto.DataServerIdentity)
 }

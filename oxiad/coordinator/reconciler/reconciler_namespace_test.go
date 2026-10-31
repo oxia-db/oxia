@@ -451,6 +451,12 @@ type mockNamespaceMetadata struct {
 	configNS map[string]*proto.Namespace
 	// getNamespaceErr, when set, fails the namespace loads
 	getNamespaceErr error
+	// listDataServerStatusErr and patchDataServerStatusErr, when set, fail
+	// the reads and the writes of the statuses of the data servers, and
+	// staleDataServerStatus, when set, is read instead of the stored ones
+	listDataServerStatusErr  error
+	patchDataServerStatusErr error
+	staleDataServerStatus    map[string]*proto.DataServerStatus
 }
 
 func (*mockNamespaceMetadata) Close() error { return nil }
@@ -568,6 +574,47 @@ func (m *mockNamespaceMetadata) PatchShardStatus(namespace string, shard int64,
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) error { return nil }
 
+func (m *mockNamespaceMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	if m.listDataServerStatusErr != nil {
+		return nil, m.listDataServerStatusErr
+	}
+	stored := m.status.GetDataServers()
+	if m.staleDataServerStatus != nil {
+		stored = m.staleDataServerStatus
+	}
+	statuses := make(map[string]commonobject.Borrowed[*proto.DataServerStatus], len(stored))
+	for name, status := range stored {
+		statuses[name] = commonobject.Borrow(status)
+	}
+	return statuses, nil
+}
+
+func (m *mockNamespaceMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	status, exists := m.status.GetDataServers()[name]
+	return commonobject.Borrow(status), exists, nil
+}
+
+func (m *mockNamespaceMetadata) PatchDataServerStatus(name string,
+	modify func(*proto.DataServerStatus) (bool, error)) error {
+	if m.patchDataServerStatusErr != nil {
+		return m.patchDataServerStatusErr
+	}
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	status, exists := cloned.GetDataServers()[name]
+	if !exists {
+		status = &proto.DataServerStatus{}
+	}
+	if updated, err := modify(status); err != nil || !updated {
+		return err
+	}
+	if cloned.DataServers == nil {
+		cloned.DataServers = map[string]*proto.DataServerStatus{}
+	}
+	cloned.DataServers[name] = status
+	m.status = cloned
+	return nil
+}
+
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil
 }
@@ -676,6 +723,8 @@ func (*mockNamespaceRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
 func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
+
+func (*mockNamespaceRuntime) BecameDrained(*proto.DataServerIdentity) {}
 
 func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 

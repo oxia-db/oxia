@@ -123,8 +123,8 @@ func TestRuntimeNewFailsWithoutInstanceID(t *testing.T) {
 	require.ErrorContains(t, err, "status unavailable")
 }
 
-// The runtime does not start without the status, the configuration and the
-// load balancer configuration.
+// The runtime does not start without the status, the statuses of the data
+// servers, the configuration and the load balancer configuration.
 func TestRuntimeNewFailsWithoutMetadata(t *testing.T) {
 	readErr := errors.New("metadata unavailable")
 	for _, tc := range []struct {
@@ -133,6 +133,11 @@ func TestRuntimeNewFailsWithoutMetadata(t *testing.T) {
 	}{
 		{"status", func(m *fakeMetadata) {
 			m.listNamespaceStatus = func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
+				return nil, readErr
+			}
+		}},
+		{"data server status", func(m *fakeMetadata) {
+			m.listDataServerStatus = func() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
 				return nil, readErr
 			}
 		}},
@@ -215,10 +220,10 @@ func TestRuntimeShardDeletedRemovesControllerFailingToClose(t *testing.T) {
 
 // The status of a data server removed from the configuration is still
 // reported while it drains.
-func TestRuntimeGetDataServerStatusFallsBackToDrainingNodes(t *testing.T) {
+func TestRuntimeGetDataServerStatusReportsDrainingDataServer(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
-	c.drainingNodes["s1"] = &fakeDataServerController{
-		status:   dataservercontroller.NewStatus(dataservercontroller.Draining),
+	c.dataServerControllers["s1"] = &fakeDataServerController{
+		status:   dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
 		features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
@@ -242,14 +247,13 @@ func TestRuntimeCreateDataServerRejectsMissingIdentity(t *testing.T) {
 // draining one is closed.
 func TestRuntimeCreateDataServerReplacesDrainingController(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
-	draining := &fakeDataServerController{}
-	c.drainingNodes["s1"] = draining
+	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+	c.dataServerControllers["s1"] = draining
 	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
 
 	require.True(t, c.CreateDataServer("s1", &proto.DataServer{Identity: server}))
 
 	assert.EqualValues(t, 1, draining.closes.Load())
-	assert.NotContains(t, c.drainingNodes, "s1")
 	require.Contains(t, c.dataServerControllers, "s1")
 	assert.NotSame(t, draining, c.dataServerControllers["s1"])
 	assert.False(t, c.CreateDataServer("s1", &proto.DataServer{Identity: server}))
@@ -260,7 +264,23 @@ func TestRuntimeDeleteDataServerIgnoresUnknownDataServer(t *testing.T) {
 
 	c.DeleteDataServer("unknown")
 
-	assert.Empty(t, c.drainingNodes)
+	assert.Empty(t, c.dataServerControllers)
+}
+
+// A deleted data server keeps its controller, which drains it, and is left out
+// of the data servers of the configuration.
+func TestRuntimeDeleteDataServerDrainsDataServer(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	running := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	c.dataServerControllers["s1"] = running
+	require.Contains(t, c.ListDataServer(), "s1")
+
+	c.DeleteDataServer("s1")
+	c.DeleteDataServer("s1")
+
+	assert.Same(t, running, c.dataServerControllers["s1"])
+	assert.EqualValues(t, 1, running.drains.Load())
+	assert.NotContains(t, c.ListDataServer(), "s1")
 }
 
 func TestRuntimeCreateNamespaceReturnsStatusReadError(t *testing.T) {
@@ -668,23 +688,55 @@ func TestRuntimeCloseAbortsSplits(t *testing.T) {
 	assert.Nil(t, parent.UnsafeBorrow().GetSplit())
 }
 
-// A draining data server that becomes unavailable is closed, even if closing
-// it fails, and the shard controllers are told.
-func TestRuntimeBecameUnavailableClosesDrainingNode(t *testing.T) {
+// A draining data server that becomes unavailable keeps its controller, which
+// stores it DRAINED, and the shard controllers are told.
+func TestRuntimeBecameUnavailableKeepsDrainingNode(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
 	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
-	draining := &fakeDataServerController{closeErr: errors.New("close failed")}
-	c.drainingNodes["s1"] = draining
+	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+	c.dataServerControllers["s1"] = draining
 	sc := &fakeShardController{}
 	c.shardControllers[0] = sc
 
 	c.BecameUnavailable(server)
 
-	assert.NotContains(t, c.drainingNodes, "s1")
+	assert.Contains(t, c.dataServerControllers, "s1")
+	assert.Zero(t, draining.closes.Load())
+	assert.Equal(t, []*proto.DataServerIdentity{server}, sc.unavailable)
+}
+
+// A drained data server's controller is closed, even if closing it fails.
+func TestRuntimeDrainedClosesDrainingNode(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+	draining.closeErr = errors.New("close failed")
+	c.dataServerControllers["s1"] = draining
+
+	c.BecameDrained(server)
+
+	assert.NotContains(t, c.dataServerControllers, "s1")
 	assert.Eventually(t, func() bool {
 		return draining.closes.Load() == 1
 	}, 10*time.Second, 10*time.Millisecond)
-	assert.Equal(t, []*proto.DataServerIdentity{server}, sc.unavailable)
+
+	// Already closed: nothing left to do
+	c.BecameDrained(server)
+	assert.EqualValues(t, 1, draining.closes.Load())
+}
+
+// The controller of a data server added again since it drained isn't closed by
+// the late notification of the drained one.
+func TestRuntimeBecameDrainedKeepsControllerOfDataServerAddedAgain(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	running := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	c.dataServerControllers["s1"] = running
+
+	c.BecameDrained(server)
+
+	assert.Same(t, running, c.dataServerControllers["s1"])
+	assert.Zero(t, running.closes.Load())
 }
 
 // An action on a shard without a controller, e.g. deleted in the meantime,
@@ -1040,7 +1092,6 @@ func TestRuntimeSubscribeShardAssignmentsWaitsForFirstComputation(t *testing.T) 
 func TestRuntimeFindDataServerFeaturesOmitsUnknownNodes(t *testing.T) {
 	c := &runtime{
 		dataServerControllers: map[string]dataservercontroller.Controller{},
-		drainingNodes:         map[string]dataservercontroller.Controller{},
 	}
 
 	dataServer := &proto.DataServerIdentity{Internal: "s1:6649"}
@@ -1048,20 +1099,6 @@ func TestRuntimeFindDataServerFeaturesOmitsUnknownNodes(t *testing.T) {
 	features := c.findDataServerFeatures([]*proto.DataServerIdentity{dataServer})
 
 	assert.NotContains(t, features, dataServer.GetNameOrDefault())
-}
-
-func TestRuntimeFindDataServerFeaturesFallsBackToDrainingNodes(t *testing.T) {
-	features := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
-	c := &runtime{
-		dataServerControllers: map[string]dataservercontroller.Controller{},
-		drainingNodes: map[string]dataservercontroller.Controller{
-			"s1:6649": &fakeDataServerController{features: features},
-		},
-	}
-
-	found := c.findDataServerFeatures([]*proto.DataServerIdentity{{Internal: "s1:6649"}})
-
-	assert.Equal(t, map[string][]proto.Feature{"s1:6649": features}, found)
 }
 
 // A data server registered without metadata is a candidate without labels.
@@ -1099,13 +1136,42 @@ func TestDataServersFromStatusIncludesAllShardMembers(t *testing.T) {
 	}
 
 	var names []string
-	for _, server := range dataServersFromStatus(status) {
+	for _, server := range dataServersFromStatus(status, nil) {
 		names = append(names, server.GetNameOrDefault())
 	}
 	assert.ElementsMatch(t, []string{
 		leader.GetNameOrDefault(), member.GetNameOrDefault(),
 		removed.GetNameOrDefault(), pendingDelete.GetNameOrDefault(),
 	}, names)
+}
+
+// A data server stored DRAINING has to be stored DRAINED by its controller,
+// even once no shard references it: only its name is known then. The other
+// stored data servers are left out.
+func TestDataServersFromStatusIncludesDrainingDataServers(t *testing.T) {
+	member := &proto.DataServerIdentity{Name: new("member"), Public: "member:9091", Internal: "member:8191"}
+	status := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
+		"ns": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
+			0: {Ensemble: []*proto.DataServerIdentity{member}},
+		}}),
+	}
+	stored := func(state proto.DataServerState) commonobject.Borrowed[*proto.DataServerStatus] {
+		return commonobject.Borrow(&proto.DataServerStatus{State: state})
+	}
+	dataServerStatus := map[string]commonobject.Borrowed[*proto.DataServerStatus]{
+		"member":   stored(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
+		"draining": stored(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
+		"drained":  stored(proto.DataServerState_DATA_SERVER_STATE_DRAINED),
+		"running":  stored(proto.DataServerState_DATA_SERVER_STATE_RUNNING),
+	}
+
+	servers := map[string]*proto.DataServerIdentity{}
+	for _, server := range dataServersFromStatus(status, dataServerStatus) {
+		servers[server.GetNameOrDefault()] = server
+	}
+	assert.Len(t, servers, 2)
+	assert.Same(t, member, servers["member"])
+	assert.Equal(t, &proto.DataServerIdentity{Name: new("draining")}, servers["draining"])
 }
 
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
@@ -1150,7 +1216,6 @@ func newNamespaceTestRuntime(t *testing.T, metadata coordmetadata.Metadata) *run
 		shardControllers:      make(map[int64]shardcontroller.Controller),
 		splitControllers:      make(map[int64]*shardcontroller.SplitController),
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
-		drainingNodes:         make(map[string]dataservercontroller.Controller),
 		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
 		rpc:                   rpctest.NewRpcProvider(),
 	}
@@ -1166,6 +1231,7 @@ type fakeMetadata struct {
 	allocateShardIDs      func(count uint32) (int64, error)
 	createNamespaceStatus func(namespace string, status *proto.NamespaceStatus) error
 	listNamespaceStatus   func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
+	listDataServerStatus  func() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error)
 	getNamespaceStatus    func(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error)
 	patchNamespaceStatus  func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error
 	updateShardStatus     func(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error
@@ -1238,6 +1304,13 @@ func (m *fakeMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*
 		return m.listNamespaceStatus()
 	}
 	return m.Metadata.ListNamespaceStatus()
+}
+
+func (m *fakeMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	if m.listDataServerStatus != nil {
+		return m.listDataServerStatus()
+	}
+	return m.Metadata.ListDataServerStatus()
 }
 
 func (m *fakeMetadata) GetNamespaceStatus(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error) {
@@ -1360,6 +1433,15 @@ type fakeDataServerController struct {
 	features []proto.Feature
 	closeErr error
 	closes   atomic.Int64
+	drains   atomic.Int64
+}
+
+func newFakeDataServerController(state proto.DataServerState) *fakeDataServerController {
+	return &fakeDataServerController{status: dataservercontroller.NewStatus(state)}
+}
+
+func (*fakeDataServerController) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
+	return commonobject.Borrow(&proto.DataServer{})
 }
 
 func (c *fakeDataServerController) GetStatus() dataservercontroller.Status {
@@ -1368,6 +1450,11 @@ func (c *fakeDataServerController) GetStatus() dataservercontroller.Status {
 
 func (c *fakeDataServerController) GetFeatures() []proto.Feature {
 	return c.features
+}
+
+func (c *fakeDataServerController) Drain() {
+	c.drains.Add(1)
+	c.status = dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
 }
 
 func (c *fakeDataServerController) Close() error {

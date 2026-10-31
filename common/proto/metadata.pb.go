@@ -35,6 +35,15 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// The state of a data server. The coordinator stores RUNNING, DRAINING and
+// DRAINED in the cluster status; UNAVAILABLE is only known while it runs.
+//
+//	             health check failed
+//	RUNNING  <----------------------->  UNAVAILABLE
+//	             handshake succeeded
+//
+//	removed from the configuration: RUNNING or UNAVAILABLE --> DRAINING
+//	no shard references it, and every shard caught up: DRAINING --> DRAINED
 type DataServerState int32
 
 const (
@@ -42,6 +51,7 @@ const (
 	DataServerState_DATA_SERVER_STATE_RUNNING     DataServerState = 1
 	DataServerState_DATA_SERVER_STATE_UNAVAILABLE DataServerState = 2
 	DataServerState_DATA_SERVER_STATE_DRAINING    DataServerState = 3
+	DataServerState_DATA_SERVER_STATE_DRAINED     DataServerState = 4
 )
 
 // Enum value maps for DataServerState.
@@ -51,12 +61,14 @@ var (
 		1: "DATA_SERVER_STATE_RUNNING",
 		2: "DATA_SERVER_STATE_UNAVAILABLE",
 		3: "DATA_SERVER_STATE_DRAINING",
+		4: "DATA_SERVER_STATE_DRAINED",
 	}
 	DataServerState_value = map[string]int32{
 		"DATA_SERVER_STATE_UNSPECIFIED": 0,
 		"DATA_SERVER_STATE_RUNNING":     1,
 		"DATA_SERVER_STATE_UNAVAILABLE": 2,
 		"DATA_SERVER_STATE_DRAINING":    3,
+		"DATA_SERVER_STATE_DRAINED":     4,
 	}
 )
 
@@ -402,8 +414,8 @@ func (x *DataServer) GetMetadata() *DataServerMetadata {
 
 type DataServerStatus struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	State             DataServerState        `protobuf:"varint,1,opt,name=state,proto3,enum=io.oxia.proto.v1.DataServerState" json:"state,omitempty"`
-	SupportedFeatures []Feature              `protobuf:"varint,2,rep,packed,name=supported_features,json=supportedFeatures,proto3,enum=replication.Feature" json:"supported_features,omitempty"`
+	State             DataServerState        `protobuf:"varint,1,opt,name=state,proto3,enum=io.oxia.proto.v1.DataServerState" json:"state,omitempty" yaml:"state,omitempty"`
+	SupportedFeatures []Feature              `protobuf:"varint,2,rep,packed,name=supported_features,json=supportedFeatures,proto3,enum=replication.Feature" json:"supported_features,omitempty" yaml:"supportedFeatures,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1205,8 +1217,10 @@ type ClusterStatus struct {
 	ShardIdGenerator int64                       `protobuf:"varint,2,opt,name=shard_id_generator,json=shardIdGenerator,proto3" json:"shard_id_generator,omitempty" yaml:"shardIdGenerator,omitempty"`
 	ServerIdx        uint32                      `protobuf:"varint,3,opt,name=server_idx,json=serverIdx,proto3" json:"server_idx,omitempty" yaml:"serverIdx,omitempty"`
 	InstanceId       string                      `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty" yaml:"instanceId,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The data servers, by name, with their stored state.
+	DataServers   map[string]*DataServerStatus `protobuf:"bytes,5,rep,name=data_servers,json=dataServers,proto3" json:"data_servers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"dataServers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClusterStatus) Reset() {
@@ -1265,6 +1279,13 @@ func (x *ClusterStatus) GetInstanceId() string {
 		return x.InstanceId
 	}
 	return ""
+}
+
+func (x *ClusterStatus) GetDataServers() map[string]*DataServerStatus {
+	if x != nil {
+		return x.DataServers
+	}
+	return nil
 }
 
 var File_metadata_proto protoreflect.FileDescriptor
@@ -1364,7 +1385,7 @@ const file_metadata_proto_rawDesc = "" +
 	"\x06shards\x18\x02 \x03(\v2-.io.oxia.proto.v1.NamespaceStatus.ShardsEntryR\x06shards\x1aZ\n" +
 	"\vShardsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x125\n" +
-	"\x05value\x18\x02 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\x05value:\x028\x01\"\xb0\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\x1f.io.oxia.proto.v1.ShardMetadataR\x05value:\x028\x01\"\xe9\x03\n" +
 	"\rClusterStatus\x12O\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2/.io.oxia.proto.v1.ClusterStatus.NamespacesEntryR\n" +
@@ -1373,15 +1394,20 @@ const file_metadata_proto_rawDesc = "" +
 	"\n" +
 	"server_idx\x18\x03 \x01(\rR\tserverIdx\x12\x1f\n" +
 	"\vinstance_id\x18\x04 \x01(\tR\n" +
-	"instanceId\x1a`\n" +
+	"instanceId\x12S\n" +
+	"\fdata_servers\x18\x05 \x03(\v20.io.oxia.proto.v1.ClusterStatus.DataServersEntryR\vdataServers\x1a`\n" +
 	"\x0fNamespacesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x127\n" +
-	"\x05value\x18\x02 \x01(\v2!.io.oxia.proto.v1.NamespaceStatusR\x05value:\x028\x01*\x96\x01\n" +
+	"\x05value\x18\x02 \x01(\v2!.io.oxia.proto.v1.NamespaceStatusR\x05value:\x028\x01\x1ab\n" +
+	"\x10DataServersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x128\n" +
+	"\x05value\x18\x02 \x01(\v2\".io.oxia.proto.v1.DataServerStatusR\x05value:\x028\x01*\xb5\x01\n" +
 	"\x0fDataServerState\x12!\n" +
 	"\x1dDATA_SERVER_STATE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19DATA_SERVER_STATE_RUNNING\x10\x01\x12!\n" +
 	"\x1dDATA_SERVER_STATE_UNAVAILABLE\x10\x02\x12\x1e\n" +
-	"\x1aDATA_SERVER_STATE_DRAINING\x10\x03*C\n" +
+	"\x1aDATA_SERVER_STATE_DRAINING\x10\x03\x12\x1d\n" +
+	"\x19DATA_SERVER_STATE_DRAINED\x10\x04*C\n" +
 	"\n" +
 	"SplitPhase\x12\r\n" +
 	"\tBootstrap\x10\x00\x12\v\n" +
@@ -1407,7 +1433,7 @@ func file_metadata_proto_rawDescGZIP() []byte {
 }
 
 var file_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_metadata_proto_goTypes = []any{
 	(DataServerState)(0),           // 0: io.oxia.proto.v1.DataServerState
 	(SplitPhase)(0),                // 1: io.oxia.proto.v1.SplitPhase
@@ -1433,14 +1459,15 @@ var file_metadata_proto_goTypes = []any{
 	nil,                            // 21: io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
 	nil,                            // 22: io.oxia.proto.v1.NamespaceStatus.ShardsEntry
 	nil,                            // 23: io.oxia.proto.v1.ClusterStatus.NamespacesEntry
-	(Feature)(0),                   // 24: replication.Feature
+	nil,                            // 24: io.oxia.proto.v1.ClusterStatus.DataServersEntry
+	(Feature)(0),                   // 25: replication.Feature
 }
 var file_metadata_proto_depIdxs = []int32{
 	19, // 0: io.oxia.proto.v1.DataServerMetadata.labels:type_name -> io.oxia.proto.v1.DataServerMetadata.LabelsEntry
 	3,  // 1: io.oxia.proto.v1.DataServer.identity:type_name -> io.oxia.proto.v1.DataServerIdentity
 	5,  // 2: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServerMetadata
 	0,  // 3: io.oxia.proto.v1.DataServerStatus.state:type_name -> io.oxia.proto.v1.DataServerState
-	24, // 4: io.oxia.proto.v1.DataServerStatus.supported_features:type_name -> replication.Feature
+	25, // 4: io.oxia.proto.v1.DataServerStatus.supported_features:type_name -> replication.Feature
 	8,  // 5: io.oxia.proto.v1.Namespace.anti_affinities:type_name -> io.oxia.proto.v1.AntiAffinity
 	9,  // 6: io.oxia.proto.v1.ClusterConfiguration.namespaces:type_name -> io.oxia.proto.v1.Namespace
 	3,  // 7: io.oxia.proto.v1.ClusterConfiguration.servers:type_name -> io.oxia.proto.v1.DataServerIdentity
@@ -1462,14 +1489,16 @@ var file_metadata_proto_depIdxs = []int32{
 	15, // 23: io.oxia.proto.v1.ShardMetadata.ensemble_change:type_name -> io.oxia.proto.v1.EnsembleChangeMetadata
 	22, // 24: io.oxia.proto.v1.NamespaceStatus.shards:type_name -> io.oxia.proto.v1.NamespaceStatus.ShardsEntry
 	23, // 25: io.oxia.proto.v1.ClusterStatus.namespaces:type_name -> io.oxia.proto.v1.ClusterStatus.NamespacesEntry
-	5,  // 26: io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry.value:type_name -> io.oxia.proto.v1.DataServerMetadata
-	16, // 27: io.oxia.proto.v1.NamespaceStatus.ShardsEntry.value:type_name -> io.oxia.proto.v1.ShardMetadata
-	17, // 28: io.oxia.proto.v1.ClusterStatus.NamespacesEntry.value:type_name -> io.oxia.proto.v1.NamespaceStatus
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	24, // 26: io.oxia.proto.v1.ClusterStatus.data_servers:type_name -> io.oxia.proto.v1.ClusterStatus.DataServersEntry
+	5,  // 27: io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry.value:type_name -> io.oxia.proto.v1.DataServerMetadata
+	16, // 28: io.oxia.proto.v1.NamespaceStatus.ShardsEntry.value:type_name -> io.oxia.proto.v1.ShardMetadata
+	17, // 29: io.oxia.proto.v1.ClusterStatus.NamespacesEntry.value:type_name -> io.oxia.proto.v1.NamespaceStatus
+	7,  // 30: io.oxia.proto.v1.ClusterStatus.DataServersEntry.value:type_name -> io.oxia.proto.v1.DataServerStatus
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_metadata_proto_init() }
@@ -1486,7 +1515,7 @@ func file_metadata_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metadata_proto_rawDesc), len(file_metadata_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   21,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

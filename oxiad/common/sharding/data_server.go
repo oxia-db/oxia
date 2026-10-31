@@ -15,6 +15,7 @@
 package sharding
 
 import (
+	"iter"
 	"slices"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -36,4 +37,22 @@ func AddDataServer(servers []*proto.DataServerIdentity, server *proto.DataServer
 		return servers
 	}
 	return append(servers, server)
+}
+
+// ShardDataServers yields the data servers that the shard references: its
+// leader, its ensemble, both sides of a change of the ensemble, and the data
+// servers that still have to delete their copy.
+func ShardDataServers(shard *proto.ShardMetadata) iter.Seq[*proto.DataServerIdentity] {
+	return func(yield func(*proto.DataServerIdentity) bool) {
+		servers := [][]*proto.DataServerIdentity{
+			{shard.GetLeader(), shard.GetEnsembleChange().GetFrom(), shard.GetEnsembleChange().GetTo()},
+			shard.GetEnsemble(),
+			shard.GetPendingDeleteShardNodes(),
+		}
+		for _, server := range slices.Concat(servers...) {
+			if server != nil && !yield(server) {
+				return
+			}
+		}
+	}
 }

@@ -18,8 +18,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync/atomic"
 
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"google.golang.org/grpc/codes"
@@ -97,6 +100,10 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 	}
 	config := borrowedConfig.UnsafeBorrow()
 	statuses := runtime.ListDataServerStatus()
+	storedStatuses, err := runtime.Metadata().ListDataServerStatus()
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to list data servers: %v", err)
+	}
 
 	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
 	for _, server := range config.GetServers() {
@@ -125,8 +132,38 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 			DataServerStatus: status,
 		})
 	}
+	for _, name := range slices.Sorted(maps.Keys(storedStatuses)) {
+		if _, exists := config.GetDataServer(name); exists {
+			continue
+		}
+		if view, left := leftDataServerView(runtime, name, storedStatuses[name].UnsafeBorrow()); left {
+			views = append(views, view)
+		}
+	}
 
 	return &proto.ListDataServersResponse{DataServers: views}, nil
+}
+
+// leftDataServerView returns the view of a data server that left the
+// configuration, from its stored status, and false if it isn't draining or
+// drained. Only its name is known.
+func leftDataServerView(runtime coordruntime.Runtime, name string,
+	stored *proto.DataServerStatus) (*proto.DataServerView, bool) {
+	state := stored.GetState()
+	if !dataserver.IsRemoved(state) {
+		return nil, false
+	}
+	status := &proto.DataServerStatus{State: state}
+	if live, found := runtime.GetDataServerStatus(name); found {
+		status.SupportedFeatures = live.GetSupportedFeatures()
+	}
+	return &proto.DataServerView{
+		DataServer: &proto.DataServer{
+			Identity: &proto.DataServerIdentity{Name: &name},
+			Metadata: &proto.DataServerMetadata{},
+		},
+		DataServerStatus: status,
+	}, true
 }
 
 func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.GetDataServerRequest) (*proto.GetDataServerResponse, error) {
@@ -143,7 +180,15 @@ func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to get data server %q: %v", req.DataServer, err)
 	}
 	if !found {
-		return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+		stored, _, err := runtime.Metadata().GetDataServerStatus(req.DataServer)
+		if err != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "failed to get data server %q: %v", req.DataServer, err)
+		}
+		view, left := leftDataServerView(runtime, req.DataServer, stored.UnsafeBorrow())
+		if !left {
+			return nil, grpcstatus.Errorf(codes.NotFound, "data server %q not found", req.DataServer)
+		}
+		return &proto.GetDataServerResponse{DataServer: view}, nil
 	}
 
 	status, _ := runtime.GetDataServerStatus(req.DataServer)

@@ -28,12 +28,35 @@ import (
 //   - binds a data server that becomes available to this coordinator with a
 //     handshake, which reports the features it supports, and tells the
 //     listener when they change;
-//   - pushes the shard assignments to the data server while it is Running or
-//     Draining, retrying with a backoff when the stream fails.
+//   - pushes the shard assignments to the data server while it is RUNNING or
+//     DRAINING, retrying with a backoff when the stream fails;
+//   - once the data server is DRAINING, checks on every probe interval
+//     whether it is drained, and stores it DRAINED.
+//
+// The lifecycle of the data server, as GetStatus reports it:
+//
+//	              handshake
+//	UNAVAILABLE ------------> RUNNING
+//	  (start)   <------------    |
+//	    |       health check     |
+//	    |       fails            |
+//	    | Drain            Drain |
+//	    v                        |
+//	DRAINING <-------------------+
+//	    |
+//	    | no shard references it, and every shard caught up
+//	    v
+//	DRAINED
+//
+// A DRAINING data server stays DRAINING when its health check fails, and
+// DRAINED is final. The status of the data server in the metadata stores
+// RUNNING, DRAINING and DRAINED, so that a drain is reported, and resumes
+// after a restart of the coordinator; UNAVAILABLE is only observed here.
 //
 // The runtime creates a controller for each data server of the configuration,
-// or still in the ensemble of a shard, and closes it once the data server is
-// removed and unavailable, or replaced.
+// or still referenced by a shard or stored DRAINING. It calls Drain when the
+// data server is removed from the configuration, and closes the controller
+// once it is DRAINED, or replaces it when the data server is added again.
 type Controller interface {
 	// Close stops the health checks and the assignments stream.
 	io.Closer
@@ -50,7 +73,9 @@ type Controller interface {
 	// first handshake.
 	GetFeatures() []proto.Feature
 
-	// Drain moves a data server removed from the configuration to Draining:
-	// it keeps receiving the shard assignments until it becomes unavailable.
+	// Drain moves a data server removed from the configuration to DRAINING:
+	// it keeps receiving the shard assignments until it is DRAINED, when the
+	// controller tells the listener. It does nothing to a data server already
+	// DRAINING or DRAINED.
 	Drain()
 }

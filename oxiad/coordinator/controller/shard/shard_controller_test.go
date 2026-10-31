@@ -3330,6 +3330,9 @@ func (r *dataServerEventsRelay) FeaturesDiscovered(dataServer *proto.DataServerI
 	}
 }
 
+// BecameDrained isn't relayed: the data servers of the tests don't drain.
+func (*dataServerEventsRelay) BecameDrained(*proto.DataServerIdentity) {}
+
 // A rolling upgrade restarts the followers first and the leader last, with a
 // binary that supports a new feature. The restarts of the followers don't
 // replace the leader, and the election that replaces the leader runs while it
@@ -3348,12 +3351,13 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	previous := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
 	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
 
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 	relay := &dataServerEventsRelay{}
 	dataServers := make(map[string]dataservercontroller.Controller, len(ensemble))
 	for _, dataServer := range ensemble {
 		rpc.GetNode(dataServer).SetNodeFeatures(previous)
 		dataServers[dataServer.GetNameOrDefault()] = dataservercontroller.NewController(context.Background(),
-			&proto.DataServer{Identity: dataServer}, rpctest.NewShardAssignmentsProvider(), relay, rpc, "test-instance",
+			&proto.DataServer{Identity: dataServer}, metadata, rpctest.NewShardAssignmentsProvider(), relay, rpc, "test-instance",
 			oxiatime.SlowInitialInterval, health.DefaultCheckPolicy)
 	}
 	defer func() {
@@ -3365,7 +3369,7 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	// stale if its ping loop changed the status while the watch waited for
 	// it: the data server reports its health until the controller acts on it.
 	setHealth := func(dataServer *proto.DataServerIdentity, servingStatus grpc_health_v1.HealthCheckResponse_ServingStatus,
-		status dataservercontroller.State) {
+		status proto.DataServerState) {
 		t.Helper()
 		require.Eventually(t, func() bool {
 			rpc.GetNode(dataServer).HealthClient.SetStatus(servingStatus)
@@ -3373,7 +3377,7 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 	for _, dataServer := range ensemble {
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, dataservercontroller.Running)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 	}
 	supply := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
 		features := make(map[string][]proto.Feature, len(servers))
@@ -3384,15 +3388,14 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	}
 	stop := func(dataServer *proto.DataServerIdentity) {
 		t.Helper()
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, dataservercontroller.NotRunning)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE)
 	}
 	startUpgraded := func(dataServer *proto.DataServerIdentity) {
 		t.Helper()
 		rpc.GetNode(dataServer).SetNodeFeatures(upgraded)
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, dataservercontroller.Running)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 	}
 
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 	steadyInTerm := func(term int64) {
 		t.Helper()
 		require.Eventually(t, func() bool {

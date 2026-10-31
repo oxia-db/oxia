@@ -32,6 +32,7 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -432,6 +433,49 @@ func (m *defaultMetadata) DeleteShardStatus(namespace string, shard int64) error
 	})
 }
 
+func (m *defaultMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*commonproto.DataServerStatus], error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return nil, err
+	}
+	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServerStatus], len(status.Value.GetDataServers()))
+	for name, dataServerStatus := range status.Value.GetDataServers() {
+		dataServers[name] = commonobject.Borrow(dataServerStatus)
+	}
+	return dataServers, nil
+}
+
+func (m *defaultMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*commonproto.DataServerStatus], bool, error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.DataServerStatus]{}, false, err
+	}
+	dataServerStatus, exists := status.Value.GetDataServers()[name]
+	if !exists {
+		return commonobject.Borrowed[*commonproto.DataServerStatus]{}, false, nil
+	}
+	return commonobject.Borrow(dataServerStatus), true, nil
+}
+
+func (m *defaultMetadata) PatchDataServerStatus(name string,
+	modify func(status *commonproto.DataServerStatus) (bool, error)) error {
+	return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		status, exists := clusterStatus.GetDataServers()[name]
+		if !exists {
+			status = &commonproto.DataServerStatus{}
+		}
+		updated, err := modify(status)
+		if err != nil || !updated {
+			return clusterStatus, false, err
+		}
+		if clusterStatus.DataServers == nil {
+			clusterStatus.DataServers = map[string]*commonproto.DataServerStatus{}
+		}
+		clusterStatus.DataServers[name] = status
+		return clusterStatus, true, nil
+	})
+}
+
 func (m *defaultMetadata) GetConfig() (commonobject.Borrowed[*commonproto.ClusterConfiguration], error) {
 	config, err := m.configProvider.Load()
 	if err != nil {
@@ -524,6 +568,17 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
 	name := dataServer.GetIdentity().GetName()
 
+	// The name of a data server that left stays taken until its status is
+	// deleted: shards could otherwise take it into their ensembles while it
+	// drains, or once it is reported drained
+	status, exists, err := m.GetDataServerStatus(name)
+	if err != nil {
+		return err
+	}
+	if state := status.UnsafeBorrow().GetState(); exists && dataserver.IsRemoved(state) {
+		return fmt.Errorf("%w: data server %q is %s", errs.ErrAlreadyExists, name, state)
+	}
+
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		if _, exists := config.GetDataServer(name); exists {
 			return nil, fmt.Errorf("%w: data server %q", errs.ErrAlreadyExists, name)
@@ -584,6 +639,7 @@ func (m *defaultMetadata) PatchDataServer(desireDataServer *commonproto.DataServ
 
 func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer, error) {
 	var deleted *commonproto.DataServer
+	inConfig := true
 	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for i, identity := range config.GetServers() {
 			if identity.GetNameOrDefault() != name {
@@ -603,17 +659,56 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 						remainingServerCount)
 				}
 			}
+			// Stored before the data server leaves the configuration: once it
+			// left, only its status tells that it is draining. If the write of
+			// the configuration fails, the data server stays in it, and serves
+			// as before until the delete is retried. The configuration lock is
+			// held, then the status lock: never the other way around.
+			if err := m.PatchDataServerStatus(name, func(status *commonproto.DataServerStatus) (bool, error) {
+				if status.GetState() == commonproto.DataServerState_DATA_SERVER_STATE_DRAINING {
+					return false, nil
+				}
+				status.State = commonproto.DataServerState_DATA_SERVER_STATE_DRAINING
+				return true, nil
+			}); err != nil {
+				return nil, err
+			}
 			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
 			if config.ServerMetadata != nil {
 				delete(config.ServerMetadata, name)
 			}
 			return config, nil
 		}
+		inConfig = false
 		return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
 	}); err != nil {
+		if !inConfig {
+			return m.deleteDrainedDataServer(name)
+		}
 		return nil, err
 	}
 
+	return deleted, nil
+}
+
+// deleteDrainedDataServer deletes the status of a drained data server, which
+// is out of the configuration.
+func (m *defaultMetadata) deleteDrainedDataServer(name string) (*commonproto.DataServer, error) {
+	var deleted *commonproto.DataServer
+	if err := m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		switch clusterStatus.GetDataServers()[name].GetState() {
+		case commonproto.DataServerState_DATA_SERVER_STATE_DRAINED:
+			delete(clusterStatus.DataServers, name)
+			deleted = &commonproto.DataServer{Identity: &commonproto.DataServerIdentity{Name: &name}}
+			return clusterStatus, true, nil
+		case commonproto.DataServerState_DATA_SERVER_STATE_DRAINING:
+			return clusterStatus, false, fmt.Errorf("%w: data server %q is draining", errs.ErrFailedPrecondition, name)
+		default:
+			return clusterStatus, false, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
+		}
+	}); err != nil {
+		return nil, err
+	}
 	return deleted, nil
 }
 

@@ -126,6 +126,9 @@ func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 	}
 }
 
+// BecameDrained has nothing to do: a drained data server is in no ensemble.
+func (*controller) BecameDrained(*proto.DataServerIdentity) {}
+
 func (s *controller) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
 	s.terminationMu.RLock()
 	defer s.terminationMu.RUnlock()

@@ -71,6 +71,8 @@ var _ coordruntime.Runtime = (*testRuntime)(nil)
 
 type testRuntime struct {
 	metadata coordmetadata.Metadata
+	// statuses are the statuses of the data servers that have a controller
+	statuses map[string]*proto.DataServerStatus
 }
 
 func (*testRuntime) Close() error { return nil }
@@ -91,15 +93,20 @@ func (*testRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
 func (*testRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
 
+func (*testRuntime) BecameDrained(*proto.DataServerIdentity) {}
+
 func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
 func (*testRuntime) DeleteDataServer(string) {}
 
 func (*testRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] { return nil }
 
-func (*testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { return nil }
+func (r *testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { return r.statuses }
 
-func (*testRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) { return nil, false }
+func (r *testRuntime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+	status, found := r.statuses[name]
+	return status, found
+}
 
 func (*testRuntime) CreateNamespace(string, *proto.Namespace) error {
 	return errors.New("unexpected namespace creation")
@@ -375,6 +382,48 @@ func TestManagementServerListDataServers(t *testing.T) {
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, ds.GetMetadata().GetLabels())
 }
 
+// A data server that left the configuration is listed while it drains, and
+// once drained, after the configured ones.
+func TestManagementServerListDataServersIncludesLeftDataServers(t *testing.T) {
+	serverName := "server-1"
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers: []*proto.DataServerIdentity{dataServer(&serverName, "public-1", "internal-1")},
+	})
+	storeDataServerStates(t, metadata, map[string]proto.DataServerState{
+		serverName: proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		"drained":  proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+		"removed":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+	})
+	management := newReadyManagementServer(metadata, nil)
+
+	res, err := management.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	require.NoError(t, err)
+	var names []string
+	var states []proto.DataServerState
+	for _, view := range res.GetDataServers() {
+		names = append(names, view.GetDataServer().GetIdentity().GetName())
+		states = append(states, view.GetDataServerStatus().GetState())
+	}
+	assert.Equal(t, []string{serverName, "drained", "draining"}, names)
+	assert.Equal(t, []proto.DataServerState{
+		proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED,
+		proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+		proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+	}, states)
+}
+
+func TestManagementServerListDataServersStatusLoadError(t *testing.T) {
+	management := newReadyManagementServer(&failingMetadata{
+		Metadata:  newTestMetadata(t, &proto.ClusterConfiguration{}),
+		statusErr: errors.New("status unavailable"),
+	}, nil)
+
+	_, err := management.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	assert.Equal(t, codes.Internal, grpcstatus.Code(err))
+	assert.ErrorContains(t, err, "status unavailable")
+}
+
 func TestManagementServerGetDataServerByName(t *testing.T) {
 	serverName := "server-2"
 
@@ -450,6 +499,50 @@ func TestManagementServerGetDataServerNotFound(t *testing.T) {
 	_, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "missing"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
+// A data server that left the configuration is reported from its stored
+// status, with the features its controller knows while it drains, and isn't
+// found once its status is gone, or if it isn't draining.
+func TestManagementServerGetDataServerReportsLeftDataServer(t *testing.T) {
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	storeDataServerStates(t, metadata, map[string]proto.DataServerState{
+		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		"drained":  proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+		"removed":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+	})
+	features := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
+	management := newReadyManagementServer(metadata, &testRuntime{
+		metadata: metadata,
+		statuses: map[string]*proto.DataServerStatus{
+			"draining": {State: proto.DataServerState_DATA_SERVER_STATE_DRAINING, SupportedFeatures: features},
+		},
+	})
+
+	res, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "draining"})
+	require.NoError(t, err)
+	assert.Equal(t, "draining", res.GetDataServer().GetDataServer().GetIdentity().GetName())
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, res.GetDataServer().GetDataServerStatus().GetState())
+	assert.Equal(t, features, res.GetDataServer().GetDataServerStatus().GetSupportedFeatures())
+
+	res, err = management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "drained"})
+	require.NoError(t, err)
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINED, res.GetDataServer().GetDataServerStatus().GetState())
+	assert.Empty(t, res.GetDataServer().GetDataServerStatus().GetSupportedFeatures())
+
+	_, err = management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "removed"})
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
+func TestManagementServerGetDataServerStatusLoadError(t *testing.T) {
+	management := newReadyManagementServer(&failingMetadata{
+		Metadata:  newTestMetadata(t, &proto.ClusterConfiguration{}),
+		statusErr: errors.New("status unavailable"),
+	}, nil)
+
+	_, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: "drained"})
+	assert.Equal(t, codes.Internal, grpcstatus.Code(err))
+	assert.ErrorContains(t, err, "status unavailable")
 }
 
 func TestManagementServerGetDataServerRejectsEmptyLookup(t *testing.T) {
@@ -1485,7 +1578,7 @@ func TestManagementServerSplitShardReturnsRuntimeError(t *testing.T) {
 }
 
 // failingMetadata fails the configuration reads and writes with err, and the
-// namespace status lists with statusErr, when they are set.
+// reads of the statuses with statusErr, when they are set.
 type failingMetadata struct {
 	coordmetadata.Metadata
 	err       error
@@ -1534,6 +1627,20 @@ func (m *failingMetadata) ListNamespace() (map[string]commonobject.Borrowed[*pro
 	return m.Metadata.ListNamespace()
 }
 
+func (m *failingMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	if m.statusErr != nil {
+		return nil, m.statusErr
+	}
+	return m.Metadata.ListDataServerStatus()
+}
+
+func (m *failingMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	if m.statusErr != nil {
+		return commonobject.Borrowed[*proto.DataServerStatus]{}, false, m.statusErr
+	}
+	return m.Metadata.GetDataServerStatus(name)
+}
+
 func (m *failingMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
 	if m.statusErr != nil {
 		return nil, m.statusErr
@@ -1576,4 +1683,15 @@ type splitRuntime struct {
 
 func (*splitRuntime) InitiateSplit(_ string, shard int64, _ *uint32) (leftShardID int64, rightShardID int64, err error) {
 	return shard + 1, shard + 2, nil
+}
+
+// storeDataServerStates stores the state of each data server.
+func storeDataServerStates(t *testing.T, metadata coordmetadata.Metadata, states map[string]proto.DataServerState) {
+	t.Helper()
+	for name, state := range states {
+		require.NoError(t, metadata.PatchDataServerStatus(name, func(status *proto.DataServerStatus) (bool, error) {
+			status.State = state
+			return true, nil
+		}))
+	}
 }

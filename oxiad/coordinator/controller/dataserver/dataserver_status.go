@@ -20,47 +20,16 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// State is the state of a data server, as its controller sees it:
-//
-//	           handshake succeeded
-//	NotRunning -------------------> Running
-//	    ^                              |
-//	    +------------------------------+
-//	           health check failed
-//
-//	removed from the configuration (Drain): Running or NotRunning --> Draining
-type State uint32
-
-const (
-	// Running is a data server that passes its health checks, and that the
-	// handshake bound to this coordinator: it receives the shard assignments.
-	Running State = iota
-	// NotRunning is a data server whose health checks fail, or that isn't
-	// bound to this coordinator yet: the state of a new controller.
-	NotRunning
-	// Draining is a data server removed from the configuration. It keeps
-	// receiving the shard assignments until it becomes unavailable, and the
-	// runtime closes its controller then.
-	Draining
-)
-
-// ToProto returns the state of the data server reported by the management API.
-func (s State) ToProto() proto.DataServerState {
-	switch s {
-	case Running:
-		return proto.DataServerState_DATA_SERVER_STATE_RUNNING
-	case NotRunning:
-		return proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE
-	case Draining:
-		return proto.DataServerState_DATA_SERVER_STATE_DRAINING
-	default:
-		return proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED
-	}
-}
-
-// Status is the state of a data server, and when it last changed.
+// Status is the state of a data server, and when it last changed. The state
+// combines where the data server is in its lifecycle with whether it is
+// available: a data server is UNAVAILABLE only while it is RUNNING, and a
+// DRAINING one stays DRAINING, so that it is still drained.
 type Status struct {
-	state State
+	// lifecycle is RUNNING, DRAINING or DRAINED.
+	lifecycle proto.DataServerState
+	// available is whether the data server answered its health checks since
+	// its last handshake.
+	available bool
 	// lastTransitionTime is when the state last changed: zero until it changes
 	// after the data server joined, as a data server that never failed doesn't
 	// need to prove that it's stable.
@@ -71,15 +40,28 @@ type Status struct {
 	epoch int64
 }
 
-// NewStatus returns the status of a data server in state, before any
-// transition.
-func NewStatus(state State) Status {
-	return Status{state: state}
+// NewStatus returns the status of a data server that GetState reports in
+// state, before any transition: UNAVAILABLE is a RUNNING data server that
+// isn't available, and any other state an available one.
+func NewStatus(state proto.DataServerState) Status {
+	if state == proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE {
+		return Status{lifecycle: proto.DataServerState_DATA_SERVER_STATE_RUNNING}
+	}
+	return Status{lifecycle: state, available: true}
 }
 
 // GetState returns the state of the data server.
-func (s Status) GetState() State {
-	return s.state
+func (s Status) GetState() proto.DataServerState {
+	if s.lifecycle == proto.DataServerState_DATA_SERVER_STATE_RUNNING && !s.available {
+		return proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE
+	}
+	return s.lifecycle
+}
+
+// IsAvailable reports whether the data server answered its health checks
+// since its last handshake.
+func (s Status) IsAvailable() bool {
+	return s.available
 }
 
 // GetLastTransitionTime returns when the state last changed, or zero if it
@@ -88,13 +70,25 @@ func (s Status) GetLastTransitionTime() time.Time {
 	return s.lastTransitionTime
 }
 
-// Advance moves the status to state, even if it already is in it: the epoch
-// increments, and the transition time is recorded, except for the first
-// transition, the data server joining.
-func (s *Status) Advance(state State) {
+// Advance moves the data server to the DRAINING or DRAINED stage of its
+// lifecycle.
+func (s *Status) Advance(lifecycle proto.DataServerState) {
+	s.lifecycle = lifecycle
+	s.transition()
+}
+
+// SetAvailable records whether the data server is available, even if it
+// already was: the epoch still increments.
+func (s *Status) SetAvailable(available bool) {
+	s.available = available
+	s.transition()
+}
+
+// transition increments the epoch, and records the transition time, except
+// for the first transition, the data server joining.
+func (s *Status) transition() {
 	if s.epoch > 0 {
 		s.lastTransitionTime = time.Now()
 	}
-	s.state = state
 	s.epoch++
 }

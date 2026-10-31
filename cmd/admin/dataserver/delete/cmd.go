@@ -27,9 +27,14 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:          "delete <name>",
-	Short:        "Delete a data server",
-	Long:         `Delete a data server`,
+	Use:   "delete <name>",
+	Short: "Delete a data server",
+	Long: `Delete a data server: it leaves the configuration, and drains while its
+replicas move to the other data servers. Get the data server to follow the
+drain: it is DATA_SERVER_STATE_DRAINING, then DATA_SERVER_STATE_DRAINED once
+no shard references it and every shard caught up, when the next one can be
+deleted. Deleting a drained data server forgets it, so that its name can be
+used again.`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,

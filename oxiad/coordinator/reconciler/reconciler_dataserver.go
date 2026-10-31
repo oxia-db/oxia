@@ -18,8 +18,10 @@ import (
 	"context"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
+	"go.uber.org/multierr"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
@@ -33,11 +35,26 @@ func (*dataServerReconciler) Close() error { return nil }
 
 func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
 	desired := hashset.New[string]()
+	statuses, err := r.runtime.Metadata().ListDataServerStatus()
+	if err != nil {
+		return err
+	}
 
 	for _, dataServer := range snapshot.ListDataServers() {
 		serverName := dataServer.GetNameOrDefault()
 		desired.Add(serverName)
 		r.runtime.CreateDataServer(serverName, dataServer)
+		if dataserver.IsServing(statuses[serverName].UnsafeBorrow().GetState()) {
+			continue
+		}
+		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
+			func(status *proto.DataServerStatus) (bool, error) {
+				if dataserver.IsServing(status.GetState()) {
+					return false, nil
+				}
+				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
+				return true, nil
+			}))
 	}
 
 	for name := range r.runtime.ListDataServer() {
@@ -47,5 +64,5 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	}
 
 	r.runtime.RefreshShardControllers()
-	return nil
+	return err
 }
