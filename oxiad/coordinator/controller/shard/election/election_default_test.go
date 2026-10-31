@@ -730,7 +730,7 @@ func TestElectionStartResetsEnsembleCaughtUp(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	e := newTestElection(t, metadata, rpc, shard, shardMeta)
 	mailbox := make(chan async.Mail, 1)
-	e.mailbox = mailbox
+	e.shardMailbox = mailbox
 
 	_, err := e.Start()
 	require.NoError(t, err)

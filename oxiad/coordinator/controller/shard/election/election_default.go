@@ -72,9 +72,9 @@ type election struct {
 	changeEnsemble   *action.ChangeEnsembleAction
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
-	// mailbox is posted to once a majority of the ensemble caught up, and once
+	// shardMailbox is posted to once a majority of the ensemble caught up, and once
 	// all of it did, see Tick
-	mailbox async.Mailbox
+	shardMailbox async.Mailbox
 
 	// mutable
 	meta             *proto.ShardMetadata
@@ -438,7 +438,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 	for caughtUp := 1; ; caughtUp++ {
 		if caughtUp == quorum.Majority(len(ensemble)) {
 			e.quorumCaughtUp.Store(true)
-			e.mailbox.Post()
+			e.shardMailbox.Post()
 		}
 		if caughtUp == len(ensemble) {
 			break
@@ -448,7 +448,7 @@ func (e *election) ensureEnsembleCaughtUp(ensemble []*proto.DataServerIdentity, 
 		}
 	}
 	e.ensembleCaughtUp.Store(true)
-	e.mailbox.Post()
+	e.shardMailbox.Post()
 	return nil
 }
 
@@ -828,7 +828,7 @@ func (e *election) Cancel() {
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
-	mailbox async.Mailbox,
+	shardMailbox async.Mailbox,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
@@ -846,7 +846,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		metadataStore:                  metadataStore,
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
-		mailbox:                        mailbox,
+		shardMailbox:                   shardMailbox,
 		leaderSelector:                 leaderSelector,
 		provider:                       provider,
 		namespace:                      namespace,
