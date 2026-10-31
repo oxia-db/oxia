@@ -28,6 +28,8 @@ import (
 
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 
+	"github.com/oxia-db/oxia/oxiad/common/async"
+
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
@@ -715,7 +717,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
+	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 		rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
@@ -733,9 +735,9 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 }
 
 // The election keeps the change pending until a majority of the ensemble caught
-// up, which a dead follower doesn't block, and TryFinishEnsembleChange finishes
-// it then. A canceled election never reports a caught-up majority, nor finishes
-// the change.
+// up, which a dead follower doesn't block, and Tick finishes it on the mail of
+// the election. A canceled election never reports a caught-up majority, nor
+// finishes the change.
 func TestElectionStartKeepsChangePending(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
@@ -761,8 +763,10 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 			rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 			rpc.GetNode(s1).BecomeLeaderResponse(nil)
-			e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
-				rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
+			mailbox := make(chan async.Mail, 1)
+			e := New(t.Context(), slog.Default(), nil, mailbox, metadata, feature.NoOpSupplier,
+				leaderselector.NewSelector(), rpc, constant.DefaultNamespace, shard, shardMeta,
+				action.NewChangeEnsembleAction(shard, s2, s4), nil,
 				metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -777,14 +781,16 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 				rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 				e.Cancel()
 				assert.False(t, e.IsQuorumCaughtUp())
-				require.NoError(t, e.TryFinishEnsembleChange())
+				assert.Empty(t, mailbox)
+				require.NoError(t, e.Tick())
 				stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 				assertEnsembleChange(t, stored.GetEnsembleChange(), s2, s4)
 				return
 			}
 			rpc.GetNode(s3).GetStatusResponse(3, proto.ServingStatus_FOLLOWER, 5, 5)
-			assert.Eventually(t, e.IsQuorumCaughtUp, 10*time.Second, 10*time.Millisecond)
-			require.NoError(t, e.TryFinishEnsembleChange())
+			<-mailbox
+			assert.True(t, e.IsQuorumCaughtUp())
+			require.NoError(t, e.Tick())
 			stored := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
 			assertShardEnsemble(t, stored.GetEnsemble(), s1, s3, s4)
 			assert.Nil(t, stored.GetEnsembleChange())
@@ -793,10 +799,10 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 	}
 }
 
-// TryFinishEnsembleChange finishes the change once a majority caught up, if the
+// Tick finishes the change once a majority caught up, if the
 // shard is still in the term of the election and the change is pending; a
 // failed write is returned.
-func TestElectionTryFinishEnsembleChange(t *testing.T) {
+func TestElectionTick(t *testing.T) {
 	var shard int64 = 5
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -835,7 +841,7 @@ func TestElectionTryFinishEnsembleChange(t *testing.T) {
 				Term: 3, Ensemble: []*proto.DataServerIdentity{s1, s4}, EnsembleChange: test.change})
 			e.quorumCaughtUp.Store(test.caughtUp)
 
-			err := e.TryFinishEnsembleChange()
+			err := e.Tick()
 			if test.writeErr != nil {
 				assert.ErrorIs(t, err, test.writeErr)
 			} else {
@@ -872,7 +878,7 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	e := New(t.Context(), slog.Default(), nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
+	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, leaderselector.NewSelector(),
 		rpc, constant.DefaultNamespace, shard, shardMeta, nil, nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),

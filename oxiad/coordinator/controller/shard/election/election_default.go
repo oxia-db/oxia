@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxia-db/oxia/oxiad/common/async"
 	"github.com/oxia-db/oxia/oxiad/common/entry"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/common/quorum"
@@ -71,6 +72,8 @@ type election struct {
 	changeEnsemble   *action.ChangeEnsembleAction
 	requiredFeatures []proto.Feature
 	featureSupplier  feature.Supplier
+	// mailbox is posted to once a majority of the ensemble caught up, see Tick
+	mailbox async.Mailbox
 
 	// mutable
 	meta           *proto.ShardMetadata
@@ -697,6 +700,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 					return
 				}
 				e.quorumCaughtUp.Store(true)
+				e.mailbox.Post()
 			},
 		)
 	})
@@ -756,7 +760,7 @@ func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled [
 	return nil
 }
 
-func (e *election) TryFinishEnsembleChange() error {
+func (e *election) Tick() error {
 	if e.meta.EnsembleChange == nil || !e.quorumCaughtUp.Load() {
 		return nil
 	}
@@ -798,6 +802,7 @@ func (e *election) Cancel() {
 //
 //nolint:revive
 func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.ShardEventListener,
+	mailbox async.Mailbox,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
 	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
@@ -815,6 +820,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		metadataStore:                  metadataStore,
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
+		mailbox:                        mailbox,
 		leaderSelector:                 leaderSelector,
 		provider:                       provider,
 		namespace:                      namespace,
