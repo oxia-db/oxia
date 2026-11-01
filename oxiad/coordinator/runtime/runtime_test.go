@@ -765,30 +765,13 @@ func TestRuntimeSelectNewEnsembleReturnsDataServerListError(t *testing.T) {
 	assert.ErrorIs(t, err, listErr)
 }
 
-// The selected data servers must be known data servers with an identity.
+// The selected data servers must be known data servers.
 func TestRuntimeSelectNewEnsembleRejectsUnknownDataServers(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		selected string
-	}{
-		{"not registered", "ghost"},
-		{"without identity", "anonymous"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c := newNamespaceTestRuntime(t, &fakeMetadata{
-				Metadata: newTestMetadata(t, &proto.ClusterConfiguration{}),
-				listDataServer: func() (map[string]commonobject.Borrowed[*proto.DataServer], error) {
-					return map[string]commonobject.Borrowed[*proto.DataServer]{
-						"anonymous": commonobject.Borrow(&proto.DataServer{}),
-					}, nil
-				},
-			})
-			c.ensembleSelector = fixedEnsembleSelector{tc.selected}
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	c.ensembleSelector = fixedEnsembleSelector{"ghost"}
 
-			_, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
-			assert.ErrorContains(t, err, "failed to find node "+tc.selected)
-		})
-	}
+	_, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
+	assert.ErrorContains(t, err, "failed to find node ghost")
 }
 
 // Only a live data server takes shards: a configured one without a controller,

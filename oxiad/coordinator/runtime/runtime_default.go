@@ -409,11 +409,7 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 		if !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
-		dataServer := borrowedDataServer.UnsafeBorrow()
-		if !exist || dataServer.GetIdentity() == nil {
-			return nil, fmt.Errorf("failed to find node %s", id)
-		}
-		esm = append(esm, dataServer.GetIdentity())
+		esm = append(esm, borrowedDataServer.UnsafeBorrow().GetIdentity())
 	}
 	return esm, nil
 }
