@@ -901,6 +901,10 @@ func TestMetadataCreateDataServerRejectsNameOfLeftDataServer(t *testing.T) {
 	}
 
 	require.ErrorIs(t, metadata.CreateDataServer(dataServer("draining")), errs.ErrAlreadyExists)
+	// A data server without a name is known by its internal address
+	require.ErrorIs(t, metadata.CreateDataServer(&commonproto.DataServer{
+		Identity: &commonproto.DataServerIdentity{Public: "unnamed:6648", Internal: "drained"},
+	}), errs.ErrAlreadyExists)
 	require.ErrorIs(t, metadata.CreateDataServer(dataServer("drained")), errs.ErrAlreadyExists)
 	require.NoError(t, metadata.CreateDataServer(dataServer("running")))
 	require.Len(t, loaded(t, configProvider).Value.GetServers(), 3)

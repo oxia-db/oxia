@@ -698,6 +698,12 @@ func New(
 
 	// init node controller
 	for _, node := range dataServers {
+		// DRAINED is final: a data server still referenced by a pending
+		// delete of its copy needs no controller
+		stored := dataServerStatus[node.GetNameOrDefault()].UnsafeBorrow().GetState()
+		if stored == proto.DataServerState_DATA_SERVER_STATE_DRAINED {
+			continue
+		}
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
 		nc := dataservercontroller.NewController(
 			c.ctx,
@@ -712,7 +718,7 @@ func New(
 		)
 		// Resume the drain before the lock is released, so that a draining
 		// data server is never seen RUNNING
-		if dataserver.IsRemoved(dataServerStatus[node.GetNameOrDefault()].UnsafeBorrow().GetState()) {
+		if stored == proto.DataServerState_DATA_SERVER_STATE_DRAINING {
 			nc.Drain()
 		}
 		c.dataServerControllers[node.GetNameOrDefault()] = nc

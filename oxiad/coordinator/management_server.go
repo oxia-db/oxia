@@ -108,6 +108,10 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 	views := make([]*proto.DataServerView, 0, len(config.GetServers()))
 	for _, server := range config.GetServers() {
 		name := server.GetNameOrDefault()
+		// Reported below, as the configuration can have it again
+		if dataserver.IsRemoved(storedStatuses[name].UnsafeBorrow().GetState()) {
+			continue
+		}
 		identity := server
 		if server.GetName() == "" {
 			identity = &proto.DataServerIdentity{
@@ -140,7 +144,8 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		if _, exists := config.GetDataServer(name); exists {
+		if _, exists := config.GetDataServer(name); exists &&
+			!dataserver.IsRemoved(storedStatuses[name].UnsafeBorrow().GetState()) {
 			continue
 		}
 		// A data server that left the configuration: only its name is known.

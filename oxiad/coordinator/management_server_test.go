@@ -413,6 +413,39 @@ func TestManagementServerListDataServersIncludesLeftDataServers(t *testing.T) {
 	}, states)
 }
 
+// A drained data server that the configuration has again is listed once, with
+// its stored state, as Get reports it.
+func TestManagementServerListDataServersReportsLeftDataServerAddedAgain(t *testing.T) {
+	serverName := "server-1"
+	drained := "drained"
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers: []*proto.DataServerIdentity{
+			dataServer(&serverName, "public-1", "internal-1"),
+			dataServer(&drained, "public-2", "internal-2"),
+		},
+	})
+	storeDataServerStates(t, metadata, map[string]proto.DataServerState{
+		drained: proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+	})
+	management := newReadyManagementServer(metadata, nil)
+
+	res, err := management.ListDataServers(context.Background(), &proto.ListDataServersRequest{})
+	require.NoError(t, err)
+	states := map[string]proto.DataServerState{}
+	for _, view := range res.GetDataServers() {
+		states[view.GetDataServer().GetIdentity().GetName()] = view.GetDataServerStatus().GetState()
+	}
+	assert.Equal(t, map[string]proto.DataServerState{
+		serverName: proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED,
+		drained:    proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+	}, states)
+	assert.Len(t, res.GetDataServers(), 2)
+
+	got, err := management.GetDataServer(context.Background(), &proto.GetDataServerRequest{DataServer: drained})
+	require.NoError(t, err)
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINED, got.GetDataServer().GetDataServerStatus().GetState())
+}
+
 func TestManagementServerListDataServersStatusLoadError(t *testing.T) {
 	management := newReadyManagementServer(&failingMetadata{
 		Metadata:  newTestMetadata(t, &proto.ClusterConfiguration{}),

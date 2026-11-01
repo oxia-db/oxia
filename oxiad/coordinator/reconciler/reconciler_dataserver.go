@@ -36,10 +36,11 @@ func (*dataServerReconciler) Close() error { return nil }
 
 func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
 	desired := hashset.New[string]()
+	// The controllers are reconciled also when the statuses can't be read or
+	// stored: the runtime knows the data servers that drain, and the error
+	// fails the pass, which is retried
 	statuses, err := r.runtime.Metadata().ListDataServerStatus()
-	if err != nil {
-		return err
-	}
+	var unstored []string
 
 	for _, dataServer := range snapshot.ListDataServers() {
 		serverName := dataServer.GetNameOrDefault()
@@ -56,17 +57,9 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 		}
 		desired.Add(serverName)
 		r.runtime.CreateDataServer(serverName, dataServer)
-		if _, stored := statuses[serverName]; stored {
-			continue
+		if _, stored := statuses[serverName]; !stored && err == nil {
+			unstored = append(unstored, serverName)
 		}
-		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
-			func(status *proto.DataServerStatus) (bool, error) {
-				if status.GetState() != proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED {
-					return false, nil
-				}
-				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
-				return true, nil
-			}))
 	}
 
 	for name := range r.runtime.ListDataServer() {
@@ -76,5 +69,16 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	}
 
 	r.runtime.RefreshShardControllers()
+
+	for _, serverName := range unstored {
+		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
+			func(status *proto.DataServerStatus) (bool, error) {
+				if status.GetState() != proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED {
+					return false, nil
+				}
+				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
+				return true, nil
+			}))
+	}
 	return err
 }

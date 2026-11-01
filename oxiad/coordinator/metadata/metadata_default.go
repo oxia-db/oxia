@@ -590,7 +590,7 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 }
 
 func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
-	name := dataServer.GetIdentity().GetName()
+	name := dataServer.GetIdentity().GetNameOrDefault()
 
 	// The name of a data server that left stays taken: shards could otherwise
 	// take it into their ensembles while it drains, or once it is reported

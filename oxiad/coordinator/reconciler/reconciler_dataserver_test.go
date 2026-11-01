@@ -82,13 +82,15 @@ func TestDataServerReconcilerReconcileKeepsRunningStoredSinceRead(t *testing.T) 
 }
 
 // A status that can't be read or stored fails the pass, which the cluster
-// reconciler retries.
+// reconciler retries, but the controllers are still reconciled.
 func TestDataServerReconcilerReconcileReturnsStatusErrors(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
 	reconciler := &dataServerReconciler{runtime: runtime}
 	readErr := errors.New("status unavailable")
 	runtime.metadata.listDataServerStatusErr = readErr
 	require.ErrorIs(t, reconciler.Reconcile(t.Context(), dataServersConfig("s1")), readErr)
+	assert.Equal(t, []string{"s1"}, runtime.createdDataServers)
+	assert.Empty(t, runtime.metadata.status.GetDataServers())
 
 	runtime.metadata.listDataServerStatusErr = nil
 	writeErr := errors.New("store unavailable")

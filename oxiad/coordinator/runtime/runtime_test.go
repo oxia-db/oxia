@@ -223,6 +223,40 @@ func TestRuntimeNewResumesDrainOfStoredDrainingDataServer(t *testing.T) {
 	assert.NotContains(t, r.ListDataServer(), "s1")
 }
 
+// A DRAINED data server still referenced by a pending delete of its copy gets
+// no controller: DRAINED is final.
+func TestRuntimeNewSkipsStoredDrainedDataServer(t *testing.T) {
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	drained := &proto.DataServerIdentity{Name: new("s2"), Public: "s2:9091", Internal: "s2:8191"}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{server}})
+	require.NoError(t, metadata.CreateNamespaceStatus("ns", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {
+				Status:                  proto.ShardStatusSteadyState,
+				Term:                    1,
+				Leader:                  server,
+				Ensemble:                []*proto.DataServerIdentity{server},
+				PendingDeleteShardNodes: []*proto.DataServerIdentity{drained},
+				Int32HashRange:          &proto.HashRange{Min: 0, Max: math.MaxUint32},
+			},
+		},
+	}))
+	require.NoError(t, metadata.PatchDataServerStatus("s2", func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINED
+		return true, nil
+	}))
+
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, r.Close()) })
+
+	_, found := r.GetDataServerStatus("s2")
+	assert.False(t, found)
+	_, found = r.GetDataServerStatus("s1")
+	assert.True(t, found)
+}
+
 // A shard deletion reported after Close started is left to Close, which
 // closes the shard controllers itself.
 func TestRuntimeShardDeletedIgnoredAfterClose(t *testing.T) {
