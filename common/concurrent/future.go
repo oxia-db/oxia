@@ -16,6 +16,8 @@ package concurrent
 
 import (
 	"context"
+
+	"github.com/oxia-db/oxia/common/channel"
 )
 
 type Future[T any] interface {
@@ -24,10 +26,12 @@ type Future[T any] interface {
 	// You should only call wait once
 	Wait(ctx context.Context) (T, error)
 
-	//
+	// Complete completes the future with result, unless it is already
+	// completed or failed
 	Complete(result T)
 
-	// Fail Signal that one party has failed in the operation
+	// Fail Signal that one party has failed in the operation, unless the
+	// future is already completed or failed
 	Fail(err error)
 }
 
@@ -47,6 +51,12 @@ func NewFuture[T any]() Future[T] {
 }
 
 func (f *future[T]) Wait(ctx context.Context) (t T, err error) {
+	// A ready value wins over a done ctx, which select would pick at random
+	select {
+	case v := <-f.val:
+		return v.t, v.err
+	default:
+	}
 	select {
 	case v := <-f.val:
 		return v.t, v.err
@@ -56,11 +66,13 @@ func (f *future[T]) Wait(ctx context.Context) (t T, err error) {
 	}
 }
 
+// Complete and Fail keep the first value only: a later one would block on
+// the full channel.
 func (f *future[T]) Complete(result T) {
-	f.val <- value[T]{result, nil}
+	channel.PushNoBlock(f.val, value[T]{result, nil})
 }
 
 func (f *future[T]) Fail(err error) {
 	var t T
-	f.val <- value[T]{t, err}
+	channel.PushNoBlock(f.val, value[T]{t, err})
 }

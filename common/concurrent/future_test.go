@@ -61,6 +61,34 @@ func TestFuture(t *testing.T) {
 	assert.Equal(t, 0, res)
 }
 
+func TestFutureKeepsTheFirstValue(t *testing.T) {
+	f := NewFuture[int]()
+	f.Complete(5)
+	f.Complete(6)
+	f.Fail(io.EOF)
+	res, err := f.Wait(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, 5, res)
+
+	f = NewFuture[int]()
+	f.Fail(io.EOF)
+	f.Complete(5)
+	_, err = f.Wait(context.Background())
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestFutureWaitPrefersTheValueOverADoneContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 100 {
+		f := NewFuture[int]()
+		f.Complete(5)
+		res, err := f.Wait(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, 5, res)
+	}
+}
+
 func TestFuture_Cancel(t *testing.T) {
 	f := NewFuture[int]()
 

@@ -14,8 +14,10 @@
 
 package action
 
-// Action is a request of the balancer for the controller of a shard, which
-// completes it with its result.
+import "context"
+
+// Action is a request of the scheduler for the controller of a shard, or for
+// the runtime, which completes it with its result.
 type Action interface {
 	// GetShard returns the shard that the action applies to.
 	GetShard() int64
@@ -25,4 +27,8 @@ type Action interface {
 
 	// Error completes the action with a failure.
 	Error(err error)
+
+	// Wait waits until the action completes or ctx ends, and returns its
+	// result, its failure, or the error of ctx.
+	Wait(ctx context.Context) (any, error)
 }

@@ -239,8 +239,9 @@ func requireElectionCompleted(t *testing.T, electionAction *action.ElectionActio
 	}
 	completed := make(chan result, 1)
 	go func() {
-		leader, err := electionAction.Wait()
-		completed <- result{leader, err}
+		leader, err := electionAction.Wait(t.Context())
+		name, _ := leader.(string)
+		completed <- result{name, err}
 	}()
 	select {
 	case r := <-completed:
@@ -1047,7 +1048,7 @@ func TestControllerDispatchChangeEnsembleWithLeaderElectionFailure(t *testing.T)
 		for {
 			a := action.NewChangeEnsembleAction(shard, s1, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if err == nil {
 				return nil
 			}
@@ -1144,7 +1145,7 @@ func TestControllerDispatchChangeEnsembleDoesNotFailIfRemoveFails(t *testing.T) 
 		for {
 			a := action.NewChangeEnsembleAction(shard, s1, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if err == nil {
 				return nil
 			}
@@ -1250,11 +1251,11 @@ func TestControllerDispatchChangeEnsembleKeepsEnsembleOnFailedElection(t *testin
 	action3 := action.NewChangeEnsembleAction(shardId, s3, s6)
 	sc.Dispatch(action3)
 
-	_, err := action1.Wait()
+	_, err := action1.Wait(context.Background())
 	assert.Error(t, err)
-	_, err = action2.Wait()
+	_, err = action2.Wait(context.Background())
 	assert.Error(t, err)
-	_, err = action3.Wait()
+	_, err = action3.Wait(context.Background())
 	assert.Error(t, err)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shardId)
@@ -1265,7 +1266,7 @@ func TestControllerDispatchChangeEnsembleKeepsEnsembleOnFailedElection(t *testin
 	wait.Go(func() {
 		action1 := action.NewChangeEnsembleAction(shardId, s1, s4)
 		sc.Dispatch(action1)
-		_, err := action1.Wait()
+		_, err := action1.Wait(context.Background())
 		assert.Error(t, err)
 	})
 
@@ -1279,7 +1280,7 @@ func TestControllerDispatchChangeEnsembleKeepsEnsembleOnFailedElection(t *testin
 	wait.Go(func() {
 		action1 := action.NewChangeEnsembleAction(shardId, s2, s5)
 		sc.Dispatch(action1)
-		_, err := action1.Wait()
+		_, err := action1.Wait(context.Background())
 		assert.Error(t, err)
 	})
 	rpc.GetNode(s2).NewTermResponse(3, 3, nil)
@@ -1292,7 +1293,7 @@ func TestControllerDispatchChangeEnsembleKeepsEnsembleOnFailedElection(t *testin
 	wait.Go(func() {
 		action1 := action.NewChangeEnsembleAction(shardId, s3, s6)
 		sc.Dispatch(action1)
-		_, err := action1.Wait()
+		_, err := action1.Wait(context.Background())
 		assert.Error(t, err)
 	})
 	rpc.GetNode(s3).NewTermResponse(4, 3, nil)
@@ -1349,7 +1350,7 @@ func TestControllerDispatchChangeEnsembleWaitsForNewEnsembleQuorum(t *testing.T)
 		for {
 			a := action.NewChangeEnsembleAction(shard, s2, s3)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -1430,7 +1431,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedFollower(t *testing.
 		for {
 			a := action.NewChangeEnsembleAction(shard, s2, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -1514,7 +1515,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRetainedFollowerAfterLeader
 		for {
 			a := action.NewChangeEnsembleAction(shard, s2, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -1615,7 +1616,7 @@ func TestControllerDispatchChangeEnsembleReplacesDeadFollower(t *testing.T) {
 		for {
 			a := action.NewChangeEnsembleAction(shard, s3, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -1690,7 +1691,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntryOfRemovedLeader(t *testing.T)
 		for {
 			a := action.NewChangeEnsembleAction(shard, s1, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -1769,7 +1770,7 @@ func TestControllerDispatchChangeEnsembleKeepsEntriesAfterFailedBecomeLeader(t *
 		for {
 			a := action.NewChangeEnsembleAction(shard, s2, s4)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -1983,7 +1984,7 @@ func TestControllerDispatchChangeEnsembleRejectsFeatureSupportRegression(t *test
 
 	waitResult := make(chan error, 1)
 	go func() {
-		_, err := change.Wait()
+		_, err := change.Wait(context.Background())
 		waitResult <- err
 	}()
 
@@ -2036,7 +2037,7 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 
 	change := action.NewChangeEnsembleAction(shard, s2, s5)
 	sc.onChangeEnsemble(change)
-	_, err := change.Wait()
+	_, err := change.Wait(context.Background())
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
@@ -2081,7 +2082,7 @@ func TestControllerDispatchChangeEnsembleRejectsLeftDataServer(t *testing.T) {
 
 	change := action.NewChangeEnsembleAction(shard, s2, s4)
 	sc.onChangeEnsemble(change)
-	_, err := change.Wait()
+	_, err := change.Wait(context.Background())
 	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
 
 	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
@@ -2126,7 +2127,7 @@ func TestControllerDispatchChangeEnsembleReturnsDataServerStatusError(t *testing
 
 	change := action.NewChangeEnsembleAction(shard, s2, s4)
 	sc.onChangeEnsemble(change)
-	_, err := change.Wait()
+	_, err := change.Wait(context.Background())
 	assert.ErrorIs(t, err, readErr)
 }
 
@@ -2165,7 +2166,7 @@ func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
 		for {
 			a := action.NewChangeEnsembleAction(shard, from, to)
 			sc.Dispatch(a)
-			_, err := a.Wait()
+			_, err := a.Wait(context.Background())
 			if !errors.Is(err, errs.ErrUnavailable) {
 				return err
 			}
@@ -2397,7 +2398,7 @@ func TestControllerDispatchChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	}))
 	close(election.release)
 
-	_, err := swap.Wait()
+	_, err := swap.Wait(context.Background())
 	assert.ErrorIs(t, err, errs.ErrShardNotElectable)
 	parent := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
 	assert.NotNil(t, parent.GetSplit())
@@ -2419,7 +2420,7 @@ func TestControllerDispatchChangeEnsembleStopsWhenSplitStarts(t *testing.T) {
 	}))
 	swap = action.NewChangeEnsembleAction(0, ps3, spare)
 	sc.Dispatch(swap)
-	_, err = swap.Wait()
+	_, err = swap.Wait(context.Background())
 	require.NoError(t, err)
 	shard := requireShardMetadata(t, metadata, constant.DefaultNamespace, 0)
 	assert.EqualValues(t, 6, shard.GetTerm())
@@ -3854,7 +3855,7 @@ func TestControllerDispatchChangeEnsembleFailsWhenClosing(t *testing.T) {
 
 	changeEnsemble := action.NewChangeEnsembleAction(5, testDataServer("s1"), testDataServer("s2"))
 	s.Dispatch(changeEnsemble)
-	_, err := changeEnsemble.Wait()
+	_, err := changeEnsemble.Wait(context.Background())
 	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
 }
 
@@ -4095,7 +4096,7 @@ func TestControllerCloseFailsQueuedActions(t *testing.T) {
 
 	_, err := requireElectionCompleted(t, electionAction)
 	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
-	_, err = changeEnsemble.Wait()
+	_, err = changeEnsemble.Wait(context.Background())
 	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
 	assert.Empty(t, s.deleteOp)
 	assert.Empty(t, s.dataServerFailureOp)
@@ -4119,7 +4120,7 @@ func TestControllerOnChangeEnsembleReturnsShardStatusLoadError(t *testing.T) {
 
 	changeEnsemble := action.NewChangeEnsembleAction(5, testDataServer("s1"), testDataServer("s2"))
 	s.onChangeEnsemble(changeEnsemble)
-	_, err := changeEnsemble.Wait()
+	_, err := changeEnsemble.Wait(context.Background())
 	assert.ErrorContains(t, err, "status unavailable")
 	assert.Nil(t, s.currentElection)
 }
@@ -4335,6 +4336,8 @@ func (*unknownAction) GetShard() int64 { return 5 }
 func (*unknownAction) Done(any) {}
 
 func (*unknownAction) Error(error) {}
+
+func (*unknownAction) Wait(context.Context) (any, error) { return nil, errors.New("unknown action") }
 
 // startElection starts a leader election of the shard, as its shard
 // controller does, and returns the elected leader once the election ends.

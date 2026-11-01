@@ -32,8 +32,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/state"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 
-	"github.com/oxia-db/oxia/common/concurrent"
-
 	"github.com/oxia-db/oxia/common/process"
 
 	"github.com/oxia-db/oxia/common/channel"
@@ -304,12 +302,12 @@ func (r *nodeBasedBalancer) swapShard(
 
 	r.logger.Info("propose to swap the shard", slog.Int64("shard", candidateShard.ShardID), slog.Any("from", fromNode), slog.Any("to", targetNodeID))
 	swapGroup.Add(1)
-	r.actionCh <- action.NewChangeEnsembleActionWithCallback(candidateShard.ShardID, fromNode, targetNode,
-		concurrent.NewOnce(func(_ any) {
-			swapGroup.Done()
-		}, func(_ error) {
-			swapGroup.Done()
-		}))
+	swap := action.NewChangeEnsembleAction(candidateShard.ShardID, fromNode, targetNode)
+	r.actionCh <- swap
+	go func() {
+		defer swapGroup.Done()
+		_, _ = swap.Wait(r.ctx)
+	}()
 	loadRatios.MoveShardToNode(candidateShard, fromNodeID, targetNodeID)
 	loadRatios.ReCalculateRatios()
 	return true, nil
@@ -553,7 +551,7 @@ func (r *nodeBasedBalancer) rebalanceLeader() {
 
 	ac := action.NewElectionAction(shard)
 	r.actionCh <- ac
-	leader, err := ac.Wait()
+	leader, err := ac.Wait(r.ctx)
 	if err != nil {
 		r.logger.Warn("quarantine the shard due to failed election", slog.String("namespace", move.Namespace), slog.Int64("shard", shard),
 			slog.Any("old-leader", oldLeader), slog.Any("error", err))

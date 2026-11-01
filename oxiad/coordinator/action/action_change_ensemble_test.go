@@ -15,49 +15,23 @@
 package action
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/common/concurrent"
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestChangeEnsembleAction_WithCallback(t *testing.T) {
-	finished := false
-	var finishedErr error
-
+func TestChangeEnsembleActionWait(t *testing.T) {
 	// success
-	action := NewChangeEnsembleActionWithCallback(0, &proto.DataServerIdentity{}, &proto.DataServerIdentity{}, concurrent.NewOnce(func(t any) {
-		finished = true
-	}, func(err error) {
-		finished = true
-		finishedErr = err
-	}))
-	action.Done(nil)
-	assert.True(t, finished)
-	assert.Nil(t, finishedErr)
-
-	// failure
-	action = NewChangeEnsembleActionWithCallback(0, &proto.DataServerIdentity{}, &proto.DataServerIdentity{}, concurrent.NewOnce(func(t any) {
-		finished = true
-	}, func(err error) {
-		finished = true
-		finishedErr = err
-	}))
-	action.Error(errors.New("error"))
-	assert.True(t, finished)
-	assert.Error(t, finishedErr)
-}
-
-func TestChangeEnsembleAction_WithoutCallback(t *testing.T) {
-	// success
-	action := NewChangeEnsembleAction(0, &proto.DataServerIdentity{}, &proto.DataServerIdentity{})
+	action := NewChangeEnsembleAction(7, &proto.DataServerIdentity{}, &proto.DataServerIdentity{})
+	assert.Equal(t, int64(7), action.GetShard())
 	go func() {
 		action.Done(nil)
 	}()
-	_, err := action.Wait()
+	_, err := action.Wait(context.Background())
 	assert.Nil(t, err)
 
 	// failure
@@ -65,22 +39,18 @@ func TestChangeEnsembleAction_WithoutCallback(t *testing.T) {
 	go func() {
 		action.Error(errors.New("error"))
 	}()
-	_, err = action.Wait()
+	_, err = action.Wait(context.Background())
 	assert.Error(t, err)
 }
 
 func TestChangeEnsembleActionDoneIgnoresLaterCompletions(t *testing.T) {
-	var completions, failures int
-	action := NewChangeEnsembleActionWithCallback(0, &proto.DataServerIdentity{}, &proto.DataServerIdentity{},
-		concurrent.NewOnce(func(any) { completions++ }, func(error) { failures++ }))
+	action := NewChangeEnsembleAction(0, &proto.DataServerIdentity{}, &proto.DataServerIdentity{})
 	action.Done(nil)
 	action.Done(nil)
 	action.Error(errors.New("error"))
 
-	_, err := action.Wait()
+	_, err := action.Wait(context.Background())
 	assert.NoError(t, err)
-	assert.Equal(t, 1, completions)
-	assert.Equal(t, 0, failures)
 }
 
 func TestChangeEnsembleActionErrorIgnoresLaterCompletions(t *testing.T) {
@@ -90,6 +60,6 @@ func TestChangeEnsembleActionErrorIgnoresLaterCompletions(t *testing.T) {
 	action.Error(errors.New("second"))
 	action.Done(nil)
 
-	_, err := action.Wait()
+	_, err := action.Wait(context.Background())
 	assert.ErrorIs(t, err, first)
 }
