@@ -16,6 +16,7 @@ package reconciler
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
 	"go.uber.org/multierr"
@@ -42,14 +43,25 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 
 	for _, dataServer := range snapshot.ListDataServers() {
 		serverName := dataServer.GetNameOrDefault()
+		// A data server that left the cluster can't join it again under the
+		// same name: it isn't reconciled, and keeps draining
+		state := statuses[serverName].UnsafeBorrow().GetState()
+		if live, found := r.runtime.GetDataServerStatus(serverName); found && !dataserver.IsRemoved(state) {
+			state = live.GetState()
+		}
+		if dataserver.IsRemoved(state) {
+			slog.Warn("Rejecting a data server of the configuration that was removed",
+				slog.String("data-server", serverName), slog.String("state", state.String()))
+			continue
+		}
 		desired.Add(serverName)
 		r.runtime.CreateDataServer(serverName, dataServer)
-		if !dataserver.NeedsRunning(statuses[serverName].UnsafeBorrow().GetState()) {
+		if _, stored := statuses[serverName]; stored {
 			continue
 		}
 		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
 			func(status *proto.DataServerStatus) (bool, error) {
-				if !dataserver.NeedsRunning(status.GetState()) {
+				if status.GetState() != proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED {
 					return false, nil
 				}
 				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING

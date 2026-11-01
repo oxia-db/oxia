@@ -22,11 +22,3 @@ func IsRemoved(state proto.DataServerState) bool {
 	return state == proto.DataServerState_DATA_SERVER_STATE_DRAINING ||
 		state == proto.DataServerState_DATA_SERVER_STATE_DRAINED
 }
-
-// NeedsRunning reports whether a data server of the configuration, in the
-// stored state, must be stored RUNNING: it has no stored state, or it is
-// DRAINED and was added again. A DRAINING one added again keeps draining.
-func NeedsRunning(state proto.DataServerState) bool {
-	return state == proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED ||
-		state == proto.DataServerState_DATA_SERVER_STATE_DRAINED
-}

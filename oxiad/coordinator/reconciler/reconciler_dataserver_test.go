@@ -24,30 +24,47 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// The data servers of the configuration are stored RUNNING: the ones without
-// a stored status, and the drained ones added again. A draining one added
-// again keeps draining.
+// The data servers of the configuration are created, and the ones without a
+// stored status are stored RUNNING.
 func TestDataServerReconcilerReconcileStoresRunningDataServers(t *testing.T) {
+	runtime := namespaceRuntimeForErrors()
+	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
+		"running": {State: proto.DataServerState_DATA_SERVER_STATE_RUNNING},
+	}
+	reconciler := &dataServerReconciler{runtime: runtime}
+
+	require.NoError(t, reconciler.Reconcile(t.Context(), dataServersConfig("new", "running")))
+
+	assert.Equal(t, []string{"new", "running"}, runtime.createdDataServers)
+	assert.Equal(t, map[string]proto.DataServerState{
+		"new":     proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+		"running": proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+	}, storedDataServerStates(runtime))
+}
+
+// A data server that left the cluster, stored DRAINING or DRAINED, or only
+// draining in the runtime yet, isn't reconciled when the configuration has it
+// again.
+func TestDataServerReconcilerReconcileRejectsRemovedDataServers(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
 	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
 		"draining": {State: proto.DataServerState_DATA_SERVER_STATE_DRAINING},
 		"drained":  {State: proto.DataServerState_DATA_SERVER_STATE_DRAINED},
-		"running":  {State: proto.DataServerState_DATA_SERVER_STATE_RUNNING},
+	}
+	runtime.dataServerStatus = map[string]*proto.DataServerStatus{
+		"draining": {State: proto.DataServerState_DATA_SERVER_STATE_RUNNING},
+		"leaving":  {State: proto.DataServerState_DATA_SERVER_STATE_DRAINING},
 	}
 	reconciler := &dataServerReconciler{runtime: runtime}
 
-	require.NoError(t, reconciler.Reconcile(t.Context(), dataServersConfig("new", "draining", "drained", "running")))
+	require.NoError(t, reconciler.Reconcile(t.Context(), dataServersConfig("new", "draining", "drained", "leaving")))
 
-	states := map[string]proto.DataServerState{}
-	for name, status := range runtime.metadata.status.GetDataServers() {
-		states[name] = status.GetState()
-	}
+	assert.Equal(t, []string{"new"}, runtime.createdDataServers)
 	assert.Equal(t, map[string]proto.DataServerState{
 		"new":      proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
-		"drained":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
-		"running":  proto.DataServerState_DATA_SERVER_STATE_RUNNING,
-	}, states)
+		"drained":  proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+	}, storedDataServerStates(runtime))
 }
 
 // A data server stored RUNNING since its status was read isn't written again.
@@ -88,4 +105,12 @@ func dataServersConfig(names ...string) *proto.ClusterConfiguration {
 		})
 	}
 	return config
+}
+
+func storedDataServerStates(runtime *mockNamespaceRuntime) map[string]proto.DataServerState {
+	states := map[string]proto.DataServerState{}
+	for name, status := range runtime.metadata.status.GetDataServers() {
+		states[name] = status.GetState()
+	}
+	return states
 }

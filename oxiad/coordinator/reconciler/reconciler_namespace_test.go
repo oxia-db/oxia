@@ -703,6 +703,8 @@ type mockNamespaceRuntime struct {
 	selectNewEnsembleFn func(*proto.Namespace, int64, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
 	added               map[int64]string
 	deleted             []int64
+	createdDataServers  []string
+	dataServerStatus    map[string]*proto.DataServerStatus
 }
 
 func (*mockNamespaceRuntime) Close() error { return nil }
@@ -726,7 +728,10 @@ func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
 
 func (*mockNamespaceRuntime) BecameDrained(*proto.DataServerIdentity) {}
 
-func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
+func (m *mockNamespaceRuntime) CreateDataServer(name string, _ *proto.DataServer) bool {
+	m.createdDataServers = append(m.createdDataServers, name)
+	return true
+}
 
 func (*mockNamespaceRuntime) DeleteDataServer(string) {}
 
@@ -828,8 +833,9 @@ func (*mockNamespaceRuntime) ListDataServerStatus() map[string]*proto.DataServer
 	return nil
 }
 
-func (*mockNamespaceRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) {
-	return nil, false
+func (m *mockNamespaceRuntime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+	status, found := m.dataServerStatus[name]
+	return status, found
 }
 
 func (*mockNamespaceRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
