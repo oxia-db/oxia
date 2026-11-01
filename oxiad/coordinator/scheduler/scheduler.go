@@ -22,11 +22,19 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 )
 
-// Scheduler moves the replicas and the leaders of the shards until no valid op
-// is left: it drains the removed data servers, balances the replicas of each
-// namespace, then of all of them, and once the replicas settle, balances the
-// leaders the same way. It drives itself: nothing has to tell it that the
-// cluster changed.
+// Scheduler balances the shards in three steps, in this order, until no valid
+// op is left:
+//
+//  1. Replicas: it drains the removed data servers, then evens out the
+//     replicas of each namespace, then of all of them.
+//  2. Leaders: once no replica moves, it evens out the leaders the same way,
+//     since every replace runs an election that may move a leader.
+//  3. Shard load: once nothing else moves, it splits a shard over the size or
+//     the throughput threshold of the auto-split, one at a time, and the next
+//     rounds balance its children.
+//
+// It balances counts, not traffic: a busy shard is split, never moved for its
+// load. It drives itself: nothing has to tell it that the cluster changed.
 //
 // # Round
 //
