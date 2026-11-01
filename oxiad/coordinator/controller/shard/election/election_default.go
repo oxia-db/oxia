@@ -39,8 +39,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -60,12 +58,14 @@ const quorumFencingGracePeriod = 100 * time.Millisecond
 var _ Election = &election{}
 
 type election struct {
-	logger           *slog.Logger
-	ctx              context.Context
-	ctxCancel        context.CancelFunc
-	wg               sync.WaitGroup
-	metadataStore    coordmetadata.Metadata
-	leaderSelector   selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
+	logger        *slog.Logger
+	ctx           context.Context
+	ctxCancel     context.CancelFunc
+	wg            sync.WaitGroup
+	metadataStore coordmetadata.Metadata
+	// preferredLeader is the data server that a leader transfer asks for, or
+	// empty.
+	preferredLeader  string
 	eventListener    controllerapi.ShardEventListener
 	provider         rpc.ControllerRPCProvider
 	namespace        string
@@ -266,7 +266,8 @@ gracePeriod:
 }
 
 // chooseLeader chooses a fenced data server with the highest head entry, which
-// has every committed entry:
+// has every committed entry; ensembleHeads holds at least the fence quorum, so
+// there is one:
 //
 //	           +----------------------+
 //	heads ---->| 1. ensemble          |    the highest head entry, with its ties
@@ -280,11 +281,11 @@ gracePeriod:
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 3. select            |    the leader among the ties, the others
-//	           |                      |    follow
+//	           | 3. select            |    among the ties: the preferred leader,
+//	           |                      |    else any; the others follow
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
-	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
+	leader *proto.DataServerIdentity, followers sharding.HeadEntries) {
 	var mostUpToDate []*proto.DataServerIdentity
 	var highest *proto.EntryId
 	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
@@ -297,28 +298,25 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			}
 		}
 	}
-	if len(mostUpToDate) > 0 {
-		if _, retained := retainedHeads[mostUpToDate[0]]; retained {
-			e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
-		} else if change := e.meta.EnsembleChange; change != nil &&
-			slices.ContainsFunc(mostUpToDate, dataserver.MatchDataServer(change.To)) {
-			// To has every committed entry: with it, the ensemble has each of them on a
-			// majority without from
-			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
-				slog.Any("from", change.From), slog.Any("to", change.To))
-			e.meta.EnsembleChange = nil
-			e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
-		}
+	if _, retained := retainedHeads[mostUpToDate[0]]; retained {
+		e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
+	} else if change := e.meta.EnsembleChange; change != nil &&
+		slices.ContainsFunc(mostUpToDate, dataserver.MatchDataServer(change.To)) {
+		// To has every committed entry: with it, the ensemble has each of them on a
+		// majority without from
+		e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
+			slog.Any("from", change.From), slog.Any("to", change.To))
+		e.meta.EnsembleChange = nil
+		e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
 	}
-	namespaces, err := e.metadataStore.ListNamespaceStatus()
-	if err != nil {
-		return nil, nil, err
-	}
-	if leader, err = e.leaderSelector.Select(&leaderselector.Context{
-		Candidates: mostUpToDate,
-		Namespaces: namespaces,
-	}); err != nil {
-		return nil, nil, err
+	// The scheduler balances the leaders, so the election doesn't count them:
+	// a count read by every election of a failover at once would send each to
+	// the same data server. The ties come in no particular order.
+	leader = mostUpToDate[0]
+	if i := slices.IndexFunc(mostUpToDate, func(server *proto.DataServerIdentity) bool {
+		return server.GetNameOrDefault() == e.preferredLeader
+	}); i >= 0 {
+		leader = mostUpToDate[i]
 	}
 	followers = make(sharding.HeadEntries)
 	for server, head := range ensembleHeads {
@@ -326,7 +324,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			followers[server] = head
 		}
 	}
-	return leader, followers, nil
+	return leader, followers
 }
 
 // undoEnsembleChange restores the ensemble before the pending change, as Raft
@@ -654,10 +652,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 	if err = e.checkNegotiatedFeatures(negotiatedFeatures, enabledFeatures, ensembleHeads); err != nil {
 		return nil, err
 	}
-	candidateLeader, followers, err := e.chooseLeader(ensembleHeads, retainedHeads)
-	if err != nil {
-		return nil, err
-	}
+	candidateLeader, followers := e.chooseLeader(ensembleHeads, retainedHeads)
 	e.logger.Info(
 		"Successfully moved ensemble to a new term",
 		slog.Int64("term", e.meta.Term),
@@ -825,7 +820,8 @@ func (e *election) Cancel() {
 	e.logger.Info("stopped the election", slog.Any("term", e.meta.GetTerm()))
 }
 
-// New returns an election of the shard. requiredFeatures are pinned in its
+// New returns an election of the shard, that elects preferredLeader if it has
+// every committed entry, unless it is empty. requiredFeatures are pinned in its
 // term (see feature.EnabledError).
 //
 //nolint:revive
@@ -833,10 +829,9 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 	shardMailbox async.Mailbox,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
-	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction, requiredFeatures []proto.Feature,
+	changeEnsembleAction *action.ChangeEnsembleAction, preferredLeader string, requiredFeatures []proto.Feature,
 	leaderElectionLatencyHistogram metric.LatencyHistogram, newTermQuorumLatencyHistogram metric.LatencyHistogram,
 	becomeLeaderLatencyHistogram metric.LatencyHistogram) Election {
 	current, cancelFunc := context.WithCancel(ctx)
@@ -849,7 +844,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
 		shardMailbox:                   shardMailbox,
-		leaderSelector:                 leaderSelector,
+		preferredLeader:                preferredLeader,
 		provider:                       provider,
 		namespace:                      namespace,
 		shard:                          shard,
