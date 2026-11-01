@@ -30,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
@@ -177,7 +178,12 @@ func TestSchedulerPlansAroundADataServerDown(t *testing.T) {
 		1: {Ensemble: identities("r", "n0")},
 		2: {Ensemble: identities("r", "n2")},
 	})
-	s := New(t.Context(), metadata, func(name string) bool { return name != "n1" }, nil)
+	s := New(t.Context(), metadata, func(name string) (dataservercontroller.Status, bool) {
+		if name == "n1" {
+			return dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING), true
+		}
+		return running(name)
+	}, nil)
 	t.Cleanup(func() { assert.NoError(t, s.Close()) })
 
 	targets := map[int64]string{}
@@ -199,9 +205,11 @@ func start(t *testing.T, metadata *fakeMetadata) Scheduler {
 	return s
 }
 
-// running reports every data server running.
-func running(string) bool {
-	return true
+// running reports every data server running, since it joined.
+func running(string) (dataservercontroller.Status, bool) {
+	status := dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	status.SetAvailable(true)
+	return status, true
 }
 
 func identities(names ...string) []*proto.DataServerIdentity {

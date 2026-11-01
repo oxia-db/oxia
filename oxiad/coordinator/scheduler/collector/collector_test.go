@@ -26,6 +26,7 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
@@ -48,12 +49,31 @@ func TestCollectorCollectReturnsTheSnapshot(t *testing.T) {
 		},
 	}
 
-	s, err := New(t.Context(), metadata, func(name string) bool { return name == "n0" }, nil).Collect()
+	metadata.dataServers["n2"] = commonobject.Borrow(&proto.DataServer{Identity: &proto.DataServerIdentity{Internal: "n2"}})
+	// n1 doesn't answer, and n2 came back just now
+	back := up()
+	back.SetAvailable(false)
+	back.SetAvailable(true)
+	statuses := map[string]dataservercontroller.Status{"n0": up(), "n2": back}
+	status := func(name string) (dataservercontroller.Status, bool) {
+		st, found := statuses[name]
+		return st, found
+	}
+
+	s, err := New(t.Context(), metadata, status, nil).Collect(time.Now())
 
 	require.NoError(t, err)
 	assert.Equal(t, &stats.ShardStats{Ensemble: []string{"n0"}, Leader: "n0"}, s.GetShard(1))
 	assert.False(t, s.DataServers["n0"].Down)
+	assert.False(t, s.DataServers["n0"].Recovering)
 	assert.True(t, s.DataServers["n1"].Down)
+	assert.False(t, s.DataServers["n1"].Recovering)
+	assert.False(t, s.DataServers["n2"].Down)
+	assert.True(t, s.DataServers["n2"].Recovering)
+
+	s, err = New(t.Context(), metadata, status, nil).Collect(time.Now().Add(StableTime))
+	require.NoError(t, err)
+	assert.False(t, s.DataServers["n2"].Recovering)
 }
 
 func TestCollectorCollectReturnsAFailedRead(t *testing.T) {
@@ -63,10 +83,24 @@ func TestCollectorCollectReturnsAFailedRead(t *testing.T) {
 		"statuses":     {listNamespaceStatusErr: errors.New("unavailable")},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := New(t.Context(), metadata, nil, nil).Collect()
+			_, err := New(t.Context(), metadata, nil, nil).Collect(time.Now())
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestRunning(t *testing.T) {
+	status := func(state proto.DataServerState, available bool) dataservercontroller.Status {
+		st := dataservercontroller.NewStatus(state)
+		st.SetAvailable(available)
+		return st
+	}
+
+	assert.True(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_RUNNING, true), true))
+	assert.True(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_DRAINING, true), true))
+	assert.False(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_DRAINED, true), true))
+	assert.False(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_RUNNING, false), true))
+	assert.False(t, Running(dataservercontroller.Status{}, false))
 }
 
 func TestCollectorSampleSetsTheOvershoot(t *testing.T) {
@@ -220,6 +254,14 @@ func TestCollectorSampleKeepsTheShardsFromSplitting(t *testing.T) {
 			assert.False(t, s.GetShard(1).Splittable)
 		})
 	}
+}
+
+// up is the status of a data server that answered its health checks since
+// it joined.
+func up() dataservercontroller.Status {
+	status := dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	status.SetAvailable(true)
+	return status
 }
 
 // newStats has the data servers n0 and n1, and the splittable shard 1 of

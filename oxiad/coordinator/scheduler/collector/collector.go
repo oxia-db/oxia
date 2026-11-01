@@ -25,6 +25,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
@@ -35,7 +36,18 @@ const (
 	statusTimeout = 5 * time.Second
 	// parallelism bounds the status requests in flight.
 	parallelism = 16
+	// StableTime is how long a data server stays up after its status changed,
+	// e.g. it came back from a failure, before it takes a replica or a
+	// leader: moving them straight back onto it turns one flap into a loop.
+	StableTime = 5 * time.Minute
 )
+
+// Running reports whether a data server, with status if found, answers its
+// health checks and isn't drained: running, or draining after its removal
+// from the configuration.
+func Running(status dataservercontroller.Status, found bool) bool {
+	return found && status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
+}
 
 // Collector collects the snapshot of each round, and the stats of its shards
 // from their leaders, at most once per collection interval of the auto-split.
@@ -51,7 +63,7 @@ type Collector struct {
 	ctx      context.Context
 	logger   *slog.Logger
 	metadata coordmetadata.Metadata
-	running  func(name string) bool
+	status   func(name string) (dataservercontroller.Status, bool)
 	rpc      rpc.ControllerRPCProvider
 	// sampled is the time of the last sample, and overshoots its result.
 	sampled    time.Time
@@ -74,16 +86,16 @@ type tracker struct {
 	exceedingSince time.Time
 }
 
-// New returns a Collector that reads metadata, whether each data server is
-// running with running, and the stats of the shards with provider, until ctx
-// is done.
-func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name string) bool,
-	provider rpc.ControllerRPCProvider) *Collector {
+// New returns a Collector that reads metadata, the status of each data server
+// with status, which reports false for one without a controller, and the
+// stats of the shards with provider, until ctx is done.
+func New(ctx context.Context, metadata coordmetadata.Metadata,
+	status func(name string) (dataservercontroller.Status, bool), provider rpc.ControllerRPCProvider) *Collector {
 	return &Collector{
 		ctx:      ctx,
 		logger:   slog.With(slog.String("component", "snapshot-collector")),
 		metadata: metadata,
-		running:  running,
+		status:   status,
 		rpc:      provider,
 		trackers: make(map[int64]*tracker),
 		evaluations: metric.NewCounter("oxia_coordinator_autosplit_evaluations_total",
@@ -92,11 +104,12 @@ func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name
 }
 
 // Collect returns the snapshot of the cluster from the metadata, with the data
-// servers that are down now, so that the plan moves nothing that needs them;
-// the dispatch checks them again before it sends an action. It doesn't sample
-// the stats of the shards: see Sample. It returns the error of a read that
-// failed.
-func (c *Collector) Collect() (*stats.ClusterStats, error) {
+// servers that are down at now, so that the plan moves nothing that needs
+// them, and the ones that changed less than StableTime before, which take
+// nothing; the dispatch checks them again before it sends an action. It
+// doesn't sample the stats of the shards: see Sample. It returns the error of
+// a read that failed.
+func (c *Collector) Collect(now time.Time) (*stats.ClusterStats, error) {
 	dataServers, errDataServers := c.metadata.ListDataServer()
 	namespaces, errNamespaces := c.metadata.ListNamespace()
 	statuses, errStatuses := c.metadata.ListNamespaceStatus()
@@ -105,7 +118,9 @@ func (c *Collector) Collect() (*stats.ClusterStats, error) {
 	}
 	s := stats.New(dataServers, namespaces, statuses)
 	for name, dataServer := range s.DataServers {
-		dataServer.Down = !c.running(name)
+		status, found := c.status(name)
+		dataServer.Down = !Running(status, found)
+		dataServer.Recovering = !dataServer.Down && now.Sub(status.GetLastTransitionTime()) < StableTime
 	}
 	return s, nil
 }

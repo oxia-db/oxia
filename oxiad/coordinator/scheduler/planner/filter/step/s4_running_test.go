@@ -42,6 +42,18 @@ func TestRunningRejectsAnOpThatNeedsADataServerDown(t *testing.T) {
 		From: "n0", To: "n1"}), errs.ErrUnavailable)
 }
 
+func TestRunningRejectsATargetThatCameBackRecently(t *testing.T) {
+	s := newStats()
+	s.DataServers["n2"].Recovering = true
+	s.DataServers["n1"].Recovering = true
+
+	assert.ErrorIs(t, Running{}.Filter(s, move("n0", "n2")), errs.ErrUnavailable)
+	assert.ErrorIs(t, Running{}.Filter(s, candidate.Candidate{Kind: candidate.TransferLeader, Namespace: "a", Shard: 1,
+		From: "n0", To: "n1"}), errs.ErrUnavailable)
+	assert.NoError(t, Running{}.Filter(s, move("n0", "n3")), "a member that came back recently holds nothing")
+	assert.NoError(t, Running{}.Filter(s, split))
+}
+
 func TestRunningDrainsARemovedDataServerDown(t *testing.T) {
 	s := newStats()
 	s.DataServers["n0"].Down = true

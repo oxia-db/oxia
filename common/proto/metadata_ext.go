@@ -26,8 +26,6 @@ import (
 const (
 	defaultLoadBalancerScheduleInterval = 30 * time.Second
 	defaultLoadBalancerQuarantineTime   = 5 * time.Minute
-	defaultLoadBalancerScheduleString   = "30s"
-	defaultLoadBalancerQuarantineString = "5m"
 
 	defaultAutoSplitMaxShardSizeMB      uint32 = 1024
 	defaultAutoSplitMaxThroughputOps    uint32 = 10000
@@ -401,26 +399,6 @@ func (lb *LoadBalancer) GetQuarantineTimeDurationOrDefault() time.Duration {
 		return defaultLoadBalancerQuarantineTime
 	}
 	return duration
-}
-
-func (cc *ClusterConfiguration) GetLoadBalancerWithDefaults() *LoadBalancer {
-	loadBalancer := &LoadBalancer{
-		ScheduleInterval: defaultLoadBalancerScheduleString,
-		QuarantineTime:   defaultLoadBalancerQuarantineString,
-	}
-
-	if cc == nil || cc.GetLoadBalancer() == nil {
-		return loadBalancer
-	}
-
-	if value := cc.GetLoadBalancer().GetScheduleInterval(); value != "" {
-		loadBalancer.ScheduleInterval = value
-	}
-	if value := cc.GetLoadBalancer().GetQuarantineTime(); value != "" {
-		loadBalancer.QuarantineTime = value
-	}
-
-	return loadBalancer
 }
 
 // AutoSplitConfig helpers — follow the same pattern as LoadBalancer duration fields.

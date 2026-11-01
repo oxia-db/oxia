@@ -125,9 +125,6 @@ type Metadata interface {
 	// SubscribeConfig returns a subscription notified on each change of the
 	// configuration.
 	SubscribeConfig() *cache.Subscription[provider.Versioned[*commonproto.ClusterConfiguration]]
-	// GetLoadBalancerConfig returns the load balancer configuration, with its
-	// defaults.
-	GetLoadBalancerConfig() (commonobject.Borrowed[*commonproto.LoadBalancer], error)
 
 	// CreateNamespace adds a namespace to the configuration, or returns
 	// ErrAlreadyExists, or ErrFailedPrecondition if there are fewer data

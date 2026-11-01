@@ -35,7 +35,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -117,8 +116,6 @@ func (*testRuntime) CreateNamespace(string, *proto.Namespace) error {
 }
 
 func (*testRuntime) DeleteNamespace(string) {}
-
-func (*testRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
 
 func (r *testRuntime) Metadata() coordmetadata.Metadata { return r.metadata }
 

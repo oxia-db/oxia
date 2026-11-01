@@ -18,6 +18,7 @@ import "github.com/oxia-db/oxia/common/proto"
 
 type DataServerStats struct {
 	*proto.DataServer
-	Removed bool
-	Down    bool
+	Removed    bool
+	Down       bool
+	Recovering bool
 }

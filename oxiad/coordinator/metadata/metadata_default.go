@@ -488,14 +488,6 @@ func (m *defaultMetadata) SubscribeConfig() *cache.Subscription[provider.Version
 	return m.configProvider.Subscribe()
 }
 
-func (m *defaultMetadata) GetLoadBalancerConfig() (commonobject.Borrowed[*commonproto.LoadBalancer], error) {
-	config, err := m.configProvider.Load()
-	if err != nil {
-		return commonobject.Borrowed[*commonproto.LoadBalancer]{}, err
-	}
-	return commonobject.Borrow(config.Value.GetLoadBalancerWithDefaults()), nil
-}
-
 func (m *defaultMetadata) CreateNamespace(namespace *commonproto.Namespace) error {
 	name := namespace.GetName()
 
