@@ -678,7 +678,7 @@ func TestRuntimeInitiateSplitRejectsChangeEnsemblePlannedBefore(t *testing.T) {
 	rpc.GetNode(splitPs1).BecomeLeaderResponse(nil)
 
 	r.dispatchAction(swap)
-	_, err = swap.Wait()
+	_, err = swap.Wait(t.Context())
 	assert.ErrorIs(t, err, errs.ErrUnavailable)
 
 	borrowed, _, err = metadata.GetShardStatus(constant.DefaultNamespace, splitParentShard)

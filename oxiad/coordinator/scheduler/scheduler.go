@@ -1,0 +1,76 @@
+// Copyright 2023-2026 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package scheduler places and moves the replicas of the shards, under the
+// load balancer and the auto-split of the cluster configuration.
+package scheduler
+
+import (
+	"io"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+)
+
+// Scheduler moves the replicas and the leaders of the shards until no valid op
+// is left: it drains the removed data servers, balances the replicas of each
+// namespace, then of all of them, and once the replicas settle, balances the
+// leaders the same way. It drives itself: nothing has to tell it that the
+// cluster changed.
+//
+// # Round
+//
+//	start, a change of the        +---------------------+
+//	configuration, or the ------->| 1. read the policy  |--x unreadable: the
+//	schedule interval             |    and the snapshot |    next round retries
+//	                              +---------------------+
+//	                                         |
+//	                              +---------------------+
+//	                              | 2. plan             |    the planner, phase
+//	                              |                     |    by phase, one op per
+//	                              |                     |    shard and per target
+//	                              +---------------------+
+//	                                         |
+//	                              +---------------------+
+//	                              | 3. dispatch         |--x a data server of the
+//	                              |    each op          |    op went down since
+//	                              |                     |    the snapshot: the rest
+//	                              +---------------------+    of the plan is canceled
+//	                                         |
+//	                              +---------------------+
+//	                              | 4. wait             |    until every op
+//	                              |    every op         |    completes
+//	                              +---------------------+
+//
+// A round reads the shard status and the configuration from the metadata, so
+// the scheduler keeps no copy of the cluster between rounds, and which data
+// servers are down: the plan moves nothing that needs one, so that a data
+// server down doesn't hold the other shards, and the dispatch checks them
+// again before it sends an op. A single goroutine runs the rounds. A round
+// waits for its ops, which the metadata shows once they are done, so the next
+// round plans on the cluster they leave; it runs right away if they all
+// succeeded, and waits the schedule interval after a failure. A shard
+// controller completes or fails every action it takes, so the wait has no
+// timeout.
+//
+// Nobody calls the scheduler: New starts it, its owner closes it, and its only
+// output is GetActions. It runs the first round right away, then a round on
+// each change of the configuration or schedule interval, until Close.
+type Scheduler interface {
+	io.Closer
+
+	// GetActions delivers the actions of the ops, for the runtime to dispatch to
+	// the controllers of their shards. An action reports its outcome back to
+	// the scheduler. The scheduler stops sending when it closes.
+	GetActions() <-chan action.Action
+}

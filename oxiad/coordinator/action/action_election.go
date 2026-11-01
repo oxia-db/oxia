@@ -14,37 +14,42 @@
 
 package action
 
-import "sync"
+import (
+	"context"
+
+	"github.com/oxia-db/oxia/common/concurrent"
+)
 
 type ElectionAction struct {
 	Shard int64
+	// PreferredLeader is the data server that the election elects if it is
+	// among the most up-to-date members, or empty to let the election choose.
+	PreferredLeader string
 
-	waiter    *sync.WaitGroup
-	newLeader string
-	err       error
+	promise concurrent.Future[any]
 }
 
 func NewElectionAction(shard int64) *ElectionAction {
-	action := &ElectionAction{Shard: shard, waiter: &sync.WaitGroup{}}
-	action.waiter.Add(1)
-	return action
+	return NewLeaderTransferAction(shard, "")
+}
+
+// NewLeaderTransferAction returns an election of shard that prefers leader.
+func NewLeaderTransferAction(shard int64, leader string) *ElectionAction {
+	return &ElectionAction{Shard: shard, PreferredLeader: leader, promise: concurrent.NewFuture[any]()}
 }
 
 func (e *ElectionAction) Done(leader any) {
-	e.newLeader = leader.(string) //nolint:revive
-	e.waiter.Done()
+	e.promise.Complete(leader)
 }
 
 func (e *ElectionAction) Error(err error) {
-	e.err = err
-	e.waiter.Done()
+	e.promise.Fail(err)
 }
 
 // Wait waits for the election, and returns the name of the new leader, or the
 // error that stopped it.
-func (e *ElectionAction) Wait() (string, error) {
-	e.waiter.Wait()
-	return e.newLeader, e.err
+func (e *ElectionAction) Wait(ctx context.Context) (any, error) {
+	return e.promise.Wait(ctx)
 }
 
 func (e *ElectionAction) GetShard() int64 {

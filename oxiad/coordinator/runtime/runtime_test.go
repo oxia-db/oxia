@@ -889,7 +889,7 @@ func TestRuntimeDispatchActionFailsForUnknownShard(t *testing.T) {
 
 	c.dispatchAction(ac)
 
-	_, err := ac.Wait()
+	_, err := ac.Wait(t.Context())
 	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
 }
 

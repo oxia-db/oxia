@@ -15,8 +15,7 @@
 package action
 
 import (
-	"sync"
-	"sync/atomic"
+	"context"
 
 	"github.com/oxia-db/oxia/common/concurrent"
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -25,41 +24,23 @@ import (
 var _ Action = &ChangeEnsembleAction{}
 
 type ChangeEnsembleAction struct {
-	sync.WaitGroup
-
 	Shard int64
 	From  *commonproto.DataServerIdentity
 	To    *commonproto.DataServerIdentity
 
-	finished     atomic.Bool
-	executeError error
-	callback     concurrent.Callback[any]
+	promise concurrent.Future[any]
 }
 
 func (s *ChangeEnsembleAction) Done(_ any) {
-	if !s.finished.CompareAndSwap(false, true) { // Ordering::SeqCst
-		return
-	}
-	if s.callback != nil {
-		s.callback.OnComplete(nil)
-	}
-	s.WaitGroup.Done()
+	s.promise.Complete(nil)
 }
 
 func (s *ChangeEnsembleAction) Error(err error) {
-	if !s.finished.CompareAndSwap(false, true) { // Ordering::SeqCst
-		return
-	}
-	s.executeError = err
-	if s.callback != nil {
-		s.callback.OnCompleteError(err)
-	}
-	s.WaitGroup.Done()
+	s.promise.Fail(err)
 }
 
-func (s *ChangeEnsembleAction) Wait() (any, error) {
-	s.WaitGroup.Wait()
-	return nil, s.executeError
+func (s *ChangeEnsembleAction) Wait(ctx context.Context) (any, error) {
+	return s.promise.Wait(ctx)
 }
 
 func (s *ChangeEnsembleAction) GetShard() int64 {
@@ -67,19 +48,5 @@ func (s *ChangeEnsembleAction) GetShard() int64 {
 }
 
 func NewChangeEnsembleAction(shard int64, from *commonproto.DataServerIdentity, to *commonproto.DataServerIdentity) *ChangeEnsembleAction {
-	return NewChangeEnsembleActionWithCallback(shard, from, to, nil)
-}
-
-func NewChangeEnsembleActionWithCallback(shard int64, from *commonproto.DataServerIdentity, to *commonproto.DataServerIdentity, callback concurrent.Callback[any]) *ChangeEnsembleAction {
-	action := ChangeEnsembleAction{
-		WaitGroup:    sync.WaitGroup{},
-		Shard:        shard,
-		From:         from,
-		To:           to,
-		finished:     atomic.Bool{},
-		executeError: nil,
-		callback:     callback,
-	}
-	action.Add(1)
-	return &action
+	return &ChangeEnsembleAction{Shard: shard, From: from, To: to, promise: concurrent.NewFuture[any]()}
 }
