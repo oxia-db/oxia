@@ -119,10 +119,14 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, "localhost:19002", deleted.GetIdentity().GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, deleted.GetMetadata().GetLabels())
 
+	// The deleted data server is reported, by name, until it is forgotten
 	dataServers, err = client.ListDataServers(t.Context())
 	require.NoError(t, err)
-	require.Len(t, dataServers, 1)
+	require.Len(t, dataServers, 2)
 	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity())
 	assert.Equal(t, remainingServerName, dataServers[0].GetDataServer().GetIdentity().GetName())
 	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[0].GetDataServer().GetMetadata().GetLabels())
+	assert.Equal(t, serverName, dataServers[1].GetDataServer().GetIdentity().GetName())
+	assert.Contains(t, []proto.DataServerState{proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		proto.DataServerState_DATA_SERVER_STATE_DRAINED}, dataServers[1].GetDataServerStatus().GetState())
 }
