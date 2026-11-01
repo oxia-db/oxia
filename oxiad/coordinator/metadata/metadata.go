@@ -160,11 +160,12 @@ type Metadata interface {
 	// ErrFailedPrecondition if a namespace would be left with fewer data
 	// servers than its replication factor.
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
-	// ListDataServer returns every data server, with its identity and its
-	// metadata, by name: the internal address of a data server without a
-	// name.
+	// ListDataServer returns every data server of the configuration, with its
+	// identity and its metadata, by name: the internal address of a data
+	// server without a name. A data server that left, stored DRAINING or
+	// DRAINED, is left out, also when the configuration has it again.
 	ListDataServer() (map[string]commonobject.Borrowed[*commonproto.DataServer], error)
 	// GetDataServer returns a data server, with its identity and its
-	// metadata, and false if it doesn't exist.
+	// metadata, and false if it doesn't exist or left, as ListDataServer.
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool, error)
 }

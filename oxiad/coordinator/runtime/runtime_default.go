@@ -699,7 +699,7 @@ func New(
 	// init node controller
 	for _, node := range dataServers {
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
-		c.dataServerControllers[node.GetNameOrDefault()] = dataservercontroller.NewController(
+		nc := dataservercontroller.NewController(
 			c.ctx,
 			dataServer,
 			c.metadata,
@@ -710,6 +710,12 @@ func New(
 			oxiatime.SlowInitialInterval,
 			health.DefaultCheckPolicy,
 		)
+		// Resume the drain before the lock is released, so that a draining
+		// data server is never seen RUNNING
+		if dataserver.IsRemoved(dataServerStatus[node.GetNameOrDefault()].UnsafeBorrow().GetState()) {
+			nc.Drain()
+		}
+		c.dataServerControllers[node.GetNameOrDefault()] = nc
 	}
 
 	// init shard controller

@@ -505,9 +505,21 @@ func (m *defaultMetadata) CreateNamespace(namespace *commonproto.Namespace) erro
 				return nil, fmt.Errorf("%w: namespace %q", errs.ErrAlreadyExists, name)
 			}
 		}
-		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
+		// A data server that left takes no shard, also while the configuration
+		// has it again
+		status, err := m.statusProvider.Load()
+		if err != nil {
+			return nil, err
+		}
+		servers := 0
+		for _, server := range config.GetServers() {
+			if !dataserver.IsRemoved(status.Value.GetDataServers()[server.GetNameOrDefault()].GetState()) {
+				servers++
+			}
+		}
+		if namespace.GetReplicationFactor() > uint32(servers) {
 			return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-				errs.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
+				errs.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), servers)
 		}
 
 		config.Namespaces = append(config.Namespaces, namespace)
@@ -523,9 +535,21 @@ func (m *defaultMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace
 				continue
 			}
 			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
-				if replicationFactor > uint32(len(config.GetServers())) {
+				// A data server that left takes no shard, also while the configuration
+				// has it again
+				status, err := m.statusProvider.Load()
+				if err != nil {
+					return nil, err
+				}
+				servers := 0
+				for _, server := range config.GetServers() {
+					if !dataserver.IsRemoved(status.Value.GetDataServers()[server.GetNameOrDefault()].GetState()) {
+						servers++
+					}
+				}
+				if replicationFactor > uint32(servers) {
 					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-						errs.ErrFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
+						errs.ErrFailedPrecondition, namespace.GetName(), replicationFactor, servers)
 				}
 				namespace.ReplicationFactor = replicationFactor
 			}
@@ -647,7 +671,19 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 
 			dataServer, _ := config.GetDataServer(name)
 			deleted = dataServer
-			remainingServerCount := len(config.GetServers()) - 1
+			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
+			// A data server that left takes no shard, also while the configuration
+			// has it again
+			status, err := m.statusProvider.Load()
+			if err != nil {
+				return nil, err
+			}
+			remainingServerCount := 0
+			for _, server := range config.GetServers() {
+				if !dataserver.IsRemoved(status.Value.GetDataServers()[server.GetNameOrDefault()].GetState()) {
+					remainingServerCount++
+				}
+			}
 			for _, namespace := range config.GetNamespaces() {
 				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
 					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
@@ -658,7 +694,6 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 						remainingServerCount)
 				}
 			}
-			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
 			if config.ServerMetadata != nil {
 				delete(config.ServerMetadata, name)
 			}
@@ -677,10 +712,17 @@ func (m *defaultMetadata) ListDataServer() (map[string]commonobject.Borrowed[*co
 	if err != nil {
 		return nil, err
 	}
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return nil, err
+	}
 	config := loaded.Value
 	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServer], len(config.GetServers()))
 	for _, server := range config.GetServers() {
 		name := server.GetNameOrDefault()
+		if dataserver.IsRemoved(status.Value.GetDataServers()[name].GetState()) {
+			continue
+		}
 		identity := server
 		if server.GetName() == "" {
 			identity = &commonproto.DataServerIdentity{
@@ -749,8 +791,12 @@ func (m *defaultMetadata) GetDataServer(name string) (commonobject.Borrowed[*com
 	if err != nil {
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false, err
 	}
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.DataServer]{}, false, err
+	}
 	value, ok := config.Value.GetDataServer(name)
-	if !ok {
+	if !ok || dataserver.IsRemoved(status.Value.GetDataServers()[name].GetState()) {
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false, nil
 	}
 	return commonobject.Borrow(value), true, nil
