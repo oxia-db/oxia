@@ -39,8 +39,6 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -65,7 +63,6 @@ type election struct {
 	ctxCancel        context.CancelFunc
 	wg               sync.WaitGroup
 	metadataStore    coordmetadata.Metadata
-	leaderSelector   selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener    controllerapi.ShardEventListener
 	provider         rpc.ControllerRPCProvider
 	namespace        string
@@ -305,10 +302,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	if err != nil {
 		return nil, nil, err
 	}
-	if leader, err = e.leaderSelector.Select(&leaderselector.Context{
-		Candidates: mostUpToDate,
-		Namespaces: namespaces,
-	}); err != nil {
+	if leader, err = fewestLeaders(mostUpToDate, namespaces); err != nil {
 		return nil, nil, err
 	}
 	followers = make(sharding.HeadEntries)
@@ -824,7 +818,6 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 	shardMailbox async.Mailbox,
 	metadataStore coordmetadata.Metadata,
 	featureSupplier feature.Supplier,
-	leaderSelector selector.Selector[*leaderselector.Context, *proto.DataServerIdentity],
 	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,
 	changeEnsembleAction *action.ChangeEnsembleAction, requiredFeatures []proto.Feature,
@@ -840,7 +833,6 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
 		shardMailbox:                   shardMailbox,
-		leaderSelector:                 leaderSelector,
 		provider:                       provider,
 		namespace:                      namespace,
 		shard:                          shard,

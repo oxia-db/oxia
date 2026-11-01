@@ -59,7 +59,6 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 )
 
 var namespaceConfig = &proto.Namespace{
@@ -272,7 +271,6 @@ func TestControllerElectLeaderReturnsNewLeader(t *testing.T) {
 		shard:           shard,
 		metadataStore:   metadata,
 		featureSupplier: feature.NoOpSupplier,
-		leaderSelector:  leaderselector.NewSelector(),
 		rpc:             rpc,
 		logger:          slog.Default(),
 		leaderElectionLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
@@ -319,7 +317,6 @@ func TestControllerElectLeaderQueuesElectionOnFailure(t *testing.T) {
 		shard:           shard,
 		metadataStore:   metadata,
 		featureSupplier: feature.NoOpSupplier,
-		leaderSelector:  leaderselector.NewSelector(),
 		rpc:             rpc,
 		logger:          slog.Default(),
 		electionOp:      make(chan *action.ElectionAction, 1),
@@ -4349,7 +4346,6 @@ func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.C
 		shard:           shard,
 		metadataStore:   metadata,
 		featureSupplier: feature.NoOpSupplier,
-		leaderSelector:  leaderselector.NewSelector(),
 		rpc:             rpc,
 		logger:          slog.Default(),
 		leaderElectionLatencyHistogram: metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",

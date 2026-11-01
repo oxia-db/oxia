@@ -34,8 +34,6 @@ import (
 
 	featurepkg "github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector"
-	leaderselector "github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/leader"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
 	"github.com/oxia-db/oxia/oxiad/coordinator/controller/shard/election"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -69,7 +67,6 @@ type controller struct {
 	namespaceConfig       *proto.Namespace
 	periodicTasksInterval time.Duration
 	rpc                   rpc.ControllerRPCProvider
-	leaderSelector        selector.Selector[*leaderselector.Context, *proto.DataServerIdentity]
 	eventListener         controllerapi.ShardEventListener
 	metadataStore         coordmetadata.Metadata
 	featureSupplier       featurepkg.Supplier
@@ -162,7 +159,6 @@ func NewController(
 		metadataStore:         metadataStore,
 		featureSupplier:       featureSupplier,
 		eventListener:         eventListener,
-		leaderSelector:        leaderselector.NewSelector(),
 		electionOp:            make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:              make(chan any, chanBufferSize),
 		dataServerFailureOp:   make(chan *proto.DataServerIdentity, chanBufferSize),
@@ -641,7 +637,7 @@ func (s *controller) electLeader(shardMeta *proto.ShardMetadata,
 		s.currentElection.Cancel()
 	}
 	s.currentElection = election.New(s.ctx, s.logger, s.eventListener, s.electionMailbox,
-		s.metadataStore, s.featureSupplier, s.leaderSelector,
+		s.metadataStore, s.featureSupplier,
 		s.rpc, s.namespace, s.shard, shardMeta, changeEnsembleAction, s.requiredFeatures,
 		s.leaderElectionLatencyHistogram,
 		s.newTermQuorumLatencyHistogram,
