@@ -99,11 +99,15 @@ func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return fa
 
 func (*testRuntime) DeleteDataServer(string) {}
 
-func (*testRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] { return nil }
+func (*testRuntime) ListLiveDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	return nil
+}
 
-func (r *testRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus { return r.statuses }
+func (r *testRuntime) ListLiveDataServerStatus() map[string]*proto.DataServerStatus {
+	return r.statuses
+}
 
-func (r *testRuntime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+func (r *testRuntime) GetLiveDataServerStatus(name string) (*proto.DataServerStatus, bool) {
 	status, found := r.statuses[name]
 	return status, found
 }

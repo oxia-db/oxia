@@ -162,10 +162,10 @@ type Metadata interface {
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
 	// ListDataServer returns every data server of the configuration, with its
 	// identity and its metadata, by name: the internal address of a data
-	// server without a name. A data server that left, stored DRAINING or
-	// DRAINED, is left out, also when the configuration has it again.
+	// server without a name. It doesn't read the stored status: a data server
+	// that left and is in the configuration again is listed too.
 	ListDataServer() (map[string]commonobject.Borrowed[*commonproto.DataServer], error)
-	// GetDataServer returns a data server, with its identity and its
-	// metadata, and false if it doesn't exist or left, as ListDataServer.
+	// GetDataServer returns a data server of the configuration, with its
+	// identity and its metadata, and false if the configuration doesn't have it.
 	GetDataServer(name string) (commonobject.Borrowed[*commonproto.DataServer], bool, error)
 }

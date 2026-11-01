@@ -97,11 +97,20 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 	}
 	refreshed := make([]*proto.DataServerIdentity, len(servers))
 	for idx, server := range servers {
+		refreshed[idx] = server
+		// A data server that left keeps the addresses it drains from, also
+		// when the configuration has it again at other ones
+		stored, _, err := e.metadataStore.GetDataServerStatus(server.GetNameOrDefault())
+		if err != nil {
+			return nil, nil, err
+		}
+		if dataserver.IsRemoved(stored.UnsafeBorrow().GetState()) {
+			continue
+		}
 		borrowedDataServer, exist, err := e.metadataStore.GetDataServer(server.GetNameOrDefault())
 		if err != nil {
 			return nil, nil, err
 		}
-		refreshed[idx] = server
 		if exist {
 			if identity := borrowedDataServer.UnsafeBorrow().GetIdentity(); identity != nil {
 				refreshed[idx] = identity

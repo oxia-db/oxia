@@ -513,9 +513,16 @@ func newInitiateSplitTestRuntime(t *testing.T) (*runtime, *fakeMetadata) {
 			LoadBalancerConfig:  loadBalancerConfig.UnsafeBorrow(),
 			NodeAvailableJudger: func(string) bool { return true },
 		}),
-		assignmentsWatch: commonwatch.New(&proto.ShardAssignments{}),
-		shardControllers: map[int64]shardcontroller.Controller{},
-		splitControllers: map[int64]*shardcontroller.SplitController{},
+		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
+		shardControllers:      map[int64]shardcontroller.Controller{},
+		splitControllers:      map[int64]*shardcontroller.SplitController{},
+		dataServerControllers: map[string]dataservercontroller.Controller{},
+	}
+	for _, server := range []*proto.DataServerIdentity{
+		splitPs1, splitPs2, splitPs3, splitLs1, splitLs2, splitLs3, splitRs1, splitRs2, splitRs3,
+	} {
+		r.dataServerControllers[server.GetNameOrDefault()] = newFakeDataServerController(
+			proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 	}
 	t.Cleanup(func() {
 		// No data server answers, so closing the split controller aborts the

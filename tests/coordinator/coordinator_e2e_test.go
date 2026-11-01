@@ -652,7 +652,7 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 	assert.NoError(t, err)
 	c := newCoordinatorInstance(t, metadataProvider, configProvider, rpc2.NewControllerRPCProviderFactory(nil))
 
-	assert.Equal(t, 3, len(c.ListDataServer()))
+	assert.Equal(t, 3, len(c.ListLiveDataServer()))
 
 	// Add s4, s5
 	clusterConfig.Servers = append(clusterConfig.Servers,
@@ -671,16 +671,16 @@ func TestCoordinator_AddRemoveNodes(t *testing.T) {
 
 	// Wait for all shards to be ready
 	assert.Eventually(t, func() bool {
-		return len(c.ListDataServer()) == 4
+		return len(c.ListLiveDataServer()) == 4
 	}, 10*time.Second, 10*time.Millisecond)
 
-	_, ok := c.ListDataServer()[sa1.Internal]
+	_, ok := c.ListLiveDataServer()[sa1.Internal]
 	assert.False(t, ok)
 
-	_, ok = c.ListDataServer()[sa4.Internal]
+	_, ok = c.ListLiveDataServer()[sa4.Internal]
 	assert.True(t, ok)
 
-	_, ok = c.ListDataServer()[sa5.Internal]
+	_, ok = c.ListLiveDataServer()[sa5.Internal]
 	assert.True(t, ok)
 
 	assert.NoError(t, c.Close())
@@ -731,7 +731,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 		return true
 	}, 10*time.Second, 10*time.Millisecond)
 
-	assert.Equal(t, 4, len(c.ListDataServer()))
+	assert.Equal(t, 4, len(c.ListLiveDataServer()))
 
 	// Remove leader dataserver
 	leaderID := mock.StatusSnapshot(t, metadata).Namespaces["my-ns-1"].Shards[0].Leader.GetNameOrDefault()
@@ -750,7 +750,7 @@ func TestCoordinator_ShrinkCluster(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
-		return len(c.ListDataServer()) == 3
+		return len(c.ListLiveDataServer()) == 3
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// Wait for all shards to be ready. With RF=1 the balancer cannot move the

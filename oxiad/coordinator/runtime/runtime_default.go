@@ -129,7 +129,7 @@ func (c *runtime) Metadata() coordmetadata.Metadata {
 	return c.metadata
 }
 
-func (c *runtime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+func (c *runtime) ListLiveDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	c.RLock()
 	defer c.RUnlock()
 	dataServers := make(map[string]commonobject.Borrowed[*proto.DataServer], len(c.dataServerControllers))
@@ -141,7 +141,7 @@ func (c *runtime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataS
 	return dataServers
 }
 
-func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
+func (c *runtime) ListLiveDataServerStatus() map[string]*proto.DataServerStatus {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -155,7 +155,7 @@ func (c *runtime) ListDataServerStatus() map[string]*proto.DataServerStatus {
 	return statuses
 }
 
-func (c *runtime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+func (c *runtime) GetLiveDataServerStatus(name string) (*proto.DataServerStatus, bool) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -240,7 +240,9 @@ func (c *runtime) CreateNamespace(name string, namespaceConfig *proto.Namespace)
 	status[name] = commonobject.Borrow(namespaceStatus)
 
 	for _, shard := range sharding.GenerateShards(baseShardID, namespaceConfig.GetInitialShardCount()) {
+		c.RLock()
 		esm, err := c.selectNewEnsemble(name, shard.Id, namespaceConfig, status, nil)
+		c.RUnlock()
 		if err != nil {
 			return errors.Wrapf(err, "failed to select the ensemble of shard %d", shard.Id)
 		}
@@ -364,11 +366,19 @@ func cloneNamespaceStatuses(namespaces map[string]commonobject.Borrowed[*proto.N
 // selectNewEnsemble select a new server ensemble based on namespace policy and current cluster status.
 // It uses the ensemble selector to choose appropriate servers and returns the selected server metadata or an error.
 // When eligible is set, only the data servers that it accepts can be selected.
+// It must be called with the lock held.
 func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Namespace, editingStatus map[string]commonobject.Borrowed[*proto.NamespaceStatus],
 	eligible func(dataServer *proto.DataServerIdentity) bool) ([]*proto.DataServerIdentity, error) {
 	dataServers, err := c.metadata.ListDataServer()
 	if err != nil {
 		return nil, err
+	}
+	// Only a live data server takes shards: one that left has no controller,
+	// or a draining one, also when the configuration has it again
+	for name := range dataServers {
+		if nc, live := c.dataServerControllers[name]; !live || dataserver.IsRemoved(nc.GetStatus().GetState()) {
+			delete(dataServers, name)
+		}
 	}
 	nodes, metadata := dataServersToCandidatesAndMetadata(dataServers)
 	candidates := nodes
@@ -399,11 +409,7 @@ func (c *runtime) selectNewEnsemble(namespace string, shard int64, ns *proto.Nam
 		if !exist {
 			return nil, fmt.Errorf("failed to find node %s", id)
 		}
-		dataServer := borrowedDataServer.UnsafeBorrow()
-		if !exist || dataServer.GetIdentity() == nil {
-			return nil, fmt.Errorf("failed to find node %s", id)
-		}
-		esm = append(esm, dataServer.GetIdentity())
+		esm = append(esm, borrowedDataServer.UnsafeBorrow().GetIdentity())
 	}
 	return esm, nil
 }

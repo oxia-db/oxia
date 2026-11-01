@@ -34,9 +34,15 @@ type Runtime interface {
 	CreateDataServer(name string, dataServer *proto.DataServer) bool
 	DeleteDataServer(name string)
 
-	ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer]
-	ListDataServerStatus() map[string]*proto.DataServerStatus
-	GetDataServerStatus(name string) (*proto.DataServerStatus, bool)
+	// ListLiveDataServer returns the data servers that have a controller and
+	// take shards: a draining or drained one is left out. The configured data
+	// servers are those of Metadata().ListDataServer.
+	ListLiveDataServer() map[string]commonobject.Borrowed[*proto.DataServer]
+	// ListLiveDataServerStatus and GetLiveDataServerStatus return the status
+	// that the controllers hold in memory, of every data server that has one.
+	// The stored status is that of Metadata().ListDataServerStatus.
+	ListLiveDataServerStatus() map[string]*proto.DataServerStatus
+	GetLiveDataServerStatus(name string) (*proto.DataServerStatus, bool)
 
 	// CreateNamespace creates the status if absent and starts any missing shard
 	// controllers from the existing status when the namespace is already saved.
