@@ -2089,6 +2089,47 @@ func TestControllerDispatchChangeEnsembleRejectsLeftDataServer(t *testing.T) {
 	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
 }
 
+// A status of the target data server that can't be read fails the change,
+// which its caller retries.
+func TestControllerDispatchChangeEnsembleReturnsDataServerStatusError(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	stored := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	require.NoError(t, stored.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:   proto.ShardStatusSteadyState,
+			Term:     2,
+			Leader:   s1,
+			Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		}},
+	}))
+	readErr := errors.New("status unavailable")
+	metadata := &hookedMetadata{
+		Metadata: stored,
+		getDataServerStatus: func(string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+			return commonobject.Borrowed[*proto.DataServerStatus]{}, false, readErr
+		},
+	}
+	sc := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		rpc:             rpctest.NewRpcProvider(),
+		ctx:             t.Context(),
+		logger:          slog.Default(),
+		currentElection: &fakeElection{quorumCaughtUp: true},
+	}
+
+	change := action.NewChangeEnsembleAction(shard, s2, s4)
+	sc.onChangeEnsemble(change)
+	_, err := change.Wait()
+	assert.ErrorIs(t, err, readErr)
+}
+
 // The mail of the election finishes the pending change once a majority of the
 // ensemble caught up, and the next change starts then.
 func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
@@ -3777,6 +3818,22 @@ func TestControllerBecameUnavailableDiscardsWhenQueueIsFull(t *testing.T) {
 	assert.Len(t, s.dataServerFailureOp, chanBufferSize)
 }
 
+// A drained data server is in no ensemble: the shard controller queues nothing.
+func TestControllerBecameDrainedQueuesNothing(t *testing.T) {
+	s := &controller{
+		shard:                5,
+		electionOp:           make(chan *action.ElectionAction, chanBufferSize),
+		dataServerFailureOp:  make(chan *proto.DataServerIdentity, chanBufferSize),
+		featuresDiscoveredOp: make(chan any, 1),
+		logger:               slog.Default(),
+	}
+
+	s.BecameDrained(&proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"})
+	assert.Empty(t, s.electionOp)
+	assert.Empty(t, s.dataServerFailureOp)
+	assert.Empty(t, s.featuresDiscoveredOp)
+}
+
 func TestControllerDispatchPanicsOnUnknownAction(t *testing.T) {
 	s := &controller{shard: 5, logger: slog.Default()}
 	assert.PanicsWithValue(t, "unknown action type: *shard.unknownAction", func() {
@@ -4374,12 +4431,20 @@ func testDataServer(id string) *proto.DataServerIdentity {
 type hookedMetadata struct {
 	coordmetadata.Metadata
 	getDataServer           func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
+	getDataServerStatus     func(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error)
 	getNamespaceStatus      func(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error)
 	getShardStatus          func(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error)
 	listNamespaceStatus     func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
 	getNamespaceTermOptions func(namespace string) (*proto.NewTermOptions, error)
 	patchNamespaceStatus    func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error
 	patchShardStatus        func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error
+}
+
+func (m *hookedMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	if m.getDataServerStatus != nil {
+		return m.getDataServerStatus(name)
+	}
+	return m.Metadata.GetDataServerStatus(name)
 }
 
 func (m *hookedMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool, error) {

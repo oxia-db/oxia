@@ -500,12 +500,35 @@ func TestMetadataReadsReturnStatusLoadError(t *testing.T) {
 				Identity: &commonproto.DataServerIdentity{Name: gproto.String("s3")},
 			})
 		}},
+		{"ListDataServer", func(_ *testing.T, metadata Metadata) error {
+			_, err := metadata.ListDataServer()
+			return err
+		}},
+		{"GetDataServer", func(t *testing.T, metadata Metadata) error {
+			t.Helper()
+			_, exists, err := metadata.GetDataServer("s1")
+			require.False(t, exists)
+			return err
+		}},
+		{"CreateNamespace", func(_ *testing.T, metadata Metadata) error {
+			return metadata.CreateNamespace(&commonproto.Namespace{
+				Name: "other", ReplicationFactor: 1, InitialShardCount: 1,
+			})
+		}},
+		{"PatchNamespace", func(_ *testing.T, metadata Metadata) error {
+			_, err := metadata.PatchNamespace(&commonproto.Namespace{Name: "default", ReplicationFactor: 2})
+			return err
+		}},
+		{"DeleteDataServer", func(_ *testing.T, metadata Metadata) error {
+			_, err := metadata.DeleteDataServer("s1")
+			return err
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
 				Provider: newStatusProvider(),
 				load:     failLoad[*commonproto.ClusterStatus]("status unavailable"),
-			}, newConfigProvider(), "")
+			}, newStoredConfigProvider(t, nil), "")
 
 			require.ErrorContains(t, test.read(t, metadata), "status unavailable")
 		})
