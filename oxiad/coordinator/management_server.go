@@ -99,7 +99,7 @@ func (management *ManagementServer) ListDataServers(_ context.Context, _ *proto.
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to list data servers: %v", err)
 	}
 	config := borrowedConfig.UnsafeBorrow()
-	statuses := runtime.ListDataServerStatus()
+	statuses := runtime.ListLiveDataServerStatus()
 	storedStatuses, err := runtime.Metadata().ListDataServerStatus()
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to list data servers: %v", err)
@@ -184,16 +184,16 @@ func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to get data server %q: %v", req.DataServer, err)
 	}
-	if !found {
-		stored, _, err := runtime.Metadata().GetDataServerStatus(req.DataServer)
-		if err != nil {
-			return nil, grpcstatus.Errorf(codes.Internal, "failed to get data server %q: %v", req.DataServer, err)
-		}
-		// A data server that left the configuration: only its name is known.
-		// Its controller stores it DRAINING once it starts draining it: until
-		// then, only the runtime reports it
-		state := stored.UnsafeBorrow().GetState()
-		live, _ := runtime.GetDataServerStatus(req.DataServer)
+	stored, _, err := runtime.Metadata().GetDataServerStatus(req.DataServer)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "failed to get data server %q: %v", req.DataServer, err)
+	}
+	// A data server that left is reported as such, also when the
+	// configuration has it again
+	if state := stored.UnsafeBorrow().GetState(); !found || dataserver.IsRemoved(state) {
+		// Only its name is known. Its controller stores it DRAINING once it
+		// starts draining it: until then, only the runtime reports it
+		live, _ := runtime.GetLiveDataServerStatus(req.DataServer)
 		if !dataserver.IsRemoved(state) && live != nil {
 			state = live.GetState()
 		}
@@ -209,7 +209,7 @@ func (management *ManagementServer) GetDataServer(_ context.Context, req *proto.
 		}}, nil
 	}
 
-	status, _ := runtime.GetDataServerStatus(req.DataServer)
+	status, _ := runtime.GetLiveDataServerStatus(req.DataServer)
 	if status == nil {
 		status = &proto.DataServerStatus{}
 	}
@@ -244,7 +244,7 @@ func (management *ManagementServer) CreateDataServer(_ context.Context, req *pro
 
 	// Its controller stores a draining data server DRAINING once it starts
 	// draining it: until then, only the runtime knows it
-	if live, found := runtime.GetDataServerStatus(req.DataServer.GetNameOrDefault()); found &&
+	if live, found := runtime.GetLiveDataServerStatus(req.DataServer.GetNameOrDefault()); found &&
 		dataserver.IsRemoved(live.GetState()) {
 		return nil, grpcstatus.Errorf(codes.AlreadyExists, "data server %q is %s",
 			req.DataServer.GetNameOrDefault(), live.GetState())

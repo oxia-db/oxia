@@ -979,7 +979,7 @@ func leaderEnablesEnsembleFeatures(coordinator coordruntime.Runtime, servers map
 	}
 	var memberFeatures [][]proto.Feature
 	for _, member := range shard.GetEnsemble() {
-		status, found := coordinator.GetDataServerStatus(member.GetNameOrDefault())
+		status, found := coordinator.GetLiveDataServerStatus(member.GetNameOrDefault())
 		if !found || status.GetState() != proto.DataServerState_DATA_SERVER_STATE_RUNNING {
 			return false
 		}

@@ -102,7 +102,7 @@ func TestRuntimeNewDiscoversFeaturesWhileStartingShardControllers(t *testing.T) 
 
 	require.Eventually(t, func() bool {
 		for _, server := range servers {
-			status, ok := r.GetDataServerStatus(server.GetNameOrDefault())
+			status, ok := r.GetLiveDataServerStatus(server.GetNameOrDefault())
 			if !ok || status.GetState() != proto.DataServerState_DATA_SERVER_STATE_RUNNING {
 				return false
 			}
@@ -217,10 +217,10 @@ func TestRuntimeNewResumesDrainOfStoredDrainingDataServer(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
-	status, found := r.GetDataServerStatus("s1")
+	status, found := r.GetLiveDataServerStatus("s1")
 	require.True(t, found)
 	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, status.GetState())
-	assert.NotContains(t, r.ListDataServer(), "s1")
+	assert.NotContains(t, r.ListLiveDataServer(), "s1")
 }
 
 // A DRAINED data server still referenced by a pending delete of its copy gets
@@ -251,9 +251,9 @@ func TestRuntimeNewSkipsStoredDrainedDataServer(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
-	_, found := r.GetDataServerStatus("s2")
+	_, found := r.GetLiveDataServerStatus("s2")
 	assert.False(t, found)
-	_, found = r.GetDataServerStatus("s1")
+	_, found = r.GetLiveDataServerStatus("s1")
 	assert.True(t, found)
 }
 
@@ -274,7 +274,7 @@ func TestRuntimeNewStartsControllersOfStoredDataServers(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
-	dataServers := r.ListDataServer()
+	dataServers := r.ListLiveDataServer()
 	require.Contains(t, dataServers, "s1")
 	assert.Equal(t, "s1:8191", dataServers["s1"].UnsafeBorrow().GetIdentity().GetInternal())
 	assert.Contains(t, dataServers, "gone")
@@ -350,12 +350,12 @@ func TestRuntimeGetDataServerStatusReportsDrainingDataServer(t *testing.T) {
 		features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
 	}
 
-	status, found := c.GetDataServerStatus("s1")
+	status, found := c.GetLiveDataServerStatus("s1")
 	require.True(t, found)
 	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, status.GetState())
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, status.GetSupportedFeatures())
 
-	_, found = c.GetDataServerStatus("unknown")
+	_, found = c.GetLiveDataServerStatus("unknown")
 	assert.False(t, found)
 }
 
@@ -392,14 +392,14 @@ func TestRuntimeDeleteDataServerDrainsDataServer(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
 	running := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 	c.dataServerControllers["s1"] = running
-	require.Contains(t, c.ListDataServer(), "s1")
+	require.Contains(t, c.ListLiveDataServer(), "s1")
 
 	c.DeleteDataServer("s1")
 	c.DeleteDataServer("s1")
 
 	assert.Same(t, running, c.dataServerControllers["s1"])
 	assert.EqualValues(t, 1, running.drains.Load())
-	assert.NotContains(t, c.ListDataServer(), "s1")
+	assert.NotContains(t, c.ListLiveDataServer(), "s1")
 }
 
 func TestRuntimeCreateNamespaceReturnsStatusReadError(t *testing.T) {
@@ -550,6 +550,8 @@ func TestRuntimeCreateNamespaceDoesNotReviveDeletedShards(t *testing.T) {
 					return status, exists, err
 				},
 			})
+			c.dataServerControllers[server.GetNameOrDefault()] = newFakeDataServerController(
+				proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 			require.NoError(t, c.CreateNamespace(namespace.Name, namespace))
 			// Wait for the original controllers to start before deleting their status.
 			requests := c.rpc.(*rpctest.RpcProvider).GetNode(server).NewTermRequests
@@ -785,6 +787,43 @@ func TestRuntimeSelectNewEnsembleRejectsUnknownDataServers(t *testing.T) {
 
 			_, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
 			assert.ErrorContains(t, err, "failed to find node "+tc.selected)
+		})
+	}
+}
+
+// Only a live data server takes shards: a configured one without a controller,
+// or with a controller that drains, e.g. added again after it left, is skipped.
+func TestRuntimeSelectNewEnsembleSkipsDataServersNotLive(t *testing.T) {
+	for _, tc := range []struct {
+		selected string
+		live     bool
+	}{
+		{"running", true},
+		{"draining", false},
+		{"drained", false},
+		{"unreconciled", false},
+	} {
+		t.Run(tc.selected, func(t *testing.T) {
+			servers := make([]*proto.DataServerIdentity, 0, 4)
+			for _, name := range []string{"running", "draining", "drained", "unreconciled"} {
+				servers = append(servers, &proto.DataServerIdentity{Name: &name, Public: name, Internal: name})
+			}
+			c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{Servers: servers}))
+			c.dataServerControllers["running"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+			c.dataServerControllers["draining"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+			c.dataServerControllers["drained"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+			c.ensembleSelector = fixedEnsembleSelector{tc.selected}
+
+			c.RLock()
+			esm, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
+			c.RUnlock()
+			if !tc.live {
+				assert.ErrorContains(t, err, "failed to find node "+tc.selected)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, esm, 1)
+			assert.Equal(t, tc.selected, esm[0].GetNameOrDefault())
 		})
 	}
 }

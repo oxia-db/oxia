@@ -841,7 +841,7 @@ func (m *mockNamespaceRuntime) DeleteShard(shard int64) {
 
 func (*mockNamespaceRuntime) RecomputeAssignments() {}
 
-func (m *mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+func (m *mockNamespaceRuntime) ListLiveDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	dataServers := map[string]commonobject.Borrowed[*proto.DataServer]{}
 	for name, status := range m.dataServerStatus {
 		if !dataserver.IsRemoved(status.GetState()) {
@@ -851,11 +851,11 @@ func (m *mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed
 	return dataServers
 }
 
-func (*mockNamespaceRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus {
+func (*mockNamespaceRuntime) ListLiveDataServerStatus() map[string]*proto.DataServerStatus {
 	return nil
 }
 
-func (m *mockNamespaceRuntime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+func (m *mockNamespaceRuntime) GetLiveDataServerStatus(name string) (*proto.DataServerStatus, bool) {
 	status, found := m.dataServerStatus[name]
 	return status, found
 }
