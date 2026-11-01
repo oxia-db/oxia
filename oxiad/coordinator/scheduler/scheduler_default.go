@@ -59,8 +59,7 @@ type scheduler struct {
 //
 // status returns the status of the controller of a data server, or false
 // without one: the plan moves nothing that needs a data server that is down,
-// or onto one that came back recently, and the dispatch checks again before
-// it sends an op. provider reads the stats of the shards from their leaders,
+// and the dispatch checks again before it sends an op. provider reads the stats of the shards from their leaders,
 // for the auto-split.
 func New(ctx context.Context, metadata coordmetadata.Metadata,
 	status func(name string) (dataservercontroller.Status, bool), provider rpc.ControllerRPCProvider) Scheduler {
@@ -124,7 +123,7 @@ func (s *scheduler) run() {
 		p := policy.New(config.UnsafeBorrow())
 		interval = p.GetRoundInterval()
 		now := time.Now()
-		snap, err := s.collector.Collect(now)
+		snap, err := s.collector.Collect()
 		if err != nil {
 			s.logger.Warn("Failed to read the cluster, retrying next round", slog.Any("error", err))
 			continue

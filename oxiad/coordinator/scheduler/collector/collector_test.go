@@ -48,32 +48,19 @@ func TestCollectorCollectReturnsTheSnapshot(t *testing.T) {
 			}}),
 		},
 	}
-
-	metadata.dataServers["n2"] = commonobject.Borrow(&proto.DataServer{Identity: &proto.DataServerIdentity{Internal: "n2"}})
-	// n1 doesn't answer, and n2 came back just now
-	back := up()
-	back.SetAvailable(false)
-	back.SetAvailable(true)
-	statuses := map[string]dataservercontroller.Status{"n0": up(), "n2": back}
+	// n1 doesn't answer
+	statuses := map[string]dataservercontroller.Status{"n0": up()}
 	status := func(name string) (dataservercontroller.Status, bool) {
 		st, found := statuses[name]
 		return st, found
 	}
 
-	s, err := New(t.Context(), metadata, status, nil).Collect(time.Now())
+	s, err := New(t.Context(), metadata, status, nil).Collect()
 
 	require.NoError(t, err)
 	assert.Equal(t, &stats.ShardStats{Ensemble: []string{"n0"}, Leader: "n0"}, s.GetShard(1))
 	assert.False(t, s.DataServers["n0"].Down)
-	assert.False(t, s.DataServers["n0"].Recovering)
 	assert.True(t, s.DataServers["n1"].Down)
-	assert.False(t, s.DataServers["n1"].Recovering)
-	assert.False(t, s.DataServers["n2"].Down)
-	assert.True(t, s.DataServers["n2"].Recovering)
-
-	s, err = New(t.Context(), metadata, status, nil).Collect(time.Now().Add(StableTime))
-	require.NoError(t, err)
-	assert.False(t, s.DataServers["n2"].Recovering)
 }
 
 func TestCollectorCollectReturnsAFailedRead(t *testing.T) {
@@ -83,7 +70,7 @@ func TestCollectorCollectReturnsAFailedRead(t *testing.T) {
 		"statuses":     {listNamespaceStatusErr: errors.New("unavailable")},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := New(t.Context(), metadata, nil, nil).Collect(time.Now())
+			_, err := New(t.Context(), metadata, nil, nil).Collect()
 			assert.Error(t, err)
 		})
 	}

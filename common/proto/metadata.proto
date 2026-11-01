@@ -97,6 +97,7 @@ message Namespace {
 message LoadBalancer {
   // @gotags: yaml:"scheduleInterval,omitempty"
   string schedule_interval = 1;
+  // Unused: kept so that a configuration that sets it still loads.
   // @gotags: yaml:"quarantineTime,omitempty"
   string quarantine_time = 2;
 }

@@ -29,8 +29,6 @@ import (
 // the copy needs the members, and the election a quorum and its target. The
 // plan skips it instead, so that the other shards still move, and the
 // dispatch checks again, for a data server that went down since the snapshot.
-// It also rejects a target that came back recently: a member that did doesn't
-// hold its shard, but nothing moves onto it until it proves stable.
 type Running struct{}
 
 func (Running) GetName() string {
@@ -50,9 +48,6 @@ func (Running) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
 		if s.DataServers[name].Down {
 			return fmt.Errorf("%w: data server %q is down", errs.ErrUnavailable, name)
 		}
-	}
-	if op.Kind != candidate.Split && s.DataServers[op.To].Recovering {
-		return fmt.Errorf("%w: data server %q came back recently", errs.ErrUnavailable, op.To)
 	}
 	return nil
 }
