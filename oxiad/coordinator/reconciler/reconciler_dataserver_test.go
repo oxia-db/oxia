@@ -60,6 +60,7 @@ func TestDataServerReconcilerReconcileRejectsRemovedDataServers(t *testing.T) {
 	require.NoError(t, reconciler.Reconcile(t.Context(), dataServersConfig("new", "draining", "drained", "leaving")))
 
 	assert.Equal(t, []string{"new"}, runtime.createdDataServers)
+	assert.Equal(t, []string{"draining"}, runtime.drainedDataServers)
 	assert.Equal(t, map[string]proto.DataServerState{
 		"new":      proto.DataServerState_DATA_SERVER_STATE_RUNNING,
 		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
@@ -88,8 +89,13 @@ func TestDataServerReconcilerReconcileReturnsStatusErrors(t *testing.T) {
 	reconciler := &dataServerReconciler{runtime: runtime}
 	readErr := errors.New("status unavailable")
 	runtime.metadata.listDataServerStatusErr = readErr
-	require.ErrorIs(t, reconciler.Reconcile(t.Context(), dataServersConfig("s1")), readErr)
-	assert.Equal(t, []string{"s1"}, runtime.createdDataServers)
+	runtime.dataServerStatus = map[string]*proto.DataServerStatus{
+		"s2": {State: proto.DataServerState_DATA_SERVER_STATE_RUNNING},
+	}
+	// s1 could have drained: it is left to the retry, and s2 is kept
+	require.ErrorIs(t, reconciler.Reconcile(t.Context(), dataServersConfig("s1", "s2")), readErr)
+	assert.Empty(t, runtime.createdDataServers)
+	assert.Empty(t, runtime.drainedDataServers)
 	assert.Empty(t, runtime.metadata.status.GetDataServers())
 
 	runtime.metadata.listDataServerStatusErr = nil

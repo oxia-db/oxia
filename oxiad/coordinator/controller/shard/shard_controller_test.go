@@ -2046,6 +2046,49 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s5)))
 }
 
+// A change of the ensemble to a data server that left is refused, without a
+// new term: e.g. one planned before the data server was removed, which could
+// otherwise complete after its drain.
+func TestControllerDispatchChangeEnsembleRejectsLeftDataServer(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:   proto.ShardStatusSteadyState,
+			Term:     2,
+			Leader:   s1,
+			Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		}},
+	}))
+	require.NoError(t, metadata.PatchDataServerStatus(s4.GetNameOrDefault(), func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}))
+	sc := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		rpc:             rpctest.NewRpcProvider(),
+		ctx:             t.Context(),
+		logger:          slog.Default(),
+		currentElection: &fakeElection{quorumCaughtUp: true},
+	}
+
+	change := action.NewChangeEnsembleAction(shard, s2, s4)
+	sc.onChangeEnsemble(change)
+	_, err := change.Wait()
+	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
+
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.EqualValues(t, 2, metaSnap.Term)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
+}
+
 // The mail of the election finishes the pending change once a majority of the
 // ensemble caught up, and the next change starts then.
 func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {

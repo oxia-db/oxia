@@ -61,16 +61,16 @@ type runtime struct {
 	logger    *slog.Logger
 	ctx       context.Context
 	ctxCancel context.CancelFunc
-	wg        sync.WaitGroup
-	insID     string
+	// wg tracks the action worker, the in-flight ShardDeleted callbacks and
+	// the closes of the drained data server controllers. The callbacks add
+	// to it only under the lock while not closed, so none races with Close.
+	wg    sync.WaitGroup
+	insID string
 
 	// closed is set (under the write lock) when Close starts, so that late
 	// shard-controller callbacks become no-ops instead of racing with the
 	// teardown (metadata may be closed right after Close returns).
 	closed bool
-	// callbacksWg tracks in-flight ShardDeleted callbacks: they run on
-	// detached goroutines that no controller's Close waits for.
-	callbacksWg sync.WaitGroup
 
 	metadata coordmetadata.Metadata
 
@@ -104,8 +104,8 @@ func (c *runtime) ShardDeleted(shard int64) {
 		c.Unlock()
 		return
 	}
-	c.callbacksWg.Add(1)
-	defer c.callbacksWg.Done()
+	c.wg.Add(1)
+	defer c.wg.Done()
 
 	sc, exists := c.shardControllers[shard]
 	if exists {
@@ -437,11 +437,9 @@ func (c *runtime) Close() error {
 		err = multierr.Append(err, sc.Close())
 	}
 
-	// Wait for any in-flight ShardDeleted callback: it may still be closing
-	// the shard controller it removed from the map. Controller Close is
-	// idempotent, so overlapping with the loop above is safe.
-	c.callbacksWg.Wait()
-
+	// Also waits for any in-flight ShardDeleted callback: it may still be
+	// closing the shard controller it removed from the map. Controller Close
+	// is idempotent, so overlapping with the loop above is safe.
 	c.wg.Wait()
 
 	for _, nc := range dataServerControllers {
@@ -468,16 +466,17 @@ func (c *runtime) BecameDrained(node *proto.DataServerIdentity) {
 	// A controller created since for the name, when the data server was
 	// added again, isn't DRAINED
 	nc, ok := c.dataServerControllers[node.GetNameOrDefault()]
-	if !ok || nc.GetStatus().GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
+	// Once closed, the runtime closes the controller itself
+	if c.closed || !ok || nc.GetStatus().GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
 		return
 	}
 	delete(c.dataServerControllers, node.GetNameOrDefault())
 	// The callback comes from a goroutine of the controller, which Close waits for
-	go func() {
+	c.wg.Go(func() {
 		if err := nc.Close(); err != nil {
 			c.logger.Error("Failed to close node controller", slog.String("node", node.GetNameOrDefault()), slog.Any("error", err))
 		}
-	}()
+	})
 }
 
 func (c *runtime) FeaturesDiscovered(node *proto.DataServerIdentity) {
@@ -698,13 +697,14 @@ func New(
 
 	// init node controller
 	for _, node := range dataServers {
-		// DRAINED is final: a data server still referenced by a pending
-		// delete of its copy needs no controller
 		stored := dataServerStatus[node.GetNameOrDefault()].UnsafeBorrow().GetState()
-		if stored == proto.DataServerState_DATA_SERVER_STATE_DRAINED {
-			continue
-		}
 		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
+		// A draining data server keeps the addresses that it drains from,
+		// also when the configuration has its name again
+		if configured, found := config.UnsafeBorrow().GetDataServer(node.GetNameOrDefault()); found &&
+			stored != proto.DataServerState_DATA_SERVER_STATE_DRAINING {
+			dataServer = configured
+		}
 		nc := dataservercontroller.NewController(
 			c.ctx,
 			dataServer,

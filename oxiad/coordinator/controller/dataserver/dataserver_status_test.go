@@ -58,4 +58,6 @@ func TestStatusSetAvailableKeepsState(t *testing.T) {
 	status.Advance(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
 	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINED, status.GetState())
 	assert.True(t, status.IsAvailable())
+	// A drain doesn't discard the observations of the availability in flight
+	assert.Equal(t, epoch+2, status.epoch)
 }

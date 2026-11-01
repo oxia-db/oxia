@@ -47,7 +47,8 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 		// A data server that left the cluster can't join it again under the
 		// same name: it isn't reconciled, and keeps draining
 		state := statuses[serverName].UnsafeBorrow().GetState()
-		if live, found := r.runtime.GetDataServerStatus(serverName); found && !dataserver.IsRemoved(state) {
+		live, found := r.runtime.GetDataServerStatus(serverName)
+		if found && !dataserver.IsRemoved(state) {
 			state = live.GetState()
 		}
 		if dataserver.IsRemoved(state) {
@@ -56,6 +57,11 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 			continue
 		}
 		desired.Add(serverName)
+		// Without its stored status, a data server is left to the retry: it
+		// could have drained
+		if !found && err != nil {
+			continue
+		}
 		r.runtime.CreateDataServer(serverName, dataServer)
 		if _, stored := statuses[serverName]; !stored && err == nil {
 			unstored = append(unstored, serverName)

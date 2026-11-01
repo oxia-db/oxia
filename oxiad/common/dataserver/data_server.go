@@ -44,14 +44,15 @@ func AddDataServer(servers []*proto.DataServerIdentity, server *proto.DataServer
 // servers that still have to delete their copy.
 func GetShardDataServers(shard *proto.ShardMetadata) iter.Seq[*proto.DataServerIdentity] {
 	return func(yield func(*proto.DataServerIdentity) bool) {
-		servers := [][]*proto.DataServerIdentity{
+		for _, servers := range [...][]*proto.DataServerIdentity{
 			{shard.GetLeader(), shard.GetEnsembleChange().GetFrom(), shard.GetEnsembleChange().GetTo()},
 			shard.GetEnsemble(),
 			shard.GetPendingDeleteShardNodes(),
-		}
-		for _, server := range slices.Concat(servers...) {
-			if server != nil && !yield(server) {
-				return
+		} {
+			for _, server := range servers {
+				if server != nil && !yield(server) {
+					return
+				}
 			}
 		}
 	}

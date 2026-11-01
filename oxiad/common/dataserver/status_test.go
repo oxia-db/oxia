@@ -53,14 +53,17 @@ func TestGetStatusDataServersIncludesAllShardMembers(t *testing.T) {
 	}, names)
 }
 
-// A data server stored DRAINING has to be stored DRAINED by its controller,
-// even once no shard references it: only its name is known then. The other
-// stored data servers are left out.
-func TestGetStatusDataServersIncludesDrainingDataServers(t *testing.T) {
+// A data server stored RUNNING or DRAINING has to be drained by its
+// controller, even once no shard references it: only its name is known then.
+// A DRAINED one is left out, also while a pending delete references it.
+func TestGetStatusDataServersIncludesStoredDataServers(t *testing.T) {
 	member := &proto.DataServerIdentity{Name: new("member"), Public: "member:9091", Internal: "member:8191"}
 	status := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
 		"ns": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
-			0: {Ensemble: []*proto.DataServerIdentity{member}},
+			0: {
+				Ensemble:                []*proto.DataServerIdentity{member},
+				PendingDeleteShardNodes: []*proto.DataServerIdentity{{Name: new("left")}},
+			},
 		}}),
 	}
 	stored := func(state proto.DataServerState) commonobject.Borrowed[*proto.DataServerStatus] {
@@ -70,6 +73,7 @@ func TestGetStatusDataServersIncludesDrainingDataServers(t *testing.T) {
 		"member":   stored(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
 		"draining": stored(proto.DataServerState_DATA_SERVER_STATE_DRAINING),
 		"drained":  stored(proto.DataServerState_DATA_SERVER_STATE_DRAINED),
+		"left":     stored(proto.DataServerState_DATA_SERVER_STATE_DRAINED),
 		"running":  stored(proto.DataServerState_DATA_SERVER_STATE_RUNNING),
 	}
 
@@ -77,9 +81,10 @@ func TestGetStatusDataServersIncludesDrainingDataServers(t *testing.T) {
 	for _, server := range GetStatusDataServers(status, dataServerStatus) {
 		servers[server.GetNameOrDefault()] = server
 	}
-	assert.Len(t, servers, 2)
+	assert.Len(t, servers, 3)
 	assert.Same(t, member, servers["member"])
 	assert.Equal(t, &proto.DataServerIdentity{Name: new("draining")}, servers["draining"])
+	assert.Equal(t, &proto.DataServerIdentity{Name: new("running")}, servers["running"])
 }
 
 func TestIsDrained(t *testing.T) {
@@ -100,7 +105,7 @@ func TestIsDrained(t *testing.T) {
 			EnsembleChange: &proto.EnsembleChangeMetadata{From: other, To: drained}, EnsembleCaughtUp: true}, false},
 		{"pending delete", &proto.ShardMetadata{
 			PendingDeleteShardNodes: []*proto.DataServerIdentity{drained}, EnsembleCaughtUp: true}, true},
-		{"deleting with it", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{drained}, Status: proto.ShardStatusDeleting}, false},
+		{"deleting with it", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{drained}, Status: proto.ShardStatusDeleting}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			namespaces := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{

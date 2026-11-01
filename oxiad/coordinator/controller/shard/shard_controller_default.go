@@ -813,6 +813,18 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 			errs.ErrFailedPrecondition, change.GetFrom().GetNameOrDefault(), change.GetTo().GetNameOrDefault()))
 		return
 	}
+	// A data server that left takes no shard: its drain could complete
+	// meanwhile, e.g. for a change planned before it was removed
+	to := changeEnsembleAction.To.GetNameOrDefault()
+	stored, _, err := s.metadataStore.GetDataServerStatus(to)
+	if err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
+	if state := stored.UnsafeBorrow().GetState(); dataserver.IsRemoved(state) {
+		changeEnsembleAction.Error(fmt.Errorf("%w: data server %q is %s", errs.ErrFailedPrecondition, to, state))
+		return
+	}
 	if err := s.validateChangeEnsembleFeatures(shardMeta, changeEnsembleAction); err != nil {
 		changeEnsembleAction.Error(err)
 		return

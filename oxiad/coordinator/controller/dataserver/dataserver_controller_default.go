@@ -263,25 +263,25 @@ func (n *controller) monitorDraining() {
 // can't be added again.
 func (n *controller) drain() (bool, error) {
 	name := n.dataServer.GetIdentity().GetNameOrDefault()
-	namespaces, err := n.metadata.ListNamespaceStatus()
-	if err != nil {
-		return false, err
-	}
 	stored, _, err := n.metadata.GetDataServerStatus(name)
 	if err != nil {
 		return false, err
 	}
 	state := stored.UnsafeBorrow().GetState()
-	var next proto.DataServerState
-	switch {
-	case state == proto.DataServerState_DATA_SERVER_STATE_DRAINED:
+	next := proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	switch state {
+	case proto.DataServerState_DATA_SERVER_STATE_DRAINED:
 		return true, nil
-	case state != proto.DataServerState_DATA_SERVER_STATE_DRAINING:
-		next = proto.DataServerState_DATA_SERVER_STATE_DRAINING
-	case commondataserver.IsDrained(name, namespaces):
+	case proto.DataServerState_DATA_SERVER_STATE_DRAINING:
+		namespaces, err := n.metadata.ListNamespaceStatus()
+		if err != nil {
+			return false, err
+		}
+		if !commondataserver.IsDrained(name, namespaces) {
+			return false, nil
+		}
 		next = proto.DataServerState_DATA_SERVER_STATE_DRAINED
 	default:
-		return false, nil
 	}
 
 	written := false

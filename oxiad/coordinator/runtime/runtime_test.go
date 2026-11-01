@@ -257,6 +257,63 @@ func TestRuntimeNewSkipsStoredDrainedDataServer(t *testing.T) {
 	assert.True(t, found)
 }
 
+// A data server stored RUNNING gets a controller: a configured one with its
+// configured identity, and one that the configuration doesn't have, e.g.
+// removed before its drain was stored, for the reconciler to drain it.
+func TestRuntimeNewStartsControllersOfStoredDataServers(t *testing.T) {
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{server}})
+	for _, name := range []string{"s1", "gone"} {
+		require.NoError(t, metadata.PatchDataServerStatus(name, func(status *proto.DataServerStatus) (bool, error) {
+			status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
+			return true, nil
+		}))
+	}
+
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, r.Close()) })
+
+	dataServers := r.ListDataServer()
+	require.Contains(t, dataServers, "s1")
+	assert.Equal(t, "s1:8191", dataServers["s1"].UnsafeBorrow().GetIdentity().GetInternal())
+	assert.Contains(t, dataServers, "gone")
+}
+
+// A draining data server keeps the addresses of the shards that it drains
+// from, also when the configuration has its name again, at other addresses.
+func TestRuntimeNewKeepsAddressesOfDrainingDataServerAddedAgain(t *testing.T) {
+	draining := &proto.DataServerIdentity{Name: new("s1"), Public: "old:9091", Internal: "old:8191"}
+	readded := &proto.DataServerIdentity{Name: new("s1"), Public: "new:9091", Internal: "new:8191"}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{readded}})
+	require.NoError(t, metadata.CreateNamespaceStatus("ns", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{
+			0: {
+				Status:         proto.ShardStatusSteadyState,
+				Term:           1,
+				Leader:         draining,
+				Ensemble:       []*proto.DataServerIdentity{draining},
+				Int32HashRange: &proto.HashRange{Min: 0, Max: math.MaxUint32},
+			},
+		},
+	}))
+	require.NoError(t, metadata.PatchDataServerStatus("s1", func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}))
+
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, r.Close()) })
+
+	c := r.(*runtime)
+	c.RLock()
+	defer c.RUnlock()
+	require.Contains(t, c.dataServerControllers, "s1")
+	assert.Equal(t, "old:8191", c.dataServerControllers["s1"].GetDataServer().UnsafeBorrow().GetIdentity().GetInternal())
+}
+
 // A shard deletion reported after Close started is left to Close, which
 // closes the shard controllers itself.
 func TestRuntimeShardDeletedIgnoredAfterClose(t *testing.T) {
@@ -785,6 +842,29 @@ func TestRuntimeBecameDrainedClosesDrainingNode(t *testing.T) {
 	// Already closed: nothing left to do
 	c.BecameDrained(server)
 	assert.EqualValues(t, 1, draining.closes.Load())
+}
+
+// Close waits for the close of a drained controller, which runs on a detached
+// goroutine, before it closes the RPC provider that the controller uses.
+func TestRuntimeCloseWaitsForDrainedDataServerClose(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	release := make(chan struct{})
+	drained := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+	drained.closeHook = func() { <-release }
+	c.dataServerControllers["s1"] = drained
+	c.BecameDrained(server)
+
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while the drained controller was still closing")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-closed)
+	assert.EqualValues(t, 1, drained.closes.Load())
 }
 
 // The controller of a data server added again since it drained isn't closed by
@@ -1435,8 +1515,10 @@ type fakeDataServerController struct {
 	status   dataservercontroller.Status
 	features []proto.Feature
 	closeErr error
-	closes   atomic.Int64
-	drains   atomic.Int64
+	// closeHook, when set, runs in Close, e.g. to block it
+	closeHook func()
+	closes    atomic.Int64
+	drains    atomic.Int64
 }
 
 func newFakeDataServerController(state proto.DataServerState) *fakeDataServerController {
@@ -1461,6 +1543,9 @@ func (c *fakeDataServerController) Drain() {
 }
 
 func (c *fakeDataServerController) Close() error {
+	if c.closeHook != nil {
+		c.closeHook()
+	}
 	c.closes.Add(1)
 	return c.closeErr
 }

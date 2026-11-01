@@ -37,9 +37,11 @@ type Status struct {
 	// changes after the data server joined, as a data server that never
 	// failed doesn't need to prove that it's stable.
 	lastTransitionTime time.Time
-	// epoch increments on every transition, so that a probe observation (a
-	// SERVING answer or a failure) obtained before a concurrent transition can
-	// be recognized as stale and discarded instead of flapping the state back.
+	// epoch increments on every change of the availability, so that a probe
+	// observation (a SERVING answer or a failure) obtained before a concurrent
+	// change can be recognized as stale and discarded instead of flapping the
+	// availability back. A change of the stage of the lifecycle doesn't
+	// invalidate them.
 	epoch int64
 }
 
@@ -67,13 +69,12 @@ func (s Status) GetLastTransitionTime() time.Time {
 }
 
 // Advance moves the data server to the DRAINING or DRAINED stage of its
-// lifecycle.
+// lifecycle, keeping the observations of its availability in flight.
 func (s *Status) Advance(state proto.DataServerState) {
 	if s.epoch > 0 {
 		s.lastTransitionTime = time.Now()
 	}
 	s.state = state
-	s.epoch++
 }
 
 // SetAvailable records whether the data server is available, even if it

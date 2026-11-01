@@ -31,6 +31,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
@@ -704,6 +705,7 @@ type mockNamespaceRuntime struct {
 	added               map[int64]string
 	deleted             []int64
 	createdDataServers  []string
+	drainedDataServers  []string
 	dataServerStatus    map[string]*proto.DataServerStatus
 }
 
@@ -729,11 +731,25 @@ func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
 func (*mockNamespaceRuntime) BecameDrained(*proto.DataServerIdentity) {}
 
 func (m *mockNamespaceRuntime) CreateDataServer(name string, _ *proto.DataServer) bool {
+	if _, exists := m.dataServerStatus[name]; exists {
+		return false
+	}
+	if m.dataServerStatus == nil {
+		m.dataServerStatus = map[string]*proto.DataServerStatus{}
+	}
+	m.dataServerStatus[name] = &proto.DataServerStatus{State: proto.DataServerState_DATA_SERVER_STATE_RUNNING}
 	m.createdDataServers = append(m.createdDataServers, name)
 	return true
 }
 
-func (*mockNamespaceRuntime) DeleteDataServer(string) {}
+func (m *mockNamespaceRuntime) DeleteDataServer(name string) {
+	status, exists := m.dataServerStatus[name]
+	if !exists || dataserver.IsRemoved(status.GetState()) {
+		return
+	}
+	status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	m.drainedDataServers = append(m.drainedDataServers, name)
+}
 
 func (*mockNamespaceRuntime) RefreshShardControllers() {}
 
@@ -825,8 +841,14 @@ func (m *mockNamespaceRuntime) DeleteShard(shard int64) {
 
 func (*mockNamespaceRuntime) RecomputeAssignments() {}
 
-func (*mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
-	return nil
+func (m *mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	dataServers := map[string]commonobject.Borrowed[*proto.DataServer]{}
+	for name, status := range m.dataServerStatus {
+		if !dataserver.IsRemoved(status.GetState()) {
+			dataServers[name] = commonobject.Borrow(&proto.DataServer{})
+		}
+	}
+	return dataServers
 }
 
 func (*mockNamespaceRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus {
