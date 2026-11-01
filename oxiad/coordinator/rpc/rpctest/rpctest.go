@@ -615,6 +615,23 @@ func (r *RpcProvider) GetNode(node *proto.DataServerIdentity) *PerNodeChannels {
 	return r.getNode(node)
 }
 
+// record queues req on requests for a test to read, without the lock: a
+// test that doesn't read them fills the buffer, and the call then waits
+// until ctx is done instead of forever.
+func record[T any](ctx context.Context, requests chan<- T, req T) error {
+	select {
+	case requests <- req:
+		return nil
+	default:
+	}
+	select {
+	case requests <- req:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (r *RpcProvider) getNode(node *proto.DataServerIdentity) *PerNodeChannels {
 	res, ok := r.channels[node.GetInternal()]
 	if ok {
@@ -641,16 +658,16 @@ func (r *RpcProvider) PushShardAssignments(ctx context.Context, node *proto.Data
 
 func (r *RpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentity, req *proto.NewTermRequest) (*proto.NewTermResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.NewTermRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
-
+	failure := s.err
 	r.Unlock()
+
+	if err := record(ctx, s.NewTermRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	select {
 	case response := <-s.newTermResponses:
@@ -664,17 +681,17 @@ func (r *RpcProvider) NewTerm(ctx context.Context, node *proto.DataServerIdentit
 
 func (r *RpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerIdentity, req *proto.BecomeLeaderRequest) (*proto.BecomeLeaderResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.becomeLeaderRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
+	failure := s.err
 	enabledFeatures := s.enabledFeatures
-
 	r.Unlock()
+
+	if err := record(ctx, s.becomeLeaderRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	if len(feature.Missing(enabledFeatures, req.FeaturesSupported)) > 0 {
 		return nil, constant.ErrUnsupportedFeatures
@@ -692,16 +709,16 @@ func (r *RpcProvider) BecomeLeader(ctx context.Context, node *proto.DataServerId
 
 func (r *RpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity, req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.getStatusRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
-
+	failure := s.err
 	r.Unlock()
+
+	if err := record(ctx, s.getStatusRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	select {
 	case response := <-s.getStatusResponses:
@@ -715,16 +732,16 @@ func (r *RpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdent
 
 func (r *RpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.deleteShardRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
-
+	failure := s.err
 	r.Unlock()
+
+	if err := record(ctx, s.deleteShardRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	select {
 	case response := <-s.deleteShardResponses:
@@ -738,17 +755,17 @@ func (r *RpcProvider) DeleteShard(ctx context.Context, node *proto.DataServerIde
 
 func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIdentity, req *proto.AddFollowerRequest) (*proto.AddFollowerResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.addFollowerRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
+	failure := s.err
 	enabledFeatures := s.enabledFeatures
-
 	r.Unlock()
+
+	if err := record(ctx, s.addFollowerRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	if req.FollowerFeatures != nil && len(feature.Missing(enabledFeatures, req.FollowerFeatures.GetSupported())) > 0 {
 		return nil, constant.ErrUnsupportedFeatures
@@ -766,16 +783,16 @@ func (r *RpcProvider) AddFollower(ctx context.Context, node *proto.DataServerIde
 
 func (r *RpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServerIdentity, req *proto.RemoveObserverRequest) (*proto.RemoveObserverResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.removeObserverRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
-
+	failure := s.err
 	r.Unlock()
+
+	if err := record(ctx, s.removeObserverRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	select {
 	case response := <-s.removeObserverResponses:
@@ -787,18 +804,18 @@ func (r *RpcProvider) RemoveObserver(ctx context.Context, node *proto.DataServer
 	}
 }
 
-func (r *RpcProvider) FreezeShard(_ context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
+func (r *RpcProvider) FreezeShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.FreezeShardRequest) (*proto.FreezeShardResponse, error) {
 	r.Lock()
-
 	s := r.getNode(node)
-	s.FreezeShardRequests <- req
-
-	if s.err != nil {
-		r.Unlock()
-		return nil, s.err
-	}
-
+	failure := s.err
 	r.Unlock()
+
+	if err := record(ctx, s.FreezeShardRequests, req); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure
+	}
 
 	// Non-blocking: use a scripted response if the test queued one, otherwise
 	// return a default. This keeps best-effort unfreeze calls (from cutover

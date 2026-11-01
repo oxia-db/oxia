@@ -94,6 +94,51 @@ func TestRpcProviderCallsReturnOnContextDone(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestRpcProviderCallsReturnOnContextDoneWhenTheRequestsAreNotRead(t *testing.T) {
+	provider := NewRpcProvider()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for name, call := range map[string]func() error{
+		"NewTerm": func() error {
+			_, err := provider.NewTerm(ctx, testNode, &proto.NewTermRequest{})
+			return err
+		},
+		"BecomeLeader": func() error {
+			_, err := provider.BecomeLeader(ctx, testNode, &proto.BecomeLeaderRequest{})
+			return err
+		},
+		"GetStatus": func() error {
+			_, err := provider.GetStatus(ctx, testNode, &proto.GetStatusRequest{})
+			return err
+		},
+		"DeleteShard": func() error {
+			_, err := provider.DeleteShard(ctx, testNode, &proto.DeleteShardRequest{})
+			return err
+		},
+		"AddFollower": func() error {
+			_, err := provider.AddFollower(ctx, testNode, &proto.AddFollowerRequest{})
+			return err
+		},
+		"RemoveObserver": func() error {
+			_, err := provider.RemoveObserver(ctx, testNode, &proto.RemoveObserverRequest{})
+			return err
+		},
+		"FreezeShard": func() error {
+			_, err := provider.FreezeShard(ctx, testNode, &proto.FreezeShardRequest{})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Nobody reads the requests: the calls fill the buffer, then return
+			for range 101 {
+				_ = call()
+			}
+			require.ErrorIs(t, call(), context.Canceled)
+		})
+	}
+}
+
 func TestRpcProviderBecomeLeaderRejectsMissingFeatures(t *testing.T) {
 	provider := NewRpcProvider()
 	provider.GetNode(testNode).SetEnabledFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
