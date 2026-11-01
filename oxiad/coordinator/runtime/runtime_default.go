@@ -632,7 +632,7 @@ func New(
 	if err != nil {
 		return nil, err
 	}
-	dataServers := dataserver.FromStatus(clusterStatus, dataServerStatus)
+	dataServers := dataserver.GetStatusDataServers(clusterStatus, dataServerStatus)
 	insID, err := metadata.GetInstanceID()
 	if err != nil {
 		return nil, err

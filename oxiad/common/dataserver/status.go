@@ -21,17 +21,17 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// FromStatus returns the data servers that the shards reference,
+// GetStatusDataServers returns the data servers that the shards reference,
 // and the ones stored as DRAINING: once no shard references a draining data
 // server, only its stored status tells that it still has to be stored
 // DRAINED, and its controller does it. The configuration isn't read: the
 // reconciler drains the data servers that it doesn't have.
-func FromStatus(status map[string]commonobject.Borrowed[*proto.NamespaceStatus],
+func GetStatusDataServers(status map[string]commonobject.Borrowed[*proto.NamespaceStatus],
 	dataServerStatus map[string]commonobject.Borrowed[*proto.DataServerStatus]) []*proto.DataServerIdentity {
 	servers := make(map[string]*proto.DataServerIdentity)
 	for _, borrowedNamespace := range status {
 		for _, shard := range borrowedNamespace.UnsafeBorrow().GetShards() {
-			for server := range ShardDataServers(shard) {
+			for server := range GetShardDataServers(shard) {
 				servers[server.GetNameOrDefault()] = server
 			}
 		}

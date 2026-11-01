@@ -25,7 +25,7 @@ import (
 
 // The data servers of a shard are its leader, the members of its ensemble,
 // and the ones being removed from it.
-func TestFromStatusIncludesAllShardMembers(t *testing.T) {
+func TestGetStatusDataServersIncludesAllShardMembers(t *testing.T) {
 	leader := &proto.DataServerIdentity{Public: "leader:9091", Internal: "leader:8191"}
 	member := &proto.DataServerIdentity{Public: "member:9091", Internal: "member:8191"}
 	removed := &proto.DataServerIdentity{Public: "removed:9091", Internal: "removed:8191"}
@@ -44,7 +44,7 @@ func TestFromStatusIncludesAllShardMembers(t *testing.T) {
 	}
 
 	var names []string
-	for _, server := range FromStatus(status, nil) {
+	for _, server := range GetStatusDataServers(status, nil) {
 		names = append(names, server.GetNameOrDefault())
 	}
 	assert.ElementsMatch(t, []string{
@@ -56,7 +56,7 @@ func TestFromStatusIncludesAllShardMembers(t *testing.T) {
 // A data server stored DRAINING has to be stored DRAINED by its controller,
 // even once no shard references it: only its name is known then. The other
 // stored data servers are left out.
-func TestFromStatusIncludesDrainingDataServers(t *testing.T) {
+func TestGetStatusDataServersIncludesDrainingDataServers(t *testing.T) {
 	member := &proto.DataServerIdentity{Name: new("member"), Public: "member:9091", Internal: "member:8191"}
 	status := map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
 		"ns": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
@@ -74,7 +74,7 @@ func TestFromStatusIncludesDrainingDataServers(t *testing.T) {
 	}
 
 	servers := map[string]*proto.DataServerIdentity{}
-	for _, server := range FromStatus(status, dataServerStatus) {
+	for _, server := range GetStatusDataServers(status, dataServerStatus) {
 		servers[server.GetNameOrDefault()] = server
 	}
 	assert.Len(t, servers, 2)
