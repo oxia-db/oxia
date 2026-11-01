@@ -23,35 +23,41 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestStateToProtoReportsUnspecifiedForUnknownState(t *testing.T) {
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, Running.ToProto())
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE, NotRunning.ToProto())
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, Draining.ToProto())
-	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED, State(99).ToProto())
-}
-
 // The first transition, the data server joining, isn't timed: a data server
 // that never failed has no transition time. The later ones are.
-func TestStatusAdvanceRecordsTransitionsAfterTheFirst(t *testing.T) {
-	status := NewStatus(NotRunning)
+func TestStatusSetAvailableRecordsTransitionsAfterTheFirst(t *testing.T) {
+	status := NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	assert.False(t, status.IsAvailable())
 
-	status.Advance(Running)
-	assert.Equal(t, Running, status.GetState())
+	status.SetAvailable(true)
+	assert.True(t, status.IsAvailable())
 	assert.True(t, status.GetLastTransitionTime().IsZero())
 
 	beforeFailure := time.Now()
-	status.Advance(NotRunning)
-	assert.Equal(t, NotRunning, status.GetState())
+	status.SetAvailable(false)
+	assert.False(t, status.IsAvailable())
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, status.GetState())
 	assert.False(t, status.GetLastTransitionTime().Before(beforeFailure))
 }
 
-// A transition to the same state still advances the epoch, so that the
-// observations made before it are discarded.
-func TestStatusAdvanceToSameStateIncrementsEpoch(t *testing.T) {
-	status := NewStatus(Draining)
-	epoch := status.epoch
+// The availability doesn't change the stage of the lifecycle, and still
+// advances the epoch, so that the observations made before it are discarded.
+func TestStatusSetAvailableKeepsState(t *testing.T) {
+	status := NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	status.Advance(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
 
-	status.Advance(Draining)
-	assert.Equal(t, Draining, status.GetState())
+	epoch := status.epoch
+	status.SetAvailable(true)
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, status.GetState())
+	assert.True(t, status.IsAvailable())
 	assert.Equal(t, epoch+1, status.epoch)
+
+	status.SetAvailable(true)
+	assert.Equal(t, epoch+2, status.epoch)
+
+	status.Advance(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINED, status.GetState())
+	assert.True(t, status.IsAvailable())
+	// A drain doesn't discard the observations of the availability in flight
+	assert.Equal(t, epoch+2, status.epoch)
 }

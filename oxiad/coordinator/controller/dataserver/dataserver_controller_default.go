@@ -29,10 +29,12 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	commondataserver "github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	controllerapi "github.com/oxia-db/oxia/oxiad/coordinator/controller"
+	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 
 	"github.com/oxia-db/oxia/common/constant"
@@ -56,6 +58,7 @@ type controller struct {
 	ctx                 context.Context
 	ctxCancel           context.CancelFunc
 	dataServer          *proto.DataServer
+	metadata            coordmetadata.Metadata
 	rpc                 rpc.ControllerRPCProvider
 	insID               string
 	assignmentsProvider controllerapi.ShardAssignmentsProvider
@@ -73,7 +76,7 @@ type controller struct {
 	// supportedFeatures are the features that the last handshake reported.
 	supportedFeatures []proto.Feature
 	// handshaking is set while a handshake is in flight: the health paths keep
-	// observing SERVING while the node is NotRunning, and at most one of them
+	// observing SERVING while the node is unavailable, and at most one of them
 	// handshakes it at a time.
 	handshaking bool
 }
@@ -97,12 +100,13 @@ func (n *controller) Drain() {
 	defer n.mu.Unlock()
 	status := n.status.Load()
 	previous := status.GetState()
-	if previous == Draining {
+	if commondataserver.IsRemoved(previous) {
 		return
 	}
-	status.Advance(Draining)
+	status.Advance(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
 	n.status.Publish(status)
-	n.logger.Info("Changed status", slog.Any("from", previous), slog.Any("to", Draining))
+	n.logger.Info("Changed status", slog.Any("from", previous),
+		slog.Any("to", proto.DataServerState_DATA_SERVER_STATE_DRAINING))
 }
 
 func (n *controller) currentStatusEpoch() int64 {
@@ -122,14 +126,14 @@ func (n *controller) Close() error {
 }
 
 // openAssignmentsStream opens the assignments stream once the data server is
-// Running or Draining. The data server rejects the stream until the handshake
-// binds it to this coordinator, and a rejected stream is only retried after
-// the full backoff: waiting for the handshake instead delivers the first
-// assignments right after it.
+// RUNNING or DRAINING, and available. The data server rejects the stream
+// until the handshake binds it to this coordinator, and a rejected stream is
+// only retried after the full backoff: waiting for the handshake instead
+// delivers the first assignments right after it.
 func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	receiver := n.status.Subscribe()
 	for {
-		if state := receiver.Load().GetState(); state == Running || state == Draining {
+		if status := receiver.Load(); status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
 			n.logger.Debug("Ready to send assignments")
 			return n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
 		}
@@ -212,6 +216,87 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 			)
 		}
 	})
+}
+
+// monitorDraining waits for the data server to be DRAINING, then checks on
+// every probe interval whether it is drained, until it stores it DRAINED. A
+// failed check is left to the next interval.
+func (n *controller) monitorDraining() {
+	receiver := n.status.Subscribe()
+	for receiver.Load().GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINING {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-receiver.Changed():
+		}
+	}
+
+	ticker := time.NewTicker(n.healthPolicy.ProbeInterval)
+	defer ticker.Stop()
+	for {
+		drained, err := n.drain()
+		if err != nil {
+			n.logger.Warn("Failed to check whether the data server is drained", slog.Any("error", err))
+		}
+		if drained {
+			n.mu.Lock()
+			status := n.status.Load()
+			status.Advance(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+			n.status.Publish(status)
+			n.mu.Unlock()
+			n.logger.Info("Data server is drained")
+			n.listener.BecameDrained(n.dataServer.GetIdentity())
+			return
+		}
+
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// drain moves the stored status of the data server one step towards DRAINED,
+// and reports whether it is DRAINED: it stores it DRAINING first, then
+// DRAINED once it is drained. DRAINED is final, as a data server that left
+// can't be added again.
+func (n *controller) drain() (bool, error) {
+	name := n.dataServer.GetIdentity().GetNameOrDefault()
+	stored, _, err := n.metadata.GetDataServerStatus(name)
+	if err != nil {
+		return false, err
+	}
+	state := stored.UnsafeBorrow().GetState()
+	next := proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	switch state {
+	case proto.DataServerState_DATA_SERVER_STATE_DRAINED:
+		return true, nil
+	case proto.DataServerState_DATA_SERVER_STATE_DRAINING:
+		namespaces, err := n.metadata.ListNamespaceStatus()
+		if err != nil {
+			return false, err
+		}
+		if !commondataserver.IsDrained(name, namespaces) {
+			return false, nil
+		}
+		next = proto.DataServerState_DATA_SERVER_STATE_DRAINED
+	default:
+	}
+
+	written := false
+	if err := n.metadata.PatchDataServerStatus(name, func(status *proto.DataServerStatus) (bool, error) {
+		// Changed since it was read: left to the next check
+		if status.GetState() != state {
+			return false, nil
+		}
+		status.State = next
+		written = true
+		return true, nil
+	}); err != nil {
+		return false, err
+	}
+	return written && next == proto.DataServerState_DATA_SERVER_STATE_DRAINED, nil
 }
 
 func (n *controller) doHealthPing(observedEpoch int64, healthClient grpc_health_v1.HealthClient) error {
@@ -400,17 +485,11 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 		n.mu.Unlock()
 		return
 	}
-	if status.GetState() != Running && status.GetState() != Draining {
+	if !status.IsAvailable() {
 		n.mu.Unlock()
 		return
 	}
-	// A Draining data server stays Draining: its epoch still advances, to
-	// discard the observations in flight
-	next := status.GetState()
-	if next == Running {
-		next = NotRunning
-	}
-	status.Advance(next)
+	status.SetAvailable(false)
 	n.status.Publish(status)
 	n.mu.Unlock()
 
@@ -427,9 +506,9 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		n.mu.Unlock()
 		return
 	}
-	if status.GetState() != NotRunning || n.handshaking {
-		// Nothing to do: the node is Running or Draining, or a handshake is
-		// already in flight.
+	if status.IsAvailable() || n.handshaking {
+		// Nothing to do: the node is available, or a handshake is already in
+		// flight.
 		n.mu.Unlock()
 		return
 	}
@@ -457,7 +536,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	n.mu.Lock()
 	n.handshaking = false
 	if err != nil {
-		// The node stays NotRunning: the next SERVING observation retries
+		// The node stays unavailable: the next SERVING observation retries
 		n.mu.Unlock()
 		n.logger.Warn("Failed to handshake with data server", slog.Any("error", err))
 		return
@@ -466,8 +545,8 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	featuresChanged := len(feature.Missing(features, n.supportedFeatures)) > 0 ||
 		len(feature.Missing(n.supportedFeatures, features)) > 0
 	n.supportedFeatures = features
-	if status = n.status.Load(); status.GetState() == NotRunning && status.epoch == observedEpoch {
-		status.Advance(Running)
+	if status = n.status.Load(); !status.IsAvailable() && status.epoch == observedEpoch {
+		status.SetAvailable(true)
 		n.status.Publish(status)
 		n.logger.Info("Storage data server is back online")
 	}
@@ -494,7 +573,9 @@ func (n *controller) handleHealthCheck(observedEpoch int64, response *grpc_healt
 	return nil
 }
 
+//nolint:revive // one argument per dependency, as the shard controller
 func NewController(ctx context.Context, dataServer *proto.DataServer,
+	metadata coordmetadata.Metadata,
 	shardAssignmentsProvider controllerapi.ShardAssignmentsProvider,
 	dataServerEventListener controllerapi.DataServerEventListener,
 	rpcProvider rpc.ControllerRPCProvider,
@@ -513,11 +594,12 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 		ctx:                 dataServerCtx,
 		ctxCancel:           cancel,
 		dataServer:          dataServer,
+		metadata:            metadata,
 		assignmentsProvider: shardAssignmentsProvider,
 		listener:            dataServerEventListener,
 		rpc:                 rpcProvider,
 		insID:               insID,
-		status:              commonwatch.New(NewStatus(NotRunning)),
+		status:              commonwatch.New(NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)),
 		supportedFeatures:   make([]proto.Feature, 0),
 		logger:              logger,
 		healthPolicy:        healthPolicy,
@@ -528,7 +610,7 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 	}
 	nc.runningGauge = metric.NewGauge("oxia_coordinator_node_running",
 		"Whether the dataServer is considered to be running by the coordinator", "count", labels, func() int64 {
-			if nc.GetStatus().GetState() == Running {
+			if status := nc.GetStatus(); status.IsAvailable() && status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING {
 				return 1
 			}
 			return 0
@@ -564,6 +646,17 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 				"dataServer": dataServerID,
 			},
 			nc.sendAssignmentsDispatchWithRetries,
+		)
+	})
+
+	nc.wg.Go(func() {
+		process.DoWithLabels(
+			nc.ctx,
+			map[string]string{
+				"component":  "data-server-controller-drain-monitor",
+				"dataServer": dataServerID,
+			},
+			nc.monitorDraining,
 		)
 	})
 

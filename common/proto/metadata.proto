@@ -48,15 +48,27 @@ message DataServer {
   DataServerMetadata metadata = 2;
 }
 
+// The stage of a data server in its lifecycle, which the coordinator stores
+// in the cluster status:
+//
+//	RUNNING --> DRAINING --> DRAINED
+//
+// A data server removed from the configuration is DRAINING, and DRAINED once
+// no ensemble has it and every shard caught up. Whether it is reachable
+// isn't stored: only the coordinator that runs observes it.
 enum DataServerState {
+  reserved 2;
+  reserved "DATA_SERVER_STATE_UNAVAILABLE";
   DATA_SERVER_STATE_UNSPECIFIED = 0;
   DATA_SERVER_STATE_RUNNING = 1;
-  DATA_SERVER_STATE_UNAVAILABLE = 2;
   DATA_SERVER_STATE_DRAINING = 3;
+  DATA_SERVER_STATE_DRAINED = 4;
 }
 
 message DataServerStatus {
+  // @gotags: yaml:"state,omitempty"
   DataServerState state = 1;
+  // @gotags: yaml:"supportedFeatures,omitempty"
   repeated replication.Feature supported_features = 2;
 }
 
@@ -216,4 +228,7 @@ message ClusterStatus {
   uint32 server_idx = 3;
   // @gotags: yaml:"instanceId,omitempty"
   string instance_id = 4;
+  // The data servers, by name, with their stored state.
+  // @gotags: yaml:"dataServers,omitempty"
+  map<string, DataServerStatus> data_servers = 5;
 }

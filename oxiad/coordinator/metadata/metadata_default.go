@@ -32,6 +32,7 @@ import (
 	commonproto "github.com/oxia-db/oxia/common/proto"
 	oxiatime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
@@ -432,6 +433,49 @@ func (m *defaultMetadata) DeleteShardStatus(namespace string, shard int64) error
 	})
 }
 
+func (m *defaultMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*commonproto.DataServerStatus], error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return nil, err
+	}
+	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServerStatus], len(status.Value.GetDataServers()))
+	for name, dataServerStatus := range status.Value.GetDataServers() {
+		dataServers[name] = commonobject.Borrow(dataServerStatus)
+	}
+	return dataServers, nil
+}
+
+func (m *defaultMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*commonproto.DataServerStatus], bool, error) {
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.DataServerStatus]{}, false, err
+	}
+	dataServerStatus, exists := status.Value.GetDataServers()[name]
+	if !exists {
+		return commonobject.Borrowed[*commonproto.DataServerStatus]{}, false, nil
+	}
+	return commonobject.Borrow(dataServerStatus), true, nil
+}
+
+func (m *defaultMetadata) PatchDataServerStatus(name string,
+	modify func(status *commonproto.DataServerStatus) (bool, error)) error {
+	return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		status, exists := clusterStatus.GetDataServers()[name]
+		if !exists {
+			status = &commonproto.DataServerStatus{}
+		}
+		updated, err := modify(status)
+		if err != nil || !updated {
+			return clusterStatus, false, err
+		}
+		if clusterStatus.DataServers == nil {
+			clusterStatus.DataServers = map[string]*commonproto.DataServerStatus{}
+		}
+		clusterStatus.DataServers[name] = status
+		return clusterStatus, true, nil
+	})
+}
+
 func (m *defaultMetadata) GetConfig() (commonobject.Borrowed[*commonproto.ClusterConfiguration], error) {
 	config, err := m.configProvider.Load()
 	if err != nil {
@@ -461,9 +505,21 @@ func (m *defaultMetadata) CreateNamespace(namespace *commonproto.Namespace) erro
 				return nil, fmt.Errorf("%w: namespace %q", errs.ErrAlreadyExists, name)
 			}
 		}
-		if namespace.GetReplicationFactor() > uint32(len(config.GetServers())) {
+		// A data server that left takes no shard, also while the configuration
+		// has it again
+		status, err := m.statusProvider.Load()
+		if err != nil {
+			return nil, err
+		}
+		servers := 0
+		for _, server := range config.GetServers() {
+			if !dataserver.IsRemoved(status.Value.GetDataServers()[server.GetNameOrDefault()].GetState()) {
+				servers++
+			}
+		}
+		if namespace.GetReplicationFactor() > uint32(servers) {
 			return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-				errs.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), len(config.GetServers()))
+				errs.ErrFailedPrecondition, name, namespace.GetReplicationFactor(), servers)
 		}
 
 		config.Namespaces = append(config.Namespaces, namespace)
@@ -479,9 +535,21 @@ func (m *defaultMetadata) PatchNamespace(desiredNamespace *commonproto.Namespace
 				continue
 			}
 			if replicationFactor := desiredNamespace.GetReplicationFactor(); replicationFactor != 0 {
-				if replicationFactor > uint32(len(config.GetServers())) {
+				// A data server that left takes no shard, also while the configuration
+				// has it again
+				status, err := m.statusProvider.Load()
+				if err != nil {
+					return nil, err
+				}
+				servers := 0
+				for _, server := range config.GetServers() {
+					if !dataserver.IsRemoved(status.Value.GetDataServers()[server.GetNameOrDefault()].GetState()) {
+						servers++
+					}
+				}
+				if replicationFactor > uint32(servers) {
 					return nil, fmt.Errorf("%w: namespace %q has replicationFactor=%d but only %d servers are configured",
-						errs.ErrFailedPrecondition, namespace.GetName(), replicationFactor, len(config.GetServers()))
+						errs.ErrFailedPrecondition, namespace.GetName(), replicationFactor, servers)
 				}
 				namespace.ReplicationFactor = replicationFactor
 			}
@@ -522,7 +590,18 @@ func (m *defaultMetadata) DeleteNamespace(name string) (*commonproto.Namespace, 
 }
 
 func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) error {
-	name := dataServer.GetIdentity().GetName()
+	name := dataServer.GetIdentity().GetNameOrDefault()
+
+	// The name of a data server that left stays taken: shards could otherwise
+	// take it into their ensembles while it drains, or once it is reported
+	// drained
+	status, _, err := m.GetDataServerStatus(name)
+	if err != nil {
+		return err
+	}
+	if state := status.UnsafeBorrow().GetState(); dataserver.IsRemoved(state) {
+		return fmt.Errorf("%w: data server %q is %s", errs.ErrAlreadyExists, name, state)
+	}
 
 	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		if _, exists := config.GetDataServer(name); exists {
@@ -592,7 +671,19 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 
 			dataServer, _ := config.GetDataServer(name)
 			deleted = dataServer
-			remainingServerCount := len(config.GetServers()) - 1
+			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
+			// A data server that left takes no shard, also while the configuration
+			// has it again
+			status, err := m.statusProvider.Load()
+			if err != nil {
+				return nil, err
+			}
+			remainingServerCount := 0
+			for _, server := range config.GetServers() {
+				if !dataserver.IsRemoved(status.Value.GetDataServers()[server.GetNameOrDefault()].GetState()) {
+					remainingServerCount++
+				}
+			}
 			for _, namespace := range config.GetNamespaces() {
 				if uint64(namespace.GetReplicationFactor()) > uint64(remainingServerCount) {
 					return nil, fmt.Errorf("%w: cannot delete data server %q because namespace %q replicationFactor=%d exceeds remaining data servers=%d",
@@ -603,7 +694,6 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 						remainingServerCount)
 				}
 			}
-			config.Servers = append(config.Servers[:i], config.Servers[i+1:]...)
 			if config.ServerMetadata != nil {
 				delete(config.ServerMetadata, name)
 			}
@@ -622,10 +712,17 @@ func (m *defaultMetadata) ListDataServer() (map[string]commonobject.Borrowed[*co
 	if err != nil {
 		return nil, err
 	}
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return nil, err
+	}
 	config := loaded.Value
 	dataServers := make(map[string]commonobject.Borrowed[*commonproto.DataServer], len(config.GetServers()))
 	for _, server := range config.GetServers() {
 		name := server.GetNameOrDefault()
+		if dataserver.IsRemoved(status.Value.GetDataServers()[name].GetState()) {
+			continue
+		}
 		identity := server
 		if server.GetName() == "" {
 			identity = &commonproto.DataServerIdentity{
@@ -694,8 +791,12 @@ func (m *defaultMetadata) GetDataServer(name string) (commonobject.Borrowed[*com
 	if err != nil {
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false, err
 	}
+	status, err := m.statusProvider.Load()
+	if err != nil {
+		return commonobject.Borrowed[*commonproto.DataServer]{}, false, err
+	}
 	value, ok := config.Value.GetDataServer(name)
-	if !ok {
+	if !ok || dataserver.IsRemoved(status.Value.GetDataServers()[name].GetState()) {
 		return commonobject.Borrowed[*commonproto.DataServer]{}, false, nil
 	}
 	return commonobject.Borrow(value), true, nil

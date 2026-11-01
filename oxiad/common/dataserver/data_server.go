@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sharding
+package dataserver
 
 import (
+	"iter"
 	"slices"
 
 	"github.com/oxia-db/oxia/common/proto"
@@ -36,4 +37,23 @@ func AddDataServer(servers []*proto.DataServerIdentity, server *proto.DataServer
 		return servers
 	}
 	return append(servers, server)
+}
+
+// GetShardDataServers yields the data servers that the shard references: its
+// leader, its ensemble, both sides of a change of the ensemble, and the data
+// servers that still have to delete their copy.
+func GetShardDataServers(shard *proto.ShardMetadata) iter.Seq[*proto.DataServerIdentity] {
+	return func(yield func(*proto.DataServerIdentity) bool) {
+		for _, servers := range [...][]*proto.DataServerIdentity{
+			{shard.GetLeader(), shard.GetEnsembleChange().GetFrom(), shard.GetEnsembleChange().GetTo()},
+			shard.GetEnsemble(),
+			shard.GetPendingDeleteShardNodes(),
+		} {
+			for _, server := range servers {
+				if server != nil && !yield(server) {
+					return
+				}
+			}
+		}
+	}
 }

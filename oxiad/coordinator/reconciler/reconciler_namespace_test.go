@@ -31,6 +31,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
@@ -451,6 +452,12 @@ type mockNamespaceMetadata struct {
 	configNS map[string]*proto.Namespace
 	// getNamespaceErr, when set, fails the namespace loads
 	getNamespaceErr error
+	// listDataServerStatusErr and patchDataServerStatusErr, when set, fail
+	// the reads and the writes of the statuses of the data servers, and
+	// staleDataServerStatus, when set, is read instead of the stored ones
+	listDataServerStatusErr  error
+	patchDataServerStatusErr error
+	staleDataServerStatus    map[string]*proto.DataServerStatus
 }
 
 func (*mockNamespaceMetadata) Close() error { return nil }
@@ -568,6 +575,47 @@ func (m *mockNamespaceMetadata) PatchShardStatus(namespace string, shard int64,
 
 func (*mockNamespaceMetadata) DeleteShardStatus(string, int64) error { return nil }
 
+func (m *mockNamespaceMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	if m.listDataServerStatusErr != nil {
+		return nil, m.listDataServerStatusErr
+	}
+	stored := m.status.GetDataServers()
+	if m.staleDataServerStatus != nil {
+		stored = m.staleDataServerStatus
+	}
+	statuses := make(map[string]commonobject.Borrowed[*proto.DataServerStatus], len(stored))
+	for name, status := range stored {
+		statuses[name] = commonobject.Borrow(status)
+	}
+	return statuses, nil
+}
+
+func (m *mockNamespaceMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	status, exists := m.status.GetDataServers()[name]
+	return commonobject.Borrow(status), exists, nil
+}
+
+func (m *mockNamespaceMetadata) PatchDataServerStatus(name string,
+	modify func(*proto.DataServerStatus) (bool, error)) error {
+	if m.patchDataServerStatusErr != nil {
+		return m.patchDataServerStatusErr
+	}
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	status, exists := cloned.GetDataServers()[name]
+	if !exists {
+		status = &proto.DataServerStatus{}
+	}
+	if updated, err := modify(status); err != nil || !updated {
+		return err
+	}
+	if cloned.DataServers == nil {
+		cloned.DataServers = map[string]*proto.DataServerStatus{}
+	}
+	cloned.DataServers[name] = status
+	m.status = cloned
+	return nil
+}
+
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
 	return nil
 }
@@ -656,6 +704,9 @@ type mockNamespaceRuntime struct {
 	selectNewEnsembleFn func(*proto.Namespace, int64, *proto.ClusterStatus) ([]*proto.DataServerIdentity, error)
 	added               map[int64]string
 	deleted             []int64
+	createdDataServers  []string
+	drainedDataServers  []string
+	dataServerStatus    map[string]*proto.DataServerStatus
 }
 
 func (*mockNamespaceRuntime) Close() error { return nil }
@@ -677,9 +728,28 @@ func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
 func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
 
-func (*mockNamespaceRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
+func (*mockNamespaceRuntime) BecameDrained(*proto.DataServerIdentity) {}
 
-func (*mockNamespaceRuntime) DeleteDataServer(string) {}
+func (m *mockNamespaceRuntime) CreateDataServer(name string, _ *proto.DataServer) bool {
+	if _, exists := m.dataServerStatus[name]; exists {
+		return false
+	}
+	if m.dataServerStatus == nil {
+		m.dataServerStatus = map[string]*proto.DataServerStatus{}
+	}
+	m.dataServerStatus[name] = &proto.DataServerStatus{State: proto.DataServerState_DATA_SERVER_STATE_RUNNING}
+	m.createdDataServers = append(m.createdDataServers, name)
+	return true
+}
+
+func (m *mockNamespaceRuntime) DeleteDataServer(name string) {
+	status, exists := m.dataServerStatus[name]
+	if !exists || dataserver.IsRemoved(status.GetState()) {
+		return
+	}
+	status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+	m.drainedDataServers = append(m.drainedDataServers, name)
+}
 
 func (*mockNamespaceRuntime) RefreshShardControllers() {}
 
@@ -771,16 +841,23 @@ func (m *mockNamespaceRuntime) DeleteShard(shard int64) {
 
 func (*mockNamespaceRuntime) RecomputeAssignments() {}
 
-func (*mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
-	return nil
+func (m *mockNamespaceRuntime) ListDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
+	dataServers := map[string]commonobject.Borrowed[*proto.DataServer]{}
+	for name, status := range m.dataServerStatus {
+		if !dataserver.IsRemoved(status.GetState()) {
+			dataServers[name] = commonobject.Borrow(&proto.DataServer{})
+		}
+	}
+	return dataServers
 }
 
 func (*mockNamespaceRuntime) ListDataServerStatus() map[string]*proto.DataServerStatus {
 	return nil
 }
 
-func (*mockNamespaceRuntime) GetDataServerStatus(string) (*proto.DataServerStatus, bool) {
-	return nil, false
+func (m *mockNamespaceRuntime) GetDataServerStatus(name string) (*proto.DataServerStatus, bool) {
+	status, found := m.dataServerStatus[name]
+	return status, found
 }
 
 func (*mockNamespaceRuntime) LoadBalancer() balancer.LoadBalancer { return nil }

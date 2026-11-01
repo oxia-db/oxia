@@ -152,6 +152,18 @@ func (m *mockMetadata) PatchShardStatus(namespace string, shard int64,
 
 func (*mockMetadata) DeleteShardStatus(string, int64) error { return nil }
 
+func (*mockMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	return map[string]commonobject.Borrowed[*proto.DataServerStatus]{}, nil
+}
+
+func (*mockMetadata) GetDataServerStatus(string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	return commonobject.Borrowed[*proto.DataServerStatus]{}, false, nil
+}
+
+func (*mockMetadata) PatchDataServerStatus(string, func(*proto.DataServerStatus) (bool, error)) error {
+	return nil
+}
+
 func (*mockMetadata) IsReady(*proto.ClusterConfiguration) bool { return true }
 
 func (*mockMetadata) CreateNamespace(*proto.Namespace) error {

@@ -2046,6 +2046,90 @@ func TestControllerDispatchChangeEnsembleRejectsWhileChangePending(t *testing.T)
 	assert.Empty(t, drainNewTermRequests(rpc.GetNode(s5)))
 }
 
+// A change of the ensemble to a data server that left is refused, without a
+// new term: e.g. one planned before the data server was removed, which could
+// otherwise complete after its drain.
+func TestControllerDispatchChangeEnsembleRejectsLeftDataServer(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:   proto.ShardStatusSteadyState,
+			Term:     2,
+			Leader:   s1,
+			Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		}},
+	}))
+	require.NoError(t, metadata.PatchDataServerStatus(s4.GetNameOrDefault(), func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}))
+	sc := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		rpc:             rpctest.NewRpcProvider(),
+		ctx:             t.Context(),
+		logger:          slog.Default(),
+		currentElection: &fakeElection{quorumCaughtUp: true},
+	}
+
+	change := action.NewChangeEnsembleAction(shard, s2, s4)
+	sc.onChangeEnsemble(change)
+	_, err := change.Wait()
+	assert.ErrorIs(t, err, errs.ErrFailedPrecondition)
+
+	metaSnap := requireShardMetadata(t, metadata, constant.DefaultNamespace, shard)
+	assert.EqualValues(t, 2, metaSnap.Term)
+	assertShardEnsemble(t, metaSnap.Ensemble, s1, s2, s3)
+}
+
+// A status of the target data server that can't be read fails the change,
+// which its caller retries.
+func TestControllerDispatchChangeEnsembleReturnsDataServerStatusError(t *testing.T) {
+	var shard int64 = 5
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	s4 := &proto.DataServerIdentity{Public: "s4:9091", Internal: "s4:8191"}
+
+	stored := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	require.NoError(t, stored.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		Shards: map[int64]*proto.ShardMetadata{shard: {
+			Status:   proto.ShardStatusSteadyState,
+			Term:     2,
+			Leader:   s1,
+			Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+		}},
+	}))
+	readErr := errors.New("status unavailable")
+	metadata := &hookedMetadata{
+		Metadata: stored,
+		getDataServerStatus: func(string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+			return commonobject.Borrowed[*proto.DataServerStatus]{}, false, readErr
+		},
+	}
+	sc := &controller{
+		namespace:       constant.DefaultNamespace,
+		shard:           shard,
+		metadataStore:   metadata,
+		rpc:             rpctest.NewRpcProvider(),
+		ctx:             t.Context(),
+		logger:          slog.Default(),
+		currentElection: &fakeElection{quorumCaughtUp: true},
+	}
+
+	change := action.NewChangeEnsembleAction(shard, s2, s4)
+	sc.onChangeEnsemble(change)
+	_, err := change.Wait()
+	assert.ErrorIs(t, err, readErr)
+}
+
 // The mail of the election finishes the pending change once a majority of the
 // ensemble caught up, and the next change starts then.
 func TestControllerDispatchChangeEnsembleFinishesCaughtUpChange(t *testing.T) {
@@ -3330,6 +3414,9 @@ func (r *dataServerEventsRelay) FeaturesDiscovered(dataServer *proto.DataServerI
 	}
 }
 
+// BecameDrained isn't relayed: the data servers of the tests don't drain.
+func (*dataServerEventsRelay) BecameDrained(*proto.DataServerIdentity) {}
+
 // A rolling upgrade restarts the followers first and the leader last, with a
 // binary that supports a new feature. The restarts of the followers don't
 // replace the leader, and the election that replaces the leader runs while it
@@ -3348,12 +3435,13 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	previous := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}
 	upgraded := []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES}
 
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 	relay := &dataServerEventsRelay{}
 	dataServers := make(map[string]dataservercontroller.Controller, len(ensemble))
 	for _, dataServer := range ensemble {
 		rpc.GetNode(dataServer).SetNodeFeatures(previous)
 		dataServers[dataServer.GetNameOrDefault()] = dataservercontroller.NewController(context.Background(),
-			&proto.DataServer{Identity: dataServer}, rpctest.NewShardAssignmentsProvider(), relay, rpc, "test-instance",
+			&proto.DataServer{Identity: dataServer}, metadata, rpctest.NewShardAssignmentsProvider(), relay, rpc, "test-instance",
 			oxiatime.SlowInitialInterval, health.DefaultCheckPolicy)
 	}
 	defer func() {
@@ -3365,15 +3453,15 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	// stale if its ping loop changed the status while the watch waited for
 	// it: the data server reports its health until the controller acts on it.
 	setHealth := func(dataServer *proto.DataServerIdentity, servingStatus grpc_health_v1.HealthCheckResponse_ServingStatus,
-		status dataservercontroller.State) {
+		available bool) {
 		t.Helper()
 		require.Eventually(t, func() bool {
 			rpc.GetNode(dataServer).HealthClient.SetStatus(servingStatus)
-			return dataServers[dataServer.GetNameOrDefault()].GetStatus().GetState() == status
+			return dataServers[dataServer.GetNameOrDefault()].GetStatus().IsAvailable() == available
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 	for _, dataServer := range ensemble {
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, dataservercontroller.Running)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, true)
 	}
 	supply := func(servers []*proto.DataServerIdentity) map[string][]proto.Feature {
 		features := make(map[string][]proto.Feature, len(servers))
@@ -3384,15 +3472,14 @@ func TestControllerFeaturesDiscoveredPinsNewFeaturesOfRollingUpgrade(t *testing.
 	}
 	stop := func(dataServer *proto.DataServerIdentity) {
 		t.Helper()
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, dataservercontroller.NotRunning)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING, false)
 	}
 	startUpgraded := func(dataServer *proto.DataServerIdentity) {
 		t.Helper()
 		rpc.GetNode(dataServer).SetNodeFeatures(upgraded)
-		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, dataservercontroller.Running)
+		setHealth(dataServer, grpc_health_v1.HealthCheckResponse_SERVING, true)
 	}
 
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
 	steadyInTerm := func(term int64) {
 		t.Helper()
 		require.Eventually(t, func() bool {
@@ -3729,6 +3816,22 @@ func TestControllerBecameUnavailableDiscardsWhenQueueIsFull(t *testing.T) {
 	}()
 	requireClosed(t, done, "BecameUnavailable on a full queue")
 	assert.Len(t, s.dataServerFailureOp, chanBufferSize)
+}
+
+// A drained data server is in no ensemble: the shard controller queues nothing.
+func TestControllerBecameDrainedQueuesNothing(t *testing.T) {
+	s := &controller{
+		shard:                5,
+		electionOp:           make(chan *action.ElectionAction, chanBufferSize),
+		dataServerFailureOp:  make(chan *proto.DataServerIdentity, chanBufferSize),
+		featuresDiscoveredOp: make(chan any, 1),
+		logger:               slog.Default(),
+	}
+
+	s.BecameDrained(&proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"})
+	assert.Empty(t, s.electionOp)
+	assert.Empty(t, s.dataServerFailureOp)
+	assert.Empty(t, s.featuresDiscoveredOp)
 }
 
 func TestControllerDispatchPanicsOnUnknownAction(t *testing.T) {
@@ -4328,12 +4431,20 @@ func testDataServer(id string) *proto.DataServerIdentity {
 type hookedMetadata struct {
 	coordmetadata.Metadata
 	getDataServer           func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
+	getDataServerStatus     func(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error)
 	getNamespaceStatus      func(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error)
 	getShardStatus          func(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error)
 	listNamespaceStatus     func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
 	getNamespaceTermOptions func(namespace string) (*proto.NewTermOptions, error)
 	patchNamespaceStatus    func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error
 	patchShardStatus        func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error
+}
+
+func (m *hookedMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	if m.getDataServerStatus != nil {
+		return m.getDataServerStatus(name)
+	}
+	return m.Metadata.GetDataServerStatus(name)
 }
 
 func (m *hookedMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool, error) {

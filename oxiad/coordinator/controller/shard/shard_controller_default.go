@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/async"
+	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
-	"github.com/oxia-db/oxia/oxiad/common/sharding"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/errors"
@@ -125,6 +125,9 @@ func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 		)
 	}
 }
+
+// BecameDrained has nothing to do: a drained data server is in no ensemble.
+func (*controller) BecameDrained(*proto.DataServerIdentity) {}
 
 func (s *controller) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
 	s.terminationMu.RLock()
@@ -565,12 +568,12 @@ func (s *controller) validateChangeEnsembleFeatures(shardMeta *proto.ShardMetada
 	target := changeEnsembleAction.To.GetNameOrDefault()
 	ensembleSize := len(shardMeta.Ensemble)
 	targetEnsemble := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
-		sharding.MatchDataServer(changeEnsembleAction.From))
+		dataserver.MatchDataServer(changeEnsembleAction.From))
 	if len(targetEnsemble) != ensembleSize-1 {
 		return fmt.Errorf("%w: invalid change ensemble: source data server %q must appear exactly once in the current ensemble", errs.ErrInvalidArgument, source)
 	}
 	ensembleWithoutTarget := slices.DeleteFunc(slices.Clone(shardMeta.Ensemble),
-		sharding.MatchDataServer(changeEnsembleAction.To))
+		dataserver.MatchDataServer(changeEnsembleAction.To))
 	if len(ensembleWithoutTarget) != ensembleSize {
 		return fmt.Errorf("%w: invalid change ensemble: target data server %q is already in the current ensemble", errs.ErrInvalidArgument, target)
 	}
@@ -808,6 +811,18 @@ func (s *controller) onChangeEnsemble(changeEnsembleAction *action.ChangeEnsembl
 	if change := shardMeta.GetEnsembleChange(); change != nil {
 		changeEnsembleAction.Error(fmt.Errorf("%w: the change of the ensemble from %q to %q is still pending",
 			errs.ErrFailedPrecondition, change.GetFrom().GetNameOrDefault(), change.GetTo().GetNameOrDefault()))
+		return
+	}
+	// A data server that left takes no shard: its drain could complete
+	// meanwhile, e.g. for a change planned before it was removed
+	to := changeEnsembleAction.To.GetNameOrDefault()
+	stored, _, err := s.metadataStore.GetDataServerStatus(to)
+	if err != nil {
+		changeEnsembleAction.Error(err)
+		return
+	}
+	if state := stored.UnsafeBorrow().GetState(); dataserver.IsRemoved(state) {
+		changeEnsembleAction.Error(fmt.Errorf("%w: data server %q is %s", errs.ErrFailedPrecondition, to, state))
 		return
 	}
 	if err := s.validateChangeEnsembleFeatures(shardMeta, changeEnsembleAction); err != nil {

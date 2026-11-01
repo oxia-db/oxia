@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/oxiad/common/health"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
@@ -75,18 +76,6 @@ func TestCoordinator_CloseWhileStatusWritesFail(t *testing.T) {
 	adminClient, err := oxia.NewAdminClient(adminAddr, nil, nil)
 	require.NoError(t, err)
 
-	requireDataServersState := func(state proto.DataServerState) {
-		t.Helper()
-		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			for _, ds := range dataServers {
-				view, err := adminClient.GetDataServer(t.Context(), ds.GetNameOrDefault())
-				if assert.NoError(c, err) {
-					assert.Equal(c, state, view.GetDataServerStatus().GetState())
-				}
-			}
-		}, 30*time.Second, 50*time.Millisecond)
-	}
-
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		ns, err := adminClient.GetNamespace(t.Context(), constant.DefaultNamespace)
 		if assert.NoError(c, err) {
@@ -95,7 +84,6 @@ func TestCoordinator_CloseWhileStatusWritesFail(t *testing.T) {
 			assert.NotNil(c, shard.GetLeader())
 		}
 	}, 30*time.Second, 50*time.Millisecond)
-	requireDataServersState(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 
 	// From now on, every shard status write fails
 	require.NoError(t, os.Chmod(filepath.Join(metadataDir, coordoption.DefaultFileStatusName), 0o400))
@@ -105,7 +93,9 @@ func TestCoordinator_CloseWhileStatusWritesFail(t *testing.T) {
 	require.NoError(t, s1.Close())
 	require.NoError(t, s2.Close())
 	require.NoError(t, s3.Close())
-	requireDataServersState(proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE)
+	// Leave the coordinator a few health probes to notice it: Close must
+	// return whether its elections started or not
+	time.Sleep(3 * health.DefaultCheckPolicy.ProbeInterval)
 	require.NoError(t, adminClient.Close())
 
 	closed := make(chan error, 1)

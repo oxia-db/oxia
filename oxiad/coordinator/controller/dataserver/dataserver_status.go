@@ -20,81 +20,70 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// State is the state of a data server, as its controller sees it:
+// Status is the state of a data server, whether it is available, and when
+// either last changed.
 //
-//	           handshake succeeded
-//	NotRunning -------------------> Running
-//	    ^                              |
-//	    +------------------------------+
-//	           health check failed
-//
-//	removed from the configuration (Drain): Running or NotRunning --> Draining
-type State uint32
-
-const (
-	// Running is a data server that passes its health checks, and that the
-	// handshake bound to this coordinator: it receives the shard assignments.
-	Running State = iota
-	// NotRunning is a data server whose health checks fail, or that isn't
-	// bound to this coordinator yet: the state of a new controller.
-	NotRunning
-	// Draining is a data server removed from the configuration. It keeps
-	// receiving the shard assignments until it becomes unavailable, and the
-	// runtime closes its controller then.
-	Draining
-)
-
-// ToProto returns the state of the data server reported by the management API.
-func (s State) ToProto() proto.DataServerState {
-	switch s {
-	case Running:
-		return proto.DataServerState_DATA_SERVER_STATE_RUNNING
-	case NotRunning:
-		return proto.DataServerState_DATA_SERVER_STATE_UNAVAILABLE
-	case Draining:
-		return proto.DataServerState_DATA_SERVER_STATE_DRAINING
-	default:
-		return proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED
-	}
-}
-
-// Status is the state of a data server, and when it last changed.
+// A Status isn't safe for concurrent use: one goroutine at a time changes it.
+// The controller changes a copy under its mu, then publishes it, and
+// GetStatus returns a copy to each reader.
 type Status struct {
-	state State
-	// lastTransitionTime is when the state last changed: zero until it changes
-	// after the data server joined, as a data server that never failed doesn't
-	// need to prove that it's stable.
+	// state is RUNNING, DRAINING or DRAINED: the stage of the lifecycle that
+	// the metadata stores.
+	state proto.DataServerState
+	// available is whether the data server answered its health checks since
+	// its last handshake. It is never stored.
+	available bool
+	// lastTransitionTime is when the status last changed: zero until it
+	// changes after the data server joined, as a data server that never
+	// failed doesn't need to prove that it's stable.
 	lastTransitionTime time.Time
-	// epoch increments on every transition, so that a probe observation (a
-	// SERVING answer or a failure) obtained before a concurrent transition can
-	// be recognized as stale and discarded instead of flapping the state back.
+	// epoch increments on every change of the availability, so that a probe
+	// observation (a SERVING answer or a failure) obtained before a concurrent
+	// change can be recognized as stale and discarded instead of flapping the
+	// availability back. A change of the stage of the lifecycle doesn't
+	// invalidate them.
 	epoch int64
 }
 
 // NewStatus returns the status of a data server in state, before any
-// transition.
-func NewStatus(state State) Status {
+// transition: it isn't available until its first handshake.
+func NewStatus(state proto.DataServerState) Status {
 	return Status{state: state}
 }
 
-// GetState returns the state of the data server.
-func (s Status) GetState() State {
+// GetState returns the stage of the lifecycle of the data server.
+func (s Status) GetState() proto.DataServerState {
 	return s.state
 }
 
-// GetLastTransitionTime returns when the state last changed, or zero if it
+// IsAvailable reports whether the data server answered its health checks
+// since its last handshake.
+func (s Status) IsAvailable() bool {
+	return s.available
+}
+
+// GetLastTransitionTime returns when the status last changed, or zero if it
 // didn't change since the data server joined.
 func (s Status) GetLastTransitionTime() time.Time {
 	return s.lastTransitionTime
 }
 
-// Advance moves the status to state, even if it already is in it: the epoch
-// increments, and the transition time is recorded, except for the first
-// transition, the data server joining.
-func (s *Status) Advance(state State) {
+// Advance moves the data server to the DRAINING or DRAINED stage of its
+// lifecycle, keeping the observations of its availability in flight.
+func (s *Status) Advance(state proto.DataServerState) {
 	if s.epoch > 0 {
 		s.lastTransitionTime = time.Now()
 	}
 	s.state = state
+}
+
+// SetAvailable records whether the data server is available, even if it
+// already was: the epoch still increments. The first transition, the data
+// server joining, isn't timed.
+func (s *Status) SetAvailable(available bool) {
+	if s.epoch > 0 {
+		s.lastTransitionTime = time.Now()
+	}
+	s.available = available
 	s.epoch++
 }
