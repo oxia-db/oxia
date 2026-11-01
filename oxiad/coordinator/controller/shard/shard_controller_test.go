@@ -4165,6 +4165,12 @@ func TestControllerRefreshSkipsMetadataLoadError(t *testing.T) {
 				return commonobject.Borrowed[*proto.DataServer]{}, false, errors.New("config unavailable")
 			},
 		},
+		"data server status": &hookedMetadata{
+			Metadata: base,
+			getDataServerStatus: func(string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+				return commonobject.Borrowed[*proto.DataServerStatus]{}, false, errors.New("status unavailable")
+			},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := &controller{
@@ -4189,6 +4195,37 @@ func TestControllerRefreshSkipsMetadataLoadError(t *testing.T) {
 	}
 	s.Refresh()
 	assert.Len(t, s.electionOp, 1)
+}
+
+// A data server that left keeps the addresses it drains from, also when the
+// configuration has it again at other ones: no election moves it there.
+func TestControllerRefreshKeepsAddressesOfLeftDataServer(t *testing.T) {
+	var shard int64 = 5
+	serverName := "s1"
+	oldIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "old-public:9091", Internal: "old-internal:8191"}
+	newIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "new-public:9091", Internal: "new-internal:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{newIdentity}})
+	require.NoError(t, metadata.PatchDataServerStatus(serverName, func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}))
+	storeTestShardMetadata(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:   proto.ShardStatusSteadyState,
+		Term:     1,
+		Leader:   oldIdentity,
+		Ensemble: []*proto.DataServerIdentity{oldIdentity},
+	})
+	s := &controller{
+		namespace:     constant.DefaultNamespace,
+		shard:         shard,
+		metadataStore: metadata,
+		electionOp:    make(chan *action.ElectionAction, chanBufferSize),
+		logger:        slog.Default(),
+	}
+
+	s.Refresh()
+	assert.Empty(t, s.electionOp)
 }
 
 // A shard deleted while its controller terminates is not refreshed.

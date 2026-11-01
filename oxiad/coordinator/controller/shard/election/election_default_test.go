@@ -226,6 +226,11 @@ func TestElectionStartReturnsMetadataLoadErrorBeforeNewTerm(t *testing.T) {
 				return commonobject.Borrowed[*proto.DataServer]{}, false, errors.New("config unavailable")
 			}
 		}},
+		{name: "data server status", hooks: func(m *hookedMetadata) {
+			m.getDataServerStatus = func(string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+				return commonobject.Borrowed[*proto.DataServerStatus]{}, false, errors.New("config unavailable")
+			}
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
@@ -274,6 +279,36 @@ func TestElectionRefreshEnsembleInfoUsesRegisteredAddresses(t *testing.T) {
 	require.NoError(t, err)
 	assertShardEnsemble(t, ensemble, newIdentity)
 	assert.Nil(t, change)
+}
+
+// A data server that left keeps the addresses it drains from, also when the
+// configuration has it again at other ones: the election fences it there.
+func TestElectionRefreshEnsembleInfoKeepsAddressesOfLeftDataServer(t *testing.T) {
+	serverName := "s1"
+	oldIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "old-public:9091", Internal: "old-internal:8191"}
+	newIdentity := &proto.DataServerIdentity{Name: &serverName, Public: "new-public:9091", Internal: "new-internal:8191"}
+	s2 := testDataServer("s2")
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{newIdentity}})
+	require.NoError(t, metadata.PatchDataServerStatus(serverName, func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}))
+	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
+
+	ensemble, change, err := e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble:       []*proto.DataServerIdentity{s2},
+		EnsembleChange: &proto.EnsembleChangeMetadata{From: oldIdentity, To: s2},
+	})
+	require.NoError(t, err)
+	assertShardEnsemble(t, ensemble, s2)
+	assertEnsembleChange(t, change, oldIdentity, s2)
+
+	ensemble, _, err = e.refreshEnsembleInfo(&proto.ShardMetadata{
+		Ensemble: []*proto.DataServerIdentity{oldIdentity},
+	})
+	require.NoError(t, err)
+	assertShardEnsemble(t, ensemble, oldIdentity)
 }
 
 // A pending change whose to isn't a member of the ensemble, e.g. in a status
@@ -961,6 +996,7 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 type hookedMetadata struct {
 	coordmetadata.Metadata
 	getDataServer           func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
+	getDataServerStatus     func(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error)
 	getNamespaceStatus      func(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error)
 	getShardStatus          func(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error)
 	listNamespaceStatus     func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
@@ -974,6 +1010,13 @@ func (m *hookedMetadata) GetDataServer(name string) (commonobject.Borrowed[*prot
 		return m.getDataServer(name)
 	}
 	return m.Metadata.GetDataServer(name)
+}
+
+func (m *hookedMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
+	if m.getDataServerStatus != nil {
+		return m.getDataServerStatus(name)
+	}
+	return m.Metadata.GetDataServerStatus(name)
 }
 
 func (m *hookedMetadata) GetNamespaceStatus(namespace string) (

@@ -868,6 +868,16 @@ func (s *controller) Refresh() {
 		s.shard).UnsafeBorrow()
 	needSync := false
 	for _, candidate := range shardMeta.Ensemble {
+		// A data server that left keeps the addresses it drains from, also
+		// when the configuration has it again at other ones
+		stored, _, err := s.metadataStore.GetDataServerStatus(candidate.GetNameOrDefault())
+		if err != nil {
+			s.logger.Warn("Failed to refresh the ensemble addresses", slog.Any("error", err))
+			return
+		}
+		if dataserver.IsRemoved(stored.UnsafeBorrow().GetState()) {
+			continue
+		}
 		borrowedDataServer, ok, err := s.metadataStore.GetDataServer(candidate.GetNameOrDefault())
 		if err != nil {
 			s.logger.Warn("Failed to refresh the ensemble addresses", slog.Any("error", err))
