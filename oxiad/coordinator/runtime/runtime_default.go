@@ -195,7 +195,7 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 	return true
 }
 
-func (c *runtime) DeleteDataServer(name string) {
+func (c *runtime) DrainDataServer(name string) {
 	c.Lock()
 	defer c.Unlock()
 

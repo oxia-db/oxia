@@ -32,7 +32,9 @@ type Runtime interface {
 	controller.DataServerEventListener
 
 	CreateDataServer(name string, dataServer *proto.DataServer) bool
-	DeleteDataServer(name string)
+	// DrainDataServer drains a data server that left the configuration: its
+	// controller is kept until it is stored DRAINED, then closed.
+	DrainDataServer(name string)
 
 	// ListLiveDataServer returns the data servers that have a controller and
 	// take shards: a draining or drained one is left out. The configured data

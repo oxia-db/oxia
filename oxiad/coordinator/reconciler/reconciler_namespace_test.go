@@ -742,7 +742,7 @@ func (m *mockNamespaceRuntime) CreateDataServer(name string, _ *proto.DataServer
 	return true
 }
 
-func (m *mockNamespaceRuntime) DeleteDataServer(name string) {
+func (m *mockNamespaceRuntime) DrainDataServer(name string) {
 	status, exists := m.dataServerStatus[name]
 	if !exists || dataserver.IsRemoved(status.GetState()) {
 		return

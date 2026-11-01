@@ -70,7 +70,7 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 
 	for name := range r.runtime.ListLiveDataServer() {
 		if !desired.Contains(name) {
-			r.runtime.DeleteDataServer(name)
+			r.runtime.DrainDataServer(name)
 		}
 	}
 

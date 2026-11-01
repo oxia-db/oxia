@@ -97,7 +97,7 @@ func (*testRuntime) BecameDrained(*proto.DataServerIdentity) {}
 
 func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return false }
 
-func (*testRuntime) DeleteDataServer(string) {}
+func (*testRuntime) DrainDataServer(string) {}
 
 func (*testRuntime) ListLiveDataServer() map[string]commonobject.Borrowed[*proto.DataServer] {
 	return nil

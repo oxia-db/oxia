@@ -378,24 +378,24 @@ func TestRuntimeCreateDataServerKeepsExistingController(t *testing.T) {
 	assert.Zero(t, draining.closes.Load())
 }
 
-func TestRuntimeDeleteDataServerIgnoresUnknownDataServer(t *testing.T) {
+func TestRuntimeDrainDataServerIgnoresUnknownDataServer(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
 
-	c.DeleteDataServer("unknown")
+	c.DrainDataServer("unknown")
 
 	assert.Empty(t, c.dataServerControllers)
 }
 
 // A deleted data server keeps its controller, which drains it, and is left out
 // of the data servers of the configuration.
-func TestRuntimeDeleteDataServerDrainsDataServer(t *testing.T) {
+func TestRuntimeDrainDataServerDrainsDataServer(t *testing.T) {
 	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
 	running := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
 	c.dataServerControllers["s1"] = running
 	require.Contains(t, c.ListLiveDataServer(), "s1")
 
-	c.DeleteDataServer("s1")
-	c.DeleteDataServer("s1")
+	c.DrainDataServer("s1")
+	c.DrainDataServer("s1")
 
 	assert.Same(t, running, c.dataServerControllers["s1"])
 	assert.EqualValues(t, 1, running.drains.Load())
