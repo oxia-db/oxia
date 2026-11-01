@@ -65,10 +65,7 @@ type election struct {
 	metadataStore coordmetadata.Metadata
 	// preferredLeader is the data server that a leader transfer asks for, or
 	// empty.
-	preferredLeader string
-	// previousLeader is the leader of the shard when the election started,
-	// before the new term clears it, or empty.
-	previousLeader   string
+	preferredLeader  string
 	eventListener    controllerapi.ShardEventListener
 	provider         rpc.ControllerRPCProvider
 	namespace        string
@@ -275,8 +272,7 @@ gracePeriod:
 //	                      |
 //	           +----------------------+
 //	           | 3. select            |    among the ties: the preferred leader,
-//	           |                      |    else the previous one, else any; the
-//	           |                      |    others follow
+//	           |                      |    else any; the others follow
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
 	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
@@ -310,14 +306,10 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	// a count read by every election of a failover at once would send each to
 	// the same data server. The ties come in no particular order.
 	leader = mostUpToDate[0]
-	for _, name := range []string{e.preferredLeader, e.previousLeader} {
-		i := slices.IndexFunc(mostUpToDate, func(server *proto.DataServerIdentity) bool {
-			return name != "" && server.GetNameOrDefault() == name
-		})
-		if i >= 0 {
-			leader = mostUpToDate[i]
-			break
-		}
+	if i := slices.IndexFunc(mostUpToDate, func(server *proto.DataServerIdentity) bool {
+		return server.GetNameOrDefault() == e.preferredLeader
+	}); i >= 0 {
+		leader = mostUpToDate[i]
 	}
 	followers = make(sharding.HeadEntries)
 	for server, head := range ensembleHeads {
@@ -849,7 +841,6 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		eventListener:                  eventListener,
 		shardMailbox:                   shardMailbox,
 		preferredLeader:                preferredLeader,
-		previousLeader:                 shardMetadata.GetLeader().GetNameOrDefault(),
 		provider:                       provider,
 		namespace:                      namespace,
 		shard:                          shard,

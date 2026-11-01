@@ -514,7 +514,7 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 }
 
 // Among the data servers tied at the highest head entry, the election elects
-// the preferred leader, else the previous leader, else any of them.
+// the preferred leader, else any of them.
 func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
@@ -523,18 +523,15 @@ func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		preferred string
-		previous  *proto.DataServerIdentity
 		leaders   []*proto.DataServerIdentity
 	}{
-		{name: "preferred", preferred: "s2", previous: s1, leaders: []*proto.DataServerIdentity{s2}},
-		{name: "previous", previous: s2, leaders: []*proto.DataServerIdentity{s2}},
-		{name: "preferred behind", preferred: "s3", previous: s1, leaders: []*proto.DataServerIdentity{s1}},
-		{name: "any", previous: s3, leaders: []*proto.DataServerIdentity{s1, s2}},
+		{name: "preferred", preferred: "s2", leaders: []*proto.DataServerIdentity{s2}},
+		{name: "preferred behind", preferred: "s3", leaders: []*proto.DataServerIdentity{s1, s2}},
+		{name: "any", leaders: []*proto.DataServerIdentity{s1, s2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			e := newTestElection(t, nil, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{
 				Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-				Leader:   test.previous,
 			})
 			e.preferredLeader = test.preferred
 
