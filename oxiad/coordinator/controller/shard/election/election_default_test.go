@@ -513,74 +513,70 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 	}
 }
 
-// Among the data servers tied at the highest head entry, the leader selector
-// chooses the leader.
+// Among the data servers tied at the highest head entry, the election elects
+// the preferred leader, else the previous leader, else any of them.
 func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
-		&proto.ClusterConfiguration{})
-	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{
-		Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
-	})
-
-	leader, followers, err := e.chooseLeader(
-		sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}}, nil)
-	require.NoError(t, err)
-	assert.Contains(t, []*proto.DataServerIdentity{s1, s2}, leader)
-	assert.Len(t, followers, 2)
-	assert.NotContains(t, maps.Keys(followers), leader)
-	assertShardEnsemble(t, e.meta.Ensemble, s1, s2, s3)
-}
-
-// The election retries an attempt whose leader can't be selected, or whose
-// leader can't be persisted.
-func TestElectionStartReturnsLeaderSelectionErrors(t *testing.T) {
-	var shard int64 = 5
-	s1 := testDataServer("s1")
+	heads := sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}}
 	for _, test := range []struct {
-		name  string
-		hooks func(m *hookedMetadata)
-		err   string
+		name      string
+		preferred string
+		previous  *proto.DataServerIdentity
+		leaders   []*proto.DataServerIdentity
 	}{
-		{name: "status list", err: "status unavailable", hooks: func(m *hookedMetadata) {
-			m.listNamespaceStatus = func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
-				return nil, errors.New("status unavailable")
-			}
-		}},
-		{name: "leader write", err: "failed to persist the new leader", hooks: func(m *hookedMetadata) {
-			writes := 0
-			m.patchShardStatus = func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error {
-				// The new term is written, the new leader is not
-				if writes++; writes > 1 {
-					return errors.New("store unavailable")
-				}
-				return m.Metadata.PatchShardStatus(namespace, shard, modify)
-			}
-		}},
+		{name: "preferred", preferred: "s2", previous: s1, leaders: []*proto.DataServerIdentity{s2}},
+		{name: "previous", previous: s2, leaders: []*proto.DataServerIdentity{s2}},
+		{name: "preferred behind", preferred: "s3", previous: s1, leaders: []*proto.DataServerIdentity{s1}},
+		{name: "any", previous: s3, leaders: []*proto.DataServerIdentity{s1, s2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
-				&proto.ClusterConfiguration{})
-			shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
-				Ensemble: []*proto.DataServerIdentity{s1}}
-			storeTestShardMetadata(t, base, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
-			metadata := &hookedMetadata{Metadata: base}
-			test.hooks(metadata)
-			rpc := rpctest.NewRpcProvider()
-			rpc.GetNode(s1).NewTermResponse(2, 0, nil)
-			rpc.GetNode(s1).BecomeLeaderResponse(nil)
-			e := newTestElection(t, metadata, rpc, shard, shardMeta)
+			e := newTestElection(t, nil, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{
+				Ensemble: []*proto.DataServerIdentity{s1, s2, s3},
+				Leader:   test.previous,
+			})
+			e.preferredLeader = test.preferred
 
-			_, err := e.Start()
-			assert.ErrorContains(t, err, test.err)
-			stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
-			assert.Equal(t, proto.ShardStatusElection, stored.GetStatus())
-			assert.EqualValues(t, 3, stored.GetTerm())
-			assert.Nil(t, stored.GetLeader())
+			leader, followers, err := e.chooseLeader(heads, nil)
+			require.NoError(t, err)
+			assert.Contains(t, test.leaders, leader)
+			assert.Len(t, followers, 2)
+			assert.NotContains(t, maps.Keys(followers), leader)
+			assertShardEnsemble(t, e.meta.Ensemble, s1, s2, s3)
 		})
 	}
+}
+
+// The election retries an attempt whose leader can't be persisted.
+func TestElectionStartReturnsLeaderWriteError(t *testing.T) {
+	var shard int64 = 5
+	s1 := testDataServer("s1")
+	base := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+		&proto.ClusterConfiguration{})
+	shardMeta := &proto.ShardMetadata{Status: proto.ShardStatusSteadyState, Term: 2, Leader: s1,
+		Ensemble: []*proto.DataServerIdentity{s1}}
+	storeTestShardMetadata(t, base, constant.DefaultNamespace, shard, namespaceConfig, shardMeta)
+	metadata := &hookedMetadata{Metadata: base}
+	writes := 0
+	metadata.patchShardStatus = func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error {
+		// The new term is written, the new leader is not
+		if writes++; writes > 1 {
+			return errors.New("store unavailable")
+		}
+		return base.PatchShardStatus(namespace, shard, modify)
+	}
+	rpc := rpctest.NewRpcProvider()
+	rpc.GetNode(s1).NewTermResponse(2, 0, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	e := newTestElection(t, metadata, rpc, shard, shardMeta)
+
+	_, err := e.Start()
+	assert.ErrorContains(t, err, "failed to persist the new leader")
+	stored := requireShardMetadata(t, base, constant.DefaultNamespace, shard)
+	assert.Equal(t, proto.ShardStatusElection, stored.GetStatus())
+	assert.EqualValues(t, 3, stored.GetTerm())
+	assert.Nil(t, stored.GetLeader())
 }
 
 func TestElectionFenceNewTermAndAddFollowerReturnsAddFollowerError(t *testing.T) {
@@ -768,7 +764,7 @@ func TestElectionStartRestoresRemovedDataServerAhead(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(2, 4, nil)
 	rpc.GetNode(s4).NewTermResponse(-1, -1, nil)
 	rpc.GetNode(s2).BecomeLeaderResponse(nil)
-	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), nil,
+	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, rpc, constant.DefaultNamespace, shard, shardMeta, action.NewChangeEnsembleAction(shard, s2, s4), "", nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 		metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -816,7 +812,7 @@ func TestElectionStartKeepsChangePending(t *testing.T) {
 			mailbox := make(chan async.Mail, 1)
 			e := New(t.Context(), slog.Default(), nil, mailbox, metadata, feature.NoOpSupplier,
 				rpc, constant.DefaultNamespace, shard, shardMeta,
-				action.NewChangeEnsembleAction(shard, s2, s4), nil,
+				action.NewChangeEnsembleAction(shard, s2, s4), "", nil,
 				metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency", "", nil),
 				metric.NewLatencyHistogram("oxia_coordinator_become_leader_latency", "", nil))
@@ -942,7 +938,7 @@ func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
 	labels := metric.LabelsForShard(constant.DefaultNamespace, shard)
-	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, rpc, constant.DefaultNamespace, shard, shardMeta, nil, nil,
+	e := New(t.Context(), slog.Default(), nil, nil, metadata, feature.NoOpSupplier, rpc, constant.DefaultNamespace, shard, shardMeta, nil, "", nil,
 		metric.NewLatencyHistogram("oxia_coordinator_leader_election_latency",
 			"The time it takes to elect a leader for the shard", labels),
 		metric.NewLatencyHistogram("oxia_coordinator_new_term_quorum_latency",
@@ -960,7 +956,6 @@ type hookedMetadata struct {
 	getDataServer           func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
 	getNamespaceStatus      func(namespace string) (commonobject.Borrowed[*proto.NamespaceStatus], bool, error)
 	getShardStatus          func(namespace string, shard int64) (commonobject.Borrowed[*proto.ShardMetadata], bool, error)
-	listNamespaceStatus     func() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error)
 	getNamespaceTermOptions func(namespace string) (*proto.NewTermOptions, error)
 	patchNamespaceStatus    func(namespace string, modify func(*proto.NamespaceStatus) (bool, error)) error
 	patchShardStatus        func(namespace string, shard int64, modify func(*proto.ShardMetadata) (bool, error)) error
@@ -987,13 +982,6 @@ func (m *hookedMetadata) GetShardStatus(namespace string, shard int64) (
 		return m.getShardStatus(namespace, shard)
 	}
 	return m.Metadata.GetShardStatus(namespace, shard)
-}
-
-func (m *hookedMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {
-	if m.listNamespaceStatus != nil {
-		return m.listNamespaceStatus()
-	}
-	return m.Metadata.ListNamespaceStatus()
 }
 
 func (m *hookedMetadata) GetNamespaceTermOptions(namespace string) (*proto.NewTermOptions, error) {

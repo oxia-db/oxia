@@ -58,11 +58,17 @@ const quorumFencingGracePeriod = 100 * time.Millisecond
 var _ Election = &election{}
 
 type election struct {
-	logger           *slog.Logger
-	ctx              context.Context
-	ctxCancel        context.CancelFunc
-	wg               sync.WaitGroup
-	metadataStore    coordmetadata.Metadata
+	logger        *slog.Logger
+	ctx           context.Context
+	ctxCancel     context.CancelFunc
+	wg            sync.WaitGroup
+	metadataStore coordmetadata.Metadata
+	// preferredLeader is the data server that a leader transfer asks for, or
+	// empty.
+	preferredLeader string
+	// previousLeader is the leader of the shard when the election started,
+	// before the new term clears it, or empty.
+	previousLeader   string
 	eventListener    controllerapi.ShardEventListener
 	provider         rpc.ControllerRPCProvider
 	namespace        string
@@ -268,8 +274,9 @@ gracePeriod:
 //	           +----------------------+
 //	                      |
 //	           +----------------------+
-//	           | 3. select            |    the leader among the ties, the others
-//	           |                      |    follow
+//	           | 3. select            |    among the ties: the preferred leader,
+//	           |                      |    else the previous one, else any; the
+//	           |                      |    others follow
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
 	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
@@ -285,25 +292,32 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			}
 		}
 	}
-	if len(mostUpToDate) > 0 {
-		if _, retained := retainedHeads[mostUpToDate[0]]; retained {
-			e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
-		} else if change := e.meta.EnsembleChange; change != nil &&
-			slices.ContainsFunc(mostUpToDate, dataserver.MatchDataServer(change.To)) {
-			// To has every committed entry: with it, the ensemble has each of them on a
-			// majority without from
-			e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
-				slog.Any("from", change.From), slog.Any("to", change.To))
-			e.meta.EnsembleChange = nil
-			e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
+	if len(mostUpToDate) == 0 {
+		return nil, nil, errs.ErrNotFound
+	}
+	if _, retained := retainedHeads[mostUpToDate[0]]; retained {
+		e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
+	} else if change := e.meta.EnsembleChange; change != nil &&
+		slices.ContainsFunc(mostUpToDate, dataserver.MatchDataServer(change.To)) {
+		// To has every committed entry: with it, the ensemble has each of them on a
+		// majority without from
+		e.logger.Info("The data server added by the change of the ensemble caught up, the change is finished",
+			slog.Any("from", change.From), slog.Any("to", change.To))
+		e.meta.EnsembleChange = nil
+		e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.From)
+	}
+	// The scheduler balances the leaders, so the election doesn't count them:
+	// a count read by every election of a failover at once would send each to
+	// the same data server. The ties come in no particular order.
+	leader = mostUpToDate[0]
+	for _, name := range []string{e.preferredLeader, e.previousLeader} {
+		i := slices.IndexFunc(mostUpToDate, func(server *proto.DataServerIdentity) bool {
+			return name != "" && server.GetNameOrDefault() == name
+		})
+		if i >= 0 {
+			leader = mostUpToDate[i]
+			break
 		}
-	}
-	namespaces, err := e.metadataStore.ListNamespaceStatus()
-	if err != nil {
-		return nil, nil, err
-	}
-	if leader, err = fewestLeaders(mostUpToDate, namespaces); err != nil {
-		return nil, nil, err
 	}
 	followers = make(sharding.HeadEntries)
 	for server, head := range ensembleHeads {
@@ -810,7 +824,8 @@ func (e *election) Cancel() {
 	e.logger.Info("stopped the election", slog.Any("term", e.meta.GetTerm()))
 }
 
-// New returns an election of the shard. requiredFeatures are pinned in its
+// New returns an election of the shard, that elects preferredLeader if it has
+// every committed entry, unless it is empty. requiredFeatures are pinned in its
 // term (see feature.EnabledError).
 //
 //nolint:revive
@@ -820,7 +835,7 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 	featureSupplier feature.Supplier,
 	provider rpc.ControllerRPCProvider, namespace string, shard int64,
 	shardMetadata *proto.ShardMetadata,
-	changeEnsembleAction *action.ChangeEnsembleAction, requiredFeatures []proto.Feature,
+	changeEnsembleAction *action.ChangeEnsembleAction, preferredLeader string, requiredFeatures []proto.Feature,
 	leaderElectionLatencyHistogram metric.LatencyHistogram, newTermQuorumLatencyHistogram metric.LatencyHistogram,
 	becomeLeaderLatencyHistogram metric.LatencyHistogram) Election {
 	current, cancelFunc := context.WithCancel(ctx)
@@ -833,6 +848,8 @@ func New(ctx context.Context, logger *slog.Logger, eventListener controllerapi.S
 		featureSupplier:                featureSupplier,
 		eventListener:                  eventListener,
 		shardMailbox:                   shardMailbox,
+		preferredLeader:                preferredLeader,
+		previousLeader:                 shardMetadata.GetLeader().GetNameOrDefault(),
 		provider:                       provider,
 		namespace:                      namespace,
 		shard:                          shard,

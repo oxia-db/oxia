@@ -289,7 +289,7 @@ func TestControllerElectLeaderReturnsNewLeader(t *testing.T) {
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 
 	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
-	newLeader, err := s.electLeader(shardMeta, nil)
+	newLeader, err := s.electLeader(shardMeta, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, newLeader)
 	assert.True(t, gproto.Equal(s1, newLeader))
@@ -334,7 +334,7 @@ func TestControllerElectLeaderQueuesElectionOnFailure(t *testing.T) {
 
 	rpc.GetNode(s1).NewTermResponse(0, 0, errors.New("unreachable"))
 	shardMeta, _ := testShardMetadata(metadata, constant.DefaultNamespace, shard)
-	leader, err := s.electLeader(shardMeta, nil)
+	leader, err := s.electLeader(shardMeta, nil, "")
 	assert.ErrorContains(t, err, "unreachable")
 	assert.Nil(t, leader)
 
@@ -687,6 +687,50 @@ func TestNewControllerKeepsPresentLeader(t *testing.T) {
 	n3.ExpectNoMoreNewTermRequest(t)
 
 	assert.NoError(t, sc.Close())
+}
+
+// A leader transfer elects its target when the target has every committed
+// entry, over the leader that it replaces.
+func TestControllerLeaderTransferElectsThePreferredLeader(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+	defer func() {
+		assert.NoError(t, sc.Close())
+	}()
+	// The controller verifies the present leader first
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	for _, s := range []*proto.DataServerIdentity{s1, s2, s3} {
+		rpc.GetNode(s).NewTermResponse(1, 0, nil)
+	}
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+
+	transfer := action.NewLeaderTransferAction(shard, s2.GetNameOrDefault())
+	sc.Dispatch(transfer)
+
+	rpc.GetNode(s2).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+	leader, err := requireElectionCompleted(t, transfer)
+	require.NoError(t, err)
+	assert.Equal(t, s2.GetNameOrDefault(), leader)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
 }
 
 // The catch-up of the ensemble is only known to the election that waited for
@@ -4364,7 +4408,7 @@ func startElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.C
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		leader, _ := s.electLeader(shardMeta, nil)
+		leader, _ := s.electLeader(shardMeta, nil, "")
 		elected <- leader
 	}()
 	t.Cleanup(func() {
