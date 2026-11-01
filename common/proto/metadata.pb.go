@@ -41,7 +41,7 @@ const (
 //	RUNNING --> DRAINING --> DRAINED
 //
 // A data server removed from the configuration is DRAINING, and DRAINED once
-// no shard references it and every shard caught up. Whether it is reachable
+// no ensemble has it and every shard caught up. Whether it is reachable
 // isn't stored: only the coordinator that runs observes it.
 type DataServerState int32
 

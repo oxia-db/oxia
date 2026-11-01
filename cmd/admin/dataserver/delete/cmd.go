@@ -32,7 +32,7 @@ var Cmd = &cobra.Command{
 	Long: `Delete a data server: it leaves the configuration, and drains while its
 replicas move to the other data servers. Get the data server to follow the
 drain: it is DATA_SERVER_STATE_DRAINING, then DATA_SERVER_STATE_DRAINED once
-no shard references it and every shard caught up, when the next one can be
+no ensemble has it and every shard caught up, when the next one can be
 deleted.`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,

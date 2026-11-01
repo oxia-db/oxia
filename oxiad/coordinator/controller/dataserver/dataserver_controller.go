@@ -37,7 +37,7 @@ import (
 // lifecycle, which the metadata stores, so that a drain is reported, and
 // resumes after a restart of the coordinator:
 //
-//	        Drain                 no shard references it,
+//	        Drain                  no ensemble has it,
 //	RUNNING -------> DRAINING ------------------------------> DRAINED
 //	                           and every shard caught up
 //

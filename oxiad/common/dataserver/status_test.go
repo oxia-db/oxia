@@ -93,14 +93,13 @@ func TestIsDrained(t *testing.T) {
 		{"caught up without it", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other}, EnsembleCaughtUp: true}, true},
 		{"not caught up", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other}}, false},
 		{"deleting", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other}, Status: proto.ShardStatusDeleting}, true},
-		{"leader", &proto.ShardMetadata{Leader: drained, EnsembleCaughtUp: true}, false},
 		{"ensemble", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{other, drained}, EnsembleCaughtUp: true}, false},
 		{"removed by a change", &proto.ShardMetadata{
 			EnsembleChange: &proto.EnsembleChangeMetadata{From: drained, To: other}, EnsembleCaughtUp: true}, false},
 		{"added by a change", &proto.ShardMetadata{
 			EnsembleChange: &proto.EnsembleChangeMetadata{From: other, To: drained}, EnsembleCaughtUp: true}, false},
 		{"pending delete", &proto.ShardMetadata{
-			PendingDeleteShardNodes: []*proto.DataServerIdentity{drained}, EnsembleCaughtUp: true}, false},
+			PendingDeleteShardNodes: []*proto.DataServerIdentity{drained}, EnsembleCaughtUp: true}, true},
 		{"deleting with it", &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{drained}, Status: proto.ShardStatusDeleting}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

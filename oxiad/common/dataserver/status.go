@@ -15,6 +15,8 @@
 package dataserver
 
 import (
+	"slices"
+
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 )
@@ -50,19 +52,23 @@ func FromStatus(status map[string]commonobject.Borrowed[*proto.NamespaceStatus],
 	return result
 }
 
-// IsDrained reports whether no shard references the data server, and every
-// shard caught up: a change of the ensemble opens a new term, which resets
-// the flag of the shard, so the shards that the data server left hold a full
-// copy on every member of their new ensembles. The shards being deleted are
+// IsDrained reports whether no ensemble, nor change of an ensemble, has the
+// data server, and every shard caught up: a change of the ensemble opens a new
+// term, which resets the flag of the shard, so the shards that the data server
+// left hold a full copy on every member of their new ensembles. A pending
+// delete of its copy doesn't count: it only frees the data server's disk, and
+// never completes if the data server is dead. The shards being deleted are
 // left out of the second check: they don't catch up again, and their copies
 // don't matter any more.
 func IsDrained(name string, namespaces map[string]commonobject.Borrowed[*proto.NamespaceStatus]) bool {
 	for _, namespace := range namespaces {
 		for _, shard := range namespace.UnsafeBorrow().GetShards() {
-			for server := range ShardDataServers(shard) {
-				if server.GetNameOrDefault() == name {
-					return false
-				}
+			change := shard.GetEnsembleChange()
+			if change.GetFrom().GetNameOrDefault() == name || change.GetTo().GetNameOrDefault() == name ||
+				slices.ContainsFunc(shard.GetEnsemble(), func(server *proto.DataServerIdentity) bool {
+					return server.GetNameOrDefault() == name
+				}) {
+				return false
 			}
 			if shard.GetStatusOrDefault() != proto.ShardStatusDeleting && !shard.GetEnsembleCaughtUp() {
 				return false
