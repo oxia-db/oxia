@@ -415,15 +415,6 @@ func TestElectionFenceQuorumRequiresOldEnsembleMajority(t *testing.T) {
 	assert.ErrorContains(t, err, "quorum not reached")
 }
 
-func TestElectionChooseLeaderFailsWithoutLeader(t *testing.T) {
-	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
-		&proto.ClusterConfiguration{})
-	e := newTestElection(t, metadata, rpctest.NewRpcProvider(), 5, &proto.ShardMetadata{})
-
-	_, _, err := e.chooseLeader(map[*proto.DataServerIdentity]*proto.EntryId{}, nil)
-	assert.ErrorIs(t, err, errs.ErrNotFound)
-}
-
 // The leader has the highest head entry among the fenced data servers, a
 // candidate when one ties with the from of the pending change. From, ahead of
 // every candidate, undoes the change: it swaps back with to, whatever the head
@@ -502,8 +493,7 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 				EnsembleChange: &proto.EnsembleChangeMetadata{From: s2, To: s4},
 			})
 
-			leader, followers, err := e.chooseLeader(test.ensembleHeads, test.retainedHeads)
-			require.NoError(t, err)
+			leader, followers := e.chooseLeader(test.ensembleHeads, test.retainedHeads)
 			assert.Equal(t, test.leader, leader)
 			assertShardEnsemble(t, e.meta.Ensemble, test.ensemble...)
 			assertEnsembleChange(t, e.meta.EnsembleChange, test.changeFrom, test.changeTo)
@@ -535,8 +525,7 @@ func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 			})
 			e.preferredLeader = test.preferred
 
-			leader, followers, err := e.chooseLeader(heads, nil)
-			require.NoError(t, err)
+			leader, followers := e.chooseLeader(heads, nil)
 			assert.Contains(t, test.leaders, leader)
 			assert.Len(t, followers, 2)
 			assert.NotContains(t, maps.Keys(followers), leader)

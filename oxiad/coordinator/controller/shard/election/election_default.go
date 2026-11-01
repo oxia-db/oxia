@@ -257,7 +257,8 @@ gracePeriod:
 }
 
 // chooseLeader chooses a fenced data server with the highest head entry, which
-// has every committed entry:
+// has every committed entry; ensembleHeads holds at least the fence quorum, so
+// there is one:
 //
 //	           +----------------------+
 //	heads ---->| 1. ensemble          |    the highest head entry, with its ties
@@ -275,7 +276,7 @@ gracePeriod:
 //	           |                      |    else any; the others follow
 //	           +----------------------+
 func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
-	leader *proto.DataServerIdentity, followers sharding.HeadEntries, err error) {
+	leader *proto.DataServerIdentity, followers sharding.HeadEntries) {
 	var mostUpToDate []*proto.DataServerIdentity
 	var highest *proto.EntryId
 	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
@@ -287,9 +288,6 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 				mostUpToDate = append(mostUpToDate, server)
 			}
 		}
-	}
-	if len(mostUpToDate) == 0 {
-		return nil, nil, errs.ErrNotFound
 	}
 	if _, retained := retainedHeads[mostUpToDate[0]]; retained {
 		e.undoEnsembleChange(mostUpToDate[0], ensembleHeads, retainedHeads)
@@ -317,7 +315,7 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 			followers[server] = head
 		}
 	}
-	return leader, followers, nil
+	return leader, followers
 }
 
 // undoEnsembleChange restores the ensemble before the pending change, as Raft
@@ -645,10 +643,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 	if err = e.checkNegotiatedFeatures(negotiatedFeatures, enabledFeatures, ensembleHeads); err != nil {
 		return nil, err
 	}
-	candidateLeader, followers, err := e.chooseLeader(ensembleHeads, retainedHeads)
-	if err != nil {
-		return nil, err
-	}
+	candidateLeader, followers := e.chooseLeader(ensembleHeads, retainedHeads)
 	e.logger.Info(
 		"Successfully moved ensemble to a new term",
 		slog.Int64("term", e.meta.Term),
