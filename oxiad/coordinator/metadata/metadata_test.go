@@ -416,10 +416,6 @@ func TestMetadataReadsReturnConfigurationLoadError(t *testing.T) {
 			_, err := metadata.GetConfig()
 			return err
 		}},
-		{"GetLoadBalancerConfig", func(_ *testing.T, metadata Metadata) error {
-			_, err := metadata.GetLoadBalancerConfig()
-			return err
-		}},
 		{"ListNamespace", func(_ *testing.T, metadata Metadata) error {
 			_, err := metadata.ListNamespace()
 			return err

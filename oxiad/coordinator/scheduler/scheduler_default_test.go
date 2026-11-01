@@ -30,6 +30,7 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
@@ -75,14 +76,21 @@ func TestSchedulerRunsARoundEveryInterval(t *testing.T) {
 
 func TestSchedulerKeepsRunningWhenTheMetadataCloses(t *testing.T) {
 	metadata := newFakeMetadata(t)
-	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "10ms"}
+	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "1h"}
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r", "n0")}})
 	s := start(t, metadata)
-	require.Eventually(t, metadata.subscribed, 5*time.Second, time.Millisecond)
+	// The first round fails, so the next one waits the interval
+	(<-s.GetActions()).Error(errors.New("not ready"))
+	require.True(t, metadata.subscribed())
 
 	require.NoError(t, metadata.configCache.Close())
-	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r", "n0")}})
 
-	<-s.GetActions()
+	select {
+	case ac := <-s.GetActions():
+		assert.Equal(t, int64(1), ac.GetShard())
+	case <-time.After(5 * time.Second):
+		assert.Fail(t, "the scheduler stopped when the metadata closed")
+	}
 }
 
 func TestSchedulerSkipsARoundOnAFailedRead(t *testing.T) {
@@ -177,7 +185,12 @@ func TestSchedulerPlansAroundADataServerDown(t *testing.T) {
 		1: {Ensemble: identities("r", "n0")},
 		2: {Ensemble: identities("r", "n2")},
 	})
-	s := New(t.Context(), metadata, func(name string) bool { return name != "n1" }, nil)
+	s := New(t.Context(), metadata, func(name string) (dataservercontroller.Status, bool) {
+		if name == "n1" {
+			return dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING), true
+		}
+		return running(name)
+	}, nil)
 	t.Cleanup(func() { assert.NoError(t, s.Close()) })
 
 	targets := map[int64]string{}
@@ -199,9 +212,11 @@ func start(t *testing.T, metadata *fakeMetadata) Scheduler {
 	return s
 }
 
-// running reports every data server running.
-func running(string) bool {
-	return true
+// running reports every data server running, since it joined.
+func running(string) (dataservercontroller.Status, bool) {
+	status := dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	status.SetAvailable(true)
+	return status, true
 }
 
 func identities(names ...string) []*proto.DataServerIdentity {

@@ -40,13 +40,16 @@ import (
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer/selector/ensemble"
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	coordoption "github.com/oxia-db/oxia/oxiad/coordinator/option"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc/rpctest"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
 // The data server controllers that New starts may discover a node's features
@@ -124,7 +127,7 @@ func TestRuntimeNewFailsWithoutInstanceID(t *testing.T) {
 }
 
 // The runtime does not start without the status, the statuses of the data
-// servers, the configuration and the load balancer configuration.
+// servers and the configuration.
 func TestRuntimeNewFailsWithoutMetadata(t *testing.T) {
 	readErr := errors.New("metadata unavailable")
 	for _, tc := range []struct {
@@ -144,11 +147,6 @@ func TestRuntimeNewFailsWithoutMetadata(t *testing.T) {
 		{"config", func(m *fakeMetadata) {
 			m.getConfig = func() (commonobject.Borrowed[*proto.ClusterConfiguration], error) {
 				return commonobject.Borrowed[*proto.ClusterConfiguration]{}, readErr
-			}
-		}},
-		{"load balancer config", func(m *fakeMetadata) {
-			m.getLoadBalancerConfig = func() (commonobject.Borrowed[*proto.LoadBalancer], error) {
-				return commonobject.Borrowed[*proto.LoadBalancer]{}, readErr
 			}
 		}},
 	} {
@@ -621,8 +619,11 @@ func TestRuntimeCreateNamespaceFailsWhenEnsembleSelectionFails(t *testing.T) {
 		ctx:              t.Context(),
 		logger:           slog.Default(),
 		metadata:         metadata,
-		ensembleSelector: failingEnsembleSelector{succeeding: 1, calls: &calls},
+		planner:          failingPlanner(1, &calls),
 		shardControllers: make(map[int64]shardcontroller.Controller),
+		dataServerControllers: map[string]dataservercontroller.Controller{
+			server.GetNameOrDefault(): newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING),
+		},
 	}
 
 	require.ErrorContains(t, c.CreateNamespace(namespace.Name, namespace), "not enough data servers")
@@ -659,8 +660,11 @@ func TestRuntimeCreateNamespaceHandlesStatusErrors(t *testing.T) {
 				ctx:              t.Context(),
 				logger:           slog.Default(),
 				metadata:         metadata,
-				ensembleSelector: namespaceEnsembleSelector{},
+				planner:          defaultPlanner(),
 				shardControllers: make(map[int64]shardcontroller.Controller),
+				dataServerControllers: map[string]dataservercontroller.Controller{
+					server.GetNameOrDefault(): newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING),
+				},
 			}
 
 			require.ErrorIs(t, c.CreateNamespace(namespace.Name, namespace), tc.err)
@@ -752,7 +756,7 @@ func TestRuntimeDeleteNamespaceIgnoresUnknownNamespace(t *testing.T) {
 	assert.Zero(t, sc.deletes.Load())
 }
 
-func TestRuntimeSelectNewEnsembleReturnsDataServerListError(t *testing.T) {
+func TestRuntimePlaceShardReturnsDataServerListError(t *testing.T) {
 	listErr := errors.New("data servers unavailable")
 	c := newNamespaceTestRuntime(t, &fakeMetadata{
 		Metadata: newTestMetadata(t, &proto.ClusterConfiguration{}),
@@ -761,54 +765,32 @@ func TestRuntimeSelectNewEnsembleReturnsDataServerListError(t *testing.T) {
 		},
 	})
 
-	_, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
+	_, err := c.placeShard("default", &proto.Namespace{ReplicationFactor: 1}, nil, nil)
 	assert.ErrorIs(t, err, listErr)
-}
-
-// The selected data servers must be known data servers.
-func TestRuntimeSelectNewEnsembleRejectsUnknownDataServers(t *testing.T) {
-	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
-	c.ensembleSelector = fixedEnsembleSelector{"ghost"}
-
-	_, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
-	assert.ErrorContains(t, err, "failed to find node ghost")
 }
 
 // Only a live data server takes shards: a configured one without a controller,
 // or with a controller that drains, e.g. added again after it left, is skipped.
-func TestRuntimeSelectNewEnsembleSkipsDataServersNotLive(t *testing.T) {
-	for _, tc := range []struct {
-		selected string
-		live     bool
-	}{
-		{"running", true},
-		{"draining", false},
-		{"drained", false},
-		{"unreconciled", false},
-	} {
-		t.Run(tc.selected, func(t *testing.T) {
-			servers := make([]*proto.DataServerIdentity, 0, 4)
-			for _, name := range []string{"running", "draining", "drained", "unreconciled"} {
-				servers = append(servers, &proto.DataServerIdentity{Name: &name, Public: name, Internal: name})
-			}
-			c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{Servers: servers}))
-			c.dataServerControllers["running"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
-			c.dataServerControllers["draining"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
-			c.dataServerControllers["drained"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
-			c.ensembleSelector = fixedEnsembleSelector{tc.selected}
-
-			c.RLock()
-			esm, err := c.selectNewEnsemble("default", 0, &proto.Namespace{ReplicationFactor: 1}, nil, nil)
-			c.RUnlock()
-			if !tc.live {
-				assert.ErrorContains(t, err, "failed to find node "+tc.selected)
-				return
-			}
-			require.NoError(t, err)
-			require.Len(t, esm, 1)
-			assert.Equal(t, tc.selected, esm[0].GetNameOrDefault())
-		})
+func TestRuntimePlaceShardSkipsDataServersNotLive(t *testing.T) {
+	servers := make([]*proto.DataServerIdentity, 0, 4)
+	for _, name := range []string{"running", "draining", "drained", "unreconciled"} {
+		servers = append(servers, &proto.DataServerIdentity{Name: &name, Public: name, Internal: name})
 	}
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{Servers: servers}))
+	c.dataServerControllers["running"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	c.dataServerControllers["draining"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+	c.dataServerControllers["drained"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+	delete(c.dataServerControllers, "unreconciled")
+	c.RLock()
+	defer c.RUnlock()
+
+	ensemble, err := c.placeShard("default", &proto.Namespace{ReplicationFactor: 1}, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, ensemble, 1)
+	assert.Equal(t, "running", ensemble[0].GetNameOrDefault())
+
+	_, err = c.placeShard("default", &proto.Namespace{ReplicationFactor: 2}, nil, nil)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 // Close closes the split controllers: a split that didn't reach its point of
@@ -903,6 +885,19 @@ func TestRuntimeBecameDrainedKeepsControllerOfDataServerAddedAgain(t *testing.T)
 	assert.Zero(t, running.closes.Load())
 }
 
+func TestRuntimeDataServerStatus(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+	c.dataServerControllers["draining"] = draining
+
+	status, found := c.dataServerStatus("draining")
+	assert.True(t, found)
+	assert.Equal(t, draining.status, status)
+
+	_, found = c.dataServerStatus("unknown")
+	assert.False(t, found)
+}
+
 // An action on a shard without a controller, e.g. deleted in the meantime,
 // fails.
 func TestRuntimeDispatchActionFailsForUnknownShard(t *testing.T) {
@@ -913,6 +908,24 @@ func TestRuntimeDispatchActionFailsForUnknownShard(t *testing.T) {
 
 	_, err := ac.Wait(t.Context())
 	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+}
+
+// A split runs in the runtime: it completes with its children once it starts,
+// or with the error that kept it from starting.
+func TestRuntimeDispatchActionInitiatesASplit(t *testing.T) {
+	r, _ := newInitiateSplitTestRuntime(t)
+	split := action.NewSplitAction(constant.DefaultNamespace, splitParentShard)
+
+	r.dispatchAction(split)
+
+	children, err := split.Wait(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, children, 2)
+
+	failed := action.NewSplitAction("unknown", splitParentShard)
+	r.dispatchAction(failed)
+	_, err = failed.Wait(context.Background())
+	assert.Error(t, err)
 }
 
 // The clients merge the results of the shards of a namespace in the order of
@@ -1265,20 +1278,6 @@ func TestRuntimeFindDataServerFeaturesOmitsUnknownNodes(t *testing.T) {
 	assert.NotContains(t, features, dataServer.GetNameOrDefault())
 }
 
-// A data server registered without metadata is a candidate without labels.
-func TestDataServersToCandidatesAndMetadataDefaultsMissingMetadata(t *testing.T) {
-	labels := &proto.DataServerMetadata{Labels: map[string]string{"zone": "a"}}
-	candidates, metadata := dataServersToCandidatesAndMetadata(map[string]commonobject.Borrowed[*proto.DataServer]{
-		"s1": commonobject.Borrow(&proto.DataServer{Metadata: labels}),
-		"s2": commonobject.Borrow(&proto.DataServer{}),
-	})
-
-	assert.ElementsMatch(t, []string{"s1", "s2"}, candidates.Values())
-	assert.Same(t, labels, metadata["s1"])
-	require.NotNil(t, metadata["s2"])
-	assert.Empty(t, metadata["s2"].GetLabels())
-}
-
 func newTestMetadata(t *testing.T, config *proto.ClusterConfiguration) coordmetadata.Metadata {
 	t.Helper()
 
@@ -1317,12 +1316,19 @@ func newNamespaceTestRuntime(t *testing.T, metadata coordmetadata.Metadata) *run
 		ctxCancel:             cancel,
 		logger:                slog.Default(),
 		metadata:              metadata,
-		ensembleSelector:      namespaceEnsembleSelector{},
+		scheduler:             fakeScheduler{},
+		planner:               defaultPlanner(),
 		shardControllers:      make(map[int64]shardcontroller.Controller),
 		splitControllers:      make(map[int64]*shardcontroller.SplitController),
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
 		assignmentsWatch:      commonwatch.New(&proto.ShardAssignments{}),
 		rpc:                   rpctest.NewRpcProvider(),
+	}
+	// Every configured data server is live, so that it takes shards
+	if dataServers, err := metadata.ListDataServer(); err == nil {
+		for name := range dataServers {
+			c.dataServerControllers[name] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+		}
 	}
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	return c
@@ -1342,7 +1348,6 @@ type fakeMetadata struct {
 	updateShardStatus     func(namespace string, shard int64, shardMetadata *proto.ShardMetadata) error
 	deleteShardStatus     func(namespace string, shard int64) error
 	getConfig             func() (commonobject.Borrowed[*proto.ClusterConfiguration], error)
-	getLoadBalancerConfig func() (commonobject.Borrowed[*proto.LoadBalancer], error)
 	listNamespace         func() (map[string]commonobject.Borrowed[*proto.Namespace], error)
 	getNamespace          func(name string) (commonobject.Borrowed[*proto.Namespace], bool, error)
 	listDataServer        func() (map[string]commonobject.Borrowed[*proto.DataServer], error)
@@ -1353,13 +1358,6 @@ func (m *fakeMetadata) GetConfig() (commonobject.Borrowed[*proto.ClusterConfigur
 		return m.getConfig()
 	}
 	return m.Metadata.GetConfig()
-}
-
-func (m *fakeMetadata) GetLoadBalancerConfig() (commonobject.Borrowed[*proto.LoadBalancer], error) {
-	if m.getLoadBalancerConfig != nil {
-		return m.getLoadBalancerConfig()
-	}
-	return m.Metadata.GetLoadBalancerConfig()
 }
 
 func (m *fakeMetadata) ListNamespace() (map[string]commonobject.Borrowed[*proto.Namespace], error) {
@@ -1479,32 +1477,40 @@ func (m *fakeMetadata) afterStatusWrites(after func()) {
 	}
 }
 
-type namespaceEnsembleSelector struct{}
+// fakeScheduler sends no action, for the runtime to close.
+type fakeScheduler struct{}
 
-func (namespaceEnsembleSelector) Select(ctx *ensemble.Context) ([]string, error) {
-	return ctx.Candidates.Values(), nil
+func (fakeScheduler) Close() error {
+	return nil
 }
 
-// failingEnsembleSelector selects the candidates for the first shards, then
-// fails.
-type failingEnsembleSelector struct {
+func (fakeScheduler) GetActions() <-chan action.Action {
+	return nil
+}
+
+func defaultPlanner() planner.Planner {
+	return planner.New(filter.Defaults(), tier.Defaults())
+}
+
+// failingPlanner places the first succeeding shards, then fails, and counts the
+// calls.
+func failingPlanner(succeeding int, calls *int) planner.Planner {
+	return fakePlanner{Planner: defaultPlanner(), succeeding: succeeding, calls: calls}
+}
+
+type fakePlanner struct {
+	planner.Planner
 	succeeding int
 	calls      *int
 }
 
-func (s failingEnsembleSelector) Select(ctx *ensemble.Context) ([]string, error) {
-	*s.calls++
-	if *s.calls > s.succeeding {
+func (f fakePlanner) Place(s *stats.ClusterStats, namespace string, replicas int, antiAffinities []*proto.AntiAffinity,
+	eligible func(*stats.DataServerStats) bool) ([]string, error) {
+	*f.calls++
+	if *f.calls > f.succeeding {
 		return nil, errors.New("not enough data servers")
 	}
-	return ctx.Candidates.Values(), nil
-}
-
-// fixedEnsembleSelector selects the same data servers for every shard.
-type fixedEnsembleSelector []string
-
-func (s fixedEnsembleSelector) Select(*ensemble.Context) ([]string, error) {
-	return s, nil
+	return f.Planner.Place(s, namespace, replicas, antiAffinities, eligible)
 }
 
 // fakeShardController records the calls the runtime makes. The methods that

@@ -34,7 +34,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/sharding"
 	commonwatch "github.com/oxia-db/oxia/oxiad/common/watch"
-	"github.com/oxia-db/oxia/oxiad/coordinator/balancer"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
@@ -645,10 +644,6 @@ func (*mockNamespaceMetadata) SubscribeConfig() *cache.Subscription[provider.Ver
 	return nil
 }
 
-func (*mockNamespaceMetadata) GetLoadBalancerConfig() (commonobject.Borrowed[*proto.LoadBalancer], error) {
-	return commonobject.Borrowed[*proto.LoadBalancer]{}, nil
-}
-
 func (*mockNamespaceMetadata) CreateDataServer(*proto.DataServer) error {
 	return nil
 }
@@ -859,8 +854,6 @@ func (m *mockNamespaceRuntime) GetLiveDataServerStatus(name string) (*proto.Data
 	status, found := m.dataServerStatus[name]
 	return status, found
 }
-
-func (*mockNamespaceRuntime) LoadBalancer() balancer.LoadBalancer { return nil }
 
 func (m *mockNamespaceRuntime) Metadata() coordmetadata.Metadata { return m.metadata }
 

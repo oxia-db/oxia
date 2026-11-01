@@ -23,6 +23,7 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
@@ -56,12 +57,13 @@ type scheduler struct {
 // New starts a scheduler. The owner reads its Actions before New, since the
 // first round may send some right away.
 //
-// running reports whether a data server answers its health checks now: the
-// plan moves nothing that needs a data server that is down, and the dispatch
-// checks again before it sends an op. provider reads the stats of the shards
-// from their leaders, for the auto-split.
-func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name string) bool,
-	provider rpc.ControllerRPCProvider) Scheduler {
+// status returns the status of the controller of a data server, or false
+// without one: the plan moves nothing that needs a data server that is down,
+// or onto one that came back recently, and the dispatch checks again before
+// it sends an op. provider reads the stats of the shards from their leaders,
+// for the auto-split.
+func New(ctx context.Context, metadata coordmetadata.Metadata,
+	status func(name string) (dataservercontroller.Status, bool), provider rpc.ControllerRPCProvider) Scheduler {
 	ctx, cancel := context.WithCancel(ctx)
 	p := planner.New(filter.Defaults(), tier.Defaults())
 	actions := make(chan action.Action, actionsBuffer)
@@ -72,8 +74,8 @@ func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name
 		metadata:   metadata,
 		actions:    actions,
 		planner:    p,
-		dispatcher: dispatcher.New(ctx, running, actions),
-		collector:  collector.New(ctx, metadata, running, provider),
+		dispatcher: dispatcher.New(ctx, func(name string) bool { return collector.Running(status(name)) }, actions),
+		collector:  collector.New(ctx, metadata, status, provider),
 		splits: metric.NewCounter("oxia_coordinator_autosplit_splits_initiated_total",
 			"Auto-splits started", "count", map[string]any{}),
 	}
@@ -105,9 +107,9 @@ func (s *scheduler) run() {
 		case <-time.After(interval):
 		case _, ok := <-changed:
 			if !ok {
-				// The metadata closed: the interval still drives the rounds
+				// The metadata closed: this round runs, and the interval drives
+				// the next ones
 				changed = nil
-				continue
 			}
 		case <-s.ctx.Done():
 			return
@@ -122,7 +124,7 @@ func (s *scheduler) run() {
 		p := policy.New(config.UnsafeBorrow())
 		interval = p.GetRoundInterval()
 		now := time.Now()
-		snap, err := s.collector.Collect()
+		snap, err := s.collector.Collect(now)
 		if err != nil {
 			s.logger.Warn("Failed to read the cluster, retrying next round", slog.Any("error", err))
 			continue
