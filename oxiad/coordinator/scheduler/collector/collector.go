@@ -216,10 +216,9 @@ func (c *Collector) overshoot(shard int64, leader string, shardStats *proto.Shar
 		t = &tracker{}
 		c.trackers[shard] = t
 	}
-	switch {
-	case t.leader != leader:
+	if t.leader != leader {
 		t.throughputOps = 0
-	case t.stats != nil && now.After(t.sampled):
+	} else if t.stats != nil && now.After(t.sampled) {
 		previous := t.stats.GetReadOpsTotal() + t.stats.GetWriteOpsTotal()
 		current := shardStats.GetReadOpsTotal() + shardStats.GetWriteOpsTotal()
 		if current >= previous {
@@ -227,7 +226,6 @@ func (c *Collector) overshoot(shard int64, leader string, shardStats *proto.Shar
 		} else {
 			t.throughputOps = 0
 		}
-	default:
 	}
 	t.leader, t.stats, t.sampled = leader, shardStats, now
 
