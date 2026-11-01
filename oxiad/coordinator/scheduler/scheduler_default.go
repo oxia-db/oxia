@@ -107,9 +107,9 @@ func (s *scheduler) run() {
 		case <-time.After(interval):
 		case _, ok := <-changed:
 			if !ok {
-				// The metadata closed: the interval still drives the rounds
+				// The metadata closed: this round runs, and the interval drives
+				// the next ones
 				changed = nil
-				continue
 			}
 		case <-s.ctx.Done():
 			return

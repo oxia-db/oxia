@@ -76,14 +76,21 @@ func TestSchedulerRunsARoundEveryInterval(t *testing.T) {
 
 func TestSchedulerKeepsRunningWhenTheMetadataCloses(t *testing.T) {
 	metadata := newFakeMetadata(t)
-	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "10ms"}
+	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "1h"}
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r", "n0")}})
 	s := start(t, metadata)
-	require.Eventually(t, metadata.subscribed, 5*time.Second, time.Millisecond)
+	// The first round fails, so the next one waits the interval
+	(<-s.GetActions()).Error(errors.New("not ready"))
+	require.True(t, metadata.subscribed())
 
 	require.NoError(t, metadata.configCache.Close())
-	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r", "n0")}})
 
-	<-s.GetActions()
+	select {
+	case ac := <-s.GetActions():
+		assert.Equal(t, int64(1), ac.GetShard())
+	case <-time.After(5 * time.Second):
+		assert.Fail(t, "the scheduler stopped when the metadata closed")
+	}
 }
 
 func TestSchedulerSkipsARoundOnAFailedRead(t *testing.T) {
