@@ -990,17 +990,8 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	}
 
 	if followerCommitOffset != nil {
-		// The entries of the follower up to its commit offset, and up to its
-		// head, are committed: they are the same as the leader's. They may be
-		// past the entries the wal of the leader shows in common, e.g. when the
-		// wal starts after a snapshot.
 		committedOffset := min(*followerCommitOffset, followerHeadEntryId.Offset)
 		if committedOffset > lastEntryInFollowerTerm.Offset {
-			// The follower gets the next entries from the wal of the leader, which
-			// must hold every one of them, or none when the leader has them all
-			// in its database. Otherwise the follower starts over from a
-			// snapshot of the leader, whose installation replaces its wal and its
-			// database.
 			walFirstOffset := lc.wal.FirstOffset()
 			if (walFirstOffset == wal.InvalidOffset && committedOffset != lc.quorumAckTracker.HeadOffset()) ||
 				(walFirstOffset != wal.InvalidOffset && committedOffset+1 < walFirstOffset) {
@@ -1015,22 +1006,12 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 				return constant2.InvalidEntryId, nil
 			}
 			if followerHeadEntryId.Offset == committedOffset {
-				// Every entry of the follower is committed
 				return followerHeadEntryId, nil
 			}
-			// The entries after the commit offset may not be the leader's
 			lastEntryInFollowerTerm = &proto.EntryId{Term: wal.InvalidTerm, Offset: committedOffset}
 		}
 	} else if lastEntryInFollowerTerm.Offset == wal.InvalidOffset && lc.wal.FirstOffset() != 0 &&
 		lc.quorumAckTracker.CommitOffset() != wal.InvalidOffset {
-		// The wal of the leader has no entry of the follower's term or an
-		// earlier one, and doesn't start at the first offset: the leader
-		// installed a snapshot, or trimmed its wal. The entries the follower
-		// has in common with the leader, if any, are among the committed ones
-		// the leader has in its database only, and it can't tell which: they may
-		// be the follower's committed entries, that the follower refuses to
-		// truncate. The follower starts over from a snapshot of the leader,
-		// whose installation replaces its wal and its database.
 		lc.log.Info(
 			"Follower is behind the wal of the leader, sending a snapshot",
 			slog.Int64("term", term),
