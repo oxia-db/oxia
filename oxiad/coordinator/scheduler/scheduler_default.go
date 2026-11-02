@@ -27,10 +27,10 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/dispatcher"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/policy"
 )
 
 // actionsBuffer leaves room for the ops of a few rounds while the runtime
@@ -109,10 +109,10 @@ func (s *scheduler) run() {
 		config, err := s.metadata.GetConfig()
 		if err != nil {
 			s.logger.Warn("Failed to read the scheduler policy, retrying next round", slog.Any("error", err))
-			interval = policy.New(nil).Interval
+			interval = model.NewPolicy(nil).Interval
 			continue
 		}
-		p := policy.New(config.UnsafeBorrow())
+		p := model.NewPolicy(config.UnsafeBorrow())
 		interval = p.GetRoundInterval()
 		now := time.Now()
 		snap, err := s.collector.Collect()

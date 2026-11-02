@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package policy
+package model
 
 import (
 	"testing"
@@ -23,15 +23,15 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestNewSplitKeepsAnExplicitZeroWindow(t *testing.T) {
-	split := newSplit(&proto.AutoSplitConfig{StabilizationPeriod: "0s", CooldownPeriod: "0s"})
+func TestNewSplitPolicyKeepsAnExplicitZeroWindow(t *testing.T) {
+	split := newSplitPolicy(&proto.AutoSplitConfig{StabilizationPeriod: "0s", CooldownPeriod: "0s"})
 
 	assert.Zero(t, split.Stabilization)
 	assert.Zero(t, split.Cooldown)
 }
 
-func TestNewSplitKeepsTheSafetyWindowsOfAnInvalidConfig(t *testing.T) {
-	split := newSplit(&proto.AutoSplitConfig{StabilizationPeriod: "x", CooldownPeriod: "y"})
+func TestNewSplitPolicyKeepsTheSafetyWindowsOfAnInvalidConfig(t *testing.T) {
+	split := newSplitPolicy(&proto.AutoSplitConfig{StabilizationPeriod: "x", CooldownPeriod: "y"})
 
 	assert.Equal(t, time.Minute, split.Stabilization)
 	assert.Equal(t, 5*time.Minute, split.Cooldown)

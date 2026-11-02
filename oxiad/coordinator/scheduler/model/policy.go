@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package policy resolves the load balancer and the auto-split of the cluster
-// configuration, with their defaults.
-package policy
+package model
 
 import (
 	"time"
@@ -22,19 +20,20 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// Policy is the scheduler policy that a round applies.
+// Policy is the scheduler policy that a round applies: the load balancer and
+// the auto-split of the cluster configuration, with their defaults.
 type Policy struct {
 	// Interval is the schedule interval of the load balancer configuration.
 	Interval time.Duration
-	Split    Split
+	Split    SplitPolicy
 }
 
-// New resolves the policy of the configuration: a field left unset takes its
+// NewPolicy resolves the policy of the configuration: a field left unset takes its
 // default.
-func New(cluster *proto.ClusterConfiguration) Policy {
+func NewPolicy(cluster *proto.ClusterConfiguration) Policy {
 	return Policy{
 		Interval: cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault(),
-		Split:    newSplit(cluster.GetAutoSplitWithDefaults()),
+		Split:    newSplitPolicy(cluster.GetAutoSplitWithDefaults()),
 	}
 }
 

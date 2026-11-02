@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package policy
+package model
 
 import (
 	"time"
@@ -20,9 +20,9 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// Split is the auto-split of the cluster configuration. See
+// SplitPolicy is the auto-split of the cluster configuration. See
 // proto.AutoSplitConfig for each field.
-type Split struct {
+type SplitPolicy struct {
 	Enabled               bool
 	MaxShardSizeMB        uint32
 	MaxThroughputOps      uint32
@@ -32,10 +32,10 @@ type Split struct {
 	CollectionInterval    time.Duration
 }
 
-// newSplit resolves config, which has its defaults already. An explicit 0s
+// newSplitPolicy resolves config, which has its defaults already. An explicit 0s
 // stabilization or cooldown is kept; an invalid one takes the default, so that
 // it doesn't turn the safety window off.
-func newSplit(config *proto.AutoSplitConfig) Split {
+func newSplitPolicy(config *proto.AutoSplitConfig) SplitPolicy {
 	stabilization, err := config.GetStabilizationPeriodDuration()
 	if err != nil {
 		stabilization = config.GetStabilizationPeriodDurationOrDefault()
@@ -44,7 +44,7 @@ func newSplit(config *proto.AutoSplitConfig) Split {
 	if err != nil {
 		cooldown = config.GetCooldownPeriodDurationOrDefault()
 	}
-	return Split{
+	return SplitPolicy{
 		Enabled:               config.GetEnabled(),
 		MaxShardSizeMB:        config.GetMaxShardSizeMBOrDefault(),
 		MaxThroughputOps:      config.GetMaxThroughputOpsOrDefault(),

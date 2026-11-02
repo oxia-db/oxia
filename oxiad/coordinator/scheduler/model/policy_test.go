@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package policy
+package model
 
 import (
 	"testing"
@@ -23,20 +23,20 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestNewTakesTheDefaults(t *testing.T) {
+func TestNewPolicyTakesTheDefaults(t *testing.T) {
 	assert.Equal(t, Policy{
 		Interval: 30 * time.Second,
-		Split: Split{MaxShardSizeMB: 1024, MaxThroughputOps: 10000, Stabilization: time.Minute,
+		Split: SplitPolicy{MaxShardSizeMB: 1024, MaxThroughputOps: 10000, Stabilization: time.Minute,
 			Cooldown: 5 * time.Minute, MaxShardsPerNamespace: 64, CollectionInterval: 30 * time.Second},
-	}, New(nil))
+	}, NewPolicy(nil))
 }
 
-func TestNewTakesTheConfiguration(t *testing.T) {
+func TestNewPolicyTakesTheConfiguration(t *testing.T) {
 	assert.Equal(t, Policy{
 		Interval: time.Second,
-		Split: Split{Enabled: true, MaxShardSizeMB: 1, MaxThroughputOps: 2, Cooldown: time.Second,
+		Split: SplitPolicy{Enabled: true, MaxShardSizeMB: 1, MaxThroughputOps: 2, Cooldown: time.Second,
 			MaxShardsPerNamespace: 3, CollectionInterval: 200 * time.Millisecond},
-	}, New(&proto.ClusterConfiguration{
+	}, NewPolicy(&proto.ClusterConfiguration{
 		LoadBalancer: &proto.LoadBalancer{ScheduleInterval: "1s"},
 		AutoSplit: &proto.AutoSplitConfig{Enabled: true, MaxShardSizeMb: 1, MaxThroughputOps: 2,
 			StabilizationPeriod: "0s", CooldownPeriod: "1s", MaxShardsPerNamespace: 3, CollectionInterval: "200ms"},
@@ -44,8 +44,8 @@ func TestNewTakesTheConfiguration(t *testing.T) {
 }
 
 func TestPolicyGetRoundInterval(t *testing.T) {
-	assert.Equal(t, 30*time.Second, New(nil).GetRoundInterval())
+	assert.Equal(t, 30*time.Second, NewPolicy(nil).GetRoundInterval())
 
 	split := &proto.AutoSplitConfig{Enabled: true, CollectionInterval: "1s"}
-	assert.Equal(t, time.Second, New(&proto.ClusterConfiguration{AutoSplit: split}).GetRoundInterval())
+	assert.Equal(t, time.Second, NewPolicy(&proto.ClusterConfiguration{AutoSplit: split}).GetRoundInterval())
 }

@@ -28,8 +28,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/policy"
 )
 
 const mb = 1024 * 1024
@@ -266,8 +266,8 @@ func newStats() *stats.ClusterStats {
 }
 
 // split splits a shard over 1 MB or 10 ops/s right away, sampled every 30s.
-func split() policy.Split {
-	return policy.Split{Enabled: true, MaxShardSizeMB: 1, MaxThroughputOps: 10, MaxShardsPerNamespace: 10,
+func split() model.SplitPolicy {
+	return model.SplitPolicy{Enabled: true, MaxShardSizeMB: 1, MaxThroughputOps: 10, MaxShardsPerNamespace: 10,
 		CollectionInterval: 30 * time.Second}
 }
 
