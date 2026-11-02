@@ -267,6 +267,7 @@ func TestShellExecutesAdminCommands(t *testing.T) {
 			dataServer.GetMetadata() == nil
 	})).Return(dataServerConfig("server-2", "server-2-new:6648", "server-2:6649", nil), nil)
 	admincommons.MockedAdminClient.On("DeleteDataServer", "server-2").Return(dataServerConfig("server-2", "server-2-new:6648", "server-2:6649", nil), nil)
+	admincommons.MockedAdminClient.On("DrainedDataServer", "server-2").Return(nil)
 
 	splitPoint := uint32(42)
 	admincommons.MockedAdminClient.On("SplitShard", "ns-1", int64(7), &splitPoint).Return(&oxia.SplitShardResult{
@@ -286,6 +287,7 @@ func TestShellExecutesAdminCommands(t *testing.T) {
 		`admin dataserver create --public server-2:6648 --internal server-2:6649 --label zone=a server-2`,
 		`admin dataserver patch --public server-2-new:6648 server-2`,
 		`admin dataserver delete server-2`,
+		`admin dataserver drained server-2`,
 		`admin shard split --namespace ns-1 --shard 7 --split-point 42`,
 		`exit`,
 	}, "\n"))
@@ -504,6 +506,8 @@ func TestPromptSuggestions(t *testing.T) {
 	assertSuggestionTexts(t, suggestionsFor(nil), "admin", "get", "put", "delete", "delete-range", "list", "range-scan", "help", "exit", "quit")
 	assertSuggestionTexts(t, suggestionsFor([]string{"admin"}), "namespace", "dataserver", "shard")
 	assertSuggestionTexts(t, suggestionsFor([]string{"admin", "namespace"}), "list", "get", "create", "patch", "delete")
+	assertSuggestionTexts(t, suggestionsFor([]string{"admin", "dataserver"}),
+		"list", "get", "create", "patch", "delete", "drained")
 	assertSuggestionTexts(t, suggestionsFor([]string{"admin", "shard"}), "split")
 	assertSuggestionTexts(t, suggestionsFor([]string{"get"}), "--hex", "--include-version", "--partition-key", "--index", "--comparison-type")
 	assertSuggestionTexts(t, suggestionsFor([]string{"delete-range"}), "--key-min", "--key-max", "--partition-key")

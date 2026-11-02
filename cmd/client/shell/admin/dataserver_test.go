@@ -32,6 +32,7 @@ func TestExecutorDataServerReturnsAdminClientError(t *testing.T) {
 	adminClient.On("CreateDataServer", mock.Anything).Return((*proto.DataServer)(nil), errTest)
 	adminClient.On("PatchDataServer", mock.Anything).Return((*proto.DataServer)(nil), errTest)
 	adminClient.On("DeleteDataServer", "server").Return((*proto.DataServer)(nil), errTest)
+	adminClient.On("DrainedDataServer", "server").Return(errTest)
 	executor, out := newTestExecutor(adminClient)
 
 	for _, args := range [][]string{
@@ -40,6 +41,7 @@ func TestExecutorDataServerReturnsAdminClientError(t *testing.T) {
 		{"dataserver", "create", "--public", "p:1", "--internal", "i:1", "server"},
 		{"dataserver", "patch", "--internal", "i:2", "server"},
 		{"dataserver", "del", "server"},
+		{"dataserver", "drained", "server"},
 	} {
 		assert.ErrorIs(t, executor.Execute(args), errTest, "args: %v", args)
 	}
@@ -119,6 +121,40 @@ func TestExecutorDataServerPatchRejectsInvalidArgs(t *testing.T) {
 			executor, out := newTestExecutor(adminClient)
 
 			err := executor.Execute(append([]string{"dataserver", "patch"}, test.args...))
+
+			assert.EqualError(t, err, test.error)
+			assert.Empty(t, out.String())
+			adminClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestExecutorDataServerDrainedSendsTheName(t *testing.T) {
+	adminClient := admincommons.NewMockAdminClient()
+	adminClient.On("DrainedDataServer", "server").Return(nil)
+	executor, out := newTestExecutor(adminClient)
+
+	require.NoError(t, executor.Execute([]string{"dataserver", "drained", " server "}))
+
+	assert.Empty(t, out.String())
+	adminClient.AssertExpectations(t)
+}
+
+func TestExecutorDataServerDrainedRejectsInvalidArgs(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		args  []string
+		error string
+	}{
+		{"no-name", nil, "usage: admin dataserver drained NAME"},
+		{"two-names", []string{"a", "b"}, "usage: admin dataserver drained NAME"},
+		{"blank-name", []string{" "}, "data server name must not be empty"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adminClient := admincommons.NewMockAdminClient()
+			executor, out := newTestExecutor(adminClient)
+
+			err := executor.Execute(append([]string{"dataserver", "drained"}, test.args...))
 
 			assert.EqualError(t, err, test.error)
 			assert.Empty(t, out.String())

@@ -27,7 +27,7 @@ import (
 
 func (e Executor) dataServer(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: admin dataserver list|get|create|patch|delete")
+		return errors.New("usage: admin dataserver list|get|create|patch|delete|drained")
 	}
 
 	switch args[0] {
@@ -41,6 +41,8 @@ func (e Executor) dataServer(args []string) error {
 		return e.dataServerPatch(args)
 	case "delete", "del":
 		return e.dataServerDelete(args)
+	case "drained":
+		return e.dataServerDrained(args)
 	default:
 		return fmt.Errorf("unknown admin dataserver command %q", args[0])
 	}
@@ -240,4 +242,20 @@ func (e Executor) dataServerDelete(args []string) error {
 		return err
 	}
 	return dataservercli.WriteDataServer(e.Out, outputFormat, deleted)
+}
+
+func (e Executor) dataServerDrained(args []string) error {
+	const usage = "usage: admin dataserver drained NAME"
+	if len(args) != 2 {
+		return errors.New(usage)
+	}
+	name := strings.TrimSpace(args[1])
+	if name == "" {
+		return errors.New("data server name must not be empty")
+	}
+	admin, err := e.Client()
+	if err != nil {
+		return err
+	}
+	return admin.DrainedDataServer(e.Ctx, name)
 }
