@@ -68,7 +68,7 @@ func TestElectionFenceQuorumReturnsHeadEntries(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(removed).NewTermResponse(1, 101, nil)
 
-	candidates, retainedHeads, features, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, retainedHeads, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
@@ -90,7 +90,7 @@ func TestElectionFenceQuorumFailsWithoutQuorum(t *testing.T) {
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2, s3}, nil)
+	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2, s3}, nil)
 	assert.ErrorContains(t, err, "quorum not reached")
 	assert.ErrorContains(t, err, "unreachable")
 }
@@ -112,7 +112,7 @@ func TestElectionFenceQuorumWaitsForEnsembleMajority(t *testing.T) {
 		rpc.GetNode(s2).NewTermResponse(1, 0, nil)
 	}()
 
-	candidates, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
+	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
 		&proto.EnsembleChangeMetadata{From: removed, To: s2})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
@@ -143,7 +143,7 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 	}()
 
 	start := time.Now()
-	candidates, retainedHeads, features, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, retainedHeads, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, &proto.EnsembleChangeMetadata{From: removed, To: s5})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), quorumFencingGracePeriod)
@@ -364,7 +364,7 @@ func TestElectionFenceQuorumRequiresEnsembleMajority(t *testing.T) {
 	rpc.GetNode(removed).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
+	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
 		&proto.EnsembleChangeMetadata{From: removed, To: s2})
 	assert.ErrorContains(t, err, "quorum of the ensemble not reached")
 }
@@ -384,7 +384,7 @@ func TestElectionFenceQuorumSucceedsWithoutFromAndTo(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	candidates, retainedHeads, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, retainedHeads, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
@@ -421,7 +421,7 @@ func TestElectionFenceQuorumSucceedsWithoutFromWithEvenReplicationFactor(t *test
 			}
 			rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
 
-			candidates, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, test.ensemble,
+			candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, test.ensemble,
 				&proto.EnsembleChangeMetadata{From: removed, To: to})
 			require.NoError(t, err)
 			assert.Len(t, candidates, len(test.ensemble)-len(test.unreachable))
@@ -445,7 +445,7 @@ func TestElectionFenceQuorumRequiresOldEnsembleMajority(t *testing.T) {
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	assert.ErrorContains(t, err, "quorum not reached")
 }
@@ -472,7 +472,7 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		followers     []*proto.DataServerIdentity
 	}{{
 		name:          "higher term wins over a higher offset",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 3, Offset: 1}, s3: {Term: 2, Offset: 9}, s4: {Term: 2, Offset: 4}},
+		ensembleHeads: sharding.HeadEntries{s1: head(3, 1), s3: head(2, 9), s4: head(2, 4)},
 		leader:        s1,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
 		changeFrom:    s2,
@@ -480,8 +480,8 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		followers:     []*proto.DataServerIdentity{s3, s4},
 	}, {
 		name:          "candidate ties with the retained data server",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.HeadEntries{s1: head(2, 5), s3: head(2, 4), s4: head(-1, -1)},
+		retainedHeads: sharding.HeadEntries{s2: head(2, 5)},
 		leader:        s1,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
 		changeFrom:    s2,
@@ -489,32 +489,32 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		followers:     []*proto.DataServerIdentity{s3, s4},
 	}, {
 		name:          "to has the highest head entry",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 6}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.HeadEntries{s1: head(2, 5), s3: head(2, 4), s4: head(2, 6)},
+		retainedHeads: sharding.HeadEntries{s2: head(2, 5)},
 		leader:        s4,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
 		pending:       []*proto.DataServerIdentity{s2},
 		followers:     []*proto.DataServerIdentity{s1, s3},
 	}, {
 		name:          "from ahead by offset",
-		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 1, Offset: 9}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.HeadEntries{s3: head(2, 4), s4: head(1, 9)},
+		retainedHeads: sharding.HeadEntries{s2: head(2, 5)},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
 		pending:       []*proto.DataServerIdentity{s4},
 		followers:     []*proto.DataServerIdentity{s3},
 	}, {
 		name:          "from ahead by term, to isn't the lowest",
-		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 9}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 3, Offset: 5}},
+		ensembleHeads: sharding.HeadEntries{s3: head(2, 4), s4: head(2, 9)},
+		retainedHeads: sharding.HeadEntries{s2: head(3, 5)},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
 		pending:       []*proto.DataServerIdentity{s4},
 		followers:     []*proto.DataServerIdentity{s3},
 	}, {
 		name:          "from ahead, to missed the fence",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 3}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.HeadEntries{s1: head(2, 4), s3: head(2, 3)},
+		retainedHeads: sharding.HeadEntries{s2: head(2, 5)},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
 		pending:       []*proto.DataServerIdentity{s4},
@@ -544,7 +544,7 @@ func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
-	heads := sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}}
+	heads := sharding.HeadEntries{s1: head(2, 5), s2: head(2, 5), s3: head(2, 4)}
 	for _, test := range []struct {
 		name      string
 		preferred string
@@ -618,12 +618,9 @@ func TestElectionFenceNewTermAndAddFollowerReturnsAddFollowerError(t *testing.T)
 // The election hands the new leader the commit offsets that its followers
 // reported when they got fenced, and none for a follower that predates them.
 func TestElectionBecomeLeaderPassesTheCommitOffsetsOfTheFollowers(t *testing.T) {
-	named := func(name string) *proto.DataServerIdentity {
-		return &proto.DataServerIdentity{Name: &name, Internal: name + ":8191", Public: name + ":9091"}
-	}
-	s1 := named("s1")
-	s2 := named("s2")
-	s3 := named("s3")
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
 	rpc := rpctest.NewRpcProvider()
 	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
@@ -631,18 +628,19 @@ func TestElectionBecomeLeaderPassesTheCommitOffsetsOfTheFollowers(t *testing.T) 
 	rpc.GetNode(s2).NewTermResponseWithCommitOffset(1, 9, 9)
 	rpc.GetNode(s3).NewTermResponse(1, 7, nil)
 
-	candidates, _, _, commitOffsets, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, nil)
 	require.NoError(t, err)
 	require.Len(t, candidates, 3)
-	assert.Equal(t, map[string]int64{"s1": 8, "s2": 9}, commitOffsets)
+	assert.EqualValues(t, 8, *candidates[s1].CommitOffset)
+	assert.EqualValues(t, 9, *candidates[s2].CommitOffset)
+	assert.Nil(t, candidates[s3].CommitOffset)
 
 	leader, followers := e.chooseLeader(candidates, sharding.HeadEntries{})
 	require.Equal(t, s1, leader)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
-	require.NoError(t, e.becomeLeader(2, leader, followers, commitOffsets, 3, nil))
-	// The leader knows its followers by their internal address
-	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithCommitOffsets(t, 5, 2, map[string]int64{"s2:8191": 9})
+	require.NoError(t, e.becomeLeader(2, leader, followers, 3, nil))
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithCommitOffsets(t, 5, 2, map[string]int64{s2.GetInternal(): 9})
 }
 
 // A follower that joins after the election hands the leader the commit offset
@@ -679,7 +677,7 @@ func TestElectionFencingFailedFollowersStopsOnInvalidTerm(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		e.fencingFailedFollowers(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{leader, follower}, leader,
-			map[*proto.DataServerIdentity]*proto.EntryId{})
+			sharding.HeadEntries{})
 		close(done)
 	}()
 	requireClosed(t, done, "fencingFailedFollowers to stop")
@@ -1006,6 +1004,10 @@ func testDataServer(id string) *proto.DataServerIdentity {
 
 // newTestElection creates an election of the shard, as its shard controller
 // does, that the test drives step by step.
+func head(term int64, offset int64) sharding.HeadEntry {
+	return sharding.HeadEntry{EntryId: &proto.EntryId{Term: term, Offset: offset}}
+}
+
 func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.ControllerRPCProvider, shard int64,
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()
