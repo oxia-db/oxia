@@ -159,6 +159,29 @@ func TestPlannerPlanTransfersTheLeadersOnceTheReplicasSettle(t *testing.T) {
 	assert.Equal(t, []string{"transfer 2 n2"}, describe(ops))
 }
 
+// n0 and n1 share zone a, so no shard has both: n0 can't pass a leader to n1,
+// and no transfer improves the leaders alone. n2 passes one to n1, and n0 one
+// to n2.
+func TestPlannerPlanPassesALeaderThroughAnotherZone(t *testing.T) {
+	s := cluster(3)
+	for name, zone := range map[string]string{"n0": "a", "n1": "a", "n2": "b"} {
+		s.DataServers[name].Metadata = &proto.DataServerMetadata{Labels: map[string]string{"zone": zone}}
+	}
+	addShard(s, "a", 1, "n0", "n2").Leader = "n0"
+	addShard(s, "a", 2, "n0", "n2").Leader = "n0"
+	addShard(s, "a", 3, "n1", "n2").Leader = "n2"
+	s.Namespaces["a"].AntiAffinities = []*proto.AntiAffinity{{Labels: []string{"zone"}, Mode: "strict"}}
+
+	ops, _ := defaultPlanner().Plan(s)
+	assert.Equal(t, []string{"transfer 3 n1", "transfer 1 n2"}, describe(ops))
+
+	for _, op := range ops {
+		apply(s, op)
+	}
+	ops, _ = defaultPlanner().Plan(s)
+	assert.Empty(t, ops)
+}
+
 func TestPlannerPlanHoldsTheLeadersWhileTheReplicasMove(t *testing.T) {
 	newCluster := func() *stats.ClusterStats {
 		s := cluster(3)
