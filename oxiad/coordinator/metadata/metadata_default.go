@@ -699,7 +699,7 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 	return deleted, nil
 }
 
-func (m *defaultMetadata) ConfirmDrainedDataServer(name string) error {
+func (m *defaultMetadata) DrainedDataServer(name string) error {
 	status, found, err := m.GetDataServerStatus(name)
 	if err != nil {
 		return err

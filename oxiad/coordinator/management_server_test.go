@@ -1792,11 +1792,11 @@ func (m *failingMetadata) DeleteDataServer(name string) (*proto.DataServer, erro
 	return m.Metadata.DeleteDataServer(name)
 }
 
-func (m *failingMetadata) ConfirmDrainedDataServer(name string) error {
+func (m *failingMetadata) DrainedDataServer(name string) error {
 	if m.err != nil {
 		return m.err
 	}
-	return m.Metadata.ConfirmDrainedDataServer(name)
+	return m.Metadata.DrainedDataServer(name)
 }
 
 func (m *failingMetadata) ListNamespace() (map[string]commonobject.Borrowed[*proto.Namespace], error) {

@@ -500,8 +500,8 @@ func TestMetadataReadsReturnStatusLoadError(t *testing.T) {
 			_, err := metadata.DeleteDataServer("s3")
 			return err
 		}},
-		{"ConfirmDrainedDataServer", func(_ *testing.T, metadata Metadata) error {
-			return metadata.ConfirmDrainedDataServer("s3")
+		{"DrainedDataServer", func(_ *testing.T, metadata Metadata) error {
+			return metadata.DrainedDataServer("s3")
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1007,24 +1007,24 @@ func TestMetadataCreateDataServerRemovesItsConfirmedDrain(t *testing.T) {
 // Only a drained data server that left the configuration is confirmed. A
 // confirmed one stays confirmed, without a write, also once its status is
 // deleted.
-func TestMetadataConfirmDrainedDataServer(t *testing.T) {
+func TestMetadataDrainedDataServer(t *testing.T) {
 	configProvider := newStoredConfigProvider(t, nil)
 	metadata := newTestMetadata(t, newDrainedStatusProvider(t), configProvider, "")
 
-	require.ErrorIs(t, metadata.ConfirmDrainedDataServer("s1"), errs.ErrFailedPrecondition)
-	require.ErrorIs(t, metadata.ConfirmDrainedDataServer("draining"), errs.ErrFailedPrecondition)
-	require.ErrorIs(t, metadata.ConfirmDrainedDataServer("unknown"), errs.ErrNotFound)
+	require.ErrorIs(t, metadata.DrainedDataServer("s1"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, metadata.DrainedDataServer("draining"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, metadata.DrainedDataServer("unknown"), errs.ErrNotFound)
 	require.Empty(t, loaded(t, configProvider).Value.GetAnnotations())
 
-	require.NoError(t, metadata.ConfirmDrainedDataServer("drained"))
+	require.NoError(t, metadata.DrainedDataServer("drained"))
 	confirmed := loaded(t, configProvider)
 	require.Equal(t, []string{"drained"}, confirmed.Value.GetConfirmedDrainedDataServers())
 
-	require.NoError(t, metadata.ConfirmDrainedDataServer("drained"))
+	require.NoError(t, metadata.DrainedDataServer("drained"))
 	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
 	require.NoError(t, err)
 	require.True(t, deleted)
-	require.NoError(t, metadata.ConfirmDrainedDataServer("drained"))
+	require.NoError(t, metadata.DrainedDataServer("drained"))
 	require.Equal(t, confirmed.Version, loaded(t, configProvider).Version)
 }
 
