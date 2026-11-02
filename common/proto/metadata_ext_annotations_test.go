@@ -42,3 +42,32 @@ func TestClusterConfigurationListUnknownAnnotations(t *testing.T) {
 	}}
 	assert.Equal(t, []string{"confirmed-drained", "zeta"}, config.ListUnknownAnnotations())
 }
+
+func TestClusterConfigurationAddConfirmedDrainedDataServer(t *testing.T) {
+	config := &ClusterConfiguration{}
+	assert.True(t, config.AddConfirmedDrainedDataServer("ds-4"))
+	assert.Equal(t, "ds-4", config.GetAnnotations()[AnnotationConfirmedDrainedDataServers])
+
+	config = &ClusterConfiguration{Annotations: map[string]string{
+		AnnotationConfirmedDrainedDataServers: " ds-4, ,ds-5 ,",
+	}}
+	assert.False(t, config.AddConfirmedDrainedDataServer("ds-5"))
+	assert.Equal(t, " ds-4, ,ds-5 ,", config.GetAnnotations()[AnnotationConfirmedDrainedDataServers])
+	assert.True(t, config.AddConfirmedDrainedDataServer("ds-6"))
+	assert.Equal(t, "ds-4,ds-5,ds-6", config.GetAnnotations()[AnnotationConfirmedDrainedDataServers])
+}
+
+func TestClusterConfigurationRemoveConfirmedDrainedDataServer(t *testing.T) {
+	assert.False(t, (&ClusterConfiguration{}).RemoveConfirmedDrainedDataServer("ds-4"))
+
+	config := &ClusterConfiguration{Annotations: map[string]string{
+		AnnotationConfirmedDrainedDataServers: " ds-4, ,ds-5 ,",
+		"other":                               "value",
+	}}
+	assert.False(t, config.RemoveConfirmedDrainedDataServer("ds-6"))
+	assert.Equal(t, " ds-4, ,ds-5 ,", config.GetAnnotations()[AnnotationConfirmedDrainedDataServers])
+	assert.True(t, config.RemoveConfirmedDrainedDataServer("ds-4"))
+	assert.Equal(t, "ds-5", config.GetAnnotations()[AnnotationConfirmedDrainedDataServers])
+	assert.True(t, config.RemoveConfirmedDrainedDataServer("ds-5"))
+	assert.Equal(t, map[string]string{"other": "value"}, config.GetAnnotations())
+}

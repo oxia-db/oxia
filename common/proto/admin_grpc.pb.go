@@ -36,17 +36,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OxiaAdmin_ListDataServers_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/ListDataServers"
-	OxiaAdmin_GetDataServer_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/GetDataServer"
-	OxiaAdmin_CreateDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
-	OxiaAdmin_PatchDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
-	OxiaAdmin_DeleteDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
-	OxiaAdmin_CreateNamespace_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
-	OxiaAdmin_PatchNamespace_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/PatchNamespace"
-	OxiaAdmin_DeleteNamespace_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/DeleteNamespace"
-	OxiaAdmin_GetNamespace_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
-	OxiaAdmin_ListNamespaces_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
-	OxiaAdmin_SplitShard_FullMethodName       = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
+	OxiaAdmin_ListDataServers_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/ListDataServers"
+	OxiaAdmin_GetDataServer_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/GetDataServer"
+	OxiaAdmin_CreateDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
+	OxiaAdmin_PatchDataServer_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
+	OxiaAdmin_DeleteDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
+	OxiaAdmin_DrainedDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/DrainedDataServer"
+	OxiaAdmin_CreateNamespace_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
+	OxiaAdmin_PatchNamespace_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/PatchNamespace"
+	OxiaAdmin_DeleteNamespace_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/DeleteNamespace"
+	OxiaAdmin_GetNamespace_FullMethodName      = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
+	OxiaAdmin_ListNamespaces_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
+	OxiaAdmin_SplitShard_FullMethodName        = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
 )
 
 // OxiaAdminClient is the client API for OxiaAdmin service.
@@ -58,12 +59,13 @@ type OxiaAdminClient interface {
 	CreateDataServer(ctx context.Context, in *CreateDataServerRequest, opts ...grpc.CallOption) (*CreateDataServerResponse, error)
 	PatchDataServer(ctx context.Context, in *PatchDataServerRequest, opts ...grpc.CallOption) (*PatchDataServerResponse, error)
 	DeleteDataServer(ctx context.Context, in *DeleteDataServerRequest, opts ...grpc.CallOption) (*DeleteDataServerResponse, error)
+	DrainedDataServer(ctx context.Context, in *DrainedDataServerRequest, opts ...grpc.CallOption) (*DrainedDataServerResponse, error)
 	CreateNamespace(ctx context.Context, in *CreateNamespaceRequest, opts ...grpc.CallOption) (*CreateNamespaceResponse, error)
 	PatchNamespace(ctx context.Context, in *PatchNamespaceRequest, opts ...grpc.CallOption) (*PatchNamespaceResponse, error)
 	DeleteNamespace(ctx context.Context, in *DeleteNamespaceRequest, opts ...grpc.CallOption) (*DeleteNamespaceResponse, error)
 	GetNamespace(ctx context.Context, in *GetNamespaceRequest, opts ...grpc.CallOption) (*GetNamespaceResponse, error)
 	ListNamespaces(ctx context.Context, in *ListNamespacesRequest, opts ...grpc.CallOption) (*ListNamespacesResponse, error)
-	// *
+	//*
 	// Triggers a shard split. The specified shard is split into two child
 	// shards at the given split point (or midpoint if not specified).
 	SplitShard(ctx context.Context, in *SplitShardRequest, opts ...grpc.CallOption) (*SplitShardResponse, error)
@@ -121,6 +123,16 @@ func (c *oxiaAdminClient) DeleteDataServer(ctx context.Context, in *DeleteDataSe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteDataServerResponse)
 	err := c.cc.Invoke(ctx, OxiaAdmin_DeleteDataServer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *oxiaAdminClient) DrainedDataServer(ctx context.Context, in *DrainedDataServerRequest, opts ...grpc.CallOption) (*DrainedDataServerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DrainedDataServerResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_DrainedDataServer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,12 +208,13 @@ type OxiaAdminServer interface {
 	CreateDataServer(context.Context, *CreateDataServerRequest) (*CreateDataServerResponse, error)
 	PatchDataServer(context.Context, *PatchDataServerRequest) (*PatchDataServerResponse, error)
 	DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error)
+	DrainedDataServer(context.Context, *DrainedDataServerRequest) (*DrainedDataServerResponse, error)
 	CreateNamespace(context.Context, *CreateNamespaceRequest) (*CreateNamespaceResponse, error)
 	PatchNamespace(context.Context, *PatchNamespaceRequest) (*PatchNamespaceResponse, error)
 	DeleteNamespace(context.Context, *DeleteNamespaceRequest) (*DeleteNamespaceResponse, error)
 	GetNamespace(context.Context, *GetNamespaceRequest) (*GetNamespaceResponse, error)
 	ListNamespaces(context.Context, *ListNamespacesRequest) (*ListNamespacesResponse, error)
-	// *
+	//*
 	// Triggers a shard split. The specified shard is split into two child
 	// shards at the given split point (or midpoint if not specified).
 	SplitShard(context.Context, *SplitShardRequest) (*SplitShardResponse, error)
@@ -229,6 +242,9 @@ func (UnimplementedOxiaAdminServer) PatchDataServer(context.Context, *PatchDataS
 }
 func (UnimplementedOxiaAdminServer) DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDataServer not implemented")
+}
+func (UnimplementedOxiaAdminServer) DrainedDataServer(context.Context, *DrainedDataServerRequest) (*DrainedDataServerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DrainedDataServer not implemented")
 }
 func (UnimplementedOxiaAdminServer) CreateNamespace(context.Context, *CreateNamespaceRequest) (*CreateNamespaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateNamespace not implemented")
@@ -355,6 +371,24 @@ func _OxiaAdmin_DeleteDataServer_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OxiaAdminServer).DeleteDataServer(ctx, req.(*DeleteDataServerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OxiaAdmin_DrainedDataServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DrainedDataServerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OxiaAdminServer).DrainedDataServer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OxiaAdmin_DrainedDataServer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OxiaAdminServer).DrainedDataServer(ctx, req.(*DrainedDataServerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -493,6 +527,10 @@ var OxiaAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDataServer",
 			Handler:    _OxiaAdmin_DeleteDataServer_Handler,
+		},
+		{
+			MethodName: "DrainedDataServer",
+			Handler:    _OxiaAdmin_DrainedDataServer_Handler,
 		},
 		{
 			MethodName: "CreateNamespace",

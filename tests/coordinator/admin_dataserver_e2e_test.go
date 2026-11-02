@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
@@ -139,4 +141,24 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, serverName, dataServers[1].GetDataServer().GetIdentity().GetName())
 	assert.Contains(t, []proto.DataServerState{proto.DataServerState_DATA_SERVER_STATE_DRAINING,
 		proto.DataServerState_DATA_SERVER_STATE_DRAINED}, dataServers[1].GetDataServerStatus().GetState())
+
+	// A retried delete returns the data server that left
+	deleted, err = client.DeleteDataServer(t.Context(), serverName)
+	require.NoError(t, err)
+	assert.Equal(t, serverName, deleted.GetIdentity().GetName())
+
+	require.Eventually(t, func() bool {
+		view, err := client.GetDataServer(t.Context(), serverName)
+		return err == nil && view.GetDataServerStatus().GetState() == proto.DataServerState_DATA_SERVER_STATE_DRAINED
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The confirmed drain forgets the data server; a retried confirm succeeds
+	require.NoError(t, client.DrainedDataServer(t.Context(), serverName))
+	require.Eventually(t, func() bool {
+		_, err := client.GetDataServer(t.Context(), serverName)
+		return grpcstatus.Code(err) == codes.NotFound
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, client.DrainedDataServer(t.Context(), serverName))
+	_, err = client.DeleteDataServer(t.Context(), serverName)
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }

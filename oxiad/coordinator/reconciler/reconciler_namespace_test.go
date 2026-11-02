@@ -672,6 +672,10 @@ func (*mockNamespaceMetadata) DeleteDataServer(string) (*proto.DataServer, error
 	return &proto.DataServer{}, nil
 }
 
+func (*mockNamespaceMetadata) DrainedDataServer(string) error {
+	return nil
+}
+
 func (*mockNamespaceMetadata) ListDataServer() (map[string]commonobject.Borrowed[*proto.DataServer], error) {
 	return map[string]commonobject.Borrowed[*proto.DataServer]{}, nil
 }

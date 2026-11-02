@@ -92,6 +92,15 @@ func (admin *adminClientImpl) DeleteDataServer(ctx context.Context, dataServer s
 	return response.DataServer, nil
 }
 
+func (admin *adminClientImpl) DrainedDataServer(ctx context.Context, dataServer string) error {
+	_, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.DrainedDataServerResponse, error) {
+		return client.DrainedDataServer(ctx, &proto.DrainedDataServerRequest{
+			DataServer: dataServer,
+		})
+	})
+	return err
+}
+
 func (admin *adminClientImpl) Close() error {
 	return admin.clientPool.Close()
 }

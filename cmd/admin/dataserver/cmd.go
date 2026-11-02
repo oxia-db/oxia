@@ -17,6 +17,7 @@ package dataserver
 import (
 	createcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/create"
 	deletecmd "github.com/oxia-db/oxia/cmd/admin/dataserver/delete"
+	drainedcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/drained"
 	getcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/get"
 	patchcmd "github.com/oxia-db/oxia/cmd/admin/dataserver/patch"
 
@@ -32,6 +33,7 @@ var (
 )
 
 func init() {
+	Cmd.AddCommand(drainedcmd.Cmd)
 	Cmd.AddCommand(createcmd.Cmd)
 	Cmd.AddCommand(deletecmd.Cmd)
 	Cmd.AddCommand(getcmd.Cmd)

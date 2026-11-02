@@ -219,6 +219,14 @@ func TestManagementServerRedirectsRequestsToCoordinatorLeader(t *testing.T) {
 			},
 		},
 		{
+			name: "drained data server",
+			call: func(ctx context.Context) error {
+				_, err := management.DrainedDataServer(ctx,
+					&proto.DrainedDataServerRequest{DataServer: "server-1"})
+				return err
+			},
+		},
+		{
 			name: "list namespaces",
 			call: func(ctx context.Context) error {
 				_, err := management.ListNamespaces(ctx, &proto.ListNamespacesRequest{})
@@ -1505,6 +1513,81 @@ func TestManagementServerDeleteDataServerFailedPrecondition(t *testing.T) {
 	assert.True(t, found)
 }
 
+// A retried delete returns the data server that already left.
+func TestManagementServerDeleteDataServerIsIdempotent(t *testing.T) {
+	serverName := "server-1"
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers: []*proto.DataServerIdentity{dataServer(&serverName, "public-1", "internal-1")},
+	})
+	require.NoError(t, metadata.PatchDataServerStatus(serverName, func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
+		return true, nil
+	}))
+	management := newReadyManagementServer(metadata, nil)
+
+	for range 2 {
+		res, err := management.DeleteDataServer(context.Background(), &proto.DeleteDataServerRequest{DataServer: serverName})
+		require.NoError(t, err)
+		assert.Equal(t, serverName, res.GetDataServer().GetIdentity().GetName())
+	}
+}
+
+func TestManagementServerDrainedDataServer(t *testing.T) {
+	serverName := "server-1"
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
+	require.NoError(t, metadata.PatchDataServerStatus(serverName, func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINED
+		return true, nil
+	}))
+	management := newReadyManagementServer(metadata, nil)
+
+	for range 2 {
+		_, err := management.DrainedDataServer(context.Background(),
+			&proto.DrainedDataServerRequest{DataServer: serverName})
+		require.NoError(t, err)
+	}
+	config, err := metadata.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, []string{serverName}, config.UnsafeBorrow().GetConfirmedDrainedDataServers())
+}
+
+func TestManagementServerDrainedDataServerRejectsInvalidRequest(t *testing.T) {
+	management := newReadyManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+
+	for _, req := range []*proto.DrainedDataServerRequest{nil, {}} {
+		_, err := management.DrainedDataServer(context.Background(), req)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(err))
+	}
+}
+
+func TestManagementServerDrainedDataServerNotFound(t *testing.T) {
+	management := newReadyManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}), nil)
+
+	_, err := management.DrainedDataServer(context.Background(),
+		&proto.DrainedDataServerRequest{DataServer: "missing"})
+	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
+}
+
+// The drain of a data server of the configuration, or of one not drained
+// yet, can't be confirmed.
+func TestManagementServerDrainedDataServerFailedPrecondition(t *testing.T) {
+	configured := "server-1"
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Servers: []*proto.DataServerIdentity{dataServer(&configured, "public-1", "internal-1")},
+	})
+	require.NoError(t, metadata.PatchDataServerStatus("server-2", func(status *proto.DataServerStatus) (bool, error) {
+		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		return true, nil
+	}))
+	management := newReadyManagementServer(metadata, nil)
+
+	for _, name := range []string{configured, "server-2"} {
+		_, err := management.DrainedDataServer(context.Background(),
+			&proto.DrainedDataServerRequest{DataServer: name})
+		assert.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err), name)
+	}
+}
+
 func TestManagementServerSetRuntimeIgnoresNil(t *testing.T) {
 	management := NewManagementServer(newTestMetadata(t, &proto.ClusterConfiguration{}))
 	management.setRuntime(nil)
@@ -1579,6 +1662,11 @@ func TestManagementServerReturnsMetadataErrors(t *testing.T) {
 		{"DeleteDataServer", codes.Aborted, func(management *ManagementServer) error {
 			_, err := management.DeleteDataServer(context.Background(),
 				&proto.DeleteDataServerRequest{DataServer: serverName})
+			return err
+		}},
+		{"DrainedDataServer", codes.Aborted, func(management *ManagementServer) error {
+			_, err := management.DrainedDataServer(context.Background(),
+				&proto.DrainedDataServerRequest{DataServer: serverName})
 			return err
 		}},
 		{"ListNamespaces", codes.Internal, func(management *ManagementServer) error {
@@ -1702,6 +1790,13 @@ func (m *failingMetadata) DeleteDataServer(name string) (*proto.DataServer, erro
 		return nil, m.err
 	}
 	return m.Metadata.DeleteDataServer(name)
+}
+
+func (m *failingMetadata) DrainedDataServer(name string) error {
+	if m.err != nil {
+		return m.err
+	}
+	return m.Metadata.DrainedDataServer(name)
 }
 
 func (m *failingMetadata) ListNamespace() (map[string]commonobject.Borrowed[*proto.Namespace], error) {
