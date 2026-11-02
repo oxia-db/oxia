@@ -38,7 +38,7 @@ func TestShardGreedyFindBestPicksTheBestOp(t *testing.T) {
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
 	addShard(s, "a", 2, "n0", "n1").Leader = "n0"
 
-	c, found := replaceGreedy().FindBest(s, tier.NewLoad(s), names(s), allowAll)
+	c, found := replaceGreedy(s).FindBest(tier.NewLoad(s), allowAll)
 
 	require.True(t, found)
 	assert.Equal(t, model.Candidate{Kind: model.Replace, Namespace: "a", Shard: 1, From: "n1", To: "n2",
@@ -50,17 +50,17 @@ func TestShardGreedyFindBestSkipsTheOpsThatTheLimitsBlock(t *testing.T) {
 	s := cluster(4)
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
 	addShard(s, "a", 2, "n0", "n1").Leader = "n0"
-	g, load := replaceGreedy(), tier.NewLoad(s)
+	g, load := replaceGreedy(s), tier.NewLoad(s)
 	shards, targets := map[int64]bool{}, map[string]bool{}
 	allows := func(op model.Candidate) bool { return !shards[op.Shard] && !targets[op.To] }
 
-	first, found := g.FindBest(s, load, names(s), allows)
+	first, found := g.FindBest(load, allows)
 	require.True(t, found)
 	assert.Equal(t, "n2", first.To)
 	shards[first.Shard], targets[first.To] = true, true
 	load.Move(s, first)
 
-	second, found := g.FindBest(s, load, names(s), allows)
+	second, found := g.FindBest(load, allows)
 	require.True(t, found)
 	assert.Equal(t, "n3", second.To)
 	assert.NotEqual(t, first.Shard, second.Shard)
@@ -77,7 +77,7 @@ func TestShardGreedyFindBestSkipsTheOpsThatAFilterRejects(t *testing.T) {
 	addShard(s, "a", 2, "n0", "n1").Leader = "n1"
 	s.Namespaces["a"].AntiAffinities = []*proto.AntiAffinity{{Labels: []string{"zone"}}}
 
-	c, found := replaceGreedy().FindBest(s, tier.NewLoad(s), names(s), allowAll)
+	c, found := replaceGreedy(s).FindBest(tier.NewLoad(s), allowAll)
 
 	require.True(t, found)
 	assert.Equal(t, "n1", c.From)
@@ -88,7 +88,7 @@ func TestShardGreedyFindBestFindsNothingOnceBalanced(t *testing.T) {
 	s := cluster(2)
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
 
-	_, found := replaceGreedy().FindBest(s, tier.NewLoad(s), names(s), allowAll)
+	_, found := replaceGreedy(s).FindBest(tier.NewLoad(s), allowAll)
 
 	assert.False(t, found)
 }
@@ -105,10 +105,13 @@ func TestShardGreedyFindBestMatchesTheReference(t *testing.T) {
 			planned[name] = random.IntN(4) == 0
 		}
 		allows := func(op model.Candidate) bool { return !planned[op.To] }
+		// Some searches only see some of the data servers
+		if random.IntN(4) == 0 {
+			dataServers = slices.DeleteFunc(dataServers, func(string) bool { return random.IntN(3) == 0 })
+		}
 		for _, kind := range []model.Kind{model.Replace, model.TransferLeader, model.Split} {
-			g := NewShardGreedy(kind, tiersOf(kind), filter.Defaults())
-			want, wantFound := referenceFindBest(g, s, load, dataServers, allows)
-			got, found := g.FindBest(s, load, dataServers, allows)
+			want, wantFound := referenceFindBest(s, load, dataServers, kind, allows)
+			got, found := NewShardGreedy(s, dataServers, kind, tiersOf(kind), filter.Defaults()).FindBest(load, allows)
 			require.Equal(t, wantFound, found, "cluster %d, %s", i, kind)
 			require.Equal(t, want, got, "cluster %d, %s", i, kind)
 		}
@@ -120,9 +123,9 @@ func BenchmarkShardGreedyFindBest(b *testing.B) {
 	for _, size := range benchSizes {
 		b.Run(size.name, func(b *testing.B) {
 			s := zonedCluster(size.zones, size.perZone, size.used, size.namespaces, size.shards)
-			g, load, dataServers := replaceGreedy(), tier.NewLoad(s), names(s)
+			g, load := replaceGreedy(s), tier.NewLoad(s)
 			for b.Loop() {
-				g.FindBest(s, load, dataServers, allowAll)
+				g.FindBest(load, allowAll)
 			}
 		})
 	}
@@ -140,10 +143,10 @@ var benchSizes = []struct {
 	{"51-servers-100-namespaces-10000-shards", 3, 17, 12, 100, 10000},
 }
 
-// replaceGreedy returns the greedy search of the replaces, with the default
+// replaceGreedy returns the greedy search of the replaces on s, with the default
 // filters and tiers.
-func replaceGreedy() *ShardGreedy {
-	return NewShardGreedy(model.Replace, tiersOf(model.Replace), filter.Defaults())
+func replaceGreedy(s *stats.ClusterStats) *ShardGreedy {
+	return NewShardGreedy(s, names(s), model.Replace, tiersOf(model.Replace), filter.Defaults())
 }
 
 // tiersOf returns the default tiers that score the ops of kind.
@@ -157,18 +160,19 @@ func tiersOf(kind model.Kind) []tier.Tier {
 	return tiers
 }
 
-// referenceFindBest is FindBest as it was first written: it runs the filters
-// on every op, before it scores it.
-func referenceFindBest(g *ShardGreedy, s *stats.ClusterStats, load *tier.Load, dataServers []string,
+// referenceFindBest is the expected answer of FindBest: the best op of kind by
+// the definition, every op checked, then scored.
+func referenceFindBest(s *stats.ClusterStats, load *tier.Load, dataServers []string, kind model.Kind,
 	allows func(model.Candidate) bool) (model.Candidate, bool) {
+	tiers, filters := tiersOf(kind), filter.Defaults()
 	var bestOp model.Candidate
 	var bestScore tier.Score
 	bestLeader, found := 0, false
-	forEachCandidate(s, dataServers, g.kind, func(op model.Candidate, shard *stats.ShardStats) {
-		if !allows(op) || filter.Check(g.filters, s, op) != nil {
+	forEachCandidate(s, dataServers, kind, func(op model.Candidate, shard *stats.ShardStats) {
+		if !allows(op) || filter.Check(filters, s, op) != nil {
 			return
 		}
-		sc := tier.Evaluate(g.tiers, s, load, op)
+		sc := tier.Evaluate(tiers, s, load, op)
 		if sc.Improved < 0 {
 			return
 		}
@@ -181,7 +185,7 @@ func referenceFindBest(g *ShardGreedy, s *stats.ClusterStats, load *tier.Load, d
 		}
 	})
 	if found {
-		bestOp.Reason = g.tiers[bestScore.Improved].GetName()
+		bestOp.Reason = tiers[bestScore.Improved].GetName()
 	}
 	return bestOp, found
 }

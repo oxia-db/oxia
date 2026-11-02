@@ -63,10 +63,10 @@ func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked)
 	pl := newPlan(s)
 	for i, ph := range p.phases {
 		planned := 0
-		greedy := algorithm.NewShardGreedy(ph.kind, ph.tiers, p.filters)
+		greedy := algorithm.NewShardGreedy(s, pl.dataServerNames, ph.kind, ph.tiers, p.filters)
 		var leaders *algorithm.LeaderGraph
 		for {
-			if c, found := greedy.FindBest(s, pl.dataServerLoad, pl.dataServerNames, pl.allows); found {
+			if c, found := greedy.FindBest(pl.dataServerLoad, pl.allows); found {
 				pl.add(c)
 				planned++
 				continue

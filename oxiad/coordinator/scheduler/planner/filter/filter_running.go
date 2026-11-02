@@ -37,15 +37,21 @@ func (Running) GetName() string {
 func (Running) Filter(s *stats.ClusterStats, op model.Candidate) error {
 	_, shard := op.GetShard(s)
 	for _, name := range shard.Ensemble {
-		if op.Kind == model.Replace && name == op.From && s.DataServers[name].Removed {
-			continue
-		}
-		if s.DataServers[name].Down {
+		if down(s, op, name) {
 			return fmt.Errorf("%w: data server %q is down", errs.ErrUnavailable, name)
 		}
 	}
-	if op.Kind != model.Split && s.DataServers[op.To].Down {
+	if op.Kind != model.Split && down(s, op, op.To) {
 		return fmt.Errorf("%w: data server %q is down", errs.ErrUnavailable, op.To)
 	}
 	return nil
+}
+
+// down reports whether op needs name, a data server that is down: a replace
+// drains its removed source even when it is down.
+func down(s *stats.ClusterStats, op model.Candidate, name string) bool {
+	if op.Kind == model.Replace && name == op.From && s.DataServers[name].Removed {
+		return false
+	}
+	return s.DataServers[name].Down
 }
