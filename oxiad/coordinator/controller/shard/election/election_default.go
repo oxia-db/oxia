@@ -138,8 +138,8 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 
 //nolint:revive
 func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemble []*proto.DataServerIdentity,
-	change *proto.EnsembleChangeMetadata) (ensembleHeads sharding.HeadEntries,
-	retainedHeads sharding.HeadEntries, features []proto.Feature, err error) {
+	change *proto.EnsembleChangeMetadata) (ensembleHeads sharding.Candidates,
+	retainedHeads sharding.Candidates, features []proto.Feature, err error) {
 	fenceQuorumTimer := e.newTermQuorumLatencyHistogram.Timer()
 
 	fencingDataServers := ensemble
@@ -205,8 +205,8 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 		})
 	}
 	enabledFeatures := make(map[proto.Feature]bool)
-	retainedHeads = make(sharding.HeadEntries)
-	ensembleHeads = make(sharding.HeadEntries)
+	retainedHeads = make(sharding.Candidates)
+	ensembleHeads = make(sharding.Candidates)
 	oldEnsembleFenced := 0
 	totalResponses := 0
 	for (oldEnsembleFenced < oldEnsembleQuorum || len(ensembleHeads) < majority) && totalResponses < fencingQuorumSize {
@@ -223,14 +223,14 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 		for _, f := range fencingResponse.Response.GetFeaturesEnabled() {
 			enabledFeatures[f] = true
 		}
-		head := sharding.HeadEntry{
-			EntryId:      fencingResponse.Response.HeadEntryId,
+		candidate := sharding.Candidate{
+			HeadEntryId:  fencingResponse.Response.HeadEntryId,
 			CommitOffset: fencingResponse.Response.CommitOffset,
 		}
 		if slices.Contains(ensemble, fencingResponse.DataServer) {
-			ensembleHeads[fencingResponse.DataServer] = head
+			ensembleHeads[fencingResponse.DataServer] = candidate
 		} else {
-			retainedHeads[fencingResponse.DataServer] = head
+			retainedHeads[fencingResponse.DataServer] = candidate
 		}
 	}
 	if oldEnsembleFenced < oldEnsembleQuorum {
@@ -255,11 +255,11 @@ gracePeriod:
 			for _, f := range r.Response.GetFeaturesEnabled() {
 				enabledFeatures[f] = true
 			}
-			head := sharding.HeadEntry{EntryId: r.Response.HeadEntryId, CommitOffset: r.Response.CommitOffset}
+			candidate := sharding.Candidate{HeadEntryId: r.Response.HeadEntryId, CommitOffset: r.Response.CommitOffset}
 			if slices.Contains(ensemble, r.DataServer) {
-				ensembleHeads[r.DataServer] = head
+				ensembleHeads[r.DataServer] = candidate
 			} else {
-				retainedHeads[r.DataServer] = head
+				retainedHeads[r.DataServer] = candidate
 			}
 		case <-time.After(quorumFencingGracePeriod):
 			break gracePeriod
@@ -289,15 +289,15 @@ gracePeriod:
 //	           | 3. select            |    among the ties: the preferred leader,
 //	           |                      |    else any; the others follow
 //	           +----------------------+
-func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHeads sharding.HeadEntries) (
-	leader *proto.DataServerIdentity, followers sharding.HeadEntries) {
+func (e *election) chooseLeader(ensembleHeads sharding.Candidates, retainedHeads sharding.Candidates) (
+	leader *proto.DataServerIdentity, followers sharding.Candidates) {
 	var mostUpToDate []*proto.DataServerIdentity
 	var highest *proto.EntryId
-	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
-		for server, head := range heads {
-			if highest == nil || entry.Compare(head.EntryId, highest) > 0 {
-				highest, mostUpToDate = head.EntryId, []*proto.DataServerIdentity{server}
-			} else if i == 0 && entry.Compare(head.EntryId, highest) == 0 {
+	for i, candidates := range []sharding.Candidates{ensembleHeads, retainedHeads} {
+		for server, candidate := range candidates {
+			if highest == nil || entry.Compare(candidate.HeadEntryId, highest) > 0 {
+				highest, mostUpToDate = candidate.HeadEntryId, []*proto.DataServerIdentity{server}
+			} else if i == 0 && entry.Compare(candidate.HeadEntryId, highest) == 0 {
 				// Visited first, the ensemble wins a tie
 				mostUpToDate = append(mostUpToDate, server)
 			}
@@ -323,10 +323,10 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	}); i >= 0 {
 		leader = mostUpToDate[i]
 	}
-	followers = make(sharding.HeadEntries)
-	for server, head := range ensembleHeads {
+	followers = make(sharding.Candidates)
+	for server, candidate := range ensembleHeads {
 		if server.GetNameOrDefault() != leader.GetNameOrDefault() {
-			followers[server] = head
+			followers[server] = candidate
 		}
 	}
 	return leader, followers
@@ -336,13 +336,13 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 // rolls back a change that isn't committed, when the retained data server is
 // ahead of every fenced member: it has every committed entry, so the ensemble
 // before the change has them on a majority.
-func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensembleHeads sharding.HeadEntries,
-	retainedHeads sharding.HeadEntries) {
+func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensembleHeads sharding.Candidates,
+	retainedHeads sharding.Candidates) {
 	change := e.meta.EnsembleChange
 	e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
 		slog.Any("from", change.From), slog.Any("to", change.To))
 	// To may have missed the fence
-	maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ sharding.HeadEntry) bool {
+	maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ sharding.Candidate) bool {
 		return server.GetNameOrDefault() == change.To.GetNameOrDefault()
 	})
 	retainedHeads.Move(retained, ensembleHeads)
@@ -351,16 +351,16 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 	e.meta.PendingDeleteShardNodes = dataserver.AddDataServer(e.meta.PendingDeleteShardNodes, change.To)
 }
 
-func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
+func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.Candidates,
 	replicationFactor uint32, negotiateFeatures []proto.Feature) error {
 	becomeLeaderTimer := e.becomeLeaderLatencyHistogram.Timer()
 
 	followersMap := make(map[string]*proto.EntryId)
 	followerCommitOffsets := make(map[string]int64)
-	for server, head := range followers {
-		followersMap[server.GetInternal()] = head.EntryId
-		if head.CommitOffset != nil {
-			followerCommitOffsets[server.GetInternal()] = *head.CommitOffset
+	for server, candidate := range followers {
+		followersMap[server.GetInternal()] = candidate.HeadEntryId
+		if candidate.CommitOffset != nil {
+			followerCommitOffsets[server.GetInternal()] = *candidate.CommitOffset
 		}
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, commonrpc.DefaultRpcTimeout)
@@ -503,7 +503,7 @@ func (e *election) fenceNewTermAndAddFollower(ctx context.Context, term int64, o
 }
 
 func (e *election) fencingFailedFollowers(term int64, options *proto.NewTermOptions, ensemble []*proto.DataServerIdentity,
-	leader *proto.DataServerIdentity, successfulFollowers sharding.HeadEntries) {
+	leader *proto.DataServerIdentity, successfulFollowers sharding.Candidates) {
 	if len(successfulFollowers) == len(ensemble)-1 {
 		e.logger.Debug(
 			"All the member of the ensemble were successfully added",
@@ -670,7 +670,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 		slog.Any("new-leader", candidateLeader),
 		slog.Any("followers", followers),
 	)
-	leaderHead := ensembleHeads[candidateLeader].EntryId
+	leaderHead := ensembleHeads[candidateLeader].HeadEntryId
 	// Persisted first: if BecomeLeader fails, the next election keeps it
 	e.meta.Status = proto.ShardStatusSteadyState
 	e.meta.Leader = candidateLeader
@@ -740,7 +740,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 // todo: move the check to the feature package, and share it with the split
 // controller, which makes the same check for the children of a split.
 func (e *election) checkNegotiatedFeatures(negotiated []proto.Feature, enabled []proto.Feature,
-	candidatesStatus sharding.HeadEntries) error {
+	candidatesStatus sharding.Candidates) error {
 	ensemble := e.meta.Ensemble
 	features := e.featureSupplier(ensemble)
 
