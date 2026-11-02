@@ -58,11 +58,38 @@ func TestCollectorCollectReturnsTheSnapshot(t *testing.T) {
 	assert.True(t, s.DataServers["n1"].Down)
 }
 
+func TestCollectorCollectTakesTheLabelsOfARemovedDataServerFromItsStatus(t *testing.T) {
+	n0, removed := &proto.DataServerIdentity{Internal: "n0"}, &proto.DataServerIdentity{Internal: "removed"}
+	labels := &proto.DataServerMetadata{Labels: map[string]string{"zone": "z1"}}
+	metadata := &fakeMetadata{
+		dataServers: map[string]commonobject.Borrowed[*proto.DataServer]{
+			"n0": commonobject.Borrow(&proto.DataServer{Identity: n0}),
+		},
+		dataServerStatuses: map[string]commonobject.Borrowed[*proto.DataServerStatus]{
+			"removed": commonobject.Borrow(&proto.DataServerStatus{
+				State: proto.DataServerState_DATA_SERVER_STATE_DRAINING, Metadata: labels}),
+		},
+		statuses: map[string]commonobject.Borrowed[*proto.NamespaceStatus]{
+			"a": commonobject.Borrow(&proto.NamespaceStatus{Shards: map[int64]*proto.ShardMetadata{
+				1: {Ensemble: []*proto.DataServerIdentity{n0, removed}, Leader: n0},
+			}}),
+		},
+	}
+
+	s, err := New(t.Context(), metadata, func(string) bool { return true }, nil).Collect()
+
+	require.NoError(t, err)
+	assert.True(t, s.DataServers["removed"].Removed)
+	assert.Equal(t, removed, s.DataServers["removed"].GetIdentity())
+	assert.Equal(t, labels, s.DataServers["removed"].GetMetadata())
+}
+
 func TestCollectorCollectReturnsAFailedRead(t *testing.T) {
 	for name, metadata := range map[string]*fakeMetadata{
-		"data servers": {listDataServerErr: errors.New("unavailable")},
-		"namespaces":   {listNamespaceErr: errors.New("unavailable")},
-		"statuses":     {listNamespaceStatusErr: errors.New("unavailable")},
+		"data servers":         {listDataServerErr: errors.New("unavailable")},
+		"data server statuses": {listDataServerStatusErr: errors.New("unavailable")},
+		"namespaces":           {listNamespaceErr: errors.New("unavailable")},
+		"statuses":             {listNamespaceStatusErr: errors.New("unavailable")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := New(t.Context(), metadata, nil, nil).Collect()
@@ -249,12 +276,14 @@ func split() policy.Split {
 type fakeMetadata struct {
 	coordmetadata.Metadata
 
-	dataServers map[string]commonobject.Borrowed[*proto.DataServer]
-	statuses    map[string]commonobject.Borrowed[*proto.NamespaceStatus]
+	dataServers        map[string]commonobject.Borrowed[*proto.DataServer]
+	dataServerStatuses map[string]commonobject.Borrowed[*proto.DataServerStatus]
+	statuses           map[string]commonobject.Borrowed[*proto.NamespaceStatus]
 
-	listDataServerErr      error
-	listNamespaceErr       error
-	listNamespaceStatusErr error
+	listDataServerErr       error
+	listDataServerStatusErr error
+	listNamespaceErr        error
+	listNamespaceStatusErr  error
 }
 
 func (m *fakeMetadata) ListDataServer() (map[string]commonobject.Borrowed[*proto.DataServer], error) {
@@ -263,6 +292,10 @@ func (m *fakeMetadata) ListDataServer() (map[string]commonobject.Borrowed[*proto
 
 func (m *fakeMetadata) ListNamespace() (map[string]commonobject.Borrowed[*proto.Namespace], error) {
 	return nil, m.listNamespaceErr
+}
+
+func (m *fakeMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	return m.dataServerStatuses, m.listDataServerStatusErr
 }
 
 func (m *fakeMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*proto.NamespaceStatus], error) {

@@ -42,6 +42,33 @@ func TestDataServerReconcilerReconcileStoresRunningDataServers(t *testing.T) {
 	}, storedDataServerStates(runtime))
 }
 
+// The status of a data server stores its metadata from the configuration, also
+// when its labels change, and keeps it once the data server leaves the
+// configuration: its replicas keep their labels until they are drained.
+func TestDataServerReconcilerReconcileStoresTheMetadataOfDataServers(t *testing.T) {
+	runtime := namespaceRuntimeForErrors()
+	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
+		"s1": {State: proto.DataServerState_DATA_SERVER_STATE_RUNNING},
+	}
+	reconciler := &dataServerReconciler{runtime: runtime}
+	zone := func(name string) *proto.DataServerMetadata {
+		return &proto.DataServerMetadata{Labels: map[string]string{"zone": name}}
+	}
+	config := dataServersConfig("s1")
+	config.ServerMetadata = map[string]*proto.DataServerMetadata{"s1": zone("z1")}
+
+	require.NoError(t, reconciler.Reconcile(t.Context(), config))
+	assert.Equal(t, &proto.DataServerStatus{State: proto.DataServerState_DATA_SERVER_STATE_RUNNING, Metadata: zone("z1")},
+		runtime.metadata.status.GetDataServers()["s1"])
+
+	config.ServerMetadata["s1"] = zone("z2")
+	require.NoError(t, reconciler.Reconcile(t.Context(), config))
+	assert.Equal(t, zone("z2"), runtime.metadata.status.GetDataServers()["s1"].GetMetadata())
+
+	require.NoError(t, reconciler.Reconcile(t.Context(), dataServersConfig()))
+	assert.Equal(t, zone("z2"), runtime.metadata.status.GetDataServers()["s1"].GetMetadata())
+}
+
 // A data server that left the cluster, stored DRAINING or DRAINED, or only
 // draining in the runtime yet, isn't reconciled when the configuration has it
 // again.

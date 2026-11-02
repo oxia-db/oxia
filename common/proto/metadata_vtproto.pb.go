@@ -107,6 +107,7 @@ func (m *DataServerStatus) CloneVT() *DataServerStatus {
 	}
 	r := new(DataServerStatus)
 	r.State = m.State
+	r.Metadata = m.Metadata.CloneVT()
 	if rhs := m.SupportedFeatures; rhs != nil {
 		tmpContainer := make([]Feature, len(rhs))
 		copy(tmpContainer, rhs)
@@ -559,6 +560,9 @@ func (this *DataServerStatus) EqualVT(that *DataServerStatus) bool {
 		if vx != vy {
 			return false
 		}
+	}
+	if !this.Metadata.EqualVT(that.Metadata) {
+		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -1342,6 +1346,16 @@ func (m *DataServerStatus) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.Metadata != nil {
+		size, err := m.Metadata.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x1a
 	}
 	if len(m.SupportedFeatures) > 0 {
 		var pksize2 int
@@ -2329,6 +2343,10 @@ func (m *DataServerStatus) SizeVT() (n int) {
 			l += protohelpers.SizeOfVarint(uint64(e))
 		}
 		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
+	}
+	if m.Metadata != nil {
+		l = m.Metadata.SizeVT()
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -3382,6 +3400,42 @@ func (m *DataServerStatus) UnmarshalVT(dAtA []byte) error {
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field SupportedFeatures", wireType)
 			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Metadata", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Metadata == nil {
+				m.Metadata = &DataServerMetadata{}
+			}
+			if err := m.Metadata.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -6754,6 +6808,42 @@ func (m *DataServerStatus) UnmarshalVTUnsafe(dAtA []byte) error {
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field SupportedFeatures", wireType)
 			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Metadata", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Metadata == nil {
+				m.Metadata = &DataServerMetadata{}
+			}
+			if err := m.Metadata.UnmarshalVTUnsafe(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
