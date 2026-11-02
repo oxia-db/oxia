@@ -136,14 +136,10 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 	return ensemble, change, nil
 }
 
-// fenceQuorum fences the ensemble with the term. It returns the head entries of
-// the fenced members, and their commit offsets by internal address, for the
-// members that report one.
-//
 //nolint:revive
 func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemble []*proto.DataServerIdentity,
 	change *proto.EnsembleChangeMetadata) (ensembleHeads sharding.HeadEntries,
-	retainedHeads sharding.HeadEntries, features []proto.Feature, commitOffsets map[string]int64, err error) {
+	retainedHeads sharding.HeadEntries, features []proto.Feature, err error) {
 	fenceQuorumTimer := e.newTermQuorumLatencyHistogram.Timer()
 
 	fencingDataServers := ensemble
@@ -211,7 +207,6 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 	enabledFeatures := make(map[proto.Feature]bool)
 	retainedHeads = make(sharding.HeadEntries)
 	ensembleHeads = make(sharding.HeadEntries)
-	commitOffsets = make(map[string]int64)
 	oldEnsembleFenced := 0
 	totalResponses := 0
 	for (oldEnsembleFenced < oldEnsembleQuorum || len(ensembleHeads) < majority) && totalResponses < fencingQuorumSize {
@@ -228,20 +223,21 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 		for _, f := range fencingResponse.Response.GetFeaturesEnabled() {
 			enabledFeatures[f] = true
 		}
-		if fencingResponse.Response.CommitOffset != nil {
-			commitOffsets[fencingResponse.DataServer.GetInternal()] = fencingResponse.Response.GetCommitOffset()
+		head := sharding.HeadEntry{
+			EntryId:      fencingResponse.Response.HeadEntryId,
+			CommitOffset: fencingResponse.Response.CommitOffset,
 		}
 		if slices.Contains(ensemble, fencingResponse.DataServer) {
-			ensembleHeads[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
+			ensembleHeads[fencingResponse.DataServer] = head
 		} else {
-			retainedHeads[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
+			retainedHeads[fencingResponse.DataServer] = head
 		}
 	}
 	if oldEnsembleFenced < oldEnsembleQuorum {
-		return nil, nil, nil, nil, errors.Wrap(err, "election failed: quorum not reached")
+		return nil, nil, nil, errors.Wrap(err, "election failed: quorum not reached")
 	}
 	if len(ensembleHeads) < majority {
-		return nil, nil, nil, nil, errors.Errorf(
+		return nil, nil, nil, errors.Errorf(
 			"election failed: quorum of the ensemble not reached: %d of %d members fenced",
 			len(ensembleHeads), len(ensemble))
 	}
@@ -259,13 +255,11 @@ gracePeriod:
 			for _, f := range r.Response.GetFeaturesEnabled() {
 				enabledFeatures[f] = true
 			}
-			if r.Response.CommitOffset != nil {
-				commitOffsets[r.DataServer.GetInternal()] = r.Response.GetCommitOffset()
-			}
+			head := sharding.HeadEntry{EntryId: r.Response.HeadEntryId, CommitOffset: r.Response.CommitOffset}
 			if slices.Contains(ensemble, r.DataServer) {
-				ensembleHeads[r.DataServer] = r.Response.HeadEntryId
+				ensembleHeads[r.DataServer] = head
 			} else {
-				retainedHeads[r.DataServer] = r.Response.HeadEntryId
+				retainedHeads[r.DataServer] = head
 			}
 		case <-time.After(quorumFencingGracePeriod):
 			break gracePeriod
@@ -273,7 +267,7 @@ gracePeriod:
 	}
 	enabled := maps.Keys(enabledFeatures)
 	slices.Sort(enabled)
-	return ensembleHeads, retainedHeads, enabled, commitOffsets, nil
+	return ensembleHeads, retainedHeads, enabled, nil
 }
 
 // chooseLeader chooses a fenced data server with the highest head entry, which
@@ -301,9 +295,9 @@ func (e *election) chooseLeader(ensembleHeads sharding.HeadEntries, retainedHead
 	var highest *proto.EntryId
 	for i, heads := range []sharding.HeadEntries{ensembleHeads, retainedHeads} {
 		for server, head := range heads {
-			if highest == nil || entry.Compare(head, highest) > 0 {
-				highest, mostUpToDate = head, []*proto.DataServerIdentity{server}
-			} else if i == 0 && entry.Compare(head, highest) == 0 {
+			if highest == nil || entry.Compare(head.EntryId, highest) > 0 {
+				highest, mostUpToDate = head.EntryId, []*proto.DataServerIdentity{server}
+			} else if i == 0 && entry.Compare(head.EntryId, highest) == 0 {
 				// Visited first, the ensemble wins a tie
 				mostUpToDate = append(mostUpToDate, server)
 			}
@@ -348,7 +342,7 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 	e.logger.Info("The data server removed by the change of the ensemble is ahead of it, the change is undone",
 		slog.Any("from", change.From), slog.Any("to", change.To))
 	// To may have missed the fence
-	maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ *proto.EntryId) bool {
+	maps.DeleteFunc(ensembleHeads, func(server *proto.DataServerIdentity, _ sharding.HeadEntry) bool {
 		return server.GetNameOrDefault() == change.To.GetNameOrDefault()
 	})
 	retainedHeads.Move(retained, ensembleHeads)
@@ -358,15 +352,15 @@ func (e *election) undoEnsembleChange(retained *proto.DataServerIdentity, ensemb
 }
 
 func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, followers sharding.HeadEntries,
-	commitOffsets map[string]int64, replicationFactor uint32, negotiateFeatures []proto.Feature) error {
+	replicationFactor uint32, negotiateFeatures []proto.Feature) error {
 	becomeLeaderTimer := e.becomeLeaderLatencyHistogram.Timer()
 
 	followersMap := make(map[string]*proto.EntryId)
 	followerCommitOffsets := make(map[string]int64)
-	for server, e := range followers {
-		followersMap[server.GetInternal()] = e
-		if commitOffset, ok := commitOffsets[server.GetInternal()]; ok {
-			followerCommitOffsets[server.GetInternal()] = commitOffset
+	for server, head := range followers {
+		followersMap[server.GetInternal()] = head.EntryId
+		if head.CommitOffset != nil {
+			followerCommitOffsets[server.GetInternal()] = *head.CommitOffset
 		}
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, commonrpc.DefaultRpcTimeout)
@@ -658,7 +652,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 	termOptions.Features = negotiatedFeatures
 
 	// Send NewTerm to all the ensemble members
-	ensembleHeads, retainedHeads, enabledFeatures, commitOffsets, err := e.fenceQuorum(
+	ensembleHeads, retainedHeads, enabledFeatures, err := e.fenceQuorum(
 		e.meta.Term,
 		termOptions,
 		e.meta.Ensemble,
@@ -676,7 +670,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 		slog.Any("new-leader", candidateLeader),
 		slog.Any("followers", followers),
 	)
-	leaderHead := ensembleHeads[candidateLeader]
+	leaderHead := ensembleHeads[candidateLeader].EntryId
 	// Persisted first: if BecomeLeader fails, the next election keeps it
 	e.meta.Status = proto.ShardStatusSteadyState
 	e.meta.Leader = candidateLeader
@@ -694,7 +688,7 @@ func (e *election) Start() (candidateLeader *proto.DataServerIdentity, err error
 	}); err != nil {
 		return nil, errors.Wrap(err, "failed to persist the new leader")
 	}
-	if err = e.becomeLeader(e.meta.Term, candidateLeader, followers, commitOffsets, uint32(len(e.meta.Ensemble)),
+	if err = e.becomeLeader(e.meta.Term, candidateLeader, followers, uint32(len(e.meta.Ensemble)),
 		negotiatedFeatures); err != nil {
 		return nil, err
 	}
