@@ -115,7 +115,10 @@ func (s *scheduler) run() {
 		}
 		cluster := config.UnsafeBorrow()
 		split := model.NewSplitPolicy(cluster)
-		interval = roundInterval(cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault(), split)
+		interval = cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault()
+		if split.Enabled {
+			interval = min(interval, split.CollectionInterval)
+		}
 		now := time.Now()
 		snap, err := s.collector.Collect()
 		if err != nil {
@@ -134,14 +137,15 @@ func (s *scheduler) run() {
 		}
 		succeeded := true
 		for _, result := range s.dispatcher.Dispatch(snap, actions) {
-			if result.Err != nil {
+			_, splitting := result.Action.(*action.SplitAction)
+			switch {
+			case result.Err != nil:
 				s.logger.Warn("An action failed", slog.Any("action", result.Action), slog.Any("error", result.Err))
 				succeeded = false
-				continue
-			}
-			if _, ok := result.Action.(*action.SplitAction); ok {
+			case splitting:
 				s.collector.SetLastSplit(now)
 				s.splitsCounter.Inc()
+			default:
 			}
 		}
 		// The next round plans on the snapshot that these actions leave, right
@@ -151,14 +155,4 @@ func (s *scheduler) run() {
 			interval = 0
 		}
 	}
-}
-
-// roundInterval returns the time until the next round when nothing triggers
-// one: the schedule interval, or the collection interval of the auto-split if
-// it is shorter, since a round follows each sample of the shard stats.
-func roundInterval(schedule time.Duration, split model.SplitPolicy) time.Duration {
-	if split.Enabled {
-		return min(schedule, split.CollectionInterval)
-	}
-	return schedule
 }
