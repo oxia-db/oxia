@@ -29,24 +29,29 @@ import (
 // that ranks first among those that the limits of the plan allow and the
 // filters pass.
 //
-// A ShardGreedy keeps buffers between the searches of a plan: one goroutine
-// uses it at a time.
+// A ShardGreedy keeps the scores of its searches: one goroutine uses it at a
+// time.
 type ShardGreedy struct {
-	s           *stats.ClusterStats
-	dataServers []string
-	kind        model.Kind
-	tiers       []tier.Tier
-	filters     []filter.Filter
+	s       *stats.ClusterStats
+	kind    model.Kind
+	tiers   []tier.Tier
+	filters []filter.Filter
 
-	// index holds the position of each data server in dataServers, and shards
-	// the shards of s in the order of their namespaces and ids.
-	index  map[string]int
-	shards []shardRef
-	// pairs holds the scores of the ops of a namespace by their source and
-	// target, and scratch the score of an op outside dataServers, reused from
-	// one search to the next.
-	pairs   []tier.Score
-	scratch tier.Score
+	// dataServers holds the names of the data servers of s in order, index
+	// their positions, and shards the shards of s in the order of their
+	// namespaces and ids.
+	dataServers []string
+	index       map[string]int
+	shards      []shardRef
+	// deltas and improved hold the score of the op of the namespace being
+	// searched from each data server to each other one, scored the first time
+	// that the search reads it, or reads its row: stamps and rowStamps hold the
+	// search of each, and stamp the search of the namespace.
+	deltas    []int
+	improved  []int
+	stamps    []uint64
+	rowStamps []uint64
+	stamp     uint64
 }
 
 type shardRef struct {
@@ -55,14 +60,13 @@ type shardRef struct {
 	shard     *stats.ShardStats
 }
 
-// NewShardGreedy returns the greedy search of the ops of kind on s, between
-// dataServers, the names of the data servers in order, scored by tiers, the
-// tiers of that kind in priority order, and passed by filters.
-func NewShardGreedy(s *stats.ClusterStats, dataServers []string, kind model.Kind, tiers []tier.Tier,
-	filters []filter.Filter) *ShardGreedy {
-	g := &ShardGreedy{s: s, dataServers: dataServers, kind: kind, tiers: tiers, filters: filters,
-		index: make(map[string]int, len(dataServers))}
-	for i, name := range dataServers {
+// NewShardGreedy returns the greedy search of the ops of kind on s, scored by
+// tiers, the tiers of that kind in priority order, and passed by filters.
+func NewShardGreedy(s *stats.ClusterStats, kind model.Kind, tiers []tier.Tier, filters []filter.Filter) *ShardGreedy {
+	g := &ShardGreedy{s: s, kind: kind, tiers: tiers, filters: filters,
+		dataServers: slices.Sorted(maps.Keys(s.DataServers))}
+	g.index = make(map[string]int, len(g.dataServers))
+	for i, name := range g.dataServers {
 		g.index[name] = i
 	}
 	for _, name := range slices.Sorted(maps.Keys(s.Namespaces)) {
@@ -86,7 +90,7 @@ func (g *ShardGreedy) FindBest(load *tier.Load, allows func(model.Candidate) boo
 		for _, ref := range g.shards {
 			op := model.Candidate{Kind: g.kind, Namespace: ref.namespace, Shard: ref.id}
 			tier.EvaluateInto(&score, g.tiers, g.s, load, op)
-			best.offer(g.filters, allows, g.s, op, ref.shard, &score)
+			g.offer(&best, allows, op, ref.shard, score)
 		}
 	} else {
 		g.findBestMove(load, allows, &best)
@@ -99,16 +103,16 @@ func (g *ShardGreedy) FindBest(load *tier.Load, allows func(model.Candidate) boo
 
 // findBestMove searches the replaces or the transfers. The tiers score them by
 // their namespace and their data servers only, not their shard: it scores each
-// pair of data servers of a namespace once, and visits only the targets that
-// improve a tier.
+// pair of data servers of a namespace once, the first time that it reads it.
 func (g *ShardGreedy) findBestMove(load *tier.Load, allows func(model.Candidate) bool, best *bestOp) {
-	n := len(g.dataServers)
-	if len(g.pairs) != n*n {
-		g.pairs = make([]tier.Score, n*n)
+	n, t := len(g.dataServers), len(g.tiers)
+	if len(g.stamps) != n*n {
+		g.deltas, g.improved = make([]int, n*n*t), make([]int, n*n)
+		g.stamps, g.rowStamps = make([]uint64, n*n), make([]uint64, n)
 	}
 	for i, ref := range g.shards {
 		if i == 0 || ref.namespace != g.shards[i-1].namespace {
-			g.scorePairs(load, ref.namespace)
+			g.stamp++
 		}
 		op := model.Candidate{Kind: g.kind, Namespace: ref.namespace, Shard: ref.id}
 		if g.kind == model.TransferLeader {
@@ -120,10 +124,12 @@ func (g *ShardGreedy) findBestMove(load *tier.Load, allows func(model.Candidate)
 }
 
 // offerTransfers offers best the transfers of shard, of op, to each other
-// member.
+// member. A leader that isn't a data server of s transfers nothing: the tiers
+// can't score it.
 func (g *ShardGreedy) offerTransfers(load *tier.Load, op model.Candidate, shard *stats.ShardStats,
 	allows func(model.Candidate) bool, best *bestOp) {
-	if shard.Leader == "" {
+	from, ok := g.index[shard.Leader]
+	if !ok {
 		return
 	}
 	op.From = shard.Leader
@@ -132,7 +138,7 @@ func (g *ShardGreedy) offerTransfers(load *tier.Load, op model.Candidate, shard 
 			continue
 		}
 		op.To = to
-		best.offer(g.filters, allows, g.s, op, shard, g.scoreOf(load, op))
+		g.offer(best, allows, op, shard, g.scoreOf(load, op, from, g.index[to]))
 	}
 }
 
@@ -140,52 +146,46 @@ func (g *ShardGreedy) offerTransfers(load *tier.Load, op model.Candidate, shard 
 // each data server whose pair improves a tier.
 func (g *ShardGreedy) offerReplaces(load *tier.Load, op model.Candidate, shard *stats.ShardStats,
 	allows func(model.Candidate) bool, best *bestOp) {
-	n := len(g.dataServers)
-	for _, from := range shard.Ensemble {
-		op.From = from
-		i, ok := g.index[from]
-		if !ok {
-			for _, to := range g.dataServers {
-				op.To = to
-				best.offer(g.filters, allows, g.s, op, shard, g.scoreOf(load, op))
-			}
-			continue
-		}
-		row := g.pairs[i*n : (i+1)*n]
-		for to := range row {
-			if row[to].Improved < 0 {
+	n, t := len(g.dataServers), len(g.tiers)
+	for _, member := range shard.Ensemble {
+		op.From = member
+		from := g.index[member]
+		g.scoreRow(load, op, from)
+		for to := range n {
+			pair := from*n + to
+			if g.improved[pair] < 0 {
 				continue
 			}
 			op.To = g.dataServers[to]
-			best.offer(g.filters, allows, g.s, op, shard, &row[to])
+			g.offer(best, allows, op, shard, tier.Score{Deltas: g.deltas[pair*t : (pair+1)*t], Improved: g.improved[pair]})
 		}
 	}
 }
 
-// scoreOf returns the score of op: the score of its pair, or its own score if
-// one of its data servers isn't in dataServers.
-func (g *ShardGreedy) scoreOf(load *tier.Load, op model.Candidate) *tier.Score {
-	from, okFrom := g.index[op.From]
-	to, okTo := g.index[op.To]
-	if okFrom && okTo {
-		return &g.pairs[from*len(g.dataServers)+to]
+// scoreRow scores op from the data server at from to each data server, the
+// first time that the search of the namespace reads them.
+func (g *ShardGreedy) scoreRow(load *tier.Load, op model.Candidate, from int) {
+	if g.rowStamps[from] == g.stamp {
+		return
 	}
-	tier.EvaluateInto(&g.scratch, g.tiers, g.s, load, op)
-	return &g.scratch
+	g.rowStamps[from] = g.stamp
+	for to, name := range g.dataServers {
+		op.To = name
+		g.scoreOf(load, op, from, to)
+	}
 }
 
-// scorePairs scores the op of the kind of namespace from each data server to
-// each other one, into pairs.
-func (g *ShardGreedy) scorePairs(load *tier.Load, namespace string) {
-	n := len(g.dataServers)
-	op := model.Candidate{Kind: g.kind, Namespace: namespace}
-	for from := range n {
-		op.From = g.dataServers[from]
-		for to := range n {
-			op.To = g.dataServers[to]
-			tier.EvaluateInto(&g.pairs[from*n+to], g.tiers, g.s, load, op)
-		}
+// scoreOf returns the score of op, from the data server at from to the one at
+// to, scored the first time that the search of the namespace reads it.
+func (g *ShardGreedy) scoreOf(load *tier.Load, op model.Candidate, from int, to int) tier.Score {
+	pair, t := from*len(g.dataServers)+to, len(g.tiers)
+	deltas := g.deltas[pair*t : (pair+1)*t : (pair+1)*t]
+	if g.stamps[pair] != g.stamp {
+		score := tier.Score{Deltas: deltas}
+		tier.EvaluateInto(&score, g.tiers, g.s, load, op)
+		g.improved[pair], g.stamps[pair] = score.Improved, g.stamp
 	}
+	return tier.Score{Deltas: deltas, Improved: g.improved[pair]}
 }
 
 // bestOp is the op that ranks first among those offered so far.
@@ -197,11 +197,11 @@ type bestOp struct {
 }
 
 // offer makes op, of shard, the best op if it improves a tier, ranks first,
-// and passes the limits that allows checks and filters. The limits and the
+// and passes the limits that allows checks and the filters. The limits and the
 // filters cost the most: only an op that would rank first runs them, which
 // finds the same op as checking every op first.
-func (b *bestOp) offer(filters []filter.Filter, allows func(model.Candidate) bool, s *stats.ClusterStats,
-	op model.Candidate, shard *stats.ShardStats, score *tier.Score) {
+func (g *ShardGreedy) offer(best *bestOp, allows func(model.Candidate) bool, op model.Candidate,
+	shard *stats.ShardStats, score tier.Score) {
 	if score.Improved < 0 {
 		return
 	}
@@ -209,13 +209,13 @@ func (b *bestOp) offer(filters []filter.Filter, allows func(model.Candidate) boo
 	if op.From == shard.Leader {
 		leader = 1
 	}
-	if b.found && cmp.Or(score.Compare(b.score), cmp.Compare(leader, b.leader)) >= 0 {
+	if best.found && cmp.Or(score.Compare(best.score), cmp.Compare(leader, best.leader)) >= 0 {
 		return
 	}
-	if !allows(op) || filter.Check(filters, s, op) != nil {
+	if !allows(op) || filter.Check(g.filters, g.s, op) != nil {
 		return
 	}
-	b.op, b.leader, b.found = op, leader, true
-	b.score.Improved = score.Improved
-	b.score.Deltas = append(b.score.Deltas[:0], score.Deltas...)
+	best.op, best.leader, best.found = op, leader, true
+	best.score.Improved = score.Improved
+	best.score.Deltas = append(best.score.Deltas[:0], score.Deltas...)
 }

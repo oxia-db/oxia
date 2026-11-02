@@ -84,6 +84,23 @@ func TestShardGreedyFindBestSkipsTheOpsThatAFilterRejects(t *testing.T) {
 	assert.Equal(t, "n2", c.To)
 }
 
+// Shard 0 changes its ensemble, and its leader is no data server of the
+// snapshot: it transfers nothing, and the leaders of n0 move to n1.
+func TestShardGreedyFindBestSkipsALeaderThatIsNoDataServer(t *testing.T) {
+	s := cluster(2)
+	shard := addShard(s, "a", 0, "n0", "n1")
+	shard.Leader, shard.Changing = "gone", true
+	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
+	addShard(s, "a", 2, "n0", "n1").Leader = "n0"
+	g := NewShardGreedy(s, model.TransferLeader, tiersOf(model.TransferLeader), filter.Defaults())
+
+	c, found := g.FindBest(tier.NewLoad(s), allowAll)
+
+	require.True(t, found)
+	assert.Equal(t, model.Candidate{Kind: model.TransferLeader, Namespace: "a", Shard: 1, From: "n0", To: "n1",
+		Reason: "namespace-leaders"}, c)
+}
+
 func TestShardGreedyFindBestFindsNothingOnceBalanced(t *testing.T) {
 	s := cluster(2)
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
@@ -105,13 +122,9 @@ func TestShardGreedyFindBestMatchesTheReference(t *testing.T) {
 			planned[name] = random.IntN(4) == 0
 		}
 		allows := func(op model.Candidate) bool { return !planned[op.To] }
-		// Some searches only see some of the data servers
-		if random.IntN(4) == 0 {
-			dataServers = slices.DeleteFunc(dataServers, func(string) bool { return random.IntN(3) == 0 })
-		}
 		for _, kind := range []model.Kind{model.Replace, model.TransferLeader, model.Split} {
 			want, wantFound := referenceFindBest(s, load, dataServers, kind, allows)
-			got, found := NewShardGreedy(s, dataServers, kind, tiersOf(kind), filter.Defaults()).FindBest(load, allows)
+			got, found := NewShardGreedy(s, kind, tiersOf(kind), filter.Defaults()).FindBest(load, allows)
 			require.Equal(t, wantFound, found, "cluster %d, %s", i, kind)
 			require.Equal(t, want, got, "cluster %d, %s", i, kind)
 		}
@@ -146,7 +159,7 @@ var benchSizes = []struct {
 // replaceGreedy returns the greedy search of the replaces on s, with the default
 // filters and tiers.
 func replaceGreedy(s *stats.ClusterStats) *ShardGreedy {
-	return NewShardGreedy(s, names(s), model.Replace, tiersOf(model.Replace), filter.Defaults())
+	return NewShardGreedy(s, model.Replace, tiersOf(model.Replace), filter.Defaults())
 }
 
 // tiersOf returns the default tiers that score the ops of kind.

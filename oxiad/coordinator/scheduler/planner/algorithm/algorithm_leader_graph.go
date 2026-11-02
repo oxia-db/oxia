@@ -35,6 +35,9 @@ import (
 // that it reaches it, after its cheaper checks, and the graph keeps the
 // verdict for the next searches of the plan. The limits of the plan, which its
 // ops change, are checked during each search.
+//
+// A LeaderGraph keeps the verdicts of its searches: one goroutine uses it at a
+// time.
 type LeaderGraph struct {
 	s          *stats.ClusterStats
 	filters    []filter.Filter
