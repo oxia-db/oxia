@@ -424,11 +424,17 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 		fc.log.Warn("Failed to get the head entry", slog.Any("error", err), slog.Int64("new-term", req.Term))
 		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get head entry failed")
 	}
+	// The stream of the leader is closed: the commit offset it advertised
+	// doesn't move anymore, while the state applier keeps applying the entries
+	// up to it. Reporting it rather than the applied offset keeps the leader
+	// from truncating the follower below the entries it applies meanwhile.
+	commitOffset := max(fc.advertisedCommitOffset.Load(), fc.commitOffset.Load())
 	fc.log.Info("Follower successfully initialized in new term", slog.Int64("term", fc.term.Load()),
-		slog.Any("last-entry", headEntryId))
+		slog.Any("last-entry", headEntryId), slog.Int64("commit-offset", commitOffset))
 	return &proto.NewTermResponse{
 		HeadEntryId:     headEntryId,
 		FeaturesEnabled: fc.db.EnabledFeatures(),
+		CommitOffset:    &commitOffset,
 	}, nil
 }
 

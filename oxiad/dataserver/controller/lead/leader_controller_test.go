@@ -3550,6 +3550,226 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 	}
 }
 
+// A follower of an earlier term than every entry in the wal of the leader has no
+// entry in common with that wal. Its entries up to the commit offset it reported
+// when it got fenced, and up to its head, are committed: the leader truncates it
+// to them, and streams it the next entries, if its wal holds them. Otherwise the
+// follower gets a snapshot. When it reported no commit offset, a leader whose
+// wal starts at the first offset truncates it to an empty wal, and one whose wal
+// starts after a snapshot sends it a snapshot: the follower may have committed
+// the entries it has in common with the leader's database, and refuses to
+// truncate them (oxia-db/chaos#85).
+func TestLeaderController_BecomeLeaderWithFollowerBehindTheWalOfTheLeader(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The first entry in the wal of the leader, of term 2. The leader's
+		// database holds the entries 0 to 9.
+		walFirstOffset int64
+		// The head of the follower is of term 1
+		followerOffset       int64
+		followerCommitOffset *int64
+		// Joins with AddFollower once the leader leads, rather than with the
+		// election
+		late bool
+		// The offset the follower gets truncated to, or nil for none
+		truncateOffset *int64
+		// The first entry sent to the follower, or -1 for a snapshot
+		firstAppend int64
+	}{
+		{name: "commit offset at the head, wal after it", walFirstOffset: 6, followerOffset: 5,
+			followerCommitOffset: ptr(5), firstAppend: 6},
+		{name: "commit offset at the head, late follower", walFirstOffset: 6, followerOffset: 5,
+			followerCommitOffset: ptr(5), late: true, firstAppend: 6},
+		{name: "commit offset past the head", walFirstOffset: 6, followerOffset: 5,
+			followerCommitOffset: ptr(7), firstAppend: 6},
+		{name: "commit offset below the head", walFirstOffset: 6, followerOffset: 7,
+			followerCommitOffset: ptr(5), truncateOffset: ptr(5), firstAppend: 6},
+		{name: "commit offset below the head, late follower", walFirstOffset: 6, followerOffset: 7,
+			followerCommitOffset: ptr(5), late: true, truncateOffset: ptr(5), firstAppend: 6},
+		{name: "commit offset before the wal", walFirstOffset: 8, followerOffset: 5,
+			followerCommitOffset: ptr(5), firstAppend: wal.InvalidOffset},
+		{name: "commit offset unknown, wal from the first offset", walFirstOffset: 0, followerOffset: 5,
+			truncateOffset: ptr(wal.InvalidOffset), firstAppend: 0},
+		{name: "commit offset unknown, wal after a snapshot", walFirstOffset: 6, followerOffset: 5,
+			firstAppend: wal.InvalidOffset},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lc, rpcClient, closeAll := newLeaderWithWalAfter(t, test.walFirstOffset)
+			defer closeAll()
+			// A truncation would block the leader until it gets a response
+			truncatedOffset := wal.InvalidOffset
+			if test.truncateOffset != nil {
+				truncatedOffset = *test.truncateOffset
+			}
+			rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
+				HeadEntryId: &proto.EntryId{Term: 3, Offset: truncatedOffset},
+			}}
+
+			follower := &proto.EntryId{Term: 1, Offset: test.followerOffset}
+			req := &proto.BecomeLeaderRequest{Shard: 1, Term: 3, ReplicationFactor: 3}
+			if !test.late {
+				req.FollowerMaps = map[string]*proto.EntryId{"f1": follower}
+				if test.followerCommitOffset != nil {
+					req.FollowerCommitOffsets = map[string]int64{"f1": *test.followerCommitOffset}
+				}
+			}
+			_, err := lc.BecomeLeader(context.Background(), req)
+			require.NoError(t, err)
+			if test.late {
+				_, err = lc.AddFollower(&proto.AddFollowerRequest{
+					Shard:                1,
+					Term:                 3,
+					FollowerName:         "f1",
+					FollowerHeadEntryId:  follower,
+					FollowerCommitOffset: test.followerCommitOffset,
+				})
+				require.NoError(t, err)
+			}
+
+			if test.truncateOffset != nil {
+				select {
+				case req := <-rpcClient.TruncateReqs:
+					assert.EqualValues(t, *test.truncateOffset, req.HeadEntryId.Offset)
+				case <-time.After(10 * time.Second):
+					assert.Fail(t, "the follower didn't get truncated")
+				}
+			} else {
+				assert.Empty(t, rpcClient.TruncateReqs, "the follower got truncated")
+			}
+			if test.firstAppend == wal.InvalidOffset {
+				assert.Eventually(t, func() bool { return len(rpcClient.SendSnapshotStream.Requests) > 0 },
+					10*time.Second, 10*time.Millisecond, "the follower got no snapshot")
+			} else {
+				select {
+				case req := <-rpcClient.AppendReqs:
+					assert.EqualValues(t, test.firstAppend, req.Entry.Offset)
+				case <-time.After(10 * time.Second):
+					assert.Fail(t, "the leader sent no entry to the follower")
+				}
+				assert.Empty(t, rpcClient.SendSnapshotStream.Requests, "the follower got a snapshot")
+			}
+		})
+	}
+}
+
+// A leader that misses committed entries, those up to the commit offset that a
+// follower reported past the head of the leader, refuses to lead, or to add the
+// follower: it would lose them.
+func TestLeaderController_RefusesAFollowerWithCommittedEntriesItDoesntHave(t *testing.T) {
+	for _, late := range []bool{false, true} {
+		t.Run(fmt.Sprintf("late=%v", late), func(t *testing.T) {
+			lc, rpcClient, closeAll := newLeaderWithWalAfter(t, 0)
+			defer closeAll()
+			// A truncation would block the leader until it gets a response
+			rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
+				HeadEntryId: &proto.EntryId{Term: 3, Offset: 9},
+			}}
+
+			follower := &proto.EntryId{Term: 2, Offset: 12}
+			req := &proto.BecomeLeaderRequest{Shard: 1, Term: 3, ReplicationFactor: 3}
+			if !late {
+				req.FollowerMaps = map[string]*proto.EntryId{"f1": follower}
+				req.FollowerCommitOffsets = map[string]int64{"f1": 12}
+				_, err := lc.BecomeLeader(context.Background(), req)
+				assert.ErrorIs(t, err, constant.ErrResourceConflict)
+				assert.Equal(t, proto.ServingStatus_FENCED, lc.Status())
+			} else {
+				_, err := lc.BecomeLeader(context.Background(), req)
+				require.NoError(t, err)
+				_, err = lc.AddFollower(&proto.AddFollowerRequest{
+					Shard:                1,
+					Term:                 3,
+					FollowerName:         "f1",
+					FollowerHeadEntryId:  follower,
+					FollowerCommitOffset: ptr(12),
+				})
+				assert.ErrorIs(t, err, constant.ErrResourceConflict)
+			}
+			assert.Empty(t, rpcClient.TruncateReqs, "the follower got truncated")
+		})
+	}
+}
+
+// A leader fenced with a new term reports the commit offset of its closed
+// tracker, which it doesn't apply entries past, or the one of its database
+// without a tracker.
+func TestLeaderController_NewTermReportsTheCommitOffset(t *testing.T) {
+	lc, _, closeAll := newLeaderWithWalAfter(t, 0)
+	defer closeAll()
+
+	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 3})
+	require.NoError(t, err)
+	require.NotNil(t, res.CommitOffset)
+	assert.EqualValues(t, 9, res.GetCommitOffset(), "the commit offset of the database")
+
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: 1, Term: 3, ReplicationFactor: 1})
+	require.NoError(t, err)
+	var shard int64 = 1
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "other-key", Value: []byte("")}},
+	})
+	require.NoError(t, err)
+
+	res, err = lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 4})
+	require.NoError(t, err)
+	assert.EqualValues(t, 10, res.GetCommitOffset(), "the commit offset of the tracker")
+	assert.EqualValues(t, 10, res.HeadEntryId.Offset)
+}
+
+// newLeaderWithWalAfter returns a leader fenced with term 3, whose database
+// holds the entries 0 to 9, of terms 1 and 2, and whose wal holds the ones from
+// walFirstOffset, of term 2.
+func newLeaderWithWalAfter(t *testing.T, walFirstOffset int64) (LeaderController, *rpc.MockRpcClient, func()) {
+	t.Helper()
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+	require.NoError(t, err)
+	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
+		1*time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	previousCrc := uint32(1)
+	for i := int64(0); i < 10; i++ {
+		wr := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}}
+		value, err := pb.Marshal(wrapInLogEntryValue(wr))
+		require.NoError(t, err)
+		if i >= walFirstOffset {
+			_, err = walObject.AppendAsyncWithPreviousCrc(
+				&proto.LogEntry{Term: 2, Offset: i, Value: value}, &previousCrc)
+			require.NoError(t, err)
+		}
+		_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
+		require.NoError(t, err)
+	}
+	require.NoError(t, walObject.Sync(context.Background()))
+	require.NoError(t, db.UpdateTerm(2, database.TermOptions{}))
+	require.NoError(t, db.Close())
+	require.NoError(t, walObject.Close())
+
+	rpcClient := rpc.NewMockRpcClient()
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
+		walFactory, kvFactory, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 3})
+	require.NoError(t, err)
+	return lc, rpcClient, func() {
+		// Complete a snapshot in progress: the leader waits for it to close
+		rpcClient.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: 9}
+		assert.NoError(t, lc.Close())
+		assert.NoError(t, kvFactory.Close())
+		assert.NoError(t, walFactory.Close())
+	}
+}
+
+func ptr(v int64) *int64 {
+	return &v
+}
+
 func TestLeaderControllerCheckpointHoldsTheCommitOffsetAndTerm(t *testing.T) {
 	var shard int64 = 1
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))

@@ -3628,6 +3628,51 @@ func TestFollowerControllerTruncateRefusesBelowTheCommitOffset(t *testing.T) {
 	assert.NoError(t, fc.Close())
 }
 
+// A follower fenced with a new term reports the commit offset that the leader
+// advertised, rather than the one it applied: its state applier keeps applying
+// the entries up to it, and doesn't pass it, so the new leader can truncate the
+// follower down to it.
+func TestFollowerControllerNewTermReportsTheAdvertisedCommitOffset(t *testing.T) {
+	walFactory, kvFactory := newHookFactories(t)
+	fc := newReplicatingFollower(t, walFactory, kvFactory)
+	appendUncommittedEntries(t, fc, 3)
+
+	// The state applier can't read the entries to apply yet
+	failReads := &atomic.Bool{}
+	failReads.Store(true)
+	walFactory.setHooks(func(h *walHooks) {
+		h.readNext = func() error {
+			if failReads.Load() {
+				return errors.New("read failed")
+			}
+			return nil
+		}
+	})
+	stream, closeStream := openStream(t, fc)
+	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: 1})
+	require.Eventually(t, func() bool { return fc.(*followerController).advertisedCommitOffset.Load() == 1 },
+		10*time.Second, 10*time.Millisecond)
+	closeStream()
+
+	res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
+	require.NoError(t, err)
+	require.NotNil(t, res.CommitOffset)
+	assert.EqualValues(t, 1, res.GetCommitOffset())
+	assert.EqualValues(t, wal.InvalidOffset, fc.CommitOffset())
+
+	// Fenced, it applies the entries up to the reported commit offset
+	failReads.Store(false)
+	require.Eventually(t, func() bool { return fc.CommitOffset() == 1 }, 10*time.Second, 10*time.Millisecond)
+
+	// The new leader truncates it to the reported commit offset
+	resp, err := fc.Truncate(&proto.TruncateRequest{Term: 2, HeadEntryId: &proto.EntryId{Offset: 1}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, resp.HeadEntryId.Offset)
+	assert.EqualValues(t, 1, fc.CommitOffset())
+
+	assert.NoError(t, fc.Close())
+}
+
 // The state applier retries the committed entries that it fails to read from
 // the WAL, once the leader sends its next request.
 func TestFollowerControllerStateApplierRetriesWalReadFailures(t *testing.T) {

@@ -157,6 +157,8 @@ type PerNodeChannels struct {
 const defaultTimeout = 10 * time.Second
 const defaultNegativeTimeout = 1 * time.Second
 
+const noBecomeLeaderRequest = "did not receive BecomeLeader request in time"
+
 func (m *PerNodeChannels) ExpectBecomeLeaderRequest(t *testing.T, shard int64, term int64, replicationFactor uint32) {
 	t.Helper()
 
@@ -164,7 +166,7 @@ func (m *PerNodeChannels) ExpectBecomeLeaderRequest(t *testing.T, shard int64, t
 	select {
 	case r = <-m.becomeLeaderRequests:
 	case <-time.After(defaultTimeout):
-		assert.Fail(t, "did not receive BecomeLeader request in time")
+		assert.Fail(t, noBecomeLeaderRequest)
 		return
 	}
 
@@ -181,7 +183,7 @@ func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFeatures(t *testing.T, sh
 	select {
 	case r = <-m.becomeLeaderRequests:
 	case <-time.After(defaultTimeout):
-		assert.Fail(t, "did not receive BecomeLeader request in time")
+		assert.Fail(t, noBecomeLeaderRequest)
 		return
 	}
 
@@ -201,7 +203,7 @@ func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFollowers(t *testing.T, s
 	select {
 	case r = <-m.becomeLeaderRequests:
 	case <-time.After(defaultTimeout):
-		assert.Fail(t, "did not receive BecomeLeader request in time")
+		assert.Fail(t, noBecomeLeaderRequest)
 		return
 	}
 
@@ -217,6 +219,26 @@ func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithFollowers(t *testing.T, s
 		actual = append(actual, follower)
 	}
 	assert.ElementsMatch(t, expected, actual, "followers should match")
+}
+
+// ExpectBecomeLeaderRequestWithCommitOffsets verifies the BecomeLeader request
+// hands the new leader exactly the expected commit offsets of its followers,
+// by internal address.
+func (m *PerNodeChannels) ExpectBecomeLeaderRequestWithCommitOffsets(t *testing.T, shard int64, term int64,
+	expected map[string]int64) {
+	t.Helper()
+
+	var r *proto.BecomeLeaderRequest
+	select {
+	case r = <-m.becomeLeaderRequests:
+	case <-time.After(defaultTimeout):
+		assert.Fail(t, noBecomeLeaderRequest)
+		return
+	}
+
+	assert.Equal(t, shard, r.Shard)
+	assert.Equal(t, term, r.Term)
+	assert.Equal(t, expected, r.FollowerCommitOffsets)
 }
 
 func (m *PerNodeChannels) ExpectNewTermRequest(t *testing.T, shard int64, term int64, notificationsEnabled bool) {
@@ -318,6 +340,21 @@ func (m *PerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
 			Offset: offset,
 		},
 	}, err}
+}
+
+// NewTermResponseWithCommitOffset enqueues a NewTerm response that also reports
+// the commit offset of the node.
+func (m *PerNodeChannels) NewTermResponseWithCommitOffset(term int64, offset int64, commitOffset int64) {
+	m.newTermResponses <- struct {
+		*proto.NewTermResponse
+		error
+	}{&proto.NewTermResponse{
+		HeadEntryId: &proto.EntryId{
+			Term:   term,
+			Offset: offset,
+		},
+		CommitOffset: &commitOffset,
+	}, nil}
 }
 
 // NewTermResponseWithFeatures enqueues a NewTerm response that also reports

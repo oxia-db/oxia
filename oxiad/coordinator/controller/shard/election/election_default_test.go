@@ -68,7 +68,7 @@ func TestElectionFenceQuorumReturnsHeadEntries(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(removed).NewTermResponse(1, 101, nil)
 
-	candidates, retainedHeads, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, retainedHeads, features, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
@@ -90,7 +90,7 @@ func TestElectionFenceQuorumFailsWithoutQuorum(t *testing.T) {
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2, s3}, nil)
+	_, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2, s3}, nil)
 	assert.ErrorContains(t, err, "quorum not reached")
 	assert.ErrorContains(t, err, "unreachable")
 }
@@ -112,7 +112,7 @@ func TestElectionFenceQuorumWaitsForEnsembleMajority(t *testing.T) {
 		rpc.GetNode(s2).NewTermResponse(1, 0, nil)
 	}()
 
-	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
+	candidates, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
 		&proto.EnsembleChangeMetadata{From: removed, To: s2})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
@@ -143,7 +143,7 @@ func TestElectionFenceQuorumWaitsForGracePeriod(t *testing.T) {
 	}()
 
 	start := time.Now()
-	candidates, retainedHeads, features, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, retainedHeads, features, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3, s4, s5}, &proto.EnsembleChangeMetadata{From: removed, To: s5})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), quorumFencingGracePeriod)
@@ -364,7 +364,7 @@ func TestElectionFenceQuorumRequiresEnsembleMajority(t *testing.T) {
 	rpc.GetNode(removed).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
+	_, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{s1, s2},
 		&proto.EnsembleChangeMetadata{From: removed, To: s2})
 	assert.ErrorContains(t, err, "quorum of the ensemble not reached")
 }
@@ -384,7 +384,7 @@ func TestElectionFenceQuorumSucceedsWithoutFromAndTo(t *testing.T) {
 	rpc.GetNode(s3).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	candidates, retainedHeads, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	candidates, retainedHeads, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
@@ -421,7 +421,7 @@ func TestElectionFenceQuorumSucceedsWithoutFromWithEvenReplicationFactor(t *test
 			}
 			rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
 
-			candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, test.ensemble,
+			candidates, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{}, test.ensemble,
 				&proto.EnsembleChangeMetadata{From: removed, To: to})
 			require.NoError(t, err)
 			assert.Len(t, candidates, len(test.ensemble)-len(test.unreachable))
@@ -445,7 +445,7 @@ func TestElectionFenceQuorumRequiresOldEnsembleMajority(t *testing.T) {
 	rpc.GetNode(s2).NewTermResponse(0, 0, errors.New("unreachable"))
 	rpc.GetNode(removed).NewTermResponse(0, 0, errors.New("unreachable"))
 
-	_, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+	_, _, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	assert.ErrorContains(t, err, "quorum not reached")
 }
@@ -613,6 +613,53 @@ func TestElectionFenceNewTermAndAddFollowerReturnsAddFollowerError(t *testing.T)
 	assert.ErrorContains(t, err, "leader unavailable")
 	request := rpc.GetNode(leader).ExpectAddFollowerRequest(t, 5, 2)
 	assert.Equal(t, int64(3), request.GetFollowerHeadEntryId().GetOffset())
+}
+
+// The election hands the new leader the commit offsets that its followers
+// reported when they got fenced, and none for a follower that predates them.
+func TestElectionBecomeLeaderPassesTheCommitOffsetsOfTheFollowers(t *testing.T) {
+	s1 := testDataServer("s1")
+	s2 := testDataServer("s2")
+	s3 := testDataServer("s3")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+
+	rpc.GetNode(s1).NewTermResponseWithCommitOffset(1, 10, 8)
+	rpc.GetNode(s2).NewTermResponseWithCommitOffset(1, 9, 9)
+	rpc.GetNode(s3).NewTermResponse(1, 7, nil)
+
+	candidates, _, _, commitOffsets, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3}, nil)
+	require.NoError(t, err)
+	require.Len(t, candidates, 3)
+	assert.Equal(t, map[string]int64{s1.GetInternal(): 8, s2.GetInternal(): 9}, commitOffsets)
+
+	leader, followers := e.chooseLeader(candidates, sharding.HeadEntries{})
+	require.Equal(t, s1, leader)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	require.NoError(t, e.becomeLeader(2, leader, followers, commitOffsets, 3, nil))
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithCommitOffsets(t, 5, 2, map[string]int64{s2.GetInternal(): 9})
+}
+
+// A follower that joins after the election hands the leader the commit offset
+// it reported when it got fenced, if any.
+func TestElectionFenceNewTermAndAddFollowerPassesTheCommitOffset(t *testing.T) {
+	leader := testDataServer("leader")
+	follower := testDataServer("follower")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+
+	rpc.GetNode(follower).NewTermResponseWithCommitOffset(1, 3, 2)
+	rpc.GetNode(leader).AddFollowerResponse(nil)
+	require.NoError(t, e.fenceNewTermAndAddFollower(t.Context(), 2, &proto.NewTermOptions{}, leader, follower))
+	request := rpc.GetNode(leader).ExpectAddFollowerRequest(t, 5, 2)
+	require.NotNil(t, request.FollowerCommitOffset)
+	assert.EqualValues(t, 2, request.GetFollowerCommitOffset())
+
+	rpc.GetNode(follower).NewTermResponse(1, 3, nil)
+	rpc.GetNode(leader).AddFollowerResponse(nil)
+	require.NoError(t, e.fenceNewTermAndAddFollower(t.Context(), 2, &proto.NewTermOptions{}, leader, follower))
+	assert.Nil(t, rpc.GetNode(leader).ExpectAddFollowerRequest(t, 5, 2).FollowerCommitOffset)
 }
 
 // A follower that rejects the term of the election as invalid is in a newer
