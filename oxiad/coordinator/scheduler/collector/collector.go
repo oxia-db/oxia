@@ -36,10 +36,6 @@ const (
 	statusTimeout = 5 * time.Second
 	// parallelism bounds the status requests in flight.
 	parallelism = 16
-	// StableTime is how long a data server stays up after its status changed,
-	// e.g. it came back from a failure, before it takes a replica or a
-	// leader: moving them straight back onto it turns one flap into a loop.
-	StableTime = 5 * time.Minute
 )
 
 // Running reports whether a data server, with status if found, answers its
@@ -104,12 +100,10 @@ func New(ctx context.Context, metadata coordmetadata.Metadata,
 }
 
 // Collect returns the snapshot of the cluster from the metadata, with the data
-// servers that are down at now, so that the plan moves nothing that needs
-// them, and the ones that changed less than StableTime before, which take
-// nothing; the dispatch checks them again before it sends an action. It
-// doesn't sample the stats of the shards: see Sample. It returns the error of
+// servers that are down, so that the plan moves nothing that needs them; the
+// dispatch checks them again before it sends an action. It doesn't sample the stats of the shards: see Sample. It returns the error of
 // a read that failed.
-func (c *Collector) Collect(now time.Time) (*stats.ClusterStats, error) {
+func (c *Collector) Collect() (*stats.ClusterStats, error) {
 	dataServers, errDataServers := c.metadata.ListDataServer()
 	namespaces, errNamespaces := c.metadata.ListNamespace()
 	statuses, errStatuses := c.metadata.ListNamespaceStatus()
@@ -118,9 +112,7 @@ func (c *Collector) Collect(now time.Time) (*stats.ClusterStats, error) {
 	}
 	s := stats.New(dataServers, namespaces, statuses)
 	for name, dataServer := range s.DataServers {
-		status, found := c.status(name)
-		dataServer.Down = !Running(status, found)
-		dataServer.Recovering = !dataServer.Down && now.Sub(status.GetLastTransitionTime()) < StableTime
+		dataServer.Down = !Running(c.status(name))
 	}
 	return s, nil
 }
