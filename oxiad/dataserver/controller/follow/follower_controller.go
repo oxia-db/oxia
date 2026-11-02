@@ -419,7 +419,7 @@ func (fc *followerController) NewTerm(req *proto.NewTermRequest) (*proto.NewTerm
 	if err = fc.wal.Sync(fc.ctx); err != nil {
 		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "wal sync failed")
 	}
-	headEntryId, dbCommitOffset, err := lead.HeadEntryId(fc.wal, fc.db)
+	headEntryId, dbCommitOffset, err := lead.GetLogState(fc.wal, fc.db)
 	if err != nil {
 		fc.log.Warn("Failed to get the head entry", slog.Any("error", err), slog.Int64("new-term", req.Term))
 		return nil, errors.Wrapf(multierr.Combine(constant.ErrResourceUnavailable, err), "get head entry failed")

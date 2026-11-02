@@ -4011,9 +4011,9 @@ func TestLeaderControllerNewTermFailsWhenTheHeadEntryCantBeRead(t *testing.T) {
 	}
 }
 
-// A node whose wal is empty reports the commit offset of its database as its
-// head: it can't report one when it fails to read it.
-func TestHeadEntryIdFailsWhenTheCommitOffsetCantBeRead(t *testing.T) {
+// A node reports the commit offset of its database with its head, and as its
+// head when its wal is empty: it can't report them when it fails to read it.
+func TestGetLogStateFailsWhenTheCommitOffsetCantBeRead(t *testing.T) {
 	kvFactory, walFactory := newHookFactories(t)
 	failReads := &atomic.Bool{}
 	kvFactory.get = failKey(testCommitOffsetKey, failReads)
@@ -4026,7 +4026,7 @@ func TestHeadEntryIdFailsWhenTheCommitOffsetCantBeRead(t *testing.T) {
 	defer walObject.Close()
 
 	failReads.Store(true)
-	headEntryId, _, err := HeadEntryId(walObject, db)
+	headEntryId, _, err := GetLogState(walObject, db)
 	assert.ErrorIs(t, err, errInjected)
 	assert.Nil(t, headEntryId)
 }

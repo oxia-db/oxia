@@ -390,7 +390,7 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	}
 	// The tracker is closed: the leader doesn't apply any entry past the commit
 	// offset of its database anymore
-	headEntryId, commitOffset, err := HeadEntryId(lc.wal, lc.db)
+	headEntryId, commitOffset, err := GetLogState(lc.wal, lc.db)
 	if err != nil {
 		return nil, err
 	}
@@ -1781,16 +1781,16 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
 
-// HeadEntryId returns the head entry that a node reports when it gets fenced
-// with a new term: the leader election picks the node with the highest one, by
-// term and then by offset. It's the last entry of the wal, except for a node
-// seeded from a snapshot, whose wal is empty while its database holds the
-// entries up to the snapshot's commit offset. The term of those entries is not
-// known: the node reports the offset with an invalid term, which ranks it above
-// the nodes that hold fewer entries, or none, and below every node with entries
-// in its wal. It also returns the commit offset of the database, which the node
-// reports with it.
-func HeadEntryId(walObject wal.Wal, db database.DB) (*proto.EntryId, int64, error) {
+// GetLogState returns the state of the log of a node, which it reports when it
+// gets fenced with a new term: its head entry, and the commit offset of its
+// database. The leader election picks the node with the highest head entry, by
+// term and then by offset. The head entry is the last entry of the wal, except
+// for a node seeded from a snapshot, whose wal is empty while its database
+// holds the entries up to the snapshot's commit offset. The term of those
+// entries is not known: the node reports the offset with an invalid term, which
+// ranks it above the nodes that hold fewer entries, or none, and below every
+// node with entries in its wal.
+func GetLogState(walObject wal.Wal, db database.DB) (*proto.EntryId, int64, error) {
 	commitOffset, err := db.ReadCommitOffset()
 	if err != nil {
 		return nil, wal.InvalidOffset, err
