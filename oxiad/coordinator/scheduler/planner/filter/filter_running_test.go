@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"testing"
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 func TestRunningName(t *testing.T) {
@@ -38,7 +38,7 @@ func TestRunningRejectsAnOpThatNeedsADataServerDown(t *testing.T) {
 	s.DataServers["n1"].Down = true
 	assert.ErrorIs(t, Running{}.Filter(s, move("n0", "n3")), errs.ErrUnavailable, "another member is down")
 	assert.ErrorIs(t, Running{}.Filter(s, split), errs.ErrUnavailable)
-	assert.ErrorIs(t, Running{}.Filter(s, candidate.Candidate{Kind: candidate.TransferLeader, Namespace: "a", Shard: 1,
+	assert.ErrorIs(t, Running{}.Filter(s, model.Candidate{Kind: model.TransferLeader, Namespace: "a", Shard: 1,
 		From: "n0", To: "n1"}), errs.ErrUnavailable)
 }
 

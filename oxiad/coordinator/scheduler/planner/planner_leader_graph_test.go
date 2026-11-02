@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 // n0 has two leaders and n3 none, and each other data server one: only a path
@@ -81,7 +81,7 @@ func TestLeaderGraphSkipsTheTransfersOfARemovedDataServer(t *testing.T) {
 
 // describePath names each transfer of path by its shard, its source and
 // target, and its reason.
-func describePath(path []candidate.Candidate) []string {
+func describePath(path []model.Candidate) []string {
 	described := make([]string, 0, len(path))
 	for _, op := range path {
 		described = append(described, fmt.Sprintf("%d %s->%s %s", op.Shard, op.From, op.To, op.Reason))

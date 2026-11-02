@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"testing"
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 func TestMembershipName(t *testing.T) {
@@ -38,8 +38,8 @@ func TestMembershipNeedsAMemberSourceAndANewTarget(t *testing.T) {
 func TestMembershipTransfersFromTheLeaderToAnotherMember(t *testing.T) {
 	s := newStats()
 	s.Namespaces["a"].Shards[1].Leader = "n0"
-	transfer := func(from string, to string) candidate.Candidate {
-		return candidate.Candidate{Kind: candidate.TransferLeader, Namespace: "a", Shard: 1, From: from, To: to}
+	transfer := func(from string, to string) model.Candidate {
+		return model.Candidate{Kind: model.TransferLeader, Namespace: "a", Shard: 1, From: from, To: to}
 	}
 
 	assert.NoError(t, Membership{}.Filter(s, transfer("n0", "n1")))

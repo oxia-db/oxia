@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package candidate is the change of a shard that the planner enumerates,
-// scores and picks, before it turns the ones it picks into actions.
-package candidate
+package model
 
 import "github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 
@@ -44,7 +42,8 @@ func (k Kind) String() string {
 	}
 }
 
-// Candidate is a change of a shard that the planner considers.
+// Candidate is a change of a shard that the planner enumerates, scores and
+// picks, before it turns the ones it picks into actions.
 type Candidate struct {
 	Kind      Kind
 	Namespace string

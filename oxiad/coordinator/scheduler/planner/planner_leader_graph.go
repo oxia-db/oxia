@@ -19,8 +19,8 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
@@ -34,7 +34,7 @@ import (
 // the limits of the plan, which its ops change, are checked during each
 // search.
 type leaderGraph struct {
-	out        map[string][]candidate.Candidate
+	out        map[string][]model.Candidate
 	namespaces []string
 	// dataServers holds the data servers that can lead, in the order of their
 	// names.
@@ -43,14 +43,14 @@ type leaderGraph struct {
 
 func (p *planner) newLeaderGraph(pl *plan) *leaderGraph {
 	g := &leaderGraph{
-		out:        make(map[string][]candidate.Candidate),
+		out:        make(map[string][]model.Candidate),
 		namespaces: slices.Sorted(maps.Keys(pl.clusterStats.Namespaces)),
 		dataServers: slices.DeleteFunc(slices.Clone(pl.dataServerNames), func(name string) bool {
 			return pl.clusterStats.DataServers[name].Removed
 		}),
 	}
-	forEachCandidate(pl.clusterStats, pl.dataServerNames, candidate.TransferLeader,
-		func(op candidate.Candidate, _ *stats.ShardStats) {
+	forEachCandidate(pl.clusterStats, pl.dataServerNames, model.TransferLeader,
+		func(op model.Candidate, _ *stats.ShardStats) {
 			// The load doesn't count the leaders of a removed data server
 			if pl.clusterStats.DataServers[op.From].Removed || p.doFilter(pl.clusterStats, op) != nil {
 				return
@@ -71,11 +71,11 @@ func (p *planner) newLeaderGraph(pl *plan) *leaderGraph {
 // they even out the leaders of the tier, and leave every namespace at least as
 // even: a run of k transfers of one namespace moves one of its leaders from a
 // data server to one that has k fewer.
-func (g *leaderGraph) findPath(pl *plan) []candidate.Candidate {
+func (g *leaderGraph) findPath(pl *plan) []model.Candidate {
 	l := pl.dataServerLoad
 	for _, namespace := range g.namespaces {
 		counts := l.GetLeaders(namespace)
-		path := g.search(pl, counts, func(op candidate.Candidate) bool {
+		path := g.search(pl, counts, func(op model.Candidate) bool {
 			return op.Namespace == namespace && counts[op.From] == counts[op.To]+1
 		})
 		if path != nil {
@@ -83,7 +83,7 @@ func (g *leaderGraph) findPath(pl *plan) []candidate.Candidate {
 		}
 	}
 	total := l.GetTotalLeaders()
-	path := g.search(pl, total, func(op candidate.Candidate) bool {
+	path := g.search(pl, total, func(op model.Candidate) bool {
 		counts := l.GetLeaders(op.Namespace)
 		return counts[op.From] == counts[op.To]+1 && total[op.From] <= total[op.To]+1
 	})
@@ -93,7 +93,7 @@ func (g *leaderGraph) findPath(pl *plan) []candidate.Candidate {
 // search returns the shortest path of transfers that allowed lets through,
 // from the data servers with the most counts to one with at least two fewer,
 // or from the next ones if none is reachable, or nil.
-func (g *leaderGraph) search(pl *plan, counts map[string]int, allowed func(candidate.Candidate) bool) []candidate.Candidate {
+func (g *leaderGraph) search(pl *plan, counts map[string]int, allowed func(model.Candidate) bool) []model.Candidate {
 	levels := make([]int, 0, len(g.dataServers))
 	for _, name := range g.dataServers {
 		levels = append(levels, counts[name])
@@ -115,8 +115,8 @@ func (g *leaderGraph) search(pl *plan, counts map[string]int, allowed func(candi
 // bfs returns the shortest path of transfers that allowed lets through, from a
 // data server with top counts to one with at most top-2, from the target
 // back to the source, or nil.
-func (g *leaderGraph) bfs(pl *plan, counts map[string]int, top int, allowed func(candidate.Candidate) bool) []candidate.Candidate {
-	parents := make(map[string]candidate.Candidate)
+func (g *leaderGraph) bfs(pl *plan, counts map[string]int, top int, allowed func(model.Candidate) bool) []model.Candidate {
+	parents := make(map[string]model.Candidate)
 	visited := make(map[string]bool)
 	var queue []string
 	for _, name := range g.dataServers {
@@ -138,7 +138,7 @@ func (g *leaderGraph) bfs(pl *plan, counts map[string]int, top int, allowed func
 				queue = append(queue, op.To)
 				continue
 			}
-			var path []candidate.Candidate
+			var path []model.Candidate
 			for op, ok := parents[op.To]; ok; op, ok = parents[op.From] {
 				path = append(path, op)
 			}
@@ -148,7 +148,7 @@ func (g *leaderGraph) bfs(pl *plan, counts map[string]int, top int, allowed func
 	return nil
 }
 
-func withReason(path []candidate.Candidate, reason string) []candidate.Candidate {
+func withReason(path []model.Candidate, reason string) []model.Candidate {
 	for i := range path {
 		path[i].Reason = reason
 	}

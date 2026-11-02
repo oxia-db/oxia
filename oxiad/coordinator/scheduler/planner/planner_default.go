@@ -28,9 +28,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter/step"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
@@ -46,7 +43,7 @@ type planner struct {
 // phase plans the ops of one kind, scored by the tiers of that kind in
 // priority order.
 type phase struct {
-	kind  candidate.Kind
+	kind  model.Kind
 	tiers []tier.Tier
 }
 
@@ -66,15 +63,15 @@ func New(filters []filter.Filter, tiers []tier.Tier) Planner {
 func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked) {
 	pl := newPlan(s)
 	var actions []action.Action
-	add := func(c candidate.Candidate) {
+	add := func(c model.Candidate) {
 		pl.apply(c)
 		p.logger.Info("Planned an op", slog.String("kind", c.Kind.String()), slog.String("namespace", c.Namespace),
 			slog.Int64("shard", c.Shard), slog.String("from", c.From), slog.String("to", c.To),
 			slog.String("reason", c.Reason))
 		switch c.Kind {
-		case candidate.TransferLeader:
+		case model.TransferLeader:
 			actions = append(actions, action.NewLeaderTransferAction(c.Shard, c.To))
-		case candidate.Split:
+		case model.Split:
 			actions = append(actions, action.NewSplitAction(c.Namespace, c.Shard))
 		default:
 			actions = append(actions, action.NewChangeEnsembleAction(c.Shard, s.DataServers[c.From].GetIdentity(),
@@ -90,7 +87,7 @@ func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked)
 		// the cluster: none to plan, and no change of an ensemble pending for a
 		// replace. A leader is one of the replicas, and every replace runs an
 		// election that may move it.
-		if ph.kind == candidate.Replace && pl.ensembleChanging {
+		if ph.kind == model.Replace && pl.ensembleChanging {
 			break
 		}
 	}
@@ -100,7 +97,7 @@ func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked)
 // planPhase plans the ops of ph with add, and returns how many: the best op,
 // one after the other, applying each to the load, until no op is left within
 // the limits.
-func (p *planner) planPhase(pl *plan, ph phase, add func(candidate.Candidate)) int {
+func (p *planner) planPhase(pl *plan, ph phase, add func(model.Candidate)) int {
 	planned := 0
 	var leaders *leaderGraph
 	for {
@@ -111,7 +108,7 @@ func (p *planner) planPhase(pl *plan, ph phase, add func(candidate.Candidate)) i
 		}
 		// No transfer evens out the leaders alone: a path may still pass one
 		// on through other data servers
-		if ph.kind != candidate.TransferLeader {
+		if ph.kind != model.TransferLeader {
 			return planned
 		}
 		if leaders == nil {
@@ -130,7 +127,7 @@ func (p *planner) planPhase(pl *plan, ph phase, add func(candidate.Candidate)) i
 
 func (*planner) Place(s *stats.ClusterStats, namespace string, replicas int, antiAffinities []*proto.AntiAffinity,
 	eligible func(*stats.DataServerStats) bool) ([]string, error) {
-	l := load.New(s)
+	l := tier.NewLoad(s)
 	counts := l.GetReplicas(namespace)
 	candidates := slices.DeleteFunc(slices.Collect(maps.Keys(s.DataServers)), func(name string) bool {
 		dataServer := s.DataServers[name]
@@ -144,7 +141,7 @@ func (*planner) Place(s *stats.ClusterStats, namespace string, replicas int, ant
 		if len(ensemble) == replicas {
 			break
 		}
-		if !step.Conflicts(s, antiAffinities, ensemble, "", name) {
+		if !filter.Conflicts(s, antiAffinities, ensemble, "", name) {
 			ensemble = append(ensemble, name)
 		}
 	}
@@ -156,7 +153,7 @@ func (*planner) Place(s *stats.ClusterStats, namespace string, replicas int, ant
 }
 
 // doFilter returns the error of the first filter that rejects op.
-func (p *planner) doFilter(s *stats.ClusterStats, op candidate.Candidate) error {
+func (p *planner) doFilter(s *stats.ClusterStats, op model.Candidate) error {
 	for _, f := range p.filters {
 		if err := f.Filter(s, op); err != nil {
 			return fmt.Errorf("%s: %w", f.GetName(), err)
@@ -169,11 +166,11 @@ func (p *planner) doFilter(s *stats.ClusterStats, op candidate.Candidate) error 
 // pass and that ranks first: by its score, then moving a follower before the leader,
 // then the first in the order of the names, so that a plan is the same every
 // time.
-func (p *planner) findBest(pl *plan, ph phase) (candidate.Candidate, bool) {
-	var bestOp candidate.Candidate
+func (p *planner) findBest(pl *plan, ph phase) (model.Candidate, bool) {
+	var bestOp model.Candidate
 	var bestScore tier.Score
 	bestLeader, found := 0, false
-	forEachCandidate(pl.clusterStats, pl.dataServerNames, ph.kind, func(op candidate.Candidate, shard *stats.ShardStats) {
+	forEachCandidate(pl.clusterStats, pl.dataServerNames, ph.kind, func(op model.Candidate, shard *stats.ShardStats) {
 		if !pl.allows(op) || p.doFilter(pl.clusterStats, op) != nil {
 			return
 		}
@@ -210,7 +207,7 @@ func (p *planner) findBlocked(s *stats.ClusterStats, dataServers []string) []mod
 				if shard.Changing || shard.Splitting || !s.DataServers[from].Removed {
 					continue
 				}
-				op := candidate.Candidate{Namespace: name, Shard: id, From: from}
+				op := model.Candidate{Namespace: name, Shard: id, From: from}
 				reason := ""
 				for _, to := range dataServers {
 					op.To = to
@@ -234,17 +231,17 @@ func (p *planner) findBlocked(s *stats.ClusterStats, dataServers []string) []mod
 // every member of a shard replaced with every data server; for a transfer,
 // the leadership of a shard moved to every other member; for a split, every
 // shard.
-func forEachCandidate(s *stats.ClusterStats, dataServers []string, kind candidate.Kind,
-	yield func(candidate.Candidate, *stats.ShardStats)) {
+func forEachCandidate(s *stats.ClusterStats, dataServers []string, kind model.Kind,
+	yield func(model.Candidate, *stats.ShardStats)) {
 	for _, name := range slices.Sorted(maps.Keys(s.Namespaces)) {
 		ns := s.Namespaces[name]
 		for _, id := range slices.Sorted(maps.Keys(ns.Shards)) {
 			shard := ns.Shards[id]
-			op := candidate.Candidate{Kind: kind, Namespace: name, Shard: id}
+			op := model.Candidate{Kind: kind, Namespace: name, Shard: id}
 			switch kind {
-			case candidate.Split:
+			case model.Split:
 				yield(op, shard)
-			case candidate.TransferLeader:
+			case model.TransferLeader:
 				op.From = shard.Leader
 				for _, to := range shard.Ensemble {
 					if shard.Leader != "" && to != shard.Leader {

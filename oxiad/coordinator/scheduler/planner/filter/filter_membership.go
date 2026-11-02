@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 	"slices"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Membership rejects an op that doesn't fit the ensemble: a replace must move a
@@ -35,12 +35,12 @@ func (Membership) GetName() string {
 	return "membership"
 }
 
-func (Membership) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
+func (Membership) Filter(s *stats.ClusterStats, op model.Candidate) error {
 	_, shard := op.GetShard(s)
 	switch op.Kind {
-	case candidate.Split:
+	case model.Split:
 		return nil
-	case candidate.TransferLeader:
+	case model.TransferLeader:
 		if op.From != shard.Leader {
 			return fmt.Errorf("%w: %q is not the leader of shard %d", errs.ErrInvalidArgument, op.From, op.Shard)
 		}

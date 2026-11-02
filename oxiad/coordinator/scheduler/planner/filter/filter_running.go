@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 	"slices"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Running rejects an op that needs a data server that is down: every member of
@@ -35,14 +35,14 @@ func (Running) GetName() string {
 	return "running"
 }
 
-func (Running) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
+func (Running) Filter(s *stats.ClusterStats, op model.Candidate) error {
 	_, shard := op.GetShard(s)
 	needed := shard.Ensemble
-	if op.Kind != candidate.Split {
+	if op.Kind != model.Split {
 		needed = append(slices.Clone(needed), op.To)
 	}
 	for _, name := range needed {
-		if op.Kind == candidate.Replace && name == op.From && s.DataServers[name].Removed {
+		if op.Kind == model.Replace && name == op.From && s.DataServers[name].Removed {
 			continue
 		}
 		if s.DataServers[name].Down {

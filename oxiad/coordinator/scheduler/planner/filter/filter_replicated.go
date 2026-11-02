@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Replicated rejects a replace of a shard with a single replica: no member
@@ -32,9 +32,9 @@ func (Replicated) GetName() string {
 	return "replicated"
 }
 
-func (Replicated) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
+func (Replicated) Filter(s *stats.ClusterStats, op model.Candidate) error {
 	_, shard := op.GetShard(s)
-	if op.Kind == candidate.Replace && len(shard.Ensemble) < 2 {
+	if op.Kind == model.Replace && len(shard.Ensemble) < 2 {
 		return fmt.Errorf("%w: shard %d has a single replica", errs.ErrFailedPrecondition, op.Shard)
 	}
 	return nil

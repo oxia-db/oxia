@@ -19,20 +19,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 func TestEvaluateImprovesTheTotalOnANamespaceTie(t *testing.T) {
 	s := newStats(map[string][][]string{"a": {{"n0", "n2"}}, "b": {{"n0", "n2"}}})
-	l := load.New(s)
-	op := candidate.Candidate{Namespace: "a", From: "n0", To: "n1"}
+	l := NewLoad(s)
+	op := model.Candidate{Namespace: "a", From: "n0", To: "n1"}
 
 	// a has a gap of 1, the total a gap of 2
 	assert.Equal(t, Score{Deltas: []int{0, 0, -2}, Improved: 2}, Evaluate(replicas(), s, l, op))
 
 	// A gap of 1 in the total doesn't improve it
-	l.Move(s, candidate.Candidate{Namespace: "b", From: "n2", To: "n1"})
+	l.Move(s, model.Candidate{Namespace: "b", From: "n2", To: "n1"})
 	assert.Equal(t, -1, Evaluate(replicas(), s, l, op).Improved)
 }
 
@@ -40,7 +39,7 @@ func TestEvaluateStopsAtAnEarlierTierItRaises(t *testing.T) {
 	// a: n0 1, n1 2, n2 1; the total of n0 is the highest
 	s := newStats(map[string][][]string{"a": {{"n0", "n1"}, {"n2", "n1"}}, "b": {{"n0", "n1"}, {"n0", "n1"}}})
 
-	sc := Evaluate(replicas(), s, load.New(s), candidate.Candidate{Namespace: "a", From: "n0", To: "n2"})
+	sc := Evaluate(replicas(), s, NewLoad(s), model.Candidate{Namespace: "a", From: "n0", To: "n2"})
 
 	assert.Equal(t, Score{Deltas: []int{0, 2, 0}, Improved: -1}, sc)
 }
@@ -48,7 +47,7 @@ func TestEvaluateStopsAtAnEarlierTierItRaises(t *testing.T) {
 func TestEvaluateDrainsFirst(t *testing.T) {
 	s := newStats(map[string][][]string{"a": {{"r", "n0"}}})
 
-	sc := Evaluate(replicas(), s, load.New(s), candidate.Candidate{Namespace: "a", From: "r", To: "n0"})
+	sc := Evaluate(replicas(), s, NewLoad(s), model.Candidate{Namespace: "a", From: "r", To: "n0"})
 
 	assert.Equal(t, Score{Deltas: []int{-1, 3, 3}, Improved: 0}, sc)
 }

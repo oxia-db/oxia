@@ -12,25 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package tier
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
-func TestSplittableName(t *testing.T) {
-	assert.Equal(t, "splittable", Splittable{}.GetName())
-}
+func TestOvershootImprovesOnlyOverTheThreshold(t *testing.T) {
+	s := newStats(map[string][][]string{"a": {{"n0"}}})
+	shard := s.Namespaces["a"].Shards[1]
+	split := model.Candidate{Kind: model.Split, Namespace: "a", Shard: 1}
 
-func TestSplittableRejectsAShardThatCantSplit(t *testing.T) {
-	s := newStats()
-	assert.ErrorIs(t, Splittable{}.Filter(s, split), errs.ErrFailedPrecondition)
-	assert.NoError(t, Splittable{}.Filter(s, move("n0", "n2")), "it only applies to a split")
+	shard.Overshoot = 1
+	delta := Overshoot{}.Delta(s, NewLoad(s), split)
+	assert.Zero(t, delta)
 
-	s.Namespaces["a"].Shards[1].Splittable = true
-	assert.NoError(t, Splittable{}.Filter(s, split))
+	shard.Overshoot = 2.5
+	delta = Overshoot{}.Delta(s, NewLoad(s), split)
+	assert.Equal(t, -250, delta)
 }

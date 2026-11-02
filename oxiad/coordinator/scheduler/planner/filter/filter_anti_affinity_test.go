@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"testing"
@@ -21,7 +21,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 func TestAntiAffinityName(t *testing.T) {
@@ -36,7 +36,7 @@ func TestAntiAffinityRejectsASharedZone(t *testing.T) {
 	s.DataServers["n2"].Metadata.Labels["zone"] = "z1"
 
 	assert.ErrorIs(t, AntiAffinity{}.Filter(s, move("n0", "n2")), errs.ErrFailedPrecondition)
-	assert.NoError(t, AntiAffinity{}.Filter(s, candidate.Candidate{Kind: candidate.TransferLeader, Namespace: "a", Shard: 1,
+	assert.NoError(t, AntiAffinity{}.Filter(s, model.Candidate{Kind: model.TransferLeader, Namespace: "a", Shard: 1,
 		From: "n0", To: "n1"}))
 	assert.NoError(t, AntiAffinity{}.Filter(s, split))
 }

@@ -19,27 +19,26 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 func TestBalanceNeedsAGapOfTwo(t *testing.T) {
 	// a: n0 has 2, n1 1, n2 0
 	s := newStats(map[string][][]string{"a": {{"n0", "n1"}, {"n0", "r"}}})
-	l := load.New(s)
+	l := NewLoad(s)
 
-	delta := NamespaceReplicas().Delta(s, l, candidate.Candidate{Namespace: "a", From: "n0", To: "n2"})
+	delta := NamespaceReplicas().Delta(s, l, model.Candidate{Namespace: "a", From: "n0", To: "n2"})
 	assert.Equal(t, -2, delta)
 
-	delta = NamespaceReplicas().Delta(s, l, candidate.Candidate{Namespace: "a", From: "n1", To: "n2"})
+	delta = NamespaceReplicas().Delta(s, l, model.Candidate{Namespace: "a", From: "n1", To: "n2"})
 	assert.Zero(t, delta)
 }
 
 func TestBalanceCountsTheTotal(t *testing.T) {
 	s := newStats(map[string][][]string{"a": {{"n0", "n2"}}, "b": {{"n0", "n2"}}})
-	l := load.New(s)
+	l := NewLoad(s)
 
-	delta := TotalReplicas().Delta(s, l, candidate.Candidate{Namespace: "a", From: "n0", To: "n1"})
+	delta := TotalReplicas().Delta(s, l, model.Candidate{Namespace: "a", From: "n0", To: "n1"})
 
 	assert.Equal(t, -2, delta)
 }
@@ -47,7 +46,7 @@ func TestBalanceCountsTheTotal(t *testing.T) {
 func TestBalanceAddsTheReplicaOfADrain(t *testing.T) {
 	s := newStats(map[string][][]string{"a": {{"r", "n0"}}})
 
-	delta := NamespaceReplicas().Delta(s, load.New(s), candidate.Candidate{Namespace: "a", From: "r", To: "n0"})
+	delta := NamespaceReplicas().Delta(s, NewLoad(s), model.Candidate{Namespace: "a", From: "r", To: "n0"})
 
 	assert.Equal(t, 3, delta)
 }
@@ -58,8 +57,8 @@ func TestBalanceMovesTheLeaders(t *testing.T) {
 	for _, shard := range s.Namespaces["a"].Shards {
 		shard.Leader = shard.Ensemble[0]
 	}
-	l := load.New(s)
-	transfer := candidate.Candidate{Kind: candidate.TransferLeader, Namespace: "a", From: "n0", To: "n1"}
+	l := NewLoad(s)
+	transfer := model.Candidate{Kind: model.TransferLeader, Namespace: "a", From: "n0", To: "n1"}
 
 	assert.Equal(t, -2, NamespaceLeaders().Delta(s, l, transfer))
 	assert.Equal(t, -2, TotalLeaders().Delta(s, l, transfer))

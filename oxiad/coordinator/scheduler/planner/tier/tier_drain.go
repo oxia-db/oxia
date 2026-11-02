@@ -12,26 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package tier
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-
-	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 )
 
-func TestReplicatedName(t *testing.T) {
-	assert.Equal(t, "replicated", Replicated{}.GetName())
+// Drain counts the replicas on removed data servers, which must reach 0.
+type Drain struct{}
+
+func (Drain) GetName() string {
+	return "drain"
 }
 
-func TestReplicatedRejectsASingleReplica(t *testing.T) {
-	s := newStats()
-	assert.NoError(t, Replicated{}.Filter(s, move("n0", "n2")))
+func (Drain) GetKind() model.Kind {
+	return model.Replace
+}
 
-	s.Namespaces["a"].Shards[1].Ensemble = []string{"n0"}
-
-	assert.ErrorIs(t, Replicated{}.Filter(s, move("n0", "n2")), errs.ErrFailedPrecondition)
-	assert.NoError(t, Replicated{}.Filter(s, split), "a split copies no replica")
+func (Drain) Delta(s *stats.ClusterStats, _ *Load, op model.Candidate) int {
+	if s.DataServers[op.From].Removed {
+		return -1
+	}
+	return 0
 }

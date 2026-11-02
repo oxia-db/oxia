@@ -12,32 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package candidate
+package filter
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 )
 
-func TestKindString(t *testing.T) {
-	assert.Equal(t, "replace", Replace.String())
-	assert.Equal(t, "transfer-leader", TransferLeader.String())
-	assert.Equal(t, "split", Split.String())
+func TestTargetName(t *testing.T) {
+	assert.Equal(t, "target", Target{}.GetName())
 }
 
-func TestCandidateShardIn(t *testing.T) {
-	shard := &stats.ShardStats{}
-	ns := &stats.NamespaceStats{Shards: map[int64]*stats.ShardStats{1: shard}}
-	s := &stats.ClusterStats{Namespaces: map[string]*stats.NamespaceStats{"a": ns}}
+func TestTargetNeedsAConfiguredDataServer(t *testing.T) {
+	s := newStats()
+	assert.NoError(t, Target{}.Filter(s, move("n0", "n2")))
+	assert.ErrorIs(t, Target{}.Filter(s, move("n0", "x")), errs.ErrUnavailable)
 
-	gotNamespace, gotShard := Candidate{Namespace: "a", Shard: 1}.GetShard(s)
-	assert.Same(t, ns, gotNamespace)
-	assert.Same(t, shard, gotShard)
-
-	gotNamespace, gotShard = Candidate{Namespace: "b", Shard: 1}.GetShard(s)
-	assert.Nil(t, gotNamespace)
-	assert.Nil(t, gotShard)
+	s.DataServers["n2"] = &stats.DataServerStats{Removed: true}
+	assert.ErrorIs(t, Target{}.Filter(s, move("n0", "n2")), errs.ErrUnavailable)
+	assert.NoError(t, Target{}.Filter(s, split), "a split has no target")
 }

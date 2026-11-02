@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package load counts the replicas and the leaders of the data servers, for
-// the tiers of the planner.
-package load
+package tier
 
 import (
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Load counts the replicas and the leaders of each data server in the
-// configuration, by namespace and in total. A plan moves them as its ops would,
+// configuration, by namespace and in total, for the tiers. A plan moves them as its ops would,
 // one op after the other.
 type Load struct {
 	replicas     map[string]map[string]int
@@ -31,7 +29,7 @@ type Load struct {
 	totalLeader  map[string]int
 }
 
-func New(s *stats.ClusterStats) *Load {
+func NewLoad(s *stats.ClusterStats) *Load {
 	l := &Load{replicas: make(map[string]map[string]int), totalReplica: make(map[string]int),
 		leaders: make(map[string]map[string]int), totalLeader: make(map[string]int)}
 	for name, ns := range s.Namespaces {
@@ -72,12 +70,12 @@ func (l *Load) GetTotalLeaders() map[string]int {
 // Move applies op. The leader that the election of a replace elects is left
 // where it is, and a split leaves the load as it is until its children are
 // placed: the plan can't know them.
-func (l *Load) Move(s *stats.ClusterStats, op candidate.Candidate) {
-	if op.Kind == candidate.Split {
+func (l *Load) Move(s *stats.ClusterStats, op model.Candidate) {
+	if op.Kind == model.Split {
 		return
 	}
 	counts, total := l.replicas, l.totalReplica
-	if op.Kind == candidate.TransferLeader {
+	if op.Kind == model.TransferLeader {
 		counts, total = l.leaders, l.totalLeader
 	}
 	if !s.DataServers[op.From].Removed {

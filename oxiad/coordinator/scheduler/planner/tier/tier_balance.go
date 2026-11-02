@@ -15,46 +15,45 @@
 package tier
 
 import (
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
 )
 
 // Balance evens out what counts returns for the namespace of an op, on the
 // data servers in the configuration, with the ops of kind.
 type Balance struct {
 	name   string
-	kind   candidate.Kind
-	counts func(l *load.Load, namespace string) map[string]int
+	kind   model.Kind
+	counts func(l *Load, namespace string) map[string]int
 }
 
 // NamespaceReplicas evens out the replicas of each namespace.
 func NamespaceReplicas() Balance {
-	return Balance{name: "namespace-replicas", kind: candidate.Replace, counts: (*load.Load).GetReplicas}
+	return Balance{name: "namespace-replicas", kind: model.Replace, counts: (*Load).GetReplicas}
 }
 
 // TotalReplicas evens out the replicas of every namespace together.
 func TotalReplicas() Balance {
-	return Balance{name: "total-replicas", kind: candidate.Replace,
-		counts: func(l *load.Load, _ string) map[string]int { return l.GetTotalReplicas() }}
+	return Balance{name: "total-replicas", kind: model.Replace,
+		counts: func(l *Load, _ string) map[string]int { return l.GetTotalReplicas() }}
 }
 
 // NamespaceLeaders evens out the leaders of each namespace.
 func NamespaceLeaders() Balance {
-	return Balance{name: "namespace-leaders", kind: candidate.TransferLeader, counts: (*load.Load).GetLeaders}
+	return Balance{name: "namespace-leaders", kind: model.TransferLeader, counts: (*Load).GetLeaders}
 }
 
 // TotalLeaders evens out the leaders of every namespace together.
 func TotalLeaders() Balance {
-	return Balance{name: "total-leaders", kind: candidate.TransferLeader,
-		counts: func(l *load.Load, _ string) map[string]int { return l.GetTotalLeaders() }}
+	return Balance{name: "total-leaders", kind: model.TransferLeader,
+		counts: func(l *Load, _ string) map[string]int { return l.GetTotalLeaders() }}
 }
 
 func (b Balance) GetName() string {
 	return b.name
 }
 
-func (b Balance) GetKind() candidate.Kind {
+func (b Balance) GetKind() model.Kind {
 	return b.kind
 }
 
@@ -62,7 +61,7 @@ func (b Balance) GetKind() candidate.Kind {
 // when the source has at least 2 more than the target, so the counts end
 // within 1 of each other. A replica on a removed data server isn't counted, so
 // draining it only adds to the target.
-func (b Balance) Delta(s *stats.ClusterStats, l *load.Load, op candidate.Candidate) int {
+func (b Balance) Delta(s *stats.ClusterStats, l *Load, op model.Candidate) int {
 	counts := b.counts(l, op.Namespace)
 	delta := 2*counts[op.To] + 1
 	if s.DataServers[op.From].Removed {

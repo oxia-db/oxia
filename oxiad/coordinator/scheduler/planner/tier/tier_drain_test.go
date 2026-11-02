@@ -12,27 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package tier
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
-func TestFrozenName(t *testing.T) {
-	assert.Equal(t, "frozen", Frozen{}.GetName())
-}
+func TestDrainImprovesOnlyFromARemovedDataServer(t *testing.T) {
+	s := newStats(map[string][][]string{"a": {{"r", "n0"}}})
+	l := NewLoad(s)
 
-func TestFrozenRejectsAFrozenShard(t *testing.T) {
-	s := newStats()
-	assert.NoError(t, Frozen{}.Filter(s, move("n0", "n2")))
+	delta := Drain{}.Delta(s, l, model.Candidate{Namespace: "a", From: "r", To: "n1"})
+	assert.Equal(t, -1, delta)
 
-	s.Namespaces["a"].Shards[1].Changing = true
-	assert.ErrorIs(t, Frozen{}.Filter(s, move("n0", "n2")), errs.ErrFailedPrecondition)
-
-	s.Namespaces["a"].Shards[1].Changing, s.Namespaces["a"].Shards[1].Splitting = false, true
-	assert.ErrorIs(t, Frozen{}.Filter(s, move("n0", "n2")), errs.ErrFailedPrecondition)
+	delta = Drain{}.Delta(s, l, model.Candidate{Namespace: "a", From: "n0", To: "n1"})
+	assert.Zero(t, delta)
 }

@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package load
+package tier
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 func TestLoadCountsTheReplicasAndTheLeaders(t *testing.T) {
-	s := newStats()
+	s := newLoadStats()
 
-	l := New(s)
+	l := NewLoad(s)
 
 	assert.Equal(t, map[string]int{"n0": 1}, l.GetReplicas("a"))
 	assert.Equal(t, map[string]int{"n0": 1}, l.GetTotalReplicas())
@@ -35,12 +35,12 @@ func TestLoadCountsTheReplicasAndTheLeaders(t *testing.T) {
 }
 
 func TestLoadMoveReplaces(t *testing.T) {
-	s := newStats()
-	l := New(s)
+	s := newLoadStats()
+	l := NewLoad(s)
 
-	l.Move(s, candidate.Candidate{Namespace: "a", From: "r", To: "n1"})
-	l.Move(s, candidate.Candidate{Namespace: "a", From: "n0", To: "n1"})
-	l.Move(s, candidate.Candidate{Namespace: "b", From: "r", To: "n0"})
+	l.Move(s, model.Candidate{Namespace: "a", From: "r", To: "n1"})
+	l.Move(s, model.Candidate{Namespace: "a", From: "n0", To: "n1"})
+	l.Move(s, model.Candidate{Namespace: "b", From: "r", To: "n0"})
 
 	assert.Equal(t, map[string]int{"n0": 0, "n1": 2}, l.GetReplicas("a"))
 	assert.Equal(t, map[string]int{"n0": 1}, l.GetReplicas("b"))
@@ -49,10 +49,10 @@ func TestLoadMoveReplaces(t *testing.T) {
 }
 
 func TestLoadMoveTransfersTheLeader(t *testing.T) {
-	s := newStats()
-	l := New(s)
+	s := newLoadStats()
+	l := NewLoad(s)
 
-	l.Move(s, candidate.Candidate{Kind: candidate.TransferLeader, Namespace: "a", From: "n0", To: "n1"})
+	l.Move(s, model.Candidate{Kind: model.TransferLeader, Namespace: "a", From: "n0", To: "n1"})
 
 	assert.Equal(t, map[string]int{"n0": 0, "n1": 1}, l.GetLeaders("a"))
 	assert.Equal(t, map[string]int{"n0": 0, "n1": 1}, l.GetTotalLeaders())
@@ -60,17 +60,17 @@ func TestLoadMoveTransfersTheLeader(t *testing.T) {
 }
 
 func TestLoadMoveLeavesTheLoadOfASplit(t *testing.T) {
-	s := newStats()
-	l := New(s)
+	s := newLoadStats()
+	l := NewLoad(s)
 
-	l.Move(s, candidate.Candidate{Kind: candidate.Split, Namespace: "a", Shard: 1})
+	l.Move(s, model.Candidate{Kind: model.Split, Namespace: "a", Shard: 1})
 
-	assert.Equal(t, New(s), l)
+	assert.Equal(t, NewLoad(s), l)
 }
 
 // snapshot has a shard of namespace a on the removed data server r and on n0,
 // its leader, and a shard of namespace c led by r.
-func newStats() *stats.ClusterStats {
+func newLoadStats() *stats.ClusterStats {
 	return &stats.ClusterStats{
 		DataServers: map[string]*stats.DataServerStats{"n0": {}, "n1": {}, "r": {Removed: true}},
 		Namespaces: map[string]*stats.NamespaceStats{

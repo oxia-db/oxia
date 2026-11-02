@@ -18,9 +18,9 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
 // plan is the state of one plan: the load and the limits left, as its ops
@@ -30,7 +30,7 @@ type plan struct {
 	clusterStats *stats.ClusterStats
 	// dataServerLoad is the load of the data servers, as the ops of the plan
 	// leave it.
-	dataServerLoad *load.Load
+	dataServerLoad *tier.Load
 	// dataServerNames holds the names of every data server, sorted, so that
 	// the ops are enumerated in the same order every time.
 	dataServerNames []string
@@ -51,7 +51,7 @@ type plan struct {
 func newPlan(s *stats.ClusterStats) *plan {
 	pl := &plan{
 		clusterStats:    s,
-		dataServerLoad:  load.New(s),
+		dataServerLoad:  tier.NewLoad(s),
 		dataServerNames: slices.Sorted(maps.Keys(s.DataServers)),
 		plannedShards:   make(map[int64]bool),
 		plannedTargets:  make(map[string]bool),
@@ -66,15 +66,15 @@ func newPlan(s *stats.ClusterStats) *plan {
 }
 
 // apply charges op to the limits and to the load of the plan.
-func (pl *plan) apply(op candidate.Candidate) {
+func (pl *plan) apply(op model.Candidate) {
 	pl.count(op)
 	pl.dataServerLoad.Move(pl.clusterStats, op)
 }
 
 // count charges op to the limits of the plan.
-func (pl *plan) count(op candidate.Candidate) {
+func (pl *plan) count(op model.Candidate) {
 	pl.plannedShards[op.Shard] = true
-	if op.Kind == candidate.Split {
+	if op.Kind == model.Split {
 		pl.splitActive = true
 		return
 	}
@@ -82,11 +82,11 @@ func (pl *plan) count(op candidate.Candidate) {
 }
 
 // allows reports whether the limits of the plan leave room for op.
-func (pl *plan) allows(op candidate.Candidate) bool {
+func (pl *plan) allows(op model.Candidate) bool {
 	if pl.plannedShards[op.Shard] {
 		return false
 	}
-	if op.Kind == candidate.Split {
+	if op.Kind == model.Split {
 		return !pl.splitActive
 	}
 	return !pl.plannedTargets[op.To]

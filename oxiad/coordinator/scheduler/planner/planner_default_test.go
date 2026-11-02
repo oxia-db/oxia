@@ -29,8 +29,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
@@ -38,11 +36,11 @@ func TestNewGroupsTheTiersInPhases(t *testing.T) {
 	p := defaultPlanner()
 
 	require.Len(t, p.phases, 3)
-	assert.Equal(t, candidate.Replace, p.phases[0].kind)
+	assert.Equal(t, model.Replace, p.phases[0].kind)
 	assert.Len(t, p.phases[0].tiers, 3)
-	assert.Equal(t, candidate.TransferLeader, p.phases[1].kind)
+	assert.Equal(t, model.TransferLeader, p.phases[1].kind)
 	assert.Len(t, p.phases[1].tiers, 2)
-	assert.Equal(t, candidate.Split, p.phases[2].kind)
+	assert.Equal(t, model.Split, p.phases[2].kind)
 	assert.Len(t, p.phases[2].tiers, 1)
 }
 
@@ -81,7 +79,7 @@ func TestPlannerPlanSettlesBalanced(t *testing.T) {
 				require.Less(t, moves, 1000, "the plan doesn't settle")
 			}
 
-			l := load.New(s)
+			l := tier.NewLoad(s)
 			assert.Zero(t, l.GetTotalReplicas()["r"])
 			for _, ns := range []string{"a", "b"} {
 				assert.LessOrEqual(t, spread(s, l.GetReplicas(ns)), 1, ns)

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Frozen rejects every op on a shard that is part of a split, or has a change
@@ -33,7 +33,7 @@ func (Frozen) GetName() string {
 	return "frozen"
 }
 
-func (Frozen) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
+func (Frozen) Filter(s *stats.ClusterStats, op model.Candidate) error {
 	_, shard := op.GetShard(s)
 	if shard.Changing || shard.Splitting {
 		return fmt.Errorf("%w: shard %d can't change now", errs.ErrFailedPrecondition, op.Shard)

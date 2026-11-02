@@ -19,13 +19,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 func TestDefaults(t *testing.T) {
 	var names []string
-	var kinds []candidate.Kind
+	var kinds []model.Kind
 	for _, tier := range Defaults() {
 		names = append(names, tier.GetName())
 		kinds = append(kinds, tier.GetKind())
@@ -33,8 +33,8 @@ func TestDefaults(t *testing.T) {
 
 	assert.Equal(t, []string{"drain", "namespace-replicas", "total-replicas", "namespace-leaders", "total-leaders",
 		"split"}, names)
-	assert.Equal(t, []candidate.Kind{candidate.Replace, candidate.Replace, candidate.Replace, candidate.TransferLeader,
-		candidate.TransferLeader, candidate.Split}, kinds)
+	assert.Equal(t, []model.Kind{model.Replace, model.Replace, model.Replace, model.TransferLeader,
+		model.TransferLeader, model.Split}, kinds)
 }
 
 // snapshot has the data servers n0 to n2 and the removed one r, and the

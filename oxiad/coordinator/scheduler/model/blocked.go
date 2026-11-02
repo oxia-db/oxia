@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package model holds the results that the scheduler, the planner and the
-// dispatcher exchange: plain values that can be logged, serialized and
-// replayed.
+// Package model holds the plain values that the scheduler, the planner and the
+// dispatcher exchange, and that the planner scores: values that can be logged,
+// serialized and replayed.
 package model
 
 // Blocked is a replica on a removed data server that no data server can take:

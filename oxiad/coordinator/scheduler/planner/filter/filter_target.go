@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Target rejects a target that is unknown or removed: a removed data server is
@@ -33,8 +33,8 @@ func (Target) GetName() string {
 	return "target"
 }
 
-func (Target) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
-	if op.Kind == candidate.Split {
+func (Target) Filter(s *stats.ClusterStats, op model.Candidate) error {
+	if op.Kind == model.Split {
 		return nil
 	}
 	if to := s.DataServers[op.To]; to == nil || to.Removed {

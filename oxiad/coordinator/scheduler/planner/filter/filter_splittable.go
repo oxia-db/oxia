@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Splittable rejects a split of a shard that can't be split now: one that
@@ -33,8 +33,8 @@ func (Splittable) GetName() string {
 	return "splittable"
 }
 
-func (Splittable) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
-	if op.Kind != candidate.Split {
+func (Splittable) Filter(s *stats.ClusterStats, op model.Candidate) error {
+	if op.Kind != model.Split {
 		return nil
 	}
 	if _, shard := op.GetShard(s); !shard.Splittable {

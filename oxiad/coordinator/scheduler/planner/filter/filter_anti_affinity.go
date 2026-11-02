@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package step
+package filter
 
 import (
 	"fmt"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // AntiAffinity rejects a replace whose target breaks an anti-affinity of the
@@ -34,8 +34,8 @@ func (AntiAffinity) GetName() string {
 	return "anti-affinity"
 }
 
-func (AntiAffinity) Filter(s *stats.ClusterStats, op candidate.Candidate) error {
-	if op.Kind != candidate.Replace {
+func (AntiAffinity) Filter(s *stats.ClusterStats, op model.Candidate) error {
+	if op.Kind != model.Replace {
 		return nil
 	}
 	ns, shard := op.GetShard(s)

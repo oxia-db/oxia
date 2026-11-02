@@ -12,28 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tier
+package filter
 
 import (
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
-// Drain counts the replicas on removed data servers, which must reach 0.
-type Drain struct{}
-
-func (Drain) GetName() string {
-	return "drain"
+func TestSplittableName(t *testing.T) {
+	assert.Equal(t, "splittable", Splittable{}.GetName())
 }
 
-func (Drain) GetKind() candidate.Kind {
-	return candidate.Replace
-}
+func TestSplittableRejectsAShardThatCantSplit(t *testing.T) {
+	s := newStats()
+	assert.ErrorIs(t, Splittable{}.Filter(s, split), errs.ErrFailedPrecondition)
+	assert.NoError(t, Splittable{}.Filter(s, move("n0", "n2")), "it only applies to a split")
 
-func (Drain) Delta(s *stats.ClusterStats, _ *load.Load, op candidate.Candidate) int {
-	if s.DataServers[op.From].Removed {
-		return -1
-	}
-	return 0
+	s.Namespaces["a"].Shards[1].Splittable = true
+	assert.NoError(t, Splittable{}.Filter(s, split))
 }

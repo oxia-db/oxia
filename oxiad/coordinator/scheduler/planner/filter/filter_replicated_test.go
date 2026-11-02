@@ -12,7 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package step holds the filters of the planner, one hard constraint each.
-// The prefix of each file, s0 to s6, is the order in which filter.Defaults
-// runs them: the cheapest checks first.
-package step
+package filter
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+)
+
+func TestReplicatedName(t *testing.T) {
+	assert.Equal(t, "replicated", Replicated{}.GetName())
+}
+
+func TestReplicatedRejectsASingleReplica(t *testing.T) {
+	s := newStats()
+	assert.NoError(t, Replicated{}.Filter(s, move("n0", "n2")))
+
+	s.Namespaces["a"].Shards[1].Ensemble = []string{"n0"}
+
+	assert.ErrorIs(t, Replicated{}.Filter(s, move("n0", "n2")), errs.ErrFailedPrecondition)
+	assert.NoError(t, Replicated{}.Filter(s, split), "a split copies no replica")
+}

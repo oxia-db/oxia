@@ -19,19 +19,18 @@
 package tier
 
 import (
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
 )
 
 // Tier is an objective of the planner.
 type Tier interface {
 	GetName() string
 	// GetKind is the kind of the ops that the tier scores.
-	GetKind() candidate.Kind
+	GetKind() model.Kind
 	// Delta returns the change of the potential that op, of the tier's kind,
 	// makes: op improves the tier if it is negative.
-	Delta(s *stats.ClusterStats, l *load.Load, op candidate.Candidate) int
+	Delta(s *stats.ClusterStats, l *Load, op model.Candidate) int
 }
 
 // Defaults returns the tiers of the scheduler, in priority order: the

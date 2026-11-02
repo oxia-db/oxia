@@ -17,9 +17,8 @@ package tier
 import (
 	"slices"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
 )
 
 // Score is the change of the potential of each tier that an op makes, in the
@@ -34,7 +33,7 @@ type Score struct {
 // it: every op then lowers the potentials, in that order, and since
 // they can't go below zero, the plans settle. It stops at the first tier that
 // op raises before improving one.
-func Evaluate(tiers []Tier, s *stats.ClusterStats, l *load.Load, op candidate.Candidate) Score {
+func Evaluate(tiers []Tier, s *stats.ClusterStats, l *Load, op model.Candidate) Score {
 	sc := Score{Deltas: make([]int, len(tiers)), Improved: -1}
 	for i, t := range tiers {
 		delta := t.Delta(s, l, op)
