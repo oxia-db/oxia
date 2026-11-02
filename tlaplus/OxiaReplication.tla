@@ -105,6 +105,8 @@ EntryId == [offset: Nat, term: Term]
 LogEntry == [entry_id: EntryId, value: Values]
 CursorStatus == { NIL, ATTACHED, PENDING_TRUNCATE }
 Cursor == [status: CursorStatus, last_pushed: EntryId, last_confirmed: EntryId]
+\* What a fenced node reports: its head entry and its commit offset
+Candidate == [head_entry_id: EntryId, commit_offset: Nat]
 NodeStatus == { LEADER, FOLLOWER, FENCED, NOT_MEMBER }
 
 \* equivalent of null for various record types
@@ -139,8 +141,7 @@ BecomeLeaderRequest ==
      coordinator:     Coordinators,
      term:        Term,
      rep_factor:   Nat,
-     follower_map: [Nodes -> EntryId \union {NIL}],
-     commit_map:   [Nodes -> Nat \union {NIL}]]
+     follower_map: [Nodes -> Candidate \union {NIL}]]
 
 \* Node -> Coordinator
 BecomeLeaderResponse ==
@@ -154,8 +155,7 @@ AddFollowerRequest ==
     [type:       {ADD_FOLLOWER_REQUEST},
      node:       Nodes,
      follower:   Nodes,
-     head_entry_id: EntryId,
-     commit_offset: Nat,
+     candidate:  Candidate,
      term:      Term]
 
 \* Node (Leader) -> Node (Follower)
@@ -583,27 +583,24 @@ CoordinatorHandlesFencingResponse ==
 FollowerResponse(responses, f) ==
     CHOOSE r \in responses : r.node = f
 
+GetCandidate(response) ==
+    [head_entry_id |-> response.head_entry_id,
+     commit_offset |-> response.commit_offset]
+
 GetFollowerMap(leader, responses, final_ensemble) ==
     LET followers == { f \in final_ensemble :
                         /\ f # leader
                         /\ \E r \in responses : r.node = f }
     IN  [f \in Nodes |->
             IF f \in followers
-            THEN FollowerResponse(responses, f).head_entry_id
+            THEN GetCandidate(FollowerResponse(responses, f))
             ELSE NIL]
-
-GetCommitMap(follower_map, responses) ==
-    [f \in Nodes |->
-        IF follower_map[f] # NIL
-        THEN FollowerResponse(responses, f).commit_offset
-        ELSE NIL]
 
 GetBecomeLeaderRequest(n, term, o, follower_map, rep_factor) ==
     [type         |-> BECOME_LEADER_REQUEST,
      node         |-> n,
      coordinator     |-> o,
      follower_map |-> follower_map,
-     commit_map   |-> GetCommitMap(follower_map, coordinator_state[o].election_fence_responses),
      rep_factor   |-> rep_factor,
      term        |-> term]
 
@@ -720,78 +717,78 @@ NeedsTruncation(nstate, head_entry_id) ==
 
 \* The entries of the follower up to its commit offset, and up to its head,
 \* are committed: they are the same as the leader's
-FollowerCommittedOffset(head_entry_id, commit_offset) ==
-    Min(commit_offset, head_entry_id.offset)
+FollowerCommittedOffset(candidate) ==
+    Min(candidate.commit_offset, candidate.head_entry_id.offset)
 
 \* The follower knows of committed entries that the leader doesn't have: the
 \* leader refuses it, or would lose them
-RefusesFollower(nstate, commit_offset) ==
-    commit_offset > nstate.head_entry_id.offset
+RefusesFollower(nstate, candidate) ==
+    candidate.commit_offset > nstate.head_entry_id.offset
 
 \* The committed entries of the follower are past the ones the wal of the
 \* leader shows in common with it, e.g. when the leader trimmed its wal
-UsesCommitOffset(nstate, head_entry_id, commit_offset) ==
-    /\ NeedsTruncation(nstate, head_entry_id)
-    /\ FollowerCommittedOffset(head_entry_id, commit_offset) >
-            GetHighestEntryOfTerm(nstate, head_entry_id.term).entry_id.offset
+UsesCommitOffset(nstate, candidate) ==
+    /\ NeedsTruncation(nstate, candidate.head_entry_id)
+    /\ FollowerCommittedOffset(candidate) >
+            GetHighestEntryOfTerm(nstate, candidate.head_entry_id.term).entry_id.offset
 
 \* The wal of the leader doesn't have the next entry of the follower
-NeedsSnapshot(nstate, head_entry_id, commit_offset) ==
-    /\ UsesCommitOffset(nstate, head_entry_id, commit_offset)
-    /\ FollowerCommittedOffset(head_entry_id, commit_offset) + 1 < nstate.snapshot_offset + 1
+NeedsSnapshot(nstate, candidate) ==
+    /\ UsesCommitOffset(nstate, candidate)
+    /\ FollowerCommittedOffset(candidate) + 1 < nstate.snapshot_offset + 1
 
-SendsTruncate(nstate, head_entry_id, commit_offset) ==
-    IF UsesCommitOffset(nstate, head_entry_id, commit_offset)
-    THEN /\ ~NeedsSnapshot(nstate, head_entry_id, commit_offset)
-         /\ head_entry_id.offset # FollowerCommittedOffset(head_entry_id, commit_offset)
-    ELSE NeedsTruncation(nstate, head_entry_id)
+SendsTruncate(nstate, candidate) ==
+    IF UsesCommitOffset(nstate, candidate)
+    THEN /\ ~NeedsSnapshot(nstate, candidate)
+         /\ candidate.head_entry_id.offset # FollowerCommittedOffset(candidate)
+    ELSE NeedsTruncation(nstate, candidate.head_entry_id)
 
 \* The implementation truncates the follower by offset, without the term of
 \* the entry: the spec uses the entry of the leader at that offset, which is
 \* the same as the follower's, as it's committed
-TruncateEntryId(nstate, head_entry_id, commit_offset) ==
-    IF UsesCommitOffset(nstate, head_entry_id, commit_offset)
+TruncateEntryId(nstate, candidate) ==
+    IF UsesCommitOffset(nstate, candidate)
     THEN (CHOOSE e \in FullLog(nstate) :
-            e.entry_id.offset = FollowerCommittedOffset(head_entry_id, commit_offset)).entry_id
-    ELSE GetHighestEntryOfTerm(nstate, head_entry_id.term).entry_id
+            e.entry_id.offset = FollowerCommittedOffset(candidate)).entry_id
+    ELSE GetHighestEntryOfTerm(nstate, candidate.head_entry_id.term).entry_id
 
-GetCursor(nstate, head_entry_id, commit_offset) ==
-    IF NeedsSnapshot(nstate, head_entry_id, commit_offset)
+GetCursor(nstate, candidate) ==
+    IF NeedsSnapshot(nstate, candidate)
     \* the cursor is behind the wal of the leader: the follower gets a snapshot
     THEN [status         |-> ATTACHED,
           last_pushed    |-> NoEntryId,
           last_confirmed |-> NoEntryId]
-    ELSE IF SendsTruncate(nstate, head_entry_id, commit_offset)
+    ELSE IF SendsTruncate(nstate, candidate)
     THEN [status         |-> PENDING_TRUNCATE,
           last_pushed    |-> NoEntryId,
           last_confirmed |-> NoEntryId]
     ELSE [status         |-> ATTACHED,
-          last_pushed    |-> head_entry_id,
-          last_confirmed |-> head_entry_id]
+          last_pushed    |-> candidate.head_entry_id,
+          last_confirmed |-> candidate.head_entry_id]
 
-GetCursors(nstate, follower_map, commit_map) ==
+GetCursors(nstate, follower_map) ==
     [n \in Nodes |->
          IF follower_map[n] # NIL
-         THEN GetCursor(nstate, follower_map[n], commit_map[n])
+         THEN GetCursor(nstate, follower_map[n])
          ELSE NoCursor]
 
 
-GetTruncateRequest(nstate, follower, head_entry_id, commit_offset) ==
+GetTruncateRequest(nstate, follower, candidate) ==
     [type        |-> TRUNCATE_REQUEST,
      dest_node   |-> follower,
      source_node |-> nstate.id,
-     head_entry_id  |-> TruncateEntryId(nstate, head_entry_id, commit_offset),
+     head_entry_id  |-> TruncateEntryId(nstate, candidate),
      term       |-> nstate.term]
 
-FollowersToTruncate(nstate, follower_map, commit_map) ==
+FollowersToTruncate(nstate, follower_map) ==
     { f \in DOMAIN follower_map :
             /\ follower_map[f] # NIL
-            /\ SendsTruncate(nstate, follower_map[f], commit_map[f]) }
+            /\ SendsTruncate(nstate, follower_map[f]) }
 
-GetTruncateRequests(nstate, follower_map, commit_map) ==
+GetTruncateRequests(nstate, follower_map) ==
     {
-        GetTruncateRequest(nstate, f, follower_map[f], commit_map[f])
-            : f \in FollowersToTruncate(nstate, follower_map, commit_map)
+        GetTruncateRequest(nstate, f, follower_map[f])
+            : f \in FollowersToTruncate(nstate, follower_map)
     }
 
 GetBecomeLeaderResponse(n, term, o) ==
@@ -805,10 +802,10 @@ NodeHandlesBecomeLeaderRequest ==
     \E msg \in DOMAIN messages :
         /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
         /\ node_state[msg.node].term = msg.term
-        /\ \A f \in Nodes : msg.follower_map[f] # NIL => ~RefusesFollower(node_state[msg.node], msg.commit_map[f])
-        /\ LET truncate_requests == GetTruncateRequests(node_state[msg.node], msg.follower_map, msg.commit_map)
+        /\ \A f \in Nodes : msg.follower_map[f] # NIL => ~RefusesFollower(node_state[msg.node], msg.follower_map[f])
+        /\ LET truncate_requests == GetTruncateRequests(node_state[msg.node], msg.follower_map)
                leader_response   == GetBecomeLeaderResponse(msg.node, msg.term, msg.coordinator)
-               updated_cursors   == GetCursors(node_state[msg.node], msg.follower_map, msg.commit_map)
+               updated_cursors   == GetCursors(node_state[msg.node], msg.follower_map)
            IN
               \* state changes
               /\ node_state' = [node_state EXCEPT ![msg.node] =
@@ -832,7 +829,7 @@ NodeRefusesBecomeLeaderRequest ==
     \E msg \in DOMAIN messages :
         /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
         /\ node_state[msg.node].term = msg.term
-        /\ \E f \in Nodes : msg.follower_map[f] # NIL /\ RefusesFollower(node_state[msg.node], msg.commit_map[f])
+        /\ \E f \in Nodes : msg.follower_map[f] # NIL /\ RefusesFollower(node_state[msg.node], msg.follower_map[f])
         \* state changes
         /\ MessageProcessed(msg)
         /\ UNCHANGED << metadata, metadata_version, node_state, coordinator_state, confirmed, coordinator_stop_ctr >>
@@ -879,12 +876,11 @@ CoordinatorHandlesBecomeLeaderResponse ==
   head entry_id.
 ----------------------------------------------------------*)
 
-GetAddFollowerRequest(n, term, follower, head_entry_id, commit_offset) ==
+GetAddFollowerRequest(n, term, follower, candidate) ==
     [type       |-> ADD_FOLLOWER_REQUEST,
      node       |-> n,
      follower   |-> follower,
-     head_entry_id |-> head_entry_id,
-     commit_offset |-> commit_offset,
+     candidate  |-> candidate,
      term      |-> term]
 
 CoordinatorHandlesPostQuorumFencingResponse ==
@@ -905,8 +901,7 @@ CoordinatorHandlesPostQuorumFencingResponse ==
                                               GetAddFollowerRequest(ostate.election_leader,
                                                                     ostate.md.term,
                                                                     msg.node,
-                                                                    msg.head_entry_id,
-                                                                    msg.commit_offset))
+                                                                    GetCandidate(msg)))
             /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
@@ -967,17 +962,16 @@ LeaderHandlesAddFollowerRequest ==
         /\ node_state[msg.node].status = LEADER
         /\ node_state[msg.node].follow_cursor[msg.follower].status = NIL
         \* state changes
-        /\ IF RefusesFollower(node_state[msg.node], msg.commit_offset)
+        /\ IF RefusesFollower(node_state[msg.node], msg.candidate)
            THEN /\ MessageProcessed(msg)
                 /\ UNCHANGED node_state
            ELSE /\ node_state' = [node_state EXCEPT ![msg.node].follow_cursor[msg.follower] =
-                                    GetCursor(node_state[msg.node], msg.head_entry_id, msg.commit_offset)]
-                /\ IF SendsTruncate(node_state[msg.node], msg.head_entry_id, msg.commit_offset)
+                                    GetCursor(node_state[msg.node], msg.candidate)]
+                /\ IF SendsTruncate(node_state[msg.node], msg.candidate)
                    THEN ProcessedOneAndSendAnother(msg,
                                                    GetTruncateRequest(node_state[msg.node],
                                                                       msg.follower,
-                                                                      msg.head_entry_id,
-                                                                      msg.commit_offset))
+                                                                      msg.candidate))
                    ELSE MessageProcessed(msg)
         /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
 
