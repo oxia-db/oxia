@@ -396,6 +396,9 @@ func (c *cluster) startWriters(through string, namespaces ...string) *writers {
 		require.NoError(c.t, err)
 		w.clients[namespace] = client
 		w.acked[namespace] = make(map[string]string)
+	}
+	// The writers start once the maps are complete: they read them meanwhile
+	for namespace, client := range w.clients {
 		w.wg.Go(func() { w.write(ctx, namespace, client) })
 	}
 	require.Eventually(c.t, func() bool {
