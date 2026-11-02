@@ -164,18 +164,6 @@ func (c *runtime) GetLiveDataServerStatus(name string) (*proto.DataServerStatus,
 	}, true
 }
 
-// dataServerStatus returns the status of the controller of a data server, or
-// false without one, e.g. for a data server that was just registered.
-func (c *runtime) dataServerStatus(name string) (dataservercontroller.Status, bool) {
-	c.RLock()
-	defer c.RUnlock()
-	dataServerController, found := c.dataServerControllers[name]
-	if !found {
-		return dataservercontroller.Status{}, false
-	}
-	return dataServerController.GetStatus(), true
-}
-
 func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bool {
 	identity := dataServer.GetIdentity()
 	if identity == nil {
@@ -703,8 +691,16 @@ func New(
 
 	// The scheduler starts once the controllers are in place, and before the
 	// action worker that reads its actions
-
-	c.scheduler = scheduler.New(c.ctx, c.metadata, c.dataServerStatus, c.rpc)
+	c.scheduler = scheduler.New(c.ctx, c.metadata, func(name string) bool {
+		c.RLock()
+		defer c.RUnlock()
+		// A data server without a controller, e.g. just registered, isn't available
+		var status dataservercontroller.Status
+		if dataServerController, found := c.dataServerControllers[name]; found {
+			status = dataServerController.GetStatus()
+		}
+		return status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
+	}, c.rpc)
 	c.wg.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{
 			"component": "coordinator-action-worker",

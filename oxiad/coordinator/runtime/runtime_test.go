@@ -885,19 +885,6 @@ func TestRuntimeBecameDrainedKeepsControllerOfDataServerAddedAgain(t *testing.T)
 	assert.Zero(t, running.closes.Load())
 }
 
-func TestRuntimeDataServerStatus(t *testing.T) {
-	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
-	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
-	c.dataServerControllers["draining"] = draining
-
-	status, found := c.dataServerStatus("draining")
-	assert.True(t, found)
-	assert.Equal(t, draining.status, status)
-
-	_, found = c.dataServerStatus("unknown")
-	assert.False(t, found)
-}
-
 // An action on a shard without a controller, e.g. deleted in the meantime,
 // fails.
 func TestRuntimeDispatchActionFailsForUnknownShard(t *testing.T) {

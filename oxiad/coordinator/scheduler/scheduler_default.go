@@ -23,12 +23,10 @@ import (
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/dispatcher"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
@@ -51,18 +49,12 @@ type scheduler struct {
 	planner    planner.Planner
 	dispatcher dispatcher.Dispatcher
 	collector  *collector.Collector
-	splits     metric.Counter
+
+	splitsCounter metric.Counter
 }
 
-// New starts a scheduler. The owner reads its Actions before New, since the
-// first round may send some right away.
-//
-// status returns the status of the controller of a data server, or false
-// without one: the plan moves nothing that needs a data server that is down,
-// and the dispatch checks again before it sends an op. provider reads the stats of the shards from their leaders,
-// for the auto-split.
-func New(ctx context.Context, metadata coordmetadata.Metadata,
-	status func(name string) (dataservercontroller.Status, bool), provider rpc.ControllerRPCProvider) Scheduler {
+func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name string) bool,
+	provider rpc.ControllerRPCProvider) Scheduler {
 	ctx, cancel := context.WithCancel(ctx)
 	p := planner.New(filter.Defaults(), tier.Defaults())
 	actions := make(chan action.Action, actionsBuffer)
@@ -73,9 +65,9 @@ func New(ctx context.Context, metadata coordmetadata.Metadata,
 		metadata:   metadata,
 		actions:    actions,
 		planner:    p,
-		dispatcher: dispatcher.New(ctx, func(name string) bool { return collector.Running(status(name)) }, actions),
-		collector:  collector.New(ctx, metadata, status, provider),
-		splits: metric.NewCounter("oxia_coordinator_autosplit_splits_initiated_total",
+		dispatcher: dispatcher.New(ctx, running, actions),
+		collector:  collector.New(ctx, metadata, running, provider),
+		splitsCounter: metric.NewCounter("oxia_coordinator_autosplit_splits_initiated_total",
 			"Auto-splits started", "count", map[string]any{}),
 	}
 	s.wg.Go(func() {
@@ -138,29 +130,23 @@ func (s *scheduler) run() {
 		for _, replica := range blocked {
 			s.logger.Warn("A replica on a removed data server is blocked", slog.Any("replica", replica))
 		}
+		succeeded := true
+		for _, result := range s.dispatcher.Dispatch(snap, actions) {
+			if result.Err != nil {
+				s.logger.Warn("An action failed", slog.Any("action", result.Action), slog.Any("error", result.Err))
+				succeeded = false
+				continue
+			}
+			if _, ok := result.Action.(*action.SplitAction); ok {
+				s.collector.SetLastSplit(now)
+				s.splitsCounter.Inc()
+			}
+		}
 		// The next round plans on the snapshot that these actions leave, right
 		// away if all of them succeeded: a failed one waits the interval, or
 		// the next round would retry it in a busy loop
-		if s.settle(s.dispatcher.Dispatch(snap, actions), now) && len(actions) > 0 {
+		if succeeded && len(actions) > 0 {
 			interval = 0
 		}
 	}
-}
-
-// settle logs the results of the actions of a round. It reports whether all
-// of them succeeded.
-func (s *scheduler) settle(results []model.Result, now time.Time) bool {
-	succeeded := true
-	for _, result := range results {
-		if result.Err != nil {
-			s.logger.Warn("An action failed", slog.Any("action", result.Action), slog.Any("error", result.Err))
-			succeeded = false
-			continue
-		}
-		if _, ok := result.Action.(*action.SplitAction); ok {
-			s.collector.SetLastSplit(now)
-			s.splits.Inc()
-		}
-	}
-	return succeeded
 }

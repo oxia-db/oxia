@@ -25,7 +25,6 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
-	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
@@ -37,13 +36,6 @@ const (
 	// parallelism bounds the status requests in flight.
 	parallelism = 16
 )
-
-// Running reports whether a data server, with status if found, answers its
-// health checks and isn't drained: running, or draining after its removal
-// from the configuration.
-func Running(status dataservercontroller.Status, found bool) bool {
-	return found && status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
-}
 
 // Collector collects the snapshot of each round, and the stats of its shards
 // from their leaders, at most once per collection interval of the auto-split.
@@ -59,7 +51,7 @@ type Collector struct {
 	ctx      context.Context
 	logger   *slog.Logger
 	metadata coordmetadata.Metadata
-	status   func(name string) (dataservercontroller.Status, bool)
+	running  func(name string) bool
 	rpc      rpc.ControllerRPCProvider
 	// sampled is the time of the last sample, and overshoots its result.
 	sampled    time.Time
@@ -68,8 +60,9 @@ type Collector struct {
 	trackers   map[int64]*tracker
 	// lastSplit is the time the last split started: no shard is over its
 	// threshold until the cooldown from it ends.
-	lastSplit   time.Time
-	evaluations metric.Counter
+	lastSplit time.Time
+
+	evaluationsCounter metric.Counter
 }
 
 // tracker holds the last sample of a shard.
@@ -82,19 +75,19 @@ type tracker struct {
 	exceedingSince time.Time
 }
 
-// New returns a Collector that reads metadata, the status of each data server
-// with status, which reports false for one without a controller, and the
-// stats of the shards with provider, until ctx is done.
-func New(ctx context.Context, metadata coordmetadata.Metadata,
-	status func(name string) (dataservercontroller.Status, bool), provider rpc.ControllerRPCProvider) *Collector {
+// New returns a Collector that reads metadata, whether each data server is
+// running with running, and the stats of the shards with provider, until ctx
+// is done.
+func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name string) bool,
+	provider rpc.ControllerRPCProvider) *Collector {
 	return &Collector{
 		ctx:      ctx,
 		logger:   slog.With(slog.String("component", "snapshot-collector")),
 		metadata: metadata,
-		status:   status,
+		running:  running,
 		rpc:      provider,
 		trackers: make(map[int64]*tracker),
-		evaluations: metric.NewCounter("oxia_coordinator_autosplit_evaluations_total",
+		evaluationsCounter: metric.NewCounter("oxia_coordinator_autosplit_evaluations_total",
 			"Number of threshold evaluation cycles", "count", map[string]any{}),
 	}
 }
@@ -112,7 +105,7 @@ func (c *Collector) Collect() (*stats.ClusterStats, error) {
 	}
 	s := stats.New(dataServers, namespaces, statuses)
 	for name, dataServer := range s.DataServers {
-		dataServer.Down = !Running(c.status(name))
+		dataServer.Down = !c.running(name)
 	}
 	return s, nil
 }
@@ -161,7 +154,7 @@ func (c *Collector) sample(s *stats.ClusterStats, p policy.Split, now time.Time)
 		return
 	}
 	c.sampled = now
-	c.evaluations.Inc()
+	c.evaluationsCounter.Inc()
 
 	leaders := make(map[int64]string)
 	for _, ns := range s.Namespaces {

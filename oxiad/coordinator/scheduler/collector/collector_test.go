@@ -26,7 +26,6 @@ import (
 
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
-	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
@@ -49,13 +48,9 @@ func TestCollectorCollectReturnsTheSnapshot(t *testing.T) {
 		},
 	}
 	// n1 doesn't answer
-	statuses := map[string]dataservercontroller.Status{"n0": up()}
-	status := func(name string) (dataservercontroller.Status, bool) {
-		st, found := statuses[name]
-		return st, found
-	}
+	running := func(name string) bool { return name == "n0" }
 
-	s, err := New(t.Context(), metadata, status, nil).Collect()
+	s, err := New(t.Context(), metadata, running, nil).Collect()
 
 	require.NoError(t, err)
 	assert.Equal(t, &stats.ShardStats{Ensemble: []string{"n0"}, Leader: "n0"}, s.GetShard(1))
@@ -74,20 +69,6 @@ func TestCollectorCollectReturnsAFailedRead(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
-}
-
-func TestRunning(t *testing.T) {
-	status := func(state proto.DataServerState, available bool) dataservercontroller.Status {
-		st := dataservercontroller.NewStatus(state)
-		st.SetAvailable(available)
-		return st
-	}
-
-	assert.True(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_RUNNING, true), true))
-	assert.True(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_DRAINING, true), true))
-	assert.False(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_DRAINED, true), true))
-	assert.False(t, Running(status(proto.DataServerState_DATA_SERVER_STATE_RUNNING, false), true))
-	assert.False(t, Running(dataservercontroller.Status{}, false))
 }
 
 func TestCollectorSampleSetsTheOvershoot(t *testing.T) {
@@ -241,14 +222,6 @@ func TestCollectorSampleKeepsTheShardsFromSplitting(t *testing.T) {
 			assert.False(t, s.GetShard(1).Splittable)
 		})
 	}
-}
-
-// up is the status of a data server that answered its health checks since
-// it joined.
-func up() dataservercontroller.Status {
-	status := dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
-	status.SetAvailable(true)
-	return status
 }
 
 // newStats has the data servers n0 and n1, and the splittable shard 1 of
