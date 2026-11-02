@@ -18,6 +18,10 @@ This spec includes:
 - Changes of the ensemble: a one-for-one swap of a member, from -> to, with
   a joint fence of the ensembles before and after the change, as Raft's joint
   consensus
+- The trimming of the wal: a node drops the committed entries below its commit
+  offset from its wal, and keeps them in its database only, without their
+  terms. A follower behind the wal of its leader gets a snapshot of the
+  leader's database.
 
 Not modelling:
 - Failure detection. There is no need to as:
@@ -125,6 +129,7 @@ NewTermResponse ==
      node:       Nodes,
      coordinator:   Coordinators,
      head_entry_id: EntryId,
+     commit_offset: Nat,
      term:      Term]
 
 \* Coordinator -> Node
@@ -134,7 +139,8 @@ BecomeLeaderRequest ==
      coordinator:     Coordinators,
      term:        Term,
      rep_factor:   Nat,
-     follower_map: [Nodes -> EntryId \union {NIL}]]
+     follower_map: [Nodes -> EntryId \union {NIL}],
+     commit_map:   [Nodes -> Nat \union {NIL}]]
 
 \* Node -> Coordinator
 BecomeLeaderResponse ==
@@ -149,6 +155,7 @@ AddFollowerRequest ==
      node:       Nodes,
      follower:   Nodes,
      head_entry_id: EntryId,
+     commit_offset: Nat,
      term:      Term]
 
 \* Node (Leader) -> Node (Follower)
@@ -211,7 +218,9 @@ NodeState == [id:              Nodes,
               term:           Term,
               leader:          Nodes \union {NIL},
               rep_factor:      Nat,
-              log:             SUBSET LogEntry,
+              log:             SUBSET LogEntry, \* the entries of the wal
+              snapshot_offset: Nat,             \* the entries up to it are in the database only
+              snapshot:        SUBSET LogEntry, \* those entries, for the invariants only
               commit_entry_id:    EntryId,
               head_entry_id:      EntryId,
               follow_cursor:   [Nodes -> Cursor]]
@@ -264,6 +273,8 @@ Init ==
                              leader          |-> NIL,
                              rep_factor      |-> 0,
                              log             |-> {},
+                             snapshot_offset |-> 0,
+                             snapshot        |-> {},
                              commit_entry_id    |-> NoEntryId,
                              head_entry_id      |-> NoEntryId,
                              follow_cursor   |-> [n1 \in Nodes |-> NoCursor]]]
@@ -285,6 +296,11 @@ Init ==
    -----------------------------------------*)
 
 Majority(n) == (n \div 2) + 1
+
+Min(a, b) == IF a < b THEN a ELSE b
+
+\* The entries of a node, in its wal and in its database
+FullLog(nstate) == nstate.log \union nstate.snapshot
 
 \* The smallest number of the n members that overlaps every majority of them:
 \* a majority leaves out n - Majority(n) members at most.
@@ -483,7 +499,14 @@ CoordinatorStartsElection ==
   Node handles a fence request
 
   A node receives a fencing request, fences itself and responds
-  with its head entry_id.
+  with its head entry_id and its commit offset. Its entries up to
+  both are committed: the leader doesn't truncate it below them.
+
+  Key points:
+  - The node reports the commit offset its leader advertised. The
+    implementation reports, for a follower, the advertised one, and,
+    for a leader, the one of its database, which may be lower: a
+    lower one leads to the same truncations or to lower ones.
 
   When a node is fenced it cannot:
   - accept any writes from a client.
@@ -497,6 +520,7 @@ GetNewTermResponse(nstate, new_term, o) ==
      node           |-> nstate.id,
      coordinator       |-> o,
      head_entry_id     |-> nstate.head_entry_id,
+     commit_offset     |-> nstate.commit_entry_id.offset,
      term          |-> new_term]
 
 NodeHandlesFencingRequest ==
@@ -568,11 +592,18 @@ GetFollowerMap(leader, responses, final_ensemble) ==
             THEN FollowerResponse(responses, f).head_entry_id
             ELSE NIL]
 
+GetCommitMap(follower_map, responses) ==
+    [f \in Nodes |->
+        IF follower_map[f] # NIL
+        THEN FollowerResponse(responses, f).commit_offset
+        ELSE NIL]
+
 GetBecomeLeaderRequest(n, term, o, follower_map, rep_factor) ==
     [type         |-> BECOME_LEADER_REQUEST,
      node         |-> n,
      coordinator     |-> o,
      follower_map |-> follower_map,
+     commit_map   |-> GetCommitMap(follower_map, coordinator_state[o].election_fence_responses),
      rep_factor   |-> rep_factor,
      term        |-> term]
 
@@ -687,8 +718,50 @@ NeedsTruncation(nstate, head_entry_id) ==
        /\ head_entry_id.offset > nstate.head_entry_id.offset
     \/ head_entry_id.term # nstate.head_entry_id.term
 
-GetCursor(nstate, head_entry_id) ==
-    IF NeedsTruncation(nstate, head_entry_id)
+\* The entries of the follower up to its commit offset, and up to its head,
+\* are committed: they are the same as the leader's
+FollowerCommittedOffset(head_entry_id, commit_offset) ==
+    Min(commit_offset, head_entry_id.offset)
+
+\* The follower knows of committed entries that the leader doesn't have: the
+\* leader refuses it, or would lose them
+RefusesFollower(nstate, commit_offset) ==
+    commit_offset > nstate.head_entry_id.offset
+
+\* The committed entries of the follower are past the ones the wal of the
+\* leader shows in common with it, e.g. when the leader trimmed its wal
+UsesCommitOffset(nstate, head_entry_id, commit_offset) ==
+    /\ NeedsTruncation(nstate, head_entry_id)
+    /\ FollowerCommittedOffset(head_entry_id, commit_offset) >
+            GetHighestEntryOfTerm(nstate, head_entry_id.term).entry_id.offset
+
+\* The wal of the leader doesn't have the next entry of the follower
+NeedsSnapshot(nstate, head_entry_id, commit_offset) ==
+    /\ UsesCommitOffset(nstate, head_entry_id, commit_offset)
+    /\ FollowerCommittedOffset(head_entry_id, commit_offset) + 1 < nstate.snapshot_offset + 1
+
+SendsTruncate(nstate, head_entry_id, commit_offset) ==
+    IF UsesCommitOffset(nstate, head_entry_id, commit_offset)
+    THEN /\ ~NeedsSnapshot(nstate, head_entry_id, commit_offset)
+         /\ head_entry_id.offset # FollowerCommittedOffset(head_entry_id, commit_offset)
+    ELSE NeedsTruncation(nstate, head_entry_id)
+
+\* The implementation truncates the follower by offset, without the term of
+\* the entry: the spec uses the entry of the leader at that offset, which is
+\* the same as the follower's, as it's committed
+TruncateEntryId(nstate, head_entry_id, commit_offset) ==
+    IF UsesCommitOffset(nstate, head_entry_id, commit_offset)
+    THEN (CHOOSE e \in FullLog(nstate) :
+            e.entry_id.offset = FollowerCommittedOffset(head_entry_id, commit_offset)).entry_id
+    ELSE GetHighestEntryOfTerm(nstate, head_entry_id.term).entry_id
+
+GetCursor(nstate, head_entry_id, commit_offset) ==
+    IF NeedsSnapshot(nstate, head_entry_id, commit_offset)
+    \* the cursor is behind the wal of the leader: the follower gets a snapshot
+    THEN [status         |-> ATTACHED,
+          last_pushed    |-> NoEntryId,
+          last_confirmed |-> NoEntryId]
+    ELSE IF SendsTruncate(nstate, head_entry_id, commit_offset)
     THEN [status         |-> PENDING_TRUNCATE,
           last_pushed    |-> NoEntryId,
           last_confirmed |-> NoEntryId]
@@ -696,29 +769,29 @@ GetCursor(nstate, head_entry_id) ==
           last_pushed    |-> head_entry_id,
           last_confirmed |-> head_entry_id]
 
-GetCursors(nstate, follower_map) ==
+GetCursors(nstate, follower_map, commit_map) ==
     [n \in Nodes |->
          IF follower_map[n] # NIL
-         THEN GetCursor(nstate, follower_map[n])
+         THEN GetCursor(nstate, follower_map[n], commit_map[n])
          ELSE NoCursor]
 
 
-GetTruncateRequest(nstate, follower, target_term) ==
+GetTruncateRequest(nstate, follower, head_entry_id, commit_offset) ==
     [type        |-> TRUNCATE_REQUEST,
      dest_node   |-> follower,
      source_node |-> nstate.id,
-     head_entry_id  |-> GetHighestEntryOfTerm(nstate, target_term).entry_id,
+     head_entry_id  |-> TruncateEntryId(nstate, head_entry_id, commit_offset),
      term       |-> nstate.term]
 
-FollowersToTruncate(nstate, follower_map) ==
+FollowersToTruncate(nstate, follower_map, commit_map) ==
     { f \in DOMAIN follower_map :
             /\ follower_map[f] # NIL
-            /\ NeedsTruncation(nstate, follower_map[f]) }
+            /\ SendsTruncate(nstate, follower_map[f], commit_map[f]) }
 
-GetTruncateRequests(nstate, follower_map) ==
+GetTruncateRequests(nstate, follower_map, commit_map) ==
     {
-        GetTruncateRequest(nstate, f, follower_map[f].term)
-            : f \in FollowersToTruncate(nstate, follower_map)
+        GetTruncateRequest(nstate, f, follower_map[f], commit_map[f])
+            : f \in FollowersToTruncate(nstate, follower_map, commit_map)
     }
 
 GetBecomeLeaderResponse(n, term, o) ==
@@ -732,9 +805,10 @@ NodeHandlesBecomeLeaderRequest ==
     \E msg \in DOMAIN messages :
         /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
         /\ node_state[msg.node].term = msg.term
-        /\ LET truncate_requests == GetTruncateRequests(node_state[msg.node], msg.follower_map)
+        /\ \A f \in Nodes : msg.follower_map[f] # NIL => ~RefusesFollower(node_state[msg.node], msg.commit_map[f])
+        /\ LET truncate_requests == GetTruncateRequests(node_state[msg.node], msg.follower_map, msg.commit_map)
                leader_response   == GetBecomeLeaderResponse(msg.node, msg.term, msg.coordinator)
-               updated_cursors   == GetCursors(node_state[msg.node], msg.follower_map)
+               updated_cursors   == GetCursors(node_state[msg.node], msg.follower_map, msg.commit_map)
            IN
               \* state changes
               /\ node_state' = [node_state EXCEPT ![msg.node] =
@@ -744,6 +818,24 @@ NodeHandlesBecomeLeaderRequest ==
                                                     !.follow_cursor = updated_cursors]]
               /\ ProcessedOneAndSendMore(msg, truncate_requests \union {leader_response})
               /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  Node refuses a Become Leader request
+
+  A follower reported a commit offset past the head of the new leader:
+  the leader misses committed entries, and would lose them. It stays
+  fenced, and the election doesn't complete.
+----------------------------------------------------------*)
+
+NodeRefusesBecomeLeaderRequest ==
+    \* enabling conditions
+    \E msg \in DOMAIN messages :
+        /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
+        /\ node_state[msg.node].term = msg.term
+        /\ \E f \in Nodes : msg.follower_map[f] # NIL /\ RefusesFollower(node_state[msg.node], msg.commit_map[f])
+        \* state changes
+        /\ MessageProcessed(msg)
+        /\ UNCHANGED << metadata, metadata_version, node_state, coordinator_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Coordinator handles Become Leader response
@@ -787,11 +879,12 @@ CoordinatorHandlesBecomeLeaderResponse ==
   head entry_id.
 ----------------------------------------------------------*)
 
-GetAddFollowerRequest(n, term, follower, head_entry_id) ==
+GetAddFollowerRequest(n, term, follower, head_entry_id, commit_offset) ==
     [type       |-> ADD_FOLLOWER_REQUEST,
      node       |-> n,
      follower   |-> follower,
      head_entry_id |-> head_entry_id,
+     commit_offset |-> commit_offset,
      term      |-> term]
 
 CoordinatorHandlesPostQuorumFencingResponse ==
@@ -812,7 +905,8 @@ CoordinatorHandlesPostQuorumFencingResponse ==
                                               GetAddFollowerRequest(ostate.election_leader,
                                                                     ostate.md.term,
                                                                     msg.node,
-                                                                    msg.head_entry_id))
+                                                                    msg.head_entry_id,
+                                                                    msg.commit_offset))
             /\ UNCHANGED << metadata, metadata_version, node_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
@@ -861,7 +955,8 @@ CoordinatorFinishesEnsembleChange ==
 
   The leader creates a cursor and will send a truncate
   request to the follower if their log might need
-  truncating first.
+  truncating first, unless the follower reported a commit
+  offset past the head of the leader: the leader refuses it.
 ----------------------------------------------------------*)
 
 LeaderHandlesAddFollowerRequest ==
@@ -872,14 +967,18 @@ LeaderHandlesAddFollowerRequest ==
         /\ node_state[msg.node].status = LEADER
         /\ node_state[msg.node].follow_cursor[msg.follower].status = NIL
         \* state changes
-        /\ node_state' = [node_state EXCEPT ![msg.node].follow_cursor[msg.follower] =
-                                GetCursor(node_state[msg.node], msg.head_entry_id)]
-        /\ IF NeedsTruncation(node_state[msg.node], msg.head_entry_id)
-           THEN ProcessedOneAndSendAnother(msg,
-                                           GetTruncateRequest(node_state[msg.node],
-                                                              msg.follower,
-                                                              msg.head_entry_id.term))
-           ELSE MessageProcessed(msg)
+        /\ IF RefusesFollower(node_state[msg.node], msg.commit_offset)
+           THEN /\ MessageProcessed(msg)
+                /\ UNCHANGED node_state
+           ELSE /\ node_state' = [node_state EXCEPT ![msg.node].follow_cursor[msg.follower] =
+                                    GetCursor(node_state[msg.node], msg.head_entry_id, msg.commit_offset)]
+                /\ IF SendsTruncate(node_state[msg.node], msg.head_entry_id, msg.commit_offset)
+                   THEN ProcessedOneAndSendAnother(msg,
+                                                   GetTruncateRequest(node_state[msg.node],
+                                                                      msg.follower,
+                                                                      msg.head_entry_id,
+                                                                      msg.commit_offset))
+                   ELSE MessageProcessed(msg)
         /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
 
 
@@ -1001,6 +1100,8 @@ CanSendToFollower(lstate, follower) ==
     /\ follower # lstate.id
     /\ lstate.follow_cursor[follower].status = ATTACHED
     /\ IsHigherId(lstate.head_entry_id, lstate.follow_cursor[follower].last_pushed)
+    \* the next entry is in the wal of the leader
+    /\ lstate.follow_cursor[follower].last_pushed.offset >= lstate.snapshot_offset
 
 \* does this group of followers include all followers that we can send to in this moment?
 IncludesAllSendableFollowers(lstate, followers) ==
@@ -1148,7 +1249,7 @@ FollowerRejectsEntry ==
 
 ----------------------------------------------------------*)
 GetEntry(entry_id, nstate) ==
-    CHOOSE entry \in nstate.log :
+    CHOOSE entry \in FullLog(nstate) :
         CompareLogEntries(entry.entry_id, entry_id) = 0
 
 \* note that >= RF/2 instead of RF/2 + 1. This is because the
@@ -1220,6 +1321,101 @@ LeaderHandlesEntryRejection ==
 
 
 (*---------------------------------------------------------
+  A leader advertises its commit offset to a follower
+
+  A follower that acknowledged the entries up to the commit offset of
+  the leader learns it, without the next entry. The implementation
+  carries the commit offset with the next entry, or in an advertisement
+  without an entry: the spec lets the follower learn it any time after
+  its acknowledgement, which covers both.
+----------------------------------------------------------*)
+
+LeaderAdvertisesCommit ==
+    \* enabling conditions
+    \E leader \in Nodes, f \in Nodes :
+        LET lstate == node_state[leader]
+            fstate == node_state[f]
+        IN
+            /\ lstate.status = LEADER
+            /\ f # leader
+            /\ lstate.follow_cursor[f].status = ATTACHED
+            /\ IsLowerOrEqualId(lstate.commit_entry_id, lstate.follow_cursor[f].last_confirmed)
+            /\ fstate.status = FOLLOWER
+            /\ fstate.term = lstate.term
+            /\ fstate.leader = leader
+            /\ IsHigherId(lstate.commit_entry_id, fstate.commit_entry_id)
+            \* state changes
+            /\ node_state' = [node_state EXCEPT ![f].commit_entry_id = lstate.commit_entry_id]
+            /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  A node trims its wal
+
+  A node drops the entries below the commit offset it knows of from its
+  wal, as the trimming of the implementation does with the entries past
+  its retention. It keeps the entry at the commit offset, as the
+  trimming never empties the wal. The dropped entries stay in its
+  database, without their terms: the node no longer finds them when it
+  looks for the entries it has in common with a follower.
+----------------------------------------------------------*)
+
+NodeTrimsLog ==
+    \* enabling conditions
+    \E n \in Nodes :
+        LET nstate      == node_state[n]
+            trim_offset == Min(nstate.commit_entry_id.offset, nstate.head_entry_id.offset)
+        IN
+            /\ trim_offset > nstate.snapshot_offset + 1
+            \* state changes
+            /\ node_state' = [node_state EXCEPT ![n] =
+                                [@ EXCEPT !.log             = { e \in nstate.log : e.entry_id.offset >= trim_offset },
+                                          !.snapshot        = @ \union { e \in nstate.log : e.entry_id.offset < trim_offset },
+                                          !.snapshot_offset = trim_offset - 1]]
+            /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  A leader sends a snapshot to a follower
+
+  The follower needs entries that the leader dropped from its wal: the
+  leader sends it a snapshot of its database, up to its commit offset,
+  which replaces the wal and the database of the follower.
+
+  Key points:
+  - The transfer is atomic, and the follower keeps the entry at the
+    commit offset in its wal. The implementation leaves the wal of the
+    follower empty, and the follower reports the commit offset with an
+    invalid term as its head until it gets the next entry: the spec
+    doesn't model that head.
+----------------------------------------------------------*)
+
+LeaderSendsSnapshot ==
+    \* enabling conditions
+    \E leader \in Nodes, f \in Nodes :
+        LET lstate == node_state[leader]
+            fstate == node_state[f]
+            commit == lstate.commit_entry_id
+        IN
+            /\ lstate.status = LEADER
+            /\ f # leader
+            /\ lstate.follow_cursor[f].status = ATTACHED
+            /\ lstate.follow_cursor[f].last_pushed.offset < lstate.snapshot_offset
+            /\ fstate.term = lstate.term
+            /\ fstate.status \in {FOLLOWER, FENCED}
+            \* state changes
+            /\ node_state' = [node_state EXCEPT
+                                ![f] = [@ EXCEPT !.status          = FOLLOWER,
+                                                 !.leader          = leader,
+                                                 !.log             = { e \in lstate.log : e.entry_id.offset = commit.offset },
+                                                 !.snapshot        = { e \in FullLog(lstate) : e.entry_id.offset < commit.offset },
+                                                 !.snapshot_offset = commit.offset - 1,
+                                                 !.commit_entry_id = commit,
+                                                 !.head_entry_id   = commit],
+                                ![leader].follow_cursor[f] = [status         |-> ATTACHED,
+                                                              last_pushed    |-> commit,
+                                                              last_confirmed |-> commit]]
+            /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
   Next state formula
 ----------------------------------------------------------*)
 Next ==
@@ -1231,6 +1427,7 @@ Next ==
     \/ CoordinatorHandlesFencingResponse             \* coordinator handles fence response, during the fencing
     \/ CoordinatorElectsLeader                       \* fence reached quorum, coordinator chooses and persists the leader
     \/ NodeHandlesBecomeLeaderRequest             \* new leader receives notification of leadership
+    \/ NodeRefusesBecomeLeaderRequest             \* new leader misses committed entries of a follower
     \/ CoordinatorHandlesBecomeLeaderResponse        \* coordinator handles new leader confirmation
     \/ NodeHandlesTruncateRequest                 \* follower truncates it log to safe point
     \/ LeaderHandlesTruncateResponse              \* leader receives truncation response
@@ -1244,6 +1441,10 @@ Next ==
     \/ FollowerRejectsEntry                       \* follower receives an entry with a stale term, sends INVALID_TERM to leader
     \/ LeaderHandlesEntryConfirm                  \* leader receives add confirm, confirms to client if reached majority
     \/ LeaderHandlesEntryRejection                \* leader receives add rejection, abdicates
+    \/ LeaderAdvertisesCommit                     \* a follower learns the commit offset it acknowledged
+    \* Trimming
+    \/ NodeTrimsLog                               \* a node drops committed entries from its wal
+    \/ LeaderSendsSnapshot                        \* a follower behind the wal of the leader gets a snapshot
 
 (*-------------------------------------------------
     INVARIANTS
@@ -1261,16 +1462,16 @@ NoLogDivergence ==
     THEN \A n \in metadata.ensemble :
         \* all entries at or below commit entry_id contain the same value
         \* for the given entry_id across all nodes that have it
-        /\ \A entry \in node_state[metadata.leader].log :
+        /\ \A entry \in FullLog(node_state[metadata.leader]) :
             IF IsLowerOrEqualId(entry.entry_id, node_state[n].commit_entry_id)
-            THEN ~\E copy \in node_state[n].log :
+            THEN ~\E copy \in FullLog(node_state[n]) :
                     /\ IsSameId(entry.entry_id, copy.entry_id)
                     /\ ~AreEqual(entry, copy)
             ELSE TRUE        
         \* all entries in the node log exists in the leader log
-        /\ \A entry \in node_state[n].log :
+        /\ \A entry \in FullLog(node_state[n]) :
             IF IsLowerOrEqualId(entry.entry_id, node_state[n].commit_entry_id)
-            THEN \E match \in node_state[metadata.leader].log :
+            THEN \E match \in FullLog(node_state[metadata.leader]) :
                 AreEqual(entry, match)
             ELSE TRUE
     ELSE TRUE
@@ -1281,9 +1482,21 @@ NoLossOfConfirmedWrite ==
     THEN
         \A v \in DOMAIN confirmed :
             \/ /\ confirmed[v] = TRUE
-               /\ \E entry \in node_state[metadata.leader].log : entry.value = v
+               /\ \E entry \in FullLog(node_state[metadata.leader]) : entry.value = v
             \/ confirmed[v] = FALSE
     ELSE TRUE
+
+\* A leader never truncates a follower below the entries the follower knows
+\* to be committed, which it may have applied: the implementation refuses it,
+\* as its database would diverge
+NoTruncationBelowCommit ==
+    \A msg \in DOMAIN messages :
+        IF /\ ReceivableMessageOfType(messages, msg, TRUNCATE_REQUEST)
+           /\ node_state[msg.dest_node].status = FENCED
+           /\ node_state[msg.dest_node].term = msg.term
+        THEN msg.head_entry_id.offset >= Min(node_state[msg.dest_node].commit_entry_id.offset,
+                                             node_state[msg.dest_node].head_entry_id.offset)
+        ELSE TRUE
 
 \* messages should not contain conflicting data
 ValidMessages ==
