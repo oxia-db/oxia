@@ -34,7 +34,21 @@ type Score struct {
 // they can't go below zero, the plans settle. It stops at the first tier that
 // op raises before improving one.
 func Evaluate(tiers []Tier, s *stats.ClusterStats, l *Load, op model.Candidate) Score {
-	sc := Score{Deltas: make([]int, len(tiers)), Improved: -1}
+	var sc Score
+	EvaluateInto(&sc, tiers, s, l, op)
+	return sc
+}
+
+// EvaluateInto scores op against tiers like Evaluate, into sc: it reuses the
+// deltas of sc, so that scoring every candidate of a round doesn't allocate.
+func EvaluateInto(sc *Score, tiers []Tier, s *stats.ClusterStats, l *Load, op model.Candidate) {
+	if cap(sc.Deltas) < len(tiers) {
+		sc.Deltas = make([]int, len(tiers))
+	} else {
+		sc.Deltas = sc.Deltas[:len(tiers)]
+		clear(sc.Deltas)
+	}
+	sc.Improved = -1
 	for i, t := range tiers {
 		delta := t.Delta(s, l, op)
 		sc.Deltas[i] = delta
@@ -42,13 +56,12 @@ func Evaluate(tiers []Tier, s *stats.ClusterStats, l *Load, op model.Candidate) 
 			continue
 		}
 		if delta > 0 {
-			return sc
+			return
 		}
 		if delta < 0 {
 			sc.Improved = i
 		}
 	}
-	return sc
 }
 
 // Compare ranks two scores tier by tier: the lower, the better.

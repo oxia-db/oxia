@@ -44,6 +44,20 @@ func TestEvaluateStopsAtAnEarlierTierItRaises(t *testing.T) {
 	assert.Equal(t, Score{Deltas: []int{0, 2, 0}, Improved: -1}, sc)
 }
 
+// A score reused for an op that stops at an earlier tier keeps no delta of the
+// op before.
+func TestEvaluateIntoReusesTheDeltas(t *testing.T) {
+	s := newStats(map[string][][]string{"a": {{"n0", "n1"}, {"n2", "n1"}}, "b": {{"n0", "n1"}, {"n0", "n1"}}})
+	l := NewLoad(s)
+	var sc Score
+
+	EvaluateInto(&sc, replicas(), s, l, model.Candidate{Namespace: "b", From: "n0", To: "n2"})
+	assert.Equal(t, Score{Deltas: []int{0, -2, -2}, Improved: 1}, sc)
+
+	EvaluateInto(&sc, replicas(), s, l, model.Candidate{Namespace: "a", From: "n0", To: "n2"})
+	assert.Equal(t, Score{Deltas: []int{0, 2, 0}, Improved: -1}, sc)
+}
+
 func TestEvaluateDrainsFirst(t *testing.T) {
 	s := newStats(map[string][][]string{"a": {{"r", "n0"}}})
 

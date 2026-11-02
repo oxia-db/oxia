@@ -16,7 +16,6 @@ package filter
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
@@ -37,17 +36,16 @@ func (Running) GetName() string {
 
 func (Running) Filter(s *stats.ClusterStats, op model.Candidate) error {
 	_, shard := op.GetShard(s)
-	needed := shard.Ensemble
-	if op.Kind != model.Split {
-		needed = append(slices.Clone(needed), op.To)
-	}
-	for _, name := range needed {
+	for _, name := range shard.Ensemble {
 		if op.Kind == model.Replace && name == op.From && s.DataServers[name].Removed {
 			continue
 		}
 		if s.DataServers[name].Down {
 			return fmt.Errorf("%w: data server %q is down", errs.ErrUnavailable, name)
 		}
+	}
+	if op.Kind != model.Split && s.DataServers[op.To].Down {
+		return fmt.Errorf("%w: data server %q is down", errs.ErrUnavailable, op.To)
 	}
 	return nil
 }
