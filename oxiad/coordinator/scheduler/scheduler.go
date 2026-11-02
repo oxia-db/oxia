@@ -27,11 +27,12 @@ import (
 //
 //  1. Replicas: it drains the removed data servers, then evens out the
 //     replicas of each namespace, then of all of them.
-//  2. Leaders: once no replica moves, it evens out the leaders the same way,
-//     since every replace runs an election that may move a leader.
-//  3. Shard load: once nothing else moves, it splits a shard over the size or
-//     the throughput threshold of the auto-split, one at a time, and the next
-//     rounds balance its children.
+//  2. Leaders: once no replica of a namespace moves, it evens out the leaders
+//     of the namespace, by its own counts and by the total, since every
+//     replace runs an election that may move a leader.
+//  3. Shard load: once nothing else of its namespace moves, it splits a shard
+//     over the size or the throughput threshold of the auto-split, one at a
+//     time, and the next rounds balance its children.
 //
 // It balances counts, not traffic: a busy shard is split, never moved for its
 // load. It drives itself: nothing has to tell it that the cluster changed.

@@ -31,11 +31,15 @@ import (
 //
 // A plan runs a phase for each kind of op, in the order of the tiers: the
 // replaces, then the transfers of the leadership, then the splits. A phase
-// plans only once the phases before it are quiet: no op of theirs planned, no
-// change of an ensemble pending, and none left to plan. A
-// leader is one of the replicas, and every replace runs an election that may
-// move it; a split places new replicas, and elects their leaders. The cluster
-// splits one shard at a time.
+// plans the ops of a namespace only once the phases before it are quiet for
+// that namespace: no op of theirs planned, no change of an ensemble pending,
+// and none left to plan. A leader is one of the replicas, and every replace
+// runs an election that may move it, so the leaders of a namespace wait for
+// its replicas, not for those of the other namespaces. The tiers that count
+// every namespace together, e.g. the total of the leaders, score the ops of
+// the namespaces that are quiet: the next rounds even out what the others
+// still move. A split places new replicas, and elects their leaders; the
+// cluster splits one shard at a time.
 //
 // # Phase
 //

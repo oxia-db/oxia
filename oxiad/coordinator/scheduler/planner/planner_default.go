@@ -61,36 +61,40 @@ func New(filters []filter.Filter, tiers []tier.Tier) Planner {
 
 func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked) {
 	pl := newPlan(s)
-	for i, ph := range p.phases {
-		planned := 0
-		greedy := algorithm.NewShardGreedy(s, ph.kind, ph.tiers, p.filters)
-		var leaders *algorithm.LeaderGraph
-		for {
-			if c, found := greedy.FindBest(pl.dataServerLoad, pl.allows); found {
-				pl.add(c)
-				planned++
-				continue
-			}
-			if ph.kind != model.TransferLeader {
-				break
-			}
-			if leaders == nil {
-				leaders = algorithm.NewLeaderGraph(s, pl.dataServerNames, p.filters)
-			}
-			path := leaders.FindPath(pl.dataServerLoad, pl.allows)
-			if path == nil {
-				break
-			}
-			for _, c := range path {
-				pl.add(c)
-			}
-			planned += len(path)
-		}
-		if planned > 0 || i == len(p.phases)-1 || (ph.kind == model.Replace && pl.ensembleChanging) {
+	for _, ph := range p.phases {
+		if pl.allWaiting() {
 			break
 		}
+		p.planPhase(s, pl, ph.kind, ph.tiers)
+		pl.endPhase(ph.kind)
 	}
 	return pl.actions, filter.Blocked(p.filters, s)
+}
+
+// planPhase adds the ops of kind to pl, scored by tiers, then for the
+// transfers the paths of the leader graph, until none is left.
+func (p *planner) planPhase(s *stats.ClusterStats, pl *plan, kind model.Kind, tiers []tier.Tier) {
+	greedy := algorithm.NewShardGreedy(s, kind, tiers, p.filters)
+	var leaders *algorithm.LeaderGraph
+	for {
+		if c, found := greedy.FindBest(pl.dataServerLoad, pl.allows); found {
+			pl.add(c)
+			continue
+		}
+		if kind != model.TransferLeader {
+			return
+		}
+		if leaders == nil {
+			leaders = algorithm.NewLeaderGraph(s, pl.dataServerNames, p.filters)
+		}
+		path := leaders.FindPath(pl.dataServerLoad, pl.allows)
+		if path == nil {
+			return
+		}
+		for _, c := range path {
+			pl.add(c)
+		}
+	}
 }
 
 func (*planner) Place(s *stats.ClusterStats, namespace string, replicas int, antiAffinities []*proto.AntiAffinity,

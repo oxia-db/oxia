@@ -26,14 +26,14 @@ import (
 func TestNewPlanTakesTheSplitsAndTheChangesInProgress(t *testing.T) {
 	s := cluster(2)
 	addShard(s, "a", 1, "n0", "n1")
-	assert.False(t, newPlan(s).ensembleChanging)
+	assert.Empty(t, newPlan(s).changing)
 	assert.True(t, newPlan(s).allows(model.Candidate{Kind: model.Split, Shard: 1}))
 
 	addShard(s, "a", 2, "n0", "n1").Changing = true
 	addShard(s, "a", 3, "n0", "n1").Splitting = true
 	pl := newPlan(s)
 
-	assert.True(t, pl.ensembleChanging)
+	assert.Equal(t, map[string]bool{"a": true}, pl.changing)
 	assert.False(t, pl.allows(model.Candidate{Kind: model.Split, Shard: 1}), "a split is in progress")
 }
 
@@ -59,6 +59,39 @@ func TestPlanAllowsOneSplitAtATime(t *testing.T) {
 	pl.add(model.Candidate{Kind: model.Split, Namespace: "a", Shard: 1})
 
 	assert.False(t, pl.allows(model.Candidate{Kind: model.Split, Namespace: "a", Shard: 2}))
+}
+
+func TestPlanEndPhaseHoldsTheNamespacesNotSettled(t *testing.T) {
+	s := cluster(3)
+	addShard(s, "a", 1, "n0", "n1")
+	addShard(s, "b", 2, "n0", "n1").Changing = true
+	addShard(s, "c", 3, "n0", "n1")
+	pl := newPlan(s)
+
+	pl.add(model.Candidate{Kind: model.Replace, Namespace: "a", Shard: 1, From: "n0", To: "n2"})
+	assert.Empty(t, pl.waiting, "a phase holds its namespaces only once it ends")
+	pl.endPhase(model.Replace)
+
+	assert.Equal(t, map[string]bool{"a": true, "b": true}, pl.waiting)
+	assert.False(t, pl.allWaiting())
+	assert.False(t, pl.allows(model.Candidate{Kind: model.TransferLeader, Namespace: "a", Shard: 4, To: "n1"}))
+	assert.True(t, pl.allows(model.Candidate{Kind: model.TransferLeader, Namespace: "c", Shard: 3, To: "n1"}))
+	assert.False(t, pl.allows(model.Candidate{Kind: model.Split, Namespace: "a", Shard: 1}))
+	assert.True(t, pl.allows(model.Candidate{Kind: model.Split, Namespace: "c", Shard: 3}))
+
+	pl.add(model.Candidate{Kind: model.TransferLeader, Namespace: "c", Shard: 3, From: "n0", To: "n1"})
+	pl.endPhase(model.TransferLeader)
+	assert.True(t, pl.allWaiting())
+}
+
+func TestPlanEndPhaseHoldsTheChangesOnlyAfterTheReplaces(t *testing.T) {
+	s := cluster(2)
+	addShard(s, "a", 1, "n0", "n1").Changing = true
+	pl := newPlan(s)
+
+	pl.endPhase(model.TransferLeader)
+
+	assert.Empty(t, pl.waiting)
 }
 
 func TestPlanAddReturnsTheActionOfEachKind(t *testing.T) {

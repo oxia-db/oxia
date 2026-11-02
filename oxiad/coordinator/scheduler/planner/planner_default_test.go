@@ -201,17 +201,58 @@ func TestPlannerPlanHoldsTheLeadersWhileTheReplicasMove(t *testing.T) {
 	t.Run("replace left", func(t *testing.T) {
 		s := newCluster()
 		removed(s, "r")
-		addShard(s, "b", 4, "r", "n0")
+		addShard(s, "a", 4, "r", "n0")
 		ops, _ := defaultPlanner().Plan(s)
 		assert.Len(t, ops, 1)
 		assert.Zero(t, transfers(ops))
 	})
 	t.Run("change pending", func(t *testing.T) {
 		s := newCluster()
-		addShard(s, "b", 4, "n1", "n2").Changing = true
+		addShard(s, "a", 4, "n1", "n2").Changing = true
 		ops, _ := defaultPlanner().Plan(s)
 		assert.Empty(t, ops)
 	})
+}
+
+// Namespace b still moves a replica, or has a change pending: the leaders of
+// a move all the same.
+func TestPlannerPlanTransfersTheLeadersOfASettledNamespace(t *testing.T) {
+	newCluster := func() *stats.ClusterStats {
+		s := cluster(3)
+		addShard(s, "a", 1, "n0", "n1").Leader = "n0"
+		addShard(s, "a", 2, "n0", "n2").Leader = "n0"
+		addShard(s, "a", 3, "n1", "n2").Leader = "n1"
+		return s
+	}
+
+	t.Run("replace left", func(t *testing.T) {
+		s := newCluster()
+		removed(s, "r")
+		addShard(s, "b", 4, "r", "n0")
+		ops, _ := defaultPlanner().Plan(s)
+		assert.Equal(t, []string{"replace 4 r n1", "transfer 2 n2"}, describe(ops))
+	})
+	t.Run("change pending", func(t *testing.T) {
+		s := newCluster()
+		addShard(s, "b", 4, "n1", "n2").Changing = true
+		ops, _ := defaultPlanner().Plan(s)
+		assert.Equal(t, []string{"transfer 2 n2"}, describe(ops))
+	})
+}
+
+// The leaders of each namespace are even, and only a path of the total evens
+// out n0 and n3: it doesn't wait for namespace v, which has a change pending.
+func TestPlannerPlanEvensTheTotalOfTheLeadersWhileANamespaceMoves(t *testing.T) {
+	s := cluster(4)
+	addShard(s, "w", 0, "n0").Leader = "n0"
+	addShard(s, "x", 1, "n0", "n1").Leader = "n0"
+	addShard(s, "y", 2, "n1", "n2").Leader = "n1"
+	addShard(s, "z", 3, "n2", "n3").Leader = "n2"
+	addShard(s, "v", 4, "n3").Changing = true
+
+	ops, _ := defaultPlanner().Plan(s)
+
+	assert.Equal(t, []string{"transfer 3 n3", "transfer 2 n2", "transfer 1 n1"}, describe(ops))
 }
 
 func TestPlannerPlanSplitsTheShardTheMostOverOnceTheLeadersSettle(t *testing.T) {
@@ -229,6 +270,12 @@ func TestPlannerPlanHoldsTheSplits(t *testing.T) {
 		ops, _ := defaultPlanner().Plan(s)
 		require.Len(t, ops, 1)
 		assert.IsType(t, &action.ElectionAction{}, ops[0])
+	})
+	t.Run("namespace not settled", func(t *testing.T) {
+		s := splitCluster()
+		s.Namespaces["a"].Shards[3].Changing = true
+		ops, _ := defaultPlanner().Plan(s)
+		assert.Empty(t, ops)
 	})
 	t.Run("split in progress", func(t *testing.T) {
 		s := splitCluster()

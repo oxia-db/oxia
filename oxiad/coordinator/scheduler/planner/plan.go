@@ -28,19 +28,24 @@ import (
 // plan is the state of one plan: its actions, and the load and the limits
 // left, as its ops leave them. A plan makes at most one op on each shard and
 // onto each data server, so that a round never piles copies or leaders onto
-// one data server, and the cluster splits one shard at a time. It enumerates
-// the data servers in the order of their names, so that a plan is the same
-// every time.
+// one data server, and the cluster splits one shard at a time. A namespace
+// waits in the phases after one that hasn't settled it. It enumerates the data
+// servers in the order of their names, so that a plan is the same every time.
 type plan struct {
-	logger           *slog.Logger
-	clusterStats     *stats.ClusterStats
-	actions          []action.Action
-	dataServerLoad   *tier.Load
-	dataServerNames  []string
-	plannedShards    map[int64]bool
-	plannedTargets   map[string]bool
-	splitActive      bool
-	ensembleChanging bool
+	logger          *slog.Logger
+	clusterStats    *stats.ClusterStats
+	actions         []action.Action
+	dataServerLoad  *tier.Load
+	dataServerNames []string
+	plannedShards   map[int64]bool
+	plannedTargets  map[string]bool
+	splitActive     bool
+	// changing holds the namespaces with a change of an ensemble pending,
+	// phasePlanned those that the current phase planned an op of, and waiting
+	// those that a phase before it hasn't settled.
+	changing     map[string]bool
+	phasePlanned map[string]bool
+	waiting      map[string]bool
 }
 
 // newPlan returns an empty plan of s, with the splits and the changes of
@@ -53,14 +58,41 @@ func newPlan(s *stats.ClusterStats) *plan {
 		dataServerNames: slices.Sorted(maps.Keys(s.DataServers)),
 		plannedShards:   make(map[int64]bool),
 		plannedTargets:  make(map[string]bool),
+		changing:        make(map[string]bool),
+		phasePlanned:    make(map[string]bool),
+		waiting:         make(map[string]bool),
 	}
-	for _, ns := range s.Namespaces {
+	for name, ns := range s.Namespaces {
 		for _, shard := range ns.Shards {
 			pl.splitActive = pl.splitActive || shard.Splitting
-			pl.ensembleChanging = pl.ensembleChanging || shard.Changing
+			if shard.Changing {
+				pl.changing[name] = true
+			}
 		}
 	}
 	return pl
+}
+
+// endPhase closes the phase of kind: the namespaces that it planned an op of
+// wait in the next phases, and after the replaces, those with a change of an
+// ensemble pending, since its election and its catch-up may still move a
+// leader.
+func (pl *plan) endPhase(kind model.Kind) {
+	for name := range pl.phasePlanned {
+		pl.waiting[name] = true
+	}
+	clear(pl.phasePlanned)
+	if kind == model.Replace {
+		for name := range pl.changing {
+			pl.waiting[name] = true
+		}
+	}
+}
+
+// allWaiting reports whether every namespace waits: the next phases have
+// nothing to plan.
+func (pl *plan) allWaiting() bool {
+	return len(pl.waiting) == len(pl.clusterStats.Namespaces)
 }
 
 // add adds the action that makes op to the plan, and charges op to the limits
@@ -85,6 +117,7 @@ func (pl *plan) add(op model.Candidate) {
 // count charges op to the limits of the plan.
 func (pl *plan) count(op model.Candidate) {
 	pl.plannedShards[op.Shard] = true
+	pl.phasePlanned[op.Namespace] = true
 	if op.Kind == model.Split {
 		pl.splitActive = true
 		return
@@ -94,7 +127,7 @@ func (pl *plan) count(op model.Candidate) {
 
 // allows reports whether the limits of the plan leave room for op.
 func (pl *plan) allows(op model.Candidate) bool {
-	if pl.plannedShards[op.Shard] {
+	if pl.plannedShards[op.Shard] || pl.waiting[op.Namespace] {
 		return false
 	}
 	if op.Kind == model.Split {
