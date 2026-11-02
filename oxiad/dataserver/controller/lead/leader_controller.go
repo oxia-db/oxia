@@ -991,7 +991,9 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 			if leaderFirstOffset == wal.InvalidOffset {
 				leaderFirstOffset = lc.quorumAckTracker.HeadOffset() + 1
 			}
-			if followerCommittedOffset+1 < leaderFirstOffset {
+			// The leader streams the follower from its next entry, if its wal has it
+			followerNextOffset := followerCommittedOffset + 1
+			if followerNextOffset < leaderFirstOffset {
 				lc.log.Info(
 					"Follower is behind the wal of the leader, sending a snapshot",
 					slog.Int64("term", term),
