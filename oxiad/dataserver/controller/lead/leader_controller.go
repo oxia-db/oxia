@@ -990,25 +990,27 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	}
 
 	if followerCommitOffset != nil {
-		committedOffset := min(*followerCommitOffset, followerHeadEntryId.Offset)
-		if committedOffset > lastEntryInFollowerTerm.Offset {
-			walFirstOffset := lc.wal.FirstOffset()
-			if (walFirstOffset == wal.InvalidOffset && committedOffset != lc.quorumAckTracker.HeadOffset()) ||
-				(walFirstOffset != wal.InvalidOffset && committedOffset+1 < walFirstOffset) {
+		followerCommittedOffset := min(*followerCommitOffset, followerHeadEntryId.Offset)
+		if followerCommittedOffset > lastEntryInFollowerTerm.Offset {
+			leaderFirstOffset := lc.wal.FirstOffset()
+			if leaderFirstOffset == wal.InvalidOffset {
+				leaderFirstOffset = lc.quorumAckTracker.HeadOffset() + 1
+			}
+			if followerCommittedOffset+1 < leaderFirstOffset {
 				lc.log.Info(
 					"Follower is behind the wal of the leader, sending a snapshot",
 					slog.Int64("term", term),
 					slog.String("follower", follower),
 					slog.Any("follower-head-entry", followerHeadEntryId),
 					slog.Int64("follower-commit-offset", *followerCommitOffset),
-					slog.Int64("wal-first-offset", walFirstOffset),
+					slog.Int64("wal-first-offset", lc.wal.FirstOffset()),
 				)
 				return constant2.InvalidEntryId, nil
 			}
-			if followerHeadEntryId.Offset == committedOffset {
+			if followerHeadEntryId.Offset == followerCommittedOffset {
 				return followerHeadEntryId, nil
 			}
-			lastEntryInFollowerTerm = &proto.EntryId{Term: wal.InvalidTerm, Offset: committedOffset}
+			lastEntryInFollowerTerm = &proto.EntryId{Term: wal.InvalidTerm, Offset: followerCommittedOffset}
 		}
 	} else if lastEntryInFollowerTerm.Offset == wal.InvalidOffset && lc.wal.FirstOffset() != 0 &&
 		lc.quorumAckTracker.CommitOffset() != wal.InvalidOffset {
@@ -1762,15 +1764,6 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
 
-// GetLogState returns the state of the log of a node, which it reports when it
-// gets fenced with a new term: its head entry, and the commit offset of its
-// database. The leader election picks the node with the highest head entry, by
-// term and then by offset. The head entry is the last entry of the wal, except
-// for a node seeded from a snapshot, whose wal is empty while its database
-// holds the entries up to the snapshot's commit offset. The term of those
-// entries is not known: the node reports the offset with an invalid term, which
-// ranks it above the nodes that hold fewer entries, or none, and below every
-// node with entries in its wal.
 func GetLogState(walObject wal.Wal, db database.DB) (*proto.EntryId, int64, error) {
 	commitOffset, err := db.ReadCommitOffset()
 	if err != nil {
