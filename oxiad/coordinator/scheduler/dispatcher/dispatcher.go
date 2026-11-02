@@ -32,8 +32,8 @@ import (
 //	          +-------------------+
 //	action -->| 1. precheck       |--x a data server of the action is down:
 //	          |    the data       |    the target, or a member but a removed
-//	          |    servers        |    source; the rest of the actions are
-//	          +-------------------+    canceled
+//	          |    servers        |    source; the other actions go on
+//	          +-------------------+
 //	                    |
 //	          +-------------------+
 //	          | 2. send           |    the send waits for the runtime to take
@@ -55,12 +55,13 @@ import (
 type Dispatcher interface {
 	// Dispatch sends actions, which the planner returned for s, in order, and
 	// waits until each one it sent completes, or the scheduler closes. It
-	// returns the result of each action, in the order of actions. The first
-	// action whose data servers aren't all running fails with
-	// errs.ErrUnavailable, and the actions after it are left out: a data
-	// server went down since the snapshot, and the next ones may depend on
-	// it. An action still running when the scheduler closes fails with
-	// context.Canceled. It returns nothing if the scheduler closes before it
-	// sends every action.
+	// returns the result of each action, in the order of actions. An action
+	// whose data servers aren't all running fails with errs.ErrUnavailable,
+	// and isn't sent: a data server went down since the snapshot. The others
+	// are sent all the same: the planner leaves each op of a plan valid on its
+	// own, e.g. a path of leader transfers that only partly completes leaves
+	// the leaders no less even. An action still running when the scheduler
+	// closes fails with context.Canceled. It returns nothing if the scheduler
+	// closes before it sends every action.
 	Dispatch(s *stats.ClusterStats, actions []action.Action) []model.Result
 }

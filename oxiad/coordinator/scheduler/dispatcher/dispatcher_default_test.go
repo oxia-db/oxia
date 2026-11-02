@@ -136,17 +136,23 @@ func TestDispatcherDispatchChecksTheDataServersAreRunning(t *testing.T) {
 	}
 }
 
-func TestDispatcherDispatchCancelsTheActionsAfterADataServerDown(t *testing.T) {
+func TestDispatcherDispatchSendsTheActionsAroundADataServerDown(t *testing.T) {
 	actions := make(chan action.Action, 2)
 	d := New(t.Context(), func(name string) bool { return name != "n2" }, actions)
-	go func() { (<-actions).Done(nil) }()
+	go func() {
+		(<-actions).Done(nil)
+		(<-actions).Done("n1")
+	}()
 	first, down, last := drain(), action.NewChangeEnsembleAction(3, identity("n0"), identity("n2")), transfer()
 
 	results := d.Dispatch(newStats(), []action.Action{first, down, last})
 
-	require.Len(t, results, 2)
+	require.Len(t, results, 3)
+	assert.Equal(t, []action.Action{first, down, last},
+		[]action.Action{results[0].Action, results[1].Action, results[2].Action})
 	require.NoError(t, errorOf(results, first))
 	assert.ErrorIs(t, errorOf(results, down), errs.ErrUnavailable)
+	require.NoError(t, errorOf(results, last))
 	assert.Empty(t, actions)
 }
 

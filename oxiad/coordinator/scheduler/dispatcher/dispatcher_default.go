@@ -47,33 +47,31 @@ func New(ctx context.Context, running func(name string) bool, actions chan<- act
 }
 
 func (d *dispatcher) Dispatch(s *stats.ClusterStats, actions []action.Action) []model.Result {
-	var sent []action.Action
-	var failed *model.Result
-	for _, ac := range actions {
+	results := make([]model.Result, len(actions))
+	var sent []int
+	for i, ac := range actions {
+		results[i].Action = ac
 		if err := d.precheck(s, ac); err != nil {
-			failed = &model.Result{Action: ac, Err: err}
-			break
+			results[i].Err = err
+			continue
 		}
 		select {
 		case d.actions <- ac:
 			d.logger.Info("Sent an action", slog.Any("action", ac))
-			sent = append(sent, ac)
+			sent = append(sent, i)
 		case <-d.ctx.Done():
 			return nil
 		}
 	}
-	results := make([]model.Result, 0, len(sent)+1)
-	for _, ac := range sent {
-		result, err := ac.Wait(d.ctx)
+	for _, i := range sent {
+		result, err := actions[i].Wait(d.ctx)
 		// The election elects the target only if it has every committed entry
-		if election, ok := ac.(*action.ElectionAction); ok && err == nil && result != election.PreferredLeader {
+		if election, ok := actions[i].(*action.ElectionAction); ok && err == nil &&
+			result != election.PreferredLeader {
 			err = fmt.Errorf("%w: the election chose %v over %q", errs.ErrFailedPrecondition, result,
 				election.PreferredLeader)
 		}
-		results = append(results, model.Result{Action: ac, Err: err})
-	}
-	if failed != nil {
-		results = append(results, *failed)
+		results[i].Err = err
 	}
 	return results
 }

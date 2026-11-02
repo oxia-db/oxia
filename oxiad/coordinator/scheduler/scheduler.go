@@ -53,8 +53,8 @@ import (
 //	                              +---------------------+
 //	                              | 3. dispatch         |--x a data server of the
 //	                              |    each op          |    op went down since
-//	                              |                     |    the snapshot: the rest
-//	                              +---------------------+    of the plan is canceled
+//	                              |                     |    the snapshot: that op
+//	                              +---------------------+    fails, the others go on
 //	                                         |
 //	                              +---------------------+
 //	                              | 4. wait             |    until every op
