@@ -988,9 +988,6 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		followerCommittedOffset := min(*followerCommitOffset, followerHeadEntryId.Offset)
 		if followerCommittedOffset > lastEntryInFollowerTerm.Offset {
 			leaderFirstOffset := lc.wal.FirstOffset()
-			if leaderFirstOffset == wal.InvalidOffset {
-				leaderFirstOffset = lc.quorumAckTracker.HeadOffset() + 1
-			}
 			// The leader streams the follower from its next entry, if its wal has it
 			followerNextOffset := followerCommittedOffset + 1
 			if followerNextOffset < leaderFirstOffset {
@@ -1000,7 +997,7 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 					slog.String("follower", follower),
 					slog.Any("follower-head-entry", followerHeadEntryId),
 					slog.Int64("follower-commit-offset", *followerCommitOffset),
-					slog.Int64("wal-first-offset", lc.wal.FirstOffset()),
+					slog.Int64("wal-first-offset", leaderFirstOffset),
 				)
 				return constant2.InvalidEntryId, nil
 			}

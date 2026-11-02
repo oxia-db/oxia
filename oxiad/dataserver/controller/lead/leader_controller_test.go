@@ -3562,9 +3562,12 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 func TestLeaderController_BecomeLeaderWithFollowerBehindTheWalOfTheLeader(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		// The first entry in the wal of the leader, of term 2. The leader's
-		// database holds the entries 0 to 9.
+		// The first entry in the wal of the leader. The leader's database
+		// holds the entries 0 to 9.
 		walFirstOffset int64
+		// The first entry of term 2 in the wal of the leader: the ones before
+		// it are of term 1
+		walTermTwoOffset int64
 		// The head of the follower is of term 1
 		followerOffset       int64
 		followerCommitOffset *int64
@@ -3586,6 +3589,8 @@ func TestLeaderController_BecomeLeaderWithFollowerBehindTheWalOfTheLeader(t *tes
 			followerCommitOffset: ptr(5), truncateOffset: ptr(5), firstAppend: 6},
 		{name: "commit offset below the head, late follower", walFirstOffset: 6, followerOffset: 7,
 			followerCommitOffset: ptr(5), late: true, truncateOffset: ptr(5), firstAppend: 6},
+		{name: "commit offset below the entries of its term in the wal", walFirstOffset: 0, walTermTwoOffset: 6,
+			followerOffset: 7, followerCommitOffset: ptr(3), truncateOffset: ptr(5), firstAppend: 6},
 		{name: "commit offset before the wal", walFirstOffset: 8, followerOffset: 5,
 			followerCommitOffset: ptr(5), firstAppend: wal.InvalidOffset},
 		{name: "commit offset unknown, wal from the first offset", walFirstOffset: 0, followerOffset: 5,
@@ -3594,7 +3599,7 @@ func TestLeaderController_BecomeLeaderWithFollowerBehindTheWalOfTheLeader(t *tes
 			firstAppend: wal.InvalidOffset},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			lc, rpcClient, closeAll := newLeaderWithWalAfter(t, test.walFirstOffset)
+			lc, rpcClient, closeAll := newLeaderWithWalAfter(t, test.walFirstOffset, test.walTermTwoOffset)
 			defer closeAll()
 			// A truncation would block the leader until it gets a response
 			truncatedOffset := wal.InvalidOffset
@@ -3658,7 +3663,7 @@ func TestLeaderController_BecomeLeaderWithFollowerBehindTheWalOfTheLeader(t *tes
 func TestLeaderController_RefusesAFollowerWithCommittedEntriesItDoesntHave(t *testing.T) {
 	for _, late := range []bool{false, true} {
 		t.Run(fmt.Sprintf("late=%v", late), func(t *testing.T) {
-			lc, rpcClient, closeAll := newLeaderWithWalAfter(t, 0)
+			lc, rpcClient, closeAll := newLeaderWithWalAfter(t, 0, 0)
 			defer closeAll()
 			// A truncation would block the leader until it gets a response
 			rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
@@ -3693,7 +3698,7 @@ func TestLeaderController_RefusesAFollowerWithCommittedEntriesItDoesntHave(t *te
 // A leader fenced with a new term reports the commit offset of its database,
 // read once its tracker is closed: it doesn't apply any entry past it.
 func TestLeaderController_NewTermReportsTheCommitOffset(t *testing.T) {
-	lc, _, closeAll := newLeaderWithWalAfter(t, 0)
+	lc, _, closeAll := newLeaderWithWalAfter(t, 0, 0)
 	defer closeAll()
 
 	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 3})
@@ -3717,9 +3722,10 @@ func TestLeaderController_NewTermReportsTheCommitOffset(t *testing.T) {
 }
 
 // newLeaderWithWalAfter returns a leader fenced with term 3, whose database
-// holds the entries 0 to 9, of terms 1 and 2, and whose wal holds the ones from
-// walFirstOffset, of term 2.
-func newLeaderWithWalAfter(t *testing.T, walFirstOffset int64) (LeaderController, *rpc.MockRpcClient, func()) {
+// holds the entries 0 to 9, and whose wal holds the ones from walFirstOffset,
+// of term 1 before walTermTwoOffset and of term 2 from it.
+func newLeaderWithWalAfter(t *testing.T, walFirstOffset int64, walTermTwoOffset int64) (LeaderController,
+	*rpc.MockRpcClient, func()) {
 	t.Helper()
 	var shard int64 = 1
 
@@ -3738,8 +3744,12 @@ func newLeaderWithWalAfter(t *testing.T, walFirstOffset int64) (LeaderController
 		value, err := pb.Marshal(wrapInLogEntryValue(wr))
 		require.NoError(t, err)
 		if i >= walFirstOffset {
+			term := int64(2)
+			if i < walTermTwoOffset {
+				term = 1
+			}
 			_, err = walObject.AppendAsyncWithPreviousCrc(
-				&proto.LogEntry{Term: 2, Offset: i, Value: value}, &previousCrc)
+				&proto.LogEntry{Term: term, Offset: i, Value: value}, &previousCrc)
 			require.NoError(t, err)
 		}
 		_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
