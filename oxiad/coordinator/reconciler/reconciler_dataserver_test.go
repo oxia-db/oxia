@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 )
 
 // The data servers of the configuration are created, and the ones without a
@@ -132,15 +133,14 @@ func TestDataServerReconcilerReconcileReturnsStatusErrors(t *testing.T) {
 	assert.Empty(t, runtime.metadata.status.GetDataServers())
 }
 
-// The status of a data server whose drain the configuration confirms is
-// deleted once it is DRAINED; one still in the configuration, or not DRAINED
-// yet, is kept.
-func TestDataServerReconcilerReconcileDeletesConfirmedDrainedDataServers(t *testing.T) {
+// The data servers whose drain the configuration confirms are forgotten; one
+// still in the configuration is skipped, and one not DRAINED yet, or already
+// forgotten, doesn't fail the pass.
+func TestDataServerReconcilerReconcileForgetsConfirmedDrainedDataServers(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
-	runtime.metadata.status.DataServers = map[string]*proto.DataServerStatus{
-		"gone":     {State: proto.DataServerState_DATA_SERVER_STATE_DRAINED},
-		"draining": {State: proto.DataServerState_DATA_SERVER_STATE_DRAINING},
-		"s1":       {State: proto.DataServerState_DATA_SERVER_STATE_DRAINED},
+	runtime.forgetErrs = map[string]error{
+		"draining": errs.ErrFailedPrecondition,
+		"unknown":  errs.ErrNotFound,
 	}
 	reconciler := &dataServerReconciler{runtime: runtime}
 	config := dataServersConfig("s1")
@@ -149,23 +149,20 @@ func TestDataServerReconcilerReconcileDeletesConfirmedDrainedDataServers(t *test
 	}
 
 	require.NoError(t, reconciler.Reconcile(t.Context(), config))
-	assert.Equal(t, map[string]proto.DataServerState{
-		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
-		"s1":       proto.DataServerState_DATA_SERVER_STATE_DRAINED,
-	}, storedDataServerStates(runtime))
+	assert.Equal(t, []string{"gone", "draining", "unknown"}, runtime.forgottenDataServers)
 }
 
-// A delete that fails fails the pass, which the cluster reconciler retries.
+// A forget that fails fails the pass, which the cluster reconciler retries.
 func TestDataServerReconcilerReconcileReturnsConfirmedDrainedErrors(t *testing.T) {
 	runtime := namespaceRuntimeForErrors()
-	deleteErr := errors.New("store unavailable")
-	runtime.metadata.deleteDrainedDataServerStatusErr = deleteErr
+	forgetErr := errors.New("store unavailable")
+	runtime.forgetErrs = map[string]error{"gone": forgetErr}
 	reconciler := &dataServerReconciler{runtime: runtime}
 	config := &proto.ClusterConfiguration{Annotations: map[string]string{
 		proto.AnnotationConfirmedDrainedDataServers: "gone",
 	}}
 
-	require.ErrorIs(t, reconciler.Reconcile(t.Context(), config), deleteErr)
+	require.ErrorIs(t, reconciler.Reconcile(t.Context(), config), forgetErr)
 }
 
 func dataServersConfig(names ...string) *proto.ClusterConfiguration {

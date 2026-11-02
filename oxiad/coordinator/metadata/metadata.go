@@ -166,12 +166,6 @@ type Metadata interface {
 	// is returned with its name and its stored metadata; one without a stored
 	// status is ErrNotFound.
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
-	// DrainedDataServer adds a data server stored DRAINED to the
-	// confirmed-drained-data-servers annotation. It does nothing for a name
-	// that is already there. It returns ErrFailedPrecondition for a data
-	// server of the configuration, or one not DRAINED, and ErrNotFound for
-	// one without a stored status.
-	DrainedDataServer(name string) error
 	// ListDataServer returns every data server of the configuration, with its
 	// identity and its metadata, by name: the internal address of a data
 	// server without a name. It doesn't read the stored status: a data server

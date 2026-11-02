@@ -798,7 +798,8 @@ type ClusterConfiguration struct {
 	// Annotations hold new or temporary settings until they become fields of
 	// the configuration; the maintainers decide when. The keys are reserved for
 	// Oxia, and an unknown key is logged and ignored. The user maintains the
-	// annotations, or the admin API for the user: the reconcile only reads them.
+	// annotations: the coordinator only reads them, but for the removals of the
+	// admin API below.
 	//
 	// # confirmed-drained-data-servers
 	//
@@ -816,9 +817,9 @@ type ClusterConfiguration struct {
 	// until a later reconcile. Once removed, the name is free: a data server
 	// that joins with it is a new one, and must start with an empty disk.
 	//
-	// The admin API follows the same steps: DeleteDataServer does 1 and 2 in a
-	// single write, and DrainedDataServer does 4. CreateDataServer
-	// removes the name from this list too.
+	// The admin API doesn't add names to this list: DeleteDataServer does 1 and
+	// 2 in a single write, and DrainedDataServer forgets the data server at
+	// once. CreateDataServer removes the name from this list too.
 	//
 	 
 	Annotations   map[string]string `protobuf:"bytes,8,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"annotations,omitempty"`

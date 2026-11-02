@@ -44,21 +44,6 @@ func (cc *ClusterConfiguration) ListUnknownAnnotations() []string {
 	return slices.DeleteFunc(keys, func(key string) bool { return key == AnnotationConfirmedDrainedDataServers })
 }
 
-// AddConfirmedDrainedDataServer adds a name to the
-// confirmed-drained-data-servers annotation, and reports whether it wasn't
-// there.
-func (cc *ClusterConfiguration) AddConfirmedDrainedDataServer(name string) bool {
-	names := cc.GetConfirmedDrainedDataServers()
-	if slices.Contains(names, name) {
-		return false
-	}
-	if cc.Annotations == nil {
-		cc.Annotations = map[string]string{}
-	}
-	cc.Annotations[AnnotationConfirmedDrainedDataServers] = strings.Join(append(names, name), ",")
-	return true
-}
-
 // RemoveConfirmedDrainedDataServer removes a name from the
 // confirmed-drained-data-servers annotation, and the annotation once it is
 // empty. It reports whether the name was there.

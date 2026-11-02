@@ -132,7 +132,7 @@ func (m *defaultMetadata) computeConfig(fn func(*commonproto.ClusterConfiguratio
 		return err
 	}
 	next, err := fn(metadatacodec.ClusterConfigCodec.Clone(current.Value), current.Version)
-	if err != nil || next == nil {
+	if err != nil {
 		return err
 	}
 
@@ -697,29 +697,6 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 	}
 
 	return deleted, nil
-}
-
-func (m *defaultMetadata) DrainedDataServer(name string) error {
-	status, found, err := m.GetDataServerStatus(name)
-	if err != nil {
-		return err
-	}
-	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
-		if _, configured := config.GetDataServer(name); configured {
-			return nil, fmt.Errorf("%w: data server %q is in the configuration", errs.ErrFailedPrecondition, name)
-		}
-		if slices.Contains(config.GetConfirmedDrainedDataServers(), name) {
-			return nil, nil
-		}
-		if !found {
-			return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
-		}
-		if state := status.UnsafeBorrow().GetState(); state != commonproto.DataServerState_DATA_SERVER_STATE_DRAINED {
-			return nil, fmt.Errorf("%w: data server %q is %s", errs.ErrFailedPrecondition, name, state)
-		}
-		config.AddConfirmedDrainedDataServer(name)
-		return config, nil
-	})
 }
 
 func (m *defaultMetadata) ListDataServer() (map[string]commonobject.Borrowed[*commonproto.DataServer], error) {
