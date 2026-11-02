@@ -22,6 +22,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
@@ -109,11 +110,12 @@ func (s *scheduler) run() {
 		config, err := s.metadata.GetConfig()
 		if err != nil {
 			s.logger.Warn("Failed to read the scheduler policy, retrying next round", slog.Any("error", err))
-			interval = model.NewPolicy(nil).Interval
+			interval = new(proto.LoadBalancer).GetScheduleIntervalDurationOrDefault()
 			continue
 		}
-		p := model.NewPolicy(config.UnsafeBorrow())
-		interval = p.GetRoundInterval()
+		cluster := config.UnsafeBorrow()
+		split := model.NewSplitPolicy(cluster)
+		interval = roundInterval(cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault(), split)
 		now := time.Now()
 		snap, err := s.collector.Collect()
 		if err != nil {
@@ -124,7 +126,7 @@ func (s *scheduler) run() {
 		if len(actions) == 0 {
 			// The splits come last: sample the stats only once nothing else
 			// moves
-			s.collector.Sample(snap, p.Split, now)
+			s.collector.Sample(snap, split, now)
 			actions, blocked = s.planner.Plan(snap)
 		}
 		for _, replica := range blocked {
@@ -149,4 +151,14 @@ func (s *scheduler) run() {
 			interval = 0
 		}
 	}
+}
+
+// roundInterval returns the time until the next round when nothing triggers
+// one: the schedule interval, or the collection interval of the auto-split if
+// it is shorter, since a round follows each sample of the shard stats.
+func roundInterval(schedule time.Duration, split model.SplitPolicy) time.Duration {
+	if split.Enabled {
+		return min(schedule, split.CollectionInterval)
+	}
+	return schedule
 }

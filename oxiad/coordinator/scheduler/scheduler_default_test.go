@@ -32,6 +32,7 @@ import (
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 )
 
 func TestSchedulerDrainsARemovedDataServer(t *testing.T) {
@@ -204,6 +205,14 @@ func TestSchedulerPlansAroundADataServerDown(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[int64]string{1: "n2", 2: "n0"}, targets)
+}
+
+func TestRoundIntervalTakesTheShorterOfTheScheduleAndTheCollection(t *testing.T) {
+	assert.Equal(t, 30*time.Second, roundInterval(30*time.Second, model.SplitPolicy{CollectionInterval: time.Second}))
+	assert.Equal(t, time.Second, roundInterval(30*time.Second, model.SplitPolicy{Enabled: true,
+		CollectionInterval: time.Second}))
+	assert.Equal(t, time.Second, roundInterval(time.Second, model.SplitPolicy{Enabled: true,
+		CollectionInterval: 30 * time.Second}))
 }
 
 func start(t *testing.T, metadata *fakeMetadata) Scheduler {

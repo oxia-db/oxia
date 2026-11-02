@@ -20,8 +20,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// SplitPolicy is the auto-split of the cluster configuration. See
-// proto.AutoSplitConfig for each field.
+// SplitPolicy is the auto-split of the cluster configuration that a round
+// applies, with its defaults. See proto.AutoSplitConfig for each field.
 type SplitPolicy struct {
 	Enabled               bool
 	MaxShardSizeMB        uint32
@@ -32,10 +32,11 @@ type SplitPolicy struct {
 	CollectionInterval    time.Duration
 }
 
-// newSplitPolicy resolves config, which has its defaults already. An explicit 0s
-// stabilization or cooldown is kept; an invalid one takes the default, so that
-// it doesn't turn the safety window off.
-func newSplitPolicy(config *proto.AutoSplitConfig) SplitPolicy {
+// NewSplitPolicy resolves the auto-split of cluster: a field left unset takes
+// its default. An explicit 0s stabilization or cooldown is kept; an invalid
+// one takes the default, so that it doesn't turn the safety window off.
+func NewSplitPolicy(cluster *proto.ClusterConfiguration) SplitPolicy {
+	config := cluster.GetAutoSplitWithDefaults()
 	stabilization, err := config.GetStabilizationPeriodDuration()
 	if err != nil {
 		stabilization = config.GetStabilizationPeriodDurationOrDefault()
