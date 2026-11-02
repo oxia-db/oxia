@@ -50,3 +50,13 @@ func TestRunningDrainsARemovedDataServerDown(t *testing.T) {
 	s.DataServers["n0"].Removed = true
 	assert.NoError(t, Running{}.Filter(s, move("n0", "n2")))
 }
+
+// A replace onto its own removed source, down, needs no running data server:
+// Membership rejects it, not Running.
+func TestRunningExemptsTheRemovedSourceAsTheTarget(t *testing.T) {
+	s := newStats()
+	s.DataServers["n0"].Removed = true
+	s.DataServers["n0"].Down = true
+
+	assert.NoError(t, Running{}.Filter(s, move("n0", "n0")))
+}

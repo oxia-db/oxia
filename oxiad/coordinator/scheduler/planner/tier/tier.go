@@ -29,7 +29,9 @@ type Tier interface {
 	// GetKind is the kind of the ops that the tier scores.
 	GetKind() model.Kind
 	// Delta returns the change of the potential that op, of the tier's kind,
-	// makes: op improves the tier if it is negative.
+	// makes: op improves the tier if it is negative. For a replace or a
+	// transfer, it depends on the namespace and the data servers of op only,
+	// not on its shard: the greedy search scores each pair once.
 	Delta(s *stats.ClusterStats, l *Load, op model.Candidate) int
 }
 

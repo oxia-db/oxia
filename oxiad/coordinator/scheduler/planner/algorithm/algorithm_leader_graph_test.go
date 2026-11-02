@@ -16,9 +16,11 @@ package algorithm
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
 
@@ -106,6 +108,42 @@ func TestLeaderGraphSkipsTheTransfersOfARemovedDataServer(t *testing.T) {
 	addShard(s, "x", 1, "r", "n0").Leader = "r"
 
 	assert.Empty(t, NewLeaderGraph(s, names(s), filter.Defaults()).out)
+}
+
+// A search that filters the edges it reaches finds the path that a graph
+// whose edges are all filtered first finds, on random clusters and limits.
+func TestLeaderGraphFindPathMatchesFilteringFirst(t *testing.T) {
+	random := rand.New(rand.NewPCG(3, 4))
+	for i := range 500 {
+		s := randomCluster(random)
+		load, dataServers := tier.NewLoad(s), names(s)
+		planned := make(map[string]bool)
+		for _, name := range dataServers {
+			planned[name] = random.IntN(4) == 0
+		}
+		allows := func(op model.Candidate) bool { return !planned[op.To] }
+		eager := NewLeaderGraph(s, dataServers, filter.Defaults())
+		for _, edges := range eager.out {
+			for j := range edges {
+				eager.passes(&edges[j])
+			}
+		}
+		lazy := NewLeaderGraph(s, dataServers, filter.Defaults())
+		require.Equal(t, eager.FindPath(load, allows), lazy.FindPath(load, allows), "cluster %d", i)
+	}
+}
+
+// The replicas are even, and the first zone leads every shard.
+func BenchmarkLeaderGraph(b *testing.B) {
+	for _, size := range benchSizes {
+		b.Run(size.name, func(b *testing.B) {
+			s := zonedCluster(size.zones, size.perZone, size.perZone, size.namespaces, size.shards)
+			load, dataServers := tier.NewLoad(s), names(s)
+			for b.Loop() {
+				NewLeaderGraph(s, dataServers, filter.Defaults()).FindPath(load, allowAll)
+			}
+		})
+	}
 }
 
 // describePath names each transfer of path by its shard, its source and

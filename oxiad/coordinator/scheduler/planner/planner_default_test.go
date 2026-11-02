@@ -294,6 +294,29 @@ func TestPlannerPlaceOnlyPicksEligible(t *testing.T) {
 	assert.Equal(t, []string{"n1", "n2"}, ensemble)
 }
 
+// Data servers join each zone: a plan moves a replica onto each of them.
+func BenchmarkPlannerPlan(b *testing.B) {
+	for _, size := range []struct {
+		name                                     string
+		zones, perZone, used, namespaces, shards int
+	}{
+		{"9-servers-99-shards", 3, 3, 2, 1, 99},
+		{"51-servers-1000-shards", 3, 17, 12, 1, 1000},
+		{"51-servers-10000-shards", 3, 17, 12, 1, 10000},
+		{"51-servers-100000-shards", 3, 17, 12, 1, 100000},
+		{"51-servers-10-namespaces-10000-shards", 3, 17, 12, 10, 10000},
+		{"51-servers-100-namespaces-10000-shards", 3, 17, 12, 100, 10000},
+	} {
+		b.Run(size.name, func(b *testing.B) {
+			s := zonedCluster(size.zones, size.perZone, size.used, size.namespaces, size.shards)
+			p := defaultPlanner()
+			for b.Loop() {
+				p.Plan(s)
+			}
+		})
+	}
+}
+
 // cluster returns a snapshot of count data servers, n0 to
 // n<count-1>.
 func cluster(count int) *stats.ClusterStats {
@@ -394,4 +417,35 @@ func splitCluster() *stats.ClusterStats {
 
 func defaultPlanner() *planner {
 	return New(filter.Defaults(), tier.Defaults()).(*planner)
+}
+
+// zonedCluster returns zones zones of perZone data servers each, z<zone>-<i>,
+// and shards shards spread over namespaces namespaces, each with an
+// anti-affinity on the zone: each shard has a replica in each zone, on one of
+// its first used data servers, and the member of the first zone leads it. The
+// other data servers are empty.
+func zonedCluster(zones, perZone, used, namespaces, shards int) *stats.ClusterStats {
+	s := &stats.ClusterStats{DataServers: make(map[string]*stats.DataServerStats),
+		Namespaces: make(map[string]*stats.NamespaceStats)}
+	name := func(zone, i int) string { return fmt.Sprintf("z%d-%02d", zone, i) }
+	for zone := range zones {
+		for i := range perZone {
+			s.DataServers[name(zone, i)] = &stats.DataServerStats{DataServer: &proto.DataServer{
+				Identity: &proto.DataServerIdentity{Internal: name(zone, i)},
+				Metadata: &proto.DataServerMetadata{Labels: map[string]string{"zone": fmt.Sprint(zone)}}}}
+		}
+	}
+	for n := range namespaces {
+		s.Namespaces[fmt.Sprintf("ns-%03d", n)] = &stats.NamespaceStats{Shards: make(map[int64]*stats.ShardStats),
+			AntiAffinities: []*proto.AntiAffinity{{Labels: []string{"zone"}, Mode: "strict"}}}
+	}
+	for id := range shards {
+		ensemble := make([]string, 0, zones)
+		for zone := range zones {
+			ensemble = append(ensemble, name(zone, id%used))
+		}
+		ns := s.Namespaces[fmt.Sprintf("ns-%03d", id%namespaces)]
+		ns.Shards[int64(id)] = &stats.ShardStats{Ensemble: ensemble, Leader: ensemble[0]}
+	}
+	return s
 }

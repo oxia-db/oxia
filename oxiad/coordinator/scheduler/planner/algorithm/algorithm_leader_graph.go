@@ -31,11 +31,17 @@ import (
 // zone, two data servers of a zone never share a shard: a leader moves from
 // one to the other through a data server of another zone.
 //
-// The filters only read the snapshot, so the graph is built once per plan;
-// the limits of the plan, which its ops change, are checked during each
-// search.
+// The filters only read the snapshot: a search filters an edge the first time
+// that it reaches it, after its cheaper checks, and the graph keeps the
+// verdict for the next searches of the plan. The limits of the plan, which its
+// ops change, are checked during each search.
+//
+// A LeaderGraph keeps the verdicts of its searches: one goroutine uses it at a
+// time.
 type LeaderGraph struct {
-	out        map[string][]model.Candidate
+	s          *stats.ClusterStats
+	filters    []filter.Filter
+	out        map[string][]edge
 	namespaces []string
 	// dataServers holds the data servers that can lead, in the order of their
 	// names.
@@ -46,7 +52,9 @@ type LeaderGraph struct {
 // between dataServers, the names of the data servers in order.
 func NewLeaderGraph(s *stats.ClusterStats, dataServers []string, filters []filter.Filter) *LeaderGraph {
 	g := &LeaderGraph{
-		out:        make(map[string][]model.Candidate),
+		s:          s,
+		filters:    filters,
+		out:        make(map[string][]edge),
 		namespaces: slices.Sorted(maps.Keys(s.Namespaces)),
 		dataServers: slices.DeleteFunc(slices.Clone(dataServers), func(name string) bool {
 			return s.DataServers[name].Removed
@@ -55,10 +63,9 @@ func NewLeaderGraph(s *stats.ClusterStats, dataServers []string, filters []filte
 	forEachCandidate(s, dataServers, model.TransferLeader,
 		func(op model.Candidate, _ *stats.ShardStats) {
 			// The load doesn't count the leaders of a removed data server
-			if s.DataServers[op.From].Removed || filter.Check(filters, s, op) != nil {
-				return
+			if !s.DataServers[op.From].Removed {
+				g.out[op.From] = append(g.out[op.From], edge{op: op})
 			}
-			g.out[op.From] = append(g.out[op.From], op)
 		})
 	return g
 }
@@ -131,8 +138,9 @@ func (g *LeaderGraph) bfs(allows func(model.Candidate) bool, counts map[string]i
 	for len(queue) > 0 {
 		from := queue[0]
 		queue = queue[1:]
-		for _, op := range g.out[from] {
-			if visited[op.To] || !allows(op) || !allowed(op) {
+		for i := range g.out[from] {
+			op := g.out[from][i].op
+			if visited[op.To] || !allows(op) || !allowed(op) || !g.passes(&g.out[from][i]) {
 				continue
 			}
 			visited[op.To] = true
@@ -156,4 +164,20 @@ func withReason(path []model.Candidate, reason string) []model.Candidate {
 		path[i].Reason = reason
 	}
 	return path
+}
+
+// edge is a transfer of the graph, with the verdict of the filters once a
+// search checks it.
+type edge struct {
+	op      model.Candidate
+	checked bool
+	passed  bool
+}
+
+// passes reports whether the filters pass e, and checks them the first time.
+func (g *LeaderGraph) passes(e *edge) bool {
+	if !e.checked {
+		e.checked, e.passed = true, filter.Check(g.filters, g.s, e.op) == nil
+	}
+	return e.passed
 }
