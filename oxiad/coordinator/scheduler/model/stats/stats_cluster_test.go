@@ -46,7 +46,7 @@ func TestNew(t *testing.T) {
 				1: {Ensemble: []*proto.DataServerIdentity{n0, r}, Leader: n0, Status: proto.ShardStatusSteadyState,
 					Int32HashRange: &proto.HashRange{Min: 0, Max: 9}},
 				2: {Ensemble: []*proto.DataServerIdentity{n0}, Split: &proto.SplitMetadata{}},
-				3: {Ensemble: []*proto.DataServerIdentity{n0}, EnsembleChange: &proto.EnsembleChangeMetadata{}},
+				3: {Ensemble: []*proto.DataServerIdentity{n0}, EnsembleChange: &proto.EnsembleChangeMetadata{From: r, To: n0}},
 				4: {Ensemble: []*proto.DataServerIdentity{n0}, Status: proto.ShardStatusDeleting},
 				5: {Ensemble: []*proto.DataServerIdentity{n0}, Status: proto.ShardStatusSteadyState,
 					Int32HashRange: &proto.HashRange{Min: 3, Max: 3}},
@@ -57,7 +57,7 @@ func TestNew(t *testing.T) {
 		})
 
 	assert.Equal(t, map[string]*DataServerStats{
-		"n0": {DataServer: dataServer},
+		"n0": {DataServer: dataServer, Copying: 1},
 		"r":  {DataServer: &proto.DataServer{Identity: r}, Removed: true},
 	}, s.DataServers)
 	assert.Equal(t, &NamespaceStats{AntiAffinities: zones, Shards: map[int64]*ShardStats{

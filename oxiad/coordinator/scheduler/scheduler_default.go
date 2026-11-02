@@ -131,6 +131,7 @@ func (s *scheduler) run() {
 			continue
 		}
 		s.backOff(snap, now, cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault())
+		snap.MaxCopies = cluster.GetLoadBalancer().GetMaxCopiesPerDataServerOrDefault()
 		actions, blocked := s.planner.Plan(snap)
 		if len(actions) == 0 {
 			// The splits come last: sample the stats only once nothing else

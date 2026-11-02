@@ -245,6 +245,13 @@ func TestLoadBalancerScheduleIntervalDuration(t *testing.T) {
 	assert.Equal(t, defaultLoadBalancerScheduleInterval, lb.GetScheduleIntervalDurationOrDefault())
 }
 
+func TestLoadBalancerGetMaxCopiesPerDataServerOrDefault(t *testing.T) {
+	var nilLoadBalancer *LoadBalancer
+	assert.Equal(t, defaultMaxCopiesPerDataServer, nilLoadBalancer.GetMaxCopiesPerDataServerOrDefault())
+	assert.Equal(t, defaultMaxCopiesPerDataServer, (&LoadBalancer{}).GetMaxCopiesPerDataServerOrDefault())
+	assert.Equal(t, 2, (&LoadBalancer{MaxCopiesPerDataServer: 2}).GetMaxCopiesPerDataServerOrDefault())
+}
+
 func TestLoadBalancerQuarantineTimeDuration(t *testing.T) {
 	var nilLoadBalancer *LoadBalancer
 	duration, err := nilLoadBalancer.GetQuarantineTimeDuration()

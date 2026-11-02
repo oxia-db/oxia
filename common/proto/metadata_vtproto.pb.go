@@ -184,6 +184,7 @@ func (m *LoadBalancer) CloneVT() *LoadBalancer {
 	r := new(LoadBalancer)
 	r.ScheduleInterval = m.ScheduleInterval
 	r.QuarantineTime = m.QuarantineTime
+	r.MaxCopiesPerDataServer = m.MaxCopiesPerDataServer
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -660,6 +661,9 @@ func (this *LoadBalancer) EqualVT(that *LoadBalancer) bool {
 		return false
 	}
 	if this.QuarantineTime != that.QuarantineTime {
+		return false
+	}
+	if this.MaxCopiesPerDataServer != that.MaxCopiesPerDataServer {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -1544,6 +1548,11 @@ func (m *LoadBalancer) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.MaxCopiesPerDataServer != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.MaxCopiesPerDataServer))
+		i--
+		dAtA[i] = 0x18
+	}
 	if len(m.QuarantineTime) > 0 {
 		i -= len(m.QuarantineTime)
 		copy(dAtA[i:], m.QuarantineTime)
@@ -2418,6 +2427,9 @@ func (m *LoadBalancer) SizeVT() (n int) {
 	l = len(m.QuarantineTime)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if m.MaxCopiesPerDataServer != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.MaxCopiesPerDataServer))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -3874,6 +3886,25 @@ func (m *LoadBalancer) UnmarshalVT(dAtA []byte) error {
 			}
 			m.QuarantineTime = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxCopiesPerDataServer", wireType)
+			}
+			m.MaxCopiesPerDataServer = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MaxCopiesPerDataServer |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -7306,6 +7337,25 @@ func (m *LoadBalancer) UnmarshalVTUnsafe(dAtA []byte) error {
 			}
 			m.QuarantineTime = stringValue
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxCopiesPerDataServer", wireType)
+			}
+			m.MaxCopiesPerDataServer = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MaxCopiesPerDataServer |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

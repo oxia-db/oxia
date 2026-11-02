@@ -20,4 +20,7 @@ type DataServerStats struct {
 	*proto.DataServer
 	Removed bool
 	Down    bool
+	// Copying counts the replicas copied onto the data server: the changes of
+	// ensembles whose new member it is, until the ensemble catches up.
+	Copying int
 }

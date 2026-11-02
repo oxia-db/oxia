@@ -195,6 +195,37 @@ func TestSchedulerHoldsTheSplitsDuringTheCooldownOfASplit(t *testing.T) {
 	assert.Never(t, func() bool { return len(s.GetActions()) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 }
 
+func TestSchedulerLimitsTheCopiesOntoADataServer(t *testing.T) {
+	metadata := newFakeMetadata(t)
+	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "10ms", MaxCopiesPerDataServer: 1}
+	// n1 and n2 each take one copy already: the drain of shard 3 waits for them
+	copying := func(to string) *proto.ShardMetadata {
+		return &proto.ShardMetadata{Ensemble: identities("n0", to),
+			EnsembleChange: &proto.EnsembleChangeMetadata{From: identities("r")[0], To: identities(to)[0]}}
+	}
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{
+		1: copying("n1"),
+		2: copying("n2"),
+		3: {Ensemble: identities("r", "n0")},
+	})
+	s := start(t, metadata)
+
+	assert.Never(t, func() bool { return len(s.GetActions()) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+
+	// n2 caught up
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{
+		1: copying("n1"),
+		2: {Ensemble: identities("n0", "n2")},
+		3: {Ensemble: identities("r", "n0")},
+	})
+	select {
+	case ac := <-s.GetActions():
+		assert.Equal(t, "n2", ac.(*action.ChangeEnsembleAction).To.GetInternal())
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "the drain waits for a data server that caught up")
+	}
+}
+
 func TestSchedulerLogsBlockedReplicas(t *testing.T) {
 	metadata := newFakeMetadata(t)
 	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r")}})

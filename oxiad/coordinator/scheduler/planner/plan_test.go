@@ -50,6 +50,23 @@ func TestPlanAllowsOneOpPerShardAndPerTarget(t *testing.T) {
 	assert.True(t, pl.allows(model.Candidate{Kind: model.TransferLeader, Shard: 2, From: "n0", To: "n1"}))
 }
 
+func TestPlanAllowsTheCopiesUpToTheLimit(t *testing.T) {
+	s := cluster(3)
+	addShard(s, "a", 1, "n0", "n1")
+	s.DataServers["n2"].Copying = 2
+	replace := model.Candidate{Kind: model.Replace, Namespace: "a", Shard: 1, From: "n0", To: "n2"}
+	transfer := model.Candidate{Kind: model.TransferLeader, Namespace: "a", Shard: 1, From: "n0", To: "n2"}
+
+	assert.True(t, newPlan(s).allows(replace), "no limit")
+
+	s.MaxCopies = 2
+	assert.False(t, newPlan(s).allows(replace))
+	assert.True(t, newPlan(s).allows(transfer), "a transfer copies no replica")
+
+	s.MaxCopies = 3
+	assert.True(t, newPlan(s).allows(replace))
+}
+
 func TestPlanAllowsOneSplitAtATime(t *testing.T) {
 	s := cluster(2)
 	addShard(s, "a", 1, "n0", "n1")

@@ -28,9 +28,11 @@ import (
 // plan is the state of one plan: its actions, and the load and the limits
 // left, as its ops leave them. A plan makes at most one op on each shard and
 // onto each data server, so that a round never piles copies or leaders onto
-// one data server, and the cluster splits one shard at a time. A namespace
-// waits in the phases after one that hasn't settled it. It enumerates the data
-// servers in the order of their names, so that a plan is the same every time.
+// one data server, and the cluster splits one shard at a time. A replace also
+// waits while its target has MaxCopies replicas still catching up, from the
+// changes of the rounds before. A namespace waits in the phases after one that
+// hasn't settled it. It enumerates the data servers in the order of their
+// names, so that a plan is the same every time.
 type plan struct {
 	logger          *slog.Logger
 	clusterStats    *stats.ClusterStats
@@ -95,6 +97,12 @@ func (pl *plan) allWaiting() bool {
 	return len(pl.waiting) == len(pl.clusterStats.Namespaces)
 }
 
+// copies reports whether the data server to has room for one more copy of a
+// replica.
+func (pl *plan) copies(to string) bool {
+	return pl.clusterStats.MaxCopies == 0 || pl.clusterStats.DataServers[to].Copying < pl.clusterStats.MaxCopies
+}
+
 // add adds the action that makes op to the plan, and charges op to the limits
 // and to the load of the plan.
 func (pl *plan) add(op model.Candidate) {
@@ -132,6 +140,9 @@ func (pl *plan) allows(op model.Candidate) bool {
 	}
 	if op.Kind == model.Split {
 		return !pl.splitActive
+	}
+	if op.Kind == model.Replace && !pl.copies(op.To) {
+		return false
 	}
 	return !pl.plannedTargets[op.To]
 }

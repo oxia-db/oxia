@@ -104,6 +104,11 @@ message LoadBalancer {
   // Unused: kept so that a configuration that sets it still loads.
   // @gotags: yaml:"quarantineTime,omitempty"
   string quarantine_time = 2;
+  // The most replicas that the scheduler copies onto a data server at a time:
+  // the changes of ensembles whose new member still catches up. 0 is the
+  // default, 4.
+  // @gotags: yaml:"maxCopiesPerDataServer,omitempty"
+  uint32 max_copies_per_data_server = 3;
 }
 
 message AutoSplitConfig {

@@ -22,6 +22,9 @@ import (
 type ClusterStats struct {
 	DataServers map[string]*DataServerStats
 	Namespaces  map[string]*NamespaceStats
+	// MaxCopies is the most replicas copied onto a data server at a time, or
+	// 0 for no limit: the scheduler sets it from its policy.
+	MaxCopies int
 }
 
 func (s *ClusterStats) GetShard(id int64) *ShardStats {
@@ -60,6 +63,10 @@ func New(dataServers map[string]commonobject.Borrowed[*proto.DataServer],
 					s.DataServers[memberName] = &DataServerStats{DataServer: &proto.DataServer{Identity: member}, Removed: true}
 				}
 				ensemble = append(ensemble, memberName)
+			}
+			// The new member of a change is in the ensemble until it is undone
+			if change := shard.GetEnsembleChange(); change != nil {
+				s.DataServers[change.GetTo().GetNameOrDefault()].Copying++
 			}
 			hashRange := shard.GetInt32HashRange()
 			ns.Shards[id] = &ShardStats{

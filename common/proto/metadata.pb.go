@@ -632,8 +632,13 @@ type LoadBalancer struct {
 	// Unused: kept so that a configuration that sets it still loads.
 	 
 	QuarantineTime string `protobuf:"bytes,2,opt,name=quarantine_time,json=quarantineTime,proto3" json:"quarantine_time,omitempty" yaml:"quarantineTime,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The most replicas that the scheduler copies onto a data server at a time:
+	// the changes of ensembles whose new member still catches up. 0 is the
+	// default, 4.
+	 
+	MaxCopiesPerDataServer uint32 `protobuf:"varint,3,opt,name=max_copies_per_data_server,json=maxCopiesPerDataServer,proto3" json:"max_copies_per_data_server,omitempty" yaml:"maxCopiesPerDataServer,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *LoadBalancer) Reset() {
@@ -678,6 +683,13 @@ func (x *LoadBalancer) GetQuarantineTime() string {
 		return x.QuarantineTime
 	}
 	return ""
+}
+
+func (x *LoadBalancer) GetMaxCopiesPerDataServer() uint32 {
+	if x != nil {
+		return x.MaxCopiesPerDataServer
+	}
+	return 0
 }
 
 type AutoSplitConfig struct {
@@ -1429,10 +1441,11 @@ const file_metadata_proto_rawDesc = "" +
 	"\vkey_sorting\x18\x05 \x01(\tR\n" +
 	"keySorting\x12G\n" +
 	"\x0fanti_affinities\x18\x06 \x03(\v2\x1e.io.oxia.proto.v1.AntiAffinityR\x0eantiAffinitiesB\x18\n" +
-	"\x16_notifications_enabled\"d\n" +
+	"\x16_notifications_enabled\"\xa0\x01\n" +
 	"\fLoadBalancer\x12+\n" +
 	"\x11schedule_interval\x18\x01 \x01(\tR\x10scheduleInterval\x12'\n" +
-	"\x0fquarantine_time\x18\x02 \x01(\tR\x0equarantineTime\"\xca\x02\n" +
+	"\x0fquarantine_time\x18\x02 \x01(\tR\x0equarantineTime\x12:\n" +
+	"\x1amax_copies_per_data_server\x18\x03 \x01(\rR\x16maxCopiesPerDataServer\"\xca\x02\n" +
 	"\x0fAutoSplitConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12)\n" +
 	"\x11max_shard_size_mb\x18\x02 \x01(\rR\x0emaxShardSizeMb\x12,\n" +

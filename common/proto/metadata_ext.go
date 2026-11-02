@@ -26,6 +26,7 @@ import (
 const (
 	defaultLoadBalancerScheduleInterval = 30 * time.Second
 	defaultLoadBalancerQuarantineTime   = 5 * time.Minute
+	defaultMaxCopiesPerDataServer       = 4
 
 	defaultAutoSplitMaxShardSizeMB      uint32 = 1024
 	defaultAutoSplitMaxThroughputOps    uint32 = 10000
@@ -388,6 +389,13 @@ func (lb *LoadBalancer) GetScheduleIntervalDurationOrDefault() time.Duration {
 		return defaultLoadBalancerScheduleInterval
 	}
 	return duration
+}
+
+func (lb *LoadBalancer) GetMaxCopiesPerDataServerOrDefault() int {
+	if lb.GetMaxCopiesPerDataServer() == 0 {
+		return defaultMaxCopiesPerDataServer
+	}
+	return int(lb.GetMaxCopiesPerDataServer())
 }
 
 func (lb *LoadBalancer) GetQuarantineTimeDurationOrDefault() time.Duration {
