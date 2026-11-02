@@ -212,19 +212,6 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 	retainedHeads = make(sharding.HeadEntries)
 	ensembleHeads = make(sharding.HeadEntries)
 	commitOffsets = make(map[string]int64)
-	addResponse := func(server *proto.DataServerIdentity, res *proto.NewTermResponse) {
-		for _, f := range res.GetFeaturesEnabled() {
-			enabledFeatures[f] = true
-		}
-		if res.CommitOffset != nil {
-			commitOffsets[server.GetInternal()] = res.GetCommitOffset()
-		}
-		if slices.Contains(ensemble, server) {
-			ensembleHeads[server] = res.HeadEntryId
-		} else {
-			retainedHeads[server] = res.HeadEntryId
-		}
-	}
 	oldEnsembleFenced := 0
 	totalResponses := 0
 	for (oldEnsembleFenced < oldEnsembleQuorum || len(ensembleHeads) < majority) && totalResponses < fencingQuorumSize {
@@ -238,7 +225,17 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 		if inOldEnsemble(fencingResponse.DataServer) {
 			oldEnsembleFenced++
 		}
-		addResponse(fencingResponse.DataServer, fencingResponse.Response)
+		for _, f := range fencingResponse.Response.GetFeaturesEnabled() {
+			enabledFeatures[f] = true
+		}
+		if fencingResponse.Response.CommitOffset != nil {
+			commitOffsets[fencingResponse.DataServer.GetInternal()] = fencingResponse.Response.GetCommitOffset()
+		}
+		if slices.Contains(ensemble, fencingResponse.DataServer) {
+			ensembleHeads[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
+		} else {
+			retainedHeads[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
+		}
 	}
 	if oldEnsembleFenced < oldEnsembleQuorum {
 		return nil, nil, nil, nil, errors.Wrap(err, "election failed: quorum not reached")
@@ -259,7 +256,17 @@ gracePeriod:
 				// rpc has already printed the logs
 				continue
 			}
-			addResponse(r.DataServer, r.Response)
+			for _, f := range r.Response.GetFeaturesEnabled() {
+				enabledFeatures[f] = true
+			}
+			if r.Response.CommitOffset != nil {
+				commitOffsets[r.DataServer.GetInternal()] = r.Response.GetCommitOffset()
+			}
+			if slices.Contains(ensemble, r.DataServer) {
+				ensembleHeads[r.DataServer] = r.Response.HeadEntryId
+			} else {
+				retainedHeads[r.DataServer] = r.Response.HeadEntryId
+			}
 		case <-time.After(quorumFencingGracePeriod):
 			break gracePeriod
 		}
