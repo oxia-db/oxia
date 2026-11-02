@@ -41,7 +41,7 @@ func (statusCodec) NewZero() *commonproto.ClusterStatus {
 }
 
 func (statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
-	return yamlv3.Marshal(value)
+	return yamlv3.Marshal(gproto.Clone(value))
 }
 
 func (statusCodec) UnmarshalJSON(data []byte) (*commonproto.ClusterStatus, error) {

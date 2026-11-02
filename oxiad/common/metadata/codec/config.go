@@ -42,7 +42,7 @@ func (configCodec) Clone(value *commonproto.ClusterConfiguration) *commonproto.C
 }
 
 func (configCodec) MarshalYAML(value *commonproto.ClusterConfiguration) ([]byte, error) {
-	return yamlv3.Marshal(value)
+	return yamlv3.Marshal(gproto.Clone(value))
 }
 
 func (configCodec) UnmarshalJSON(data []byte) (*commonproto.ClusterConfiguration, error) {
