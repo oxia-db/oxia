@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 )
 
 // n0 has two leaders and n3 none, and each other data server one: only a path
@@ -33,7 +34,7 @@ func TestLeaderGraphFindPathPassesALeaderAlongThreeDataServers(t *testing.T) {
 	addShard(s, "z", 3, "n2", "n3").Leader = "n2"
 	pl := newPlan(s)
 
-	path := defaultPlanner().newLeaderGraph(pl).findPath(pl)
+	path := newLeaderGraph(pl, filter.Defaults()).findPath(pl)
 
 	assert.Equal(t, []string{"3 n2->n3 total-leaders", "2 n1->n2 total-leaders", "1 n0->n1 total-leaders"},
 		describePath(path))
@@ -51,7 +52,7 @@ func TestLeaderGraphFindPathStartsFromTheNextDataServers(t *testing.T) {
 	addShard(s, "z", 5, "n3", "n2").Leader = "n3"
 	pl := newPlan(s)
 
-	path := defaultPlanner().newLeaderGraph(pl).findPath(pl)
+	path := newLeaderGraph(pl, filter.Defaults()).findPath(pl)
 
 	assert.Equal(t, []string{"5 n3->n2 total-leaders", "4 n1->n3 total-leaders"}, describePath(path))
 }
@@ -66,7 +67,7 @@ func TestLeaderGraphFindPathKeepsTheNamespacesBalanced(t *testing.T) {
 	addShard(s, "y", 3, "n1", "n2").Leader = "n2"
 	pl := newPlan(s)
 
-	assert.Nil(t, defaultPlanner().newLeaderGraph(pl).findPath(pl))
+	assert.Nil(t, newLeaderGraph(pl, filter.Defaults()).findPath(pl))
 }
 
 // A removed data server leads no counted leader: no path starts from it.
@@ -76,7 +77,7 @@ func TestLeaderGraphSkipsTheTransfersOfARemovedDataServer(t *testing.T) {
 	addShard(s, "x", 1, "r", "n0").Leader = "r"
 	pl := newPlan(s)
 
-	assert.Empty(t, defaultPlanner().newLeaderGraph(pl).out)
+	assert.Empty(t, newLeaderGraph(pl, filter.Defaults()).out)
 }
 
 // describePath names each transfer of path by its shard, its source and

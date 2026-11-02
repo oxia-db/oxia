@@ -21,6 +21,7 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
@@ -41,7 +42,8 @@ type leaderGraph struct {
 	dataServers []string
 }
 
-func (p *planner) newLeaderGraph(pl *plan) *leaderGraph {
+// newLeaderGraph returns the graph of the transfers of pl that filters pass.
+func newLeaderGraph(pl *plan, filters []filter.Filter) *leaderGraph {
 	g := &leaderGraph{
 		out:        make(map[string][]model.Candidate),
 		namespaces: slices.Sorted(maps.Keys(pl.clusterStats.Namespaces)),
@@ -52,7 +54,7 @@ func (p *planner) newLeaderGraph(pl *plan) *leaderGraph {
 	forEachCandidate(pl.clusterStats, pl.dataServerNames, model.TransferLeader,
 		func(op model.Candidate, _ *stats.ShardStats) {
 			// The load doesn't count the leaders of a removed data server
-			if pl.clusterStats.DataServers[op.From].Removed || p.doFilter(pl.clusterStats, op) != nil {
+			if pl.clusterStats.DataServers[op.From].Removed || filter.Check(filters, pl.clusterStats, op) != nil {
 				return
 			}
 			g.out[op.From] = append(g.out[op.From], op)

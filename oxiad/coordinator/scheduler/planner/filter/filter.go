@@ -22,6 +22,8 @@
 package filter
 
 import (
+	"fmt"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 )
@@ -37,6 +39,17 @@ type Filter interface {
 	// errs sentinel and says why not. A filter passes the kinds of op that its
 	// constraint doesn't apply to.
 	Filter(s *stats.ClusterStats, op model.Candidate) error
+}
+
+// Check returns the error of the first of filters that rejects op, prefixed
+// with its name, or nil.
+func Check(filters []Filter, s *stats.ClusterStats, op model.Candidate) error {
+	for _, f := range filters {
+		if err := f.Filter(s, op); err != nil {
+			return fmt.Errorf("%s: %w", f.GetName(), err)
+		}
+	}
+	return nil
 }
 
 // Defaults returns the filters of the scheduler, in the order of their steps:

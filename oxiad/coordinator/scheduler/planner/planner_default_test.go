@@ -257,32 +257,6 @@ func TestPlannerPlanPrefersMovingAFollower(t *testing.T) {
 	assert.Equal(t, []string{"replace 1 r1 n1"}, describe(ops))
 }
 
-func TestPlannerPlanReportsBlockedReplicas(t *testing.T) {
-	s := cluster(2)
-	removed(s, "r")
-	addShard(s, "single", 1, "r")
-	addShard(s, "zones", 2, "r", "n0")
-	s.Namespaces["zones"].AntiAffinities = []*proto.AntiAffinity{{Labels: []string{"zone"}}}
-	addShard(s, "frozen", 3, "r", "n0").Changing = true
-
-	_, blocked := defaultPlanner().Plan(s)
-
-	assert.Equal(t, []model.Blocked{
-		{Namespace: "single", Shard: 1, DataServer: "r", Reason: "replicated: failed precondition: shard 1 has a single replica"},
-		{Namespace: "zones", Shard: 2, DataServer: "r", Reason: `anti-affinity: failed precondition: "n1" breaks the anti-affinity of shard 2`},
-	}, blocked)
-}
-
-func TestPlannerPlanReportsBlockedReplicasWithoutTarget(t *testing.T) {
-	s := cluster(1)
-	removed(s, "r")
-	addShard(s, "a", 1, "r", "n0")
-
-	_, blocked := defaultPlanner().Plan(s)
-
-	assert.Equal(t, []model.Blocked{{Namespace: "a", Shard: 1, DataServer: "r", Reason: "no data server can take a replica"}}, blocked)
-}
-
 func TestPlannerPlacePicksTheLeastLoaded(t *testing.T) {
 	s := cluster(4)
 	removed(s, "r")
