@@ -119,6 +119,11 @@ type Metadata interface {
 	// single write, unless modify returns false or an error, which
 	// PatchDataServerStatus returns.
 	PatchDataServerStatus(name string, modify func(status *commonproto.DataServerStatus) (bool, error)) error
+	// DeleteDrainedDataServerStatus deletes the status of a data server stored
+	// DRAINED, and drops it from the pending deletes of every shard, in a
+	// single write. It reports whether it deleted the status: it does nothing
+	// for a data server that isn't stored DRAINED.
+	DeleteDrainedDataServerStatus(name string) (bool, error)
 
 	// GetConfig returns the configuration.
 	GetConfig() (commonobject.Borrowed[*commonproto.ClusterConfiguration], error)

@@ -260,7 +260,7 @@ func (n *controller) monitorDraining() {
 // drain moves the stored status of the data server one step towards DRAINED,
 // and reports whether it is DRAINED: it stores it DRAINING first, then
 // DRAINED once it is drained. DRAINED is final, as a data server that left
-// can't be added again.
+// can't be added again until the configuration confirms its drain.
 func (n *controller) drain() (bool, error) {
 	name := n.dataServer.GetIdentity().GetNameOrDefault()
 	stored, _, err := n.metadata.GetDataServerStatus(name)

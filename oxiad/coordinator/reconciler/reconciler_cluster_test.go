@@ -78,6 +78,17 @@ func TestClusterReconcilerNewReturnsReconcileError(t *testing.T) {
 	require.Empty(t, base.added)
 }
 
+// An unknown annotation is logged, and doesn't fail the pass.
+func TestClusterReconcilerReconcileIgnoresUnknownAnnotations(t *testing.T) {
+	runtime := &watchedNamespaceRuntime{mockNamespaceRuntime: namespaceRuntimeForErrors()}
+	reconciler := &clusterReconciler{ctx: t.Context(), logger: slog.Default(), runtime: runtime}
+
+	require.NoError(t, reconciler.Reconcile(t.Context(), &proto.ClusterConfiguration{
+		Annotations: map[string]string{"unknown": "value"},
+	}))
+	require.Equal(t, 1, runtime.recomputations)
+}
+
 func TestClusterReconcilerReconcileWithRetriesRetriesReconcileError(t *testing.T) {
 	base := namespaceRuntimeForErrors("retry", "healthy")
 	base.metadata.config = &proto.ClusterConfiguration{Namespaces: []*proto.Namespace{

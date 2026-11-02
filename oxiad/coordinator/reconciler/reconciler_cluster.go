@@ -98,6 +98,9 @@ func (r *clusterReconciler) Close() error {
 }
 
 func (r *clusterReconciler) Reconcile(_ context.Context, snapshot *proto.ClusterConfiguration) error {
+	if unknown := snapshot.ListUnknownAnnotations(); len(unknown) > 0 {
+		r.logger.Warn("Ignoring the unknown annotations of the configuration", slog.Any("annotations", unknown))
+	}
 	var errs error
 	for _, reconciler := range r.reconcilers {
 		if err := reconciler.Reconcile(r.ctx, snapshot); err != nil {
