@@ -3690,9 +3690,8 @@ func TestLeaderController_RefusesAFollowerWithCommittedEntriesItDoesntHave(t *te
 	}
 }
 
-// A leader fenced with a new term reports the commit offset of its closed
-// tracker, which it doesn't apply entries past, or the one of its database
-// without a tracker.
+// A leader fenced with a new term reports the commit offset of its database,
+// read once its tracker is closed: it doesn't apply any entry past it.
 func TestLeaderController_NewTermReportsTheCommitOffset(t *testing.T) {
 	lc, _, closeAll := newLeaderWithWalAfter(t, 0)
 	defer closeAll()
@@ -3700,7 +3699,7 @@ func TestLeaderController_NewTermReportsTheCommitOffset(t *testing.T) {
 	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 3})
 	require.NoError(t, err)
 	require.NotNil(t, res.CommitOffset)
-	assert.EqualValues(t, 9, res.GetCommitOffset(), "the commit offset of the database")
+	assert.EqualValues(t, 9, res.GetCommitOffset())
 
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: 1, Term: 3, ReplicationFactor: 1})
 	require.NoError(t, err)
@@ -3713,7 +3712,7 @@ func TestLeaderController_NewTermReportsTheCommitOffset(t *testing.T) {
 
 	res, err = lc.NewTerm(&proto.NewTermRequest{Shard: 1, Term: 4})
 	require.NoError(t, err)
-	assert.EqualValues(t, 10, res.GetCommitOffset(), "the commit offset of the tracker")
+	assert.EqualValues(t, 10, res.GetCommitOffset(), "the entry of the term it led")
 	assert.EqualValues(t, 10, res.HeadEntryId.Offset)
 }
 

@@ -379,9 +379,7 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	// not inherit a stale write-freeze from a previous (aborted) cutover.
 	lc.frozen.Store(false)
 
-	// Once the tracker is closed, its commit offset doesn't move and the leader
-	// doesn't apply any entry past it
-	commitOffset := lc.prepareNewTerm()
+	lc.prepareNewTerm()
 
 	// The proposals return once their entry is appended to the wal, before it
 	// is synced, while the head is read from the last synced entry: wait for
@@ -394,11 +392,11 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	if err != nil {
 		return nil, err
 	}
-	dbCommitOffset, err := lc.db.ReadCommitOffset()
+	// The tracker is closed: the leader doesn't apply any entry anymore
+	commitOffset, err := lc.db.ReadCommitOffset()
 	if err != nil {
 		return nil, err
 	}
-	commitOffset = max(commitOffset, dbCommitOffset)
 
 	lc.sessionManager.stop()
 
@@ -417,19 +415,16 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 }
 
 // prepareNewTerm closes what leading the term opened: the quorum tracker, the
-// follower and observer cursors, and their gauges. It returns the commit offset
-// of the closed tracker, or -1 without one. It must be called while holding the
-// leader lock.
-func (lc *leaderController) prepareNewTerm() int64 {
+// follower and observer cursors, and their gauges. It must be called while
+// holding the leader lock.
+func (lc *leaderController) prepareNewTerm() {
 	lc.unregisterOffsetGauges()
 
-	commitOffset := wal.InvalidOffset
 	if lc.quorumAckTracker != nil {
 		// Closing the tracker waits for the callback that is running, which
 		// can be retrying an entry that failed to apply
 		lc.termCancel()
 		lc.quorumAckTracker.Close()
-		commitOffset = lc.quorumAckTracker.CommitOffset()
 		lc.quorumAckTracker = nil
 	}
 
@@ -447,7 +442,6 @@ func (lc *leaderController) prepareNewTerm() int64 {
 
 	lc.followers = nil
 	lc.observers = nil
-	return commitOffset
 }
 
 // becomeLeader must be called while holding the leader lock, once
@@ -1005,16 +999,21 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		// wal starts after a snapshot.
 		committedOffset := min(*followerCommitOffset, followerHeadEntryId.Offset)
 		if committedOffset > lastEntryInFollowerTerm.Offset {
-			if !lc.walHoldsEntriesAfter(committedOffset) {
-				// The follower starts over from a snapshot of the leader, whose
-				// installation replaces its wal and its database
+			// The follower gets the next entries from the wal of the leader, which
+			// must hold every one of them, or none when the leader has them all
+			// in its database. Otherwise the follower starts over from a
+			// snapshot of the leader, whose installation replaces its wal and its
+			// database.
+			walFirstOffset := lc.wal.FirstOffset()
+			if (walFirstOffset == wal.InvalidOffset && committedOffset != lc.quorumAckTracker.HeadOffset()) ||
+				(walFirstOffset != wal.InvalidOffset && committedOffset+1 < walFirstOffset) {
 				lc.log.Info(
 					"Follower is behind the wal of the leader, sending a snapshot",
 					slog.Int64("term", term),
 					slog.String("follower", follower),
 					slog.Any("follower-head-entry", followerHeadEntryId),
 					slog.Int64("follower-commit-offset", *followerCommitOffset),
-					slog.Int64("wal-first-offset", lc.wal.FirstOffset()),
+					slog.Int64("wal-first-offset", walFirstOffset),
 				)
 				return constant2.InvalidEntryId, nil
 			}
@@ -1080,18 +1079,6 @@ func (lc *leaderController) canStreamAfter(offset int64) bool {
 	if walFirstOffset == wal.InvalidOffset {
 		// The entries of the leader are all in its database
 		return offset == commitOffset
-	}
-	return offset+1 >= walFirstOffset
-}
-
-// walHoldsEntriesAfter reports whether the wal of the leader holds every entry
-// after offset, up to the head of the leader, which offset is at most. The
-// follower cursor streams them from there.
-func (lc *leaderController) walHoldsEntriesAfter(offset int64) bool {
-	walFirstOffset := lc.wal.FirstOffset()
-	if walFirstOffset == wal.InvalidOffset {
-		// The entries of the leader are all in its database
-		return offset == lc.quorumAckTracker.HeadOffset()
 	}
 	return offset+1 >= walFirstOffset
 }
