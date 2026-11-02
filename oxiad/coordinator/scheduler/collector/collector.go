@@ -27,8 +27,8 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/policy"
 )
 
 const (
@@ -129,7 +129,7 @@ func (c *Collector) Collect() (*stats.ClusterStats, error) {
 // The splits come after the other ops, so the owner samples only once
 // nothing else moves: a shard sampled again after a gap of more than two
 // collection intervals starts its stabilization over.
-func (c *Collector) Sample(s *stats.ClusterStats, p policy.Split, now time.Time) {
+func (c *Collector) Sample(s *stats.ClusterStats, p model.SplitPolicy, now time.Time) {
 	c.sample(s, p, now)
 	cooling := now.Sub(c.lastSplit) < p.Cooldown
 	for _, ns := range s.Namespaces {
@@ -152,7 +152,7 @@ func (c *Collector) SetLastSplit(now time.Time) {
 // sample samples the stats of the shards of s again, if the collection
 // interval of p passed since the last sample. It forgets the samples if the
 // auto-split is disabled.
-func (c *Collector) sample(s *stats.ClusterStats, p policy.Split, now time.Time) {
+func (c *Collector) sample(s *stats.ClusterStats, p model.SplitPolicy, now time.Time) {
 	if !p.Enabled {
 		c.sampled, c.overshoots, c.filtering = time.Time{}, nil, nil
 		clear(c.trackers)
@@ -217,7 +217,7 @@ func (c *Collector) fetch(s *stats.ClusterStats, leaders map[int64]string) map[i
 
 // overshoot records the sample of shard, and returns how many times its
 // threshold the shard has stayed over for the stabilization period, or 0.
-func (c *Collector) overshoot(shard int64, leader string, shardStats *proto.ShardStats, p policy.Split,
+func (c *Collector) overshoot(shard int64, leader string, shardStats *proto.ShardStats, p model.SplitPolicy,
 	now time.Time) float64 {
 	t, ok := c.trackers[shard]
 	if !ok || now.Sub(t.sampled) > 2*p.CollectionInterval {

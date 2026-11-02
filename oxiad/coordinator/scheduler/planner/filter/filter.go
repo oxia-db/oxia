@@ -17,14 +17,15 @@
 // only rank the candidates that every filter passes. The filters read only the
 // stats of the round, which tell the data servers that are down: the dispatch
 // checks them again before it sends an action.
-// The filters themselves live in the step package, one file per step, in the
-// order of Defaults.
+// Each filter has its own file, and Defaults runs them in order: the cheapest
+// checks first.
 package filter
 
 import (
+	"fmt"
+
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter/step"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
 )
 
 // Filter rejects a candidate that breaks a hard constraint, with the reason.
@@ -37,13 +38,24 @@ type Filter interface {
 	// Filter returns nil if op keeps the constraint, or an error that wraps an
 	// errs sentinel and says why not. A filter passes the kinds of op that its
 	// constraint doesn't apply to.
-	Filter(s *stats.ClusterStats, op candidate.Candidate) error
+	Filter(s *stats.ClusterStats, op model.Candidate) error
+}
+
+// Check returns the error of the first of filters that rejects op, prefixed
+// with its name, or nil.
+func Check(filters []Filter, s *stats.ClusterStats, op model.Candidate) error {
+	for _, f := range filters {
+		if err := f.Filter(s, op); err != nil {
+			return fmt.Errorf("%s: %w", f.GetName(), err)
+		}
+	}
+	return nil
 }
 
 // Defaults returns the filters of the scheduler, in the order of their steps:
 // the cheapest first, since the planner stops at the first one that rejects a
 // candidate and runs them on every candidate of a round.
 func Defaults() []Filter {
-	return []Filter{step.Frozen{}, step.Replicated{}, step.Membership{}, step.Target{}, step.Running{},
-		step.AntiAffinity{}, step.Splittable{}}
+	return []Filter{Frozen{}, Replicated{}, Membership{}, Target{}, Running{},
+		AntiAffinity{}, Splittable{}}
 }

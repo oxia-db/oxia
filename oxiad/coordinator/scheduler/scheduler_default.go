@@ -22,15 +22,16 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/process"
+	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/dispatcher"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/policy"
 )
 
 // actionsBuffer leaves room for the ops of a few rounds while the runtime
@@ -109,11 +110,15 @@ func (s *scheduler) run() {
 		config, err := s.metadata.GetConfig()
 		if err != nil {
 			s.logger.Warn("Failed to read the scheduler policy, retrying next round", slog.Any("error", err))
-			interval = policy.New(nil).Interval
+			interval = new(proto.LoadBalancer).GetScheduleIntervalDurationOrDefault()
 			continue
 		}
-		p := policy.New(config.UnsafeBorrow())
-		interval = p.GetRoundInterval()
+		cluster := config.UnsafeBorrow()
+		split := model.NewSplitPolicy(cluster)
+		interval = cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault()
+		if split.Enabled {
+			interval = min(interval, split.CollectionInterval)
+		}
 		now := time.Now()
 		snap, err := s.collector.Collect()
 		if err != nil {
@@ -124,7 +129,7 @@ func (s *scheduler) run() {
 		if len(actions) == 0 {
 			// The splits come last: sample the stats only once nothing else
 			// moves
-			s.collector.Sample(snap, p.Split, now)
+			s.collector.Sample(snap, split, now)
 			actions, blocked = s.planner.Plan(snap)
 		}
 		for _, replica := range blocked {
@@ -132,14 +137,15 @@ func (s *scheduler) run() {
 		}
 		succeeded := true
 		for _, result := range s.dispatcher.Dispatch(snap, actions) {
-			if result.Err != nil {
+			_, splitting := result.Action.(*action.SplitAction)
+			switch {
+			case result.Err != nil:
 				s.logger.Warn("An action failed", slog.Any("action", result.Action), slog.Any("error", result.Err))
 				succeeded = false
-				continue
-			}
-			if _, ok := result.Action.(*action.SplitAction); ok {
+			case splitting:
 				s.collector.SetLastSplit(now)
 				s.splitsCounter.Inc()
+			default:
 			}
 		}
 		// The next round plans on the snapshot that these actions leave, right

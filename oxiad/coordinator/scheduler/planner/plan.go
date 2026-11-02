@@ -15,34 +15,31 @@
 package planner
 
 import (
+	"log/slog"
 	"maps"
 	"slices"
 
+	"github.com/oxia-db/oxia/oxiad/coordinator/action"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/internal/candidate"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/load"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
-// plan is the state of one plan: the load and the limits left, as its ops
-// leave them. A plan makes at most one op on each shard and onto each data
-// server, so that a round never piles copies or leaders onto one data server.
+// plan is the state of one plan: its actions, and the load and the limits
+// left, as its ops leave them. A plan makes at most one op on each shard and
+// onto each data server, so that a round never piles copies or leaders onto
+// one data server, and the cluster splits one shard at a time. It enumerates
+// the data servers in the order of their names, so that a plan is the same
+// every time.
 type plan struct {
-	clusterStats *stats.ClusterStats
-	// dataServerLoad is the load of the data servers, as the ops of the plan
-	// leave it.
-	dataServerLoad *load.Load
-	// dataServerNames holds the names of every data server, sorted, so that
-	// the ops are enumerated in the same order every time.
-	dataServerNames []string
-	// plannedShards holds the shards that an op of the plan already changes.
-	plannedShards map[int64]bool
-	// plannedTargets holds the data servers that an op of the plan already
-	// copies a replica, or moves a leadership, onto.
-	plannedTargets map[string]bool
-	// splitActive is set once a split is planned or in progress: the
-	// cluster splits one shard at a time.
-	splitActive bool
-	// ensembleChanging is set if a change of an ensemble is pending.
+	logger           *slog.Logger
+	clusterStats     *stats.ClusterStats
+	actions          []action.Action
+	dataServerLoad   *tier.Load
+	dataServerNames  []string
+	plannedShards    map[int64]bool
+	plannedTargets   map[string]bool
+	splitActive      bool
 	ensembleChanging bool
 }
 
@@ -50,8 +47,9 @@ type plan struct {
 // ensembles that are already in progress.
 func newPlan(s *stats.ClusterStats) *plan {
 	pl := &plan{
+		logger:          slog.With(slog.String("component", "planner")),
 		clusterStats:    s,
-		dataServerLoad:  load.New(s),
+		dataServerLoad:  tier.NewLoad(s),
 		dataServerNames: slices.Sorted(maps.Keys(s.DataServers)),
 		plannedShards:   make(map[int64]bool),
 		plannedTargets:  make(map[string]bool),
@@ -65,16 +63,29 @@ func newPlan(s *stats.ClusterStats) *plan {
 	return pl
 }
 
-// apply charges op to the limits and to the load of the plan.
-func (pl *plan) apply(op candidate.Candidate) {
+// add adds the action that makes op to the plan, and charges op to the limits
+// and to the load of the plan.
+func (pl *plan) add(op model.Candidate) {
 	pl.count(op)
 	pl.dataServerLoad.Move(pl.clusterStats, op)
+	pl.logger.Info("Planned an op", slog.String("kind", op.Kind.String()), slog.String("namespace", op.Namespace),
+		slog.Int64("shard", op.Shard), slog.String("from", op.From), slog.String("to", op.To),
+		slog.String("reason", op.Reason))
+	switch op.Kind {
+	case model.TransferLeader:
+		pl.actions = append(pl.actions, action.NewLeaderTransferAction(op.Shard, op.To))
+	case model.Split:
+		pl.actions = append(pl.actions, action.NewSplitAction(op.Namespace, op.Shard))
+	default:
+		pl.actions = append(pl.actions, action.NewChangeEnsembleAction(op.Shard,
+			pl.clusterStats.DataServers[op.From].GetIdentity(), pl.clusterStats.DataServers[op.To].GetIdentity()))
+	}
 }
 
 // count charges op to the limits of the plan.
-func (pl *plan) count(op candidate.Candidate) {
+func (pl *plan) count(op model.Candidate) {
 	pl.plannedShards[op.Shard] = true
-	if op.Kind == candidate.Split {
+	if op.Kind == model.Split {
 		pl.splitActive = true
 		return
 	}
@@ -82,11 +93,11 @@ func (pl *plan) count(op candidate.Candidate) {
 }
 
 // allows reports whether the limits of the plan leave room for op.
-func (pl *plan) allows(op candidate.Candidate) bool {
+func (pl *plan) allows(op model.Candidate) bool {
 	if pl.plannedShards[op.Shard] {
 		return false
 	}
-	if op.Kind == candidate.Split {
+	if op.Kind == model.Split {
 		return !pl.splitActive
 	}
 	return !pl.plannedTargets[op.To]
