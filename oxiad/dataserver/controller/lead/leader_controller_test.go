@@ -4026,7 +4026,7 @@ func TestHeadEntryIdFailsWhenTheCommitOffsetCantBeRead(t *testing.T) {
 	defer walObject.Close()
 
 	failReads.Store(true)
-	headEntryId, err := HeadEntryId(walObject, db)
+	headEntryId, _, err := HeadEntryId(walObject, db)
 	assert.ErrorIs(t, err, errInjected)
 	assert.Nil(t, headEntryId)
 }

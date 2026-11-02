@@ -388,12 +388,9 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	if err := lc.wal.Sync(lc.ctx); err != nil {
 		return nil, err
 	}
-	headEntryId, err := HeadEntryId(lc.wal, lc.db)
-	if err != nil {
-		return nil, err
-	}
-	// The tracker is closed: the leader doesn't apply any entry anymore
-	commitOffset, err := lc.db.ReadCommitOffset()
+	// The tracker is closed: the leader doesn't apply any entry past the commit
+	// offset of its database anymore
+	headEntryId, commitOffset, err := HeadEntryId(lc.wal, lc.db)
 	if err != nil {
 		return nil, err
 	}
@@ -1791,20 +1788,21 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 // entries up to the snapshot's commit offset. The term of those entries is not
 // known: the node reports the offset with an invalid term, which ranks it above
 // the nodes that hold fewer entries, or none, and below every node with entries
-// in its wal.
-func HeadEntryId(walObject wal.Wal, db database.DB) (*proto.EntryId, error) {
-	headEntryId, err := getLastEntryIdInWal(walObject)
-	if err != nil || headEntryId.Offset != wal.InvalidOffset {
-		return headEntryId, err
-	}
+// in its wal. It also returns the commit offset of the database, which the node
+// reports with it.
+func HeadEntryId(walObject wal.Wal, db database.DB) (*proto.EntryId, int64, error) {
 	commitOffset, err := db.ReadCommitOffset()
-	switch {
-	case err != nil:
-		return nil, err
-	case commitOffset == wal.InvalidOffset:
-		return headEntryId, nil
+	if err != nil {
+		return nil, wal.InvalidOffset, err
 	}
-	return &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}, nil
+	headEntryId, err := getLastEntryIdInWal(walObject)
+	if err != nil {
+		return nil, wal.InvalidOffset, err
+	}
+	if headEntryId.Offset == wal.InvalidOffset && commitOffset != wal.InvalidOffset {
+		headEntryId = &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}
+	}
+	return headEntryId, commitOffset, nil
 }
 
 // CommitOffset is the offset of the last entry applied to the database, rather
