@@ -134,6 +134,29 @@ message ClusterConfiguration {
   repeated Coordinator coordinators = 6;
   // @gotags: yaml:"autoSplit,omitempty"
   AutoSplitConfig auto_split = 7;
+  // Annotations hold new or temporary settings until they become fields of
+  // the configuration; the maintainers decide when. The keys are reserved for
+  // Oxia, and an unknown key is logged and ignored. The user maintains the
+  // annotations: the coordinator only reads them.
+  //
+  // # confirmed-drained-data-servers
+  //
+  // The data servers whose drain the user confirms, by name and separated by
+  // commas, e.g. "ds-4,ds-5". To decommission a data server:
+  //
+  //   1. Remove its name from this list, if it is there.
+  //   2. Remove it from servers: the coordinator drains it.
+  //   3. Wait until its status is DRAINED, then shut it down.
+  //   4. Add its name to this list: the coordinator removes it from the
+  //      status and from the pending deletes of the shards. Its copies on
+  //      disk are left as they are.
+  //
+  // A listed name that is still in servers, or not DRAINED yet, is ignored
+  // until a later reconcile. Once removed, the name is free: a data server
+  // that joins with it is a new one, and must start with an empty disk.
+  //
+  // @gotags: yaml:"annotations,omitempty"
+  map<string, string> annotations = 8;
 }
 
 message HashRange {

@@ -618,6 +618,7 @@ type LoadBalancer struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	 
 	ScheduleInterval string `protobuf:"bytes,1,opt,name=schedule_interval,json=scheduleInterval,proto3" json:"schedule_interval,omitempty" yaml:"scheduleInterval,omitempty"`
+	// Unused: kept so that a configuration that sets it still loads.
 	 
 	QuarantineTime string `protobuf:"bytes,2,opt,name=quarantine_time,json=quarantineTime,proto3" json:"quarantine_time,omitempty" yaml:"quarantineTime,omitempty"`
 	unknownFields  protoimpl.UnknownFields
@@ -782,7 +783,30 @@ type ClusterConfiguration struct {
 	 
 	Coordinators []*Coordinator `protobuf:"bytes,6,rep,name=coordinators,proto3" json:"coordinators,omitempty" yaml:"coordinators,omitempty"`
 	 
-	AutoSplit     *AutoSplitConfig `protobuf:"bytes,7,opt,name=auto_split,json=autoSplit,proto3" json:"auto_split,omitempty" yaml:"autoSplit,omitempty"`
+	AutoSplit *AutoSplitConfig `protobuf:"bytes,7,opt,name=auto_split,json=autoSplit,proto3" json:"auto_split,omitempty" yaml:"autoSplit,omitempty"`
+	// Annotations hold new or temporary settings until they become fields of
+	// the configuration; the maintainers decide when. The keys are reserved for
+	// Oxia, and an unknown key is logged and ignored. The user maintains the
+	// annotations: the coordinator only reads them.
+	//
+	// # confirmed-drained-data-servers
+	//
+	// The data servers whose drain the user confirms, by name and separated by
+	// commas, e.g. "ds-4,ds-5". To decommission a data server:
+	//
+	//   1. Remove its name from this list, if it is there.
+	//   2. Remove it from servers: the coordinator drains it.
+	//   3. Wait until its status is DRAINED, then shut it down.
+	//   4. Add its name to this list: the coordinator removes it from the
+	//      status and from the pending deletes of the shards. Its copies on
+	//      disk are left as they are.
+	//
+	// A listed name that is still in servers, or not DRAINED yet, is ignored
+	// until a later reconcile. Once removed, the name is free: a data server
+	// that joins with it is a new one, and must start with an empty disk.
+	//
+	 
+	Annotations   map[string]string `protobuf:"bytes,8,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value" yaml:"annotations,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -862,6 +886,13 @@ func (x *ClusterConfiguration) GetCoordinators() []*Coordinator {
 func (x *ClusterConfiguration) GetAutoSplit() *AutoSplitConfig {
 	if x != nil {
 		return x.AutoSplit
+	}
+	return nil
+}
+
+func (x *ClusterConfiguration) GetAnnotations() map[string]string {
+	if x != nil {
+		return x.Annotations
 	}
 	return nil
 }
@@ -1393,7 +1424,7 @@ const file_metadata_proto_rawDesc = "" +
 	"\x14stabilization_period\x18\x04 \x01(\tR\x13stabilizationPeriod\x12'\n" +
 	"\x0fcooldown_period\x18\x05 \x01(\tR\x0ecooldownPeriod\x127\n" +
 	"\x18max_shards_per_namespace\x18\x06 \x01(\rR\x15maxShardsPerNamespace\x12/\n" +
-	"\x13collection_interval\x18\a \x01(\tR\x12collectionInterval\"\xe3\x04\n" +
+	"\x13collection_interval\x18\a \x01(\tR\x12collectionInterval\"\xfe\x05\n" +
 	"\x14ClusterConfiguration\x12;\n" +
 	"\n" +
 	"namespaces\x18\x01 \x03(\v2\x1b.io.oxia.proto.v1.NamespaceR\n" +
@@ -1404,10 +1435,14 @@ const file_metadata_proto_rawDesc = "" +
 	"\rload_balancer\x18\x05 \x01(\v2\x1e.io.oxia.proto.v1.LoadBalancerR\floadBalancer\x12A\n" +
 	"\fcoordinators\x18\x06 \x03(\v2\x1d.io.oxia.proto.v1.CoordinatorR\fcoordinators\x12@\n" +
 	"\n" +
-	"auto_split\x18\a \x01(\v2!.io.oxia.proto.v1.AutoSplitConfigR\tautoSplit\x1ag\n" +
+	"auto_split\x18\a \x01(\v2!.io.oxia.proto.v1.AutoSplitConfigR\tautoSplit\x12Y\n" +
+	"\vannotations\x18\b \x03(\v27.io.oxia.proto.v1.ClusterConfiguration.AnnotationsEntryR\vannotations\x1ag\n" +
 	"\x13ServerMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\x05value:\x028\x01\"/\n" +
+	"\x05value\x18\x02 \x01(\v2$.io.oxia.proto.v1.DataServerMetadataR\x05value:\x028\x01\x1a>\n" +
+	"\x10AnnotationsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"/\n" +
 	"\tHashRange\x12\x10\n" +
 	"\x03min\x18\x01 \x01(\rR\x03min\x12\x10\n" +
 	"\x03max\x18\x02 \x01(\rR\x03max\"\xdd\x03\n" +
@@ -1490,7 +1525,7 @@ func file_metadata_proto_rawDescGZIP() []byte {
 }
 
 var file_metadata_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_metadata_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_metadata_proto_goTypes = []any{
 	(DataServerState)(0),           // 0: io.oxia.proto.v1.DataServerState
 	(SplitPhase)(0),                // 1: io.oxia.proto.v1.SplitPhase
@@ -1513,18 +1548,19 @@ var file_metadata_proto_goTypes = []any{
 	(*ClusterStatus)(nil),          // 18: io.oxia.proto.v1.ClusterStatus
 	nil,                            // 19: io.oxia.proto.v1.DataServerMetadata.LabelsEntry
 	nil,                            // 20: io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry
-	nil,                            // 21: io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
-	nil,                            // 22: io.oxia.proto.v1.NamespaceStatus.ShardsEntry
-	nil,                            // 23: io.oxia.proto.v1.ClusterStatus.NamespacesEntry
-	nil,                            // 24: io.oxia.proto.v1.ClusterStatus.DataServersEntry
-	(Feature)(0),                   // 25: replication.Feature
+	nil,                            // 21: io.oxia.proto.v1.ClusterConfiguration.AnnotationsEntry
+	nil,                            // 22: io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
+	nil,                            // 23: io.oxia.proto.v1.NamespaceStatus.ShardsEntry
+	nil,                            // 24: io.oxia.proto.v1.ClusterStatus.NamespacesEntry
+	nil,                            // 25: io.oxia.proto.v1.ClusterStatus.DataServersEntry
+	(Feature)(0),                   // 26: replication.Feature
 }
 var file_metadata_proto_depIdxs = []int32{
 	19, // 0: io.oxia.proto.v1.DataServerMetadata.labels:type_name -> io.oxia.proto.v1.DataServerMetadata.LabelsEntry
 	3,  // 1: io.oxia.proto.v1.DataServer.identity:type_name -> io.oxia.proto.v1.DataServerIdentity
 	5,  // 2: io.oxia.proto.v1.DataServer.metadata:type_name -> io.oxia.proto.v1.DataServerMetadata
 	0,  // 3: io.oxia.proto.v1.DataServerStatus.state:type_name -> io.oxia.proto.v1.DataServerState
-	25, // 4: io.oxia.proto.v1.DataServerStatus.supported_features:type_name -> replication.Feature
+	26, // 4: io.oxia.proto.v1.DataServerStatus.supported_features:type_name -> replication.Feature
 	8,  // 5: io.oxia.proto.v1.Namespace.anti_affinities:type_name -> io.oxia.proto.v1.AntiAffinity
 	9,  // 6: io.oxia.proto.v1.ClusterConfiguration.namespaces:type_name -> io.oxia.proto.v1.Namespace
 	3,  // 7: io.oxia.proto.v1.ClusterConfiguration.servers:type_name -> io.oxia.proto.v1.DataServerIdentity
@@ -1532,30 +1568,31 @@ var file_metadata_proto_depIdxs = []int32{
 	10, // 9: io.oxia.proto.v1.ClusterConfiguration.load_balancer:type_name -> io.oxia.proto.v1.LoadBalancer
 	4,  // 10: io.oxia.proto.v1.ClusterConfiguration.coordinators:type_name -> io.oxia.proto.v1.Coordinator
 	11, // 11: io.oxia.proto.v1.ClusterConfiguration.auto_split:type_name -> io.oxia.proto.v1.AutoSplitConfig
-	1,  // 12: io.oxia.proto.v1.SplitMetadata.phase:type_name -> io.oxia.proto.v1.SplitPhase
-	21, // 13: io.oxia.proto.v1.SplitMetadata.child_leaders_at_bootstrap:type_name -> io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
-	3,  // 14: io.oxia.proto.v1.EnsembleChangeMetadata.from:type_name -> io.oxia.proto.v1.DataServerIdentity
-	3,  // 15: io.oxia.proto.v1.EnsembleChangeMetadata.to:type_name -> io.oxia.proto.v1.DataServerIdentity
-	2,  // 16: io.oxia.proto.v1.ShardMetadata.status:type_name -> io.oxia.proto.v1.ShardStatus
-	3,  // 17: io.oxia.proto.v1.ShardMetadata.leader:type_name -> io.oxia.proto.v1.DataServerIdentity
-	3,  // 18: io.oxia.proto.v1.ShardMetadata.ensemble:type_name -> io.oxia.proto.v1.DataServerIdentity
-	3,  // 19: io.oxia.proto.v1.ShardMetadata.removed_nodes:type_name -> io.oxia.proto.v1.DataServerIdentity
-	3,  // 20: io.oxia.proto.v1.ShardMetadata.pending_delete_shard_nodes:type_name -> io.oxia.proto.v1.DataServerIdentity
-	13, // 21: io.oxia.proto.v1.ShardMetadata.int32_hash_range:type_name -> io.oxia.proto.v1.HashRange
-	14, // 22: io.oxia.proto.v1.ShardMetadata.split:type_name -> io.oxia.proto.v1.SplitMetadata
-	15, // 23: io.oxia.proto.v1.ShardMetadata.ensemble_change:type_name -> io.oxia.proto.v1.EnsembleChangeMetadata
-	22, // 24: io.oxia.proto.v1.NamespaceStatus.shards:type_name -> io.oxia.proto.v1.NamespaceStatus.ShardsEntry
-	23, // 25: io.oxia.proto.v1.ClusterStatus.namespaces:type_name -> io.oxia.proto.v1.ClusterStatus.NamespacesEntry
-	24, // 26: io.oxia.proto.v1.ClusterStatus.data_servers:type_name -> io.oxia.proto.v1.ClusterStatus.DataServersEntry
-	5,  // 27: io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry.value:type_name -> io.oxia.proto.v1.DataServerMetadata
-	16, // 28: io.oxia.proto.v1.NamespaceStatus.ShardsEntry.value:type_name -> io.oxia.proto.v1.ShardMetadata
-	17, // 29: io.oxia.proto.v1.ClusterStatus.NamespacesEntry.value:type_name -> io.oxia.proto.v1.NamespaceStatus
-	7,  // 30: io.oxia.proto.v1.ClusterStatus.DataServersEntry.value:type_name -> io.oxia.proto.v1.DataServerStatus
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	21, // 12: io.oxia.proto.v1.ClusterConfiguration.annotations:type_name -> io.oxia.proto.v1.ClusterConfiguration.AnnotationsEntry
+	1,  // 13: io.oxia.proto.v1.SplitMetadata.phase:type_name -> io.oxia.proto.v1.SplitPhase
+	22, // 14: io.oxia.proto.v1.SplitMetadata.child_leaders_at_bootstrap:type_name -> io.oxia.proto.v1.SplitMetadata.ChildLeadersAtBootstrapEntry
+	3,  // 15: io.oxia.proto.v1.EnsembleChangeMetadata.from:type_name -> io.oxia.proto.v1.DataServerIdentity
+	3,  // 16: io.oxia.proto.v1.EnsembleChangeMetadata.to:type_name -> io.oxia.proto.v1.DataServerIdentity
+	2,  // 17: io.oxia.proto.v1.ShardMetadata.status:type_name -> io.oxia.proto.v1.ShardStatus
+	3,  // 18: io.oxia.proto.v1.ShardMetadata.leader:type_name -> io.oxia.proto.v1.DataServerIdentity
+	3,  // 19: io.oxia.proto.v1.ShardMetadata.ensemble:type_name -> io.oxia.proto.v1.DataServerIdentity
+	3,  // 20: io.oxia.proto.v1.ShardMetadata.removed_nodes:type_name -> io.oxia.proto.v1.DataServerIdentity
+	3,  // 21: io.oxia.proto.v1.ShardMetadata.pending_delete_shard_nodes:type_name -> io.oxia.proto.v1.DataServerIdentity
+	13, // 22: io.oxia.proto.v1.ShardMetadata.int32_hash_range:type_name -> io.oxia.proto.v1.HashRange
+	14, // 23: io.oxia.proto.v1.ShardMetadata.split:type_name -> io.oxia.proto.v1.SplitMetadata
+	15, // 24: io.oxia.proto.v1.ShardMetadata.ensemble_change:type_name -> io.oxia.proto.v1.EnsembleChangeMetadata
+	23, // 25: io.oxia.proto.v1.NamespaceStatus.shards:type_name -> io.oxia.proto.v1.NamespaceStatus.ShardsEntry
+	24, // 26: io.oxia.proto.v1.ClusterStatus.namespaces:type_name -> io.oxia.proto.v1.ClusterStatus.NamespacesEntry
+	25, // 27: io.oxia.proto.v1.ClusterStatus.data_servers:type_name -> io.oxia.proto.v1.ClusterStatus.DataServersEntry
+	5,  // 28: io.oxia.proto.v1.ClusterConfiguration.ServerMetadataEntry.value:type_name -> io.oxia.proto.v1.DataServerMetadata
+	16, // 29: io.oxia.proto.v1.NamespaceStatus.ShardsEntry.value:type_name -> io.oxia.proto.v1.ShardMetadata
+	17, // 30: io.oxia.proto.v1.ClusterStatus.NamespacesEntry.value:type_name -> io.oxia.proto.v1.NamespaceStatus
+	7,  // 31: io.oxia.proto.v1.ClusterStatus.DataServersEntry.value:type_name -> io.oxia.proto.v1.DataServerStatus
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_metadata_proto_init() }
@@ -1572,7 +1609,7 @@ func file_metadata_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_metadata_proto_rawDesc), len(file_metadata_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   22,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

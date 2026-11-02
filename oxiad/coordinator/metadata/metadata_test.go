@@ -906,6 +906,58 @@ func TestMetadataCreateDataServerRejectsNameOfLeftDataServer(t *testing.T) {
 	require.Len(t, loaded(t, configProvider).Value.GetServers(), 3)
 }
 
+// Only a data server stored DRAINED is deleted, from the data servers and
+// from the pending deletes of every shard, which frees its name.
+func TestMetadataDeleteDrainedDataServerStatus(t *testing.T) {
+	statusProvider := newDrainedStatusProvider(t)
+	configProvider := newStoredConfigProvider(t, nil)
+	metadata := newTestMetadata(t, statusProvider, configProvider, "")
+	version := loaded(t, statusProvider).Version
+
+	for _, name := range []string{"draining", "unknown"} {
+		deleted, err := metadata.DeleteDrainedDataServerStatus(name)
+		require.NoError(t, err)
+		require.False(t, deleted, name)
+	}
+	require.Equal(t, version, loaded(t, statusProvider).Version, "nothing to delete: nothing is written")
+
+	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
+	require.NoError(t, err)
+	require.True(t, deleted)
+
+	status := loaded(t, statusProvider).Value
+	require.NotContains(t, status.GetDataServers(), "drained")
+	require.Contains(t, status.GetDataServers(), "draining")
+	pending := func(shard int64) []string {
+		var names []string
+		for _, server := range status.GetNamespaces()["default"].GetShards()[shard].GetPendingDeleteShardNodes() {
+			names = append(names, server.GetNameOrDefault())
+		}
+		return names
+	}
+	require.Equal(t, []string{"s1"}, pending(0))
+	require.Equal(t, []string{"draining"}, pending(1))
+
+	require.NoError(t, metadata.CreateDataServer(&commonproto.DataServer{
+		Identity: &commonproto.DataServerIdentity{Name: gproto.String("drained"), Public: "drained:6648",
+			Internal: "drained:6649"},
+	}))
+}
+
+// A failed write reports that nothing was deleted.
+func TestMetadataDeleteDrainedDataServerStatusReturnsWriteError(t *testing.T) {
+	statusProvider := newDrainedStatusProvider(t)
+	metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
+		Provider: statusProvider,
+		store:    failStore("store unavailable"),
+	}, newConfigProvider(), "")
+
+	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
+	require.ErrorContains(t, err, "store unavailable")
+	require.False(t, deleted)
+	require.Contains(t, loaded(t, statusProvider).Value.GetDataServers(), "drained")
+}
+
 // The data servers are those of the configuration: one that left is listed
 // while the configuration has it again.
 func TestMetadataListDataServerListsConfiguredDataServers(t *testing.T) {
@@ -984,6 +1036,34 @@ func newStoredStatusProvider(t *testing.T) provider.Provider[*commonproto.Cluste
 		Value: &commonproto.ClusterStatus{
 			Namespaces: map[string]*commonproto.NamespaceStatus{
 				"default": {Shards: map[int64]*commonproto.ShardMetadata{0: {Term: 1}}},
+			},
+		},
+		Version: metadataconstant.NotExists,
+	})
+	require.NoError(t, err)
+	return statusProvider
+}
+
+// newDrainedStatusProvider returns a status provider that stores the data
+// servers drained and draining, and the namespace default, whose shard 0 has
+// drained and s1 to delete its copy, and shard 1 draining.
+func newDrainedStatusProvider(t *testing.T) provider.Provider[*commonproto.ClusterStatus] {
+	t.Helper()
+	identity := func(name string) *commonproto.DataServerIdentity {
+		return &commonproto.DataServerIdentity{Name: gproto.String(name)}
+	}
+	statusProvider := newStatusProvider()
+	_, err := statusProvider.Store(provider.Versioned[*commonproto.ClusterStatus]{
+		Value: &commonproto.ClusterStatus{
+			Namespaces: map[string]*commonproto.NamespaceStatus{
+				"default": {Shards: map[int64]*commonproto.ShardMetadata{
+					0: {PendingDeleteShardNodes: []*commonproto.DataServerIdentity{identity("drained"), identity("s1")}},
+					1: {PendingDeleteShardNodes: []*commonproto.DataServerIdentity{identity("draining")}},
+				}},
+			},
+			DataServers: map[string]*commonproto.DataServerStatus{
+				"drained":  {State: commonproto.DataServerState_DATA_SERVER_STATE_DRAINED},
+				"draining": {State: commonproto.DataServerState_DATA_SERVER_STATE_DRAINING},
 			},
 		},
 		Version: metadataconstant.NotExists,

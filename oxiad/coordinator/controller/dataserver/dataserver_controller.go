@@ -49,7 +49,8 @@ import (
 // or still referenced by a shard or stored DRAINING. It calls Drain when the
 // data server is removed from the configuration, and closes the controller
 // once it is DRAINED. A data server that left can't be added again under the
-// same name: the reconciler rejects it, and it keeps draining.
+// same name, until the configuration confirms its drain: the reconciler
+// rejects it, and it keeps draining.
 type Controller interface {
 	// Close stops the health checks and the assignments stream.
 	io.Closer

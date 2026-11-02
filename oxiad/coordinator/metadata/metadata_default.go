@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -474,6 +475,25 @@ func (m *defaultMetadata) PatchDataServerStatus(name string,
 		clusterStatus.DataServers[name] = status
 		return clusterStatus, true, nil
 	})
+}
+
+func (m *defaultMetadata) DeleteDrainedDataServerStatus(name string) (bool, error) {
+	deleted := false
+	err := m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		if clusterStatus.GetDataServers()[name].GetState() != commonproto.DataServerState_DATA_SERVER_STATE_DRAINED {
+			return clusterStatus, false, nil
+		}
+		for _, namespace := range clusterStatus.GetNamespaces() {
+			for _, shard := range namespace.GetShards() {
+				shard.PendingDeleteShardNodes = slices.DeleteFunc(shard.PendingDeleteShardNodes,
+					func(server *commonproto.DataServerIdentity) bool { return server.GetNameOrDefault() == name })
+			}
+		}
+		delete(clusterStatus.DataServers, name)
+		deleted = true
+		return clusterStatus, true, nil
+	})
+	return deleted && err == nil, err
 }
 
 func (m *defaultMetadata) GetConfig() (commonobject.Borrowed[*commonproto.ClusterConfiguration], error) {

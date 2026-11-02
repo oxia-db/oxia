@@ -45,7 +45,8 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	for _, dataServer := range snapshot.ListDataServers() {
 		serverName := dataServer.GetNameOrDefault()
 		// A data server that left the cluster can't join it again under the
-		// same name: it isn't reconciled, and keeps draining
+		// same name until its drain is confirmed: it isn't reconciled, and
+		// keeps draining
 		state := statuses[serverName].UnsafeBorrow().GetState()
 		live, found := r.runtime.GetLiveDataServerStatus(serverName)
 		if found && !dataserver.IsRemoved(state) {
@@ -76,6 +77,7 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 
 	r.runtime.RefreshShardControllers()
 
+	err = multierr.Append(err, r.deleteConfirmedDrained(snapshot))
 	for _, serverName := range unstored {
 		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
 			func(status *proto.DataServerStatus) (bool, error) {
@@ -85,6 +87,29 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
 				return true, nil
 			}))
+	}
+	return err
+}
+
+// deleteConfirmedDrained deletes the status of the data servers whose drain
+// the configuration confirms. A data server still in the configuration is
+// ignored, and one not DRAINED yet is left to a later pass.
+func (r *dataServerReconciler) deleteConfirmedDrained(snapshot *proto.ClusterConfiguration) error {
+	var err error
+	for _, name := range snapshot.GetConfirmedDrainedDataServers() {
+		if _, configured := snapshot.GetDataServer(name); configured {
+			slog.Warn("Ignoring the confirmed drain of a data server of the configuration",
+				slog.String("data-server", name))
+			continue
+		}
+		deleted, deleteErr := r.runtime.Metadata().DeleteDrainedDataServerStatus(name)
+		if deleteErr != nil {
+			err = multierr.Append(err, deleteErr)
+			continue
+		}
+		if deleted {
+			slog.Info("Deleted the status of a confirmed drained data server", slog.String("data-server", name))
+		}
 	}
 	return err
 }

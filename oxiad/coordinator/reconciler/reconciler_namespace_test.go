@@ -457,6 +457,9 @@ type mockNamespaceMetadata struct {
 	listDataServerStatusErr  error
 	patchDataServerStatusErr error
 	staleDataServerStatus    map[string]*proto.DataServerStatus
+	// deleteDrainedDataServerStatusErr, when set, fails the deletes of the
+	// statuses of the drained data servers
+	deleteDrainedDataServerStatusErr error
 }
 
 func (*mockNamespaceMetadata) Close() error { return nil }
@@ -613,6 +616,19 @@ func (m *mockNamespaceMetadata) PatchDataServerStatus(name string,
 	cloned.DataServers[name] = status
 	m.status = cloned
 	return nil
+}
+
+func (m *mockNamespaceMetadata) DeleteDrainedDataServerStatus(name string) (bool, error) {
+	if m.deleteDrainedDataServerStatusErr != nil {
+		return false, m.deleteDrainedDataServerStatusErr
+	}
+	if m.status.GetDataServers()[name].GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
+		return false, nil
+	}
+	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
+	delete(cloned.DataServers, name)
+	m.status = cloned
+	return true, nil
 }
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {

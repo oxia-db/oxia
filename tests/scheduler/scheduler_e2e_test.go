@@ -25,9 +25,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gproto "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
+	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
 	coordruntime "github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 	"github.com/oxia-db/oxia/oxiad/dataserver"
 	"github.com/oxia-db/oxia/tests/mock"
@@ -56,6 +58,7 @@ func TestScheduler(t *testing.T) {
 		{"scale out", testScaleOut},
 		{"drain a removed data server", testDrain},
 		{"replace a data server", testReplace},
+		{"confirm a drained data server", testConfirmDrained},
 		{"scale out with anti-affinity", testScaleOutWithAntiAffinity},
 		{"replication factors 1 to 3", testReplicationFactors},
 		{"scale out at scale", testScaleOutAtScale},
@@ -118,6 +121,45 @@ func testReplace(t *testing.T) {
 	members := c.ensembleMembers()
 	require.NotContains(t, members, "ds-3")
 	require.Contains(t, members, "ds-4")
+}
+
+// A user confirms the drain of a removed data server once it is DRAINED and
+// shut down: its status and pending deletes go, and its name can join again.
+func testConfirmDrained(t *testing.T) {
+	t.Helper()
+	c := newCluster(t)
+	c.addDataServers("ds-0", "ds-1", "ds-2", "ds-3")
+	c.createNamespace(&proto.Namespace{Name: "ns-a", InitialShardCount: 6, ReplicationFactor: 3})
+	c.waitBalanced()
+
+	c.removeDataServer("ds-3")
+	c.waitBalanced()
+	require.Eventually(t, func() bool {
+		state, found := c.dataServerState("ds-3")
+		return found && state == proto.DataServerState_DATA_SERVER_STATE_DRAINED
+	}, balanceTimeout, balanceTick)
+	c.stopDataServer("ds-3")
+
+	c.confirmDrained("ds-3")
+	require.Eventually(t, func() bool {
+		if _, found := c.dataServerState("ds-3"); found {
+			return false
+		}
+		for _, ns := range c.status().GetNamespaces() {
+			for _, shard := range ns.GetShards() {
+				for _, server := range shard.GetPendingDeleteShardNodes() {
+					if server.GetNameOrDefault() == "ds-3" {
+						return false
+					}
+				}
+			}
+		}
+		return true
+	}, balanceTimeout, balanceTick)
+
+	c.addDataServers("ds-3")
+	c.waitBalanced()
+	require.Contains(t, c.ensembleMembers(), "ds-3")
 }
 
 func testScaleOutWithAntiAffinity(t *testing.T) {
@@ -188,19 +230,21 @@ func testScaleOutAtScale(t *testing.T) {
 // cluster is a coordinator with its own data servers, whose scheduler policy
 // acts in milliseconds rather than minutes.
 type cluster struct {
-	t           *testing.T
-	runtime     coordruntime.Runtime
-	mu          sync.Mutex
-	dataServers map[string]*dataserver.Server
-	identities  map[string]*proto.DataServerIdentity
+	t              *testing.T
+	runtime        coordruntime.Runtime
+	configProvider provider.Provider[*proto.ClusterConfiguration]
+	mu             sync.Mutex
+	dataServers    map[string]*dataserver.Server
+	identities     map[string]*proto.DataServerIdentity
 }
 
 func newCluster(t *testing.T) *cluster {
 	t.Helper()
 	c := &cluster{t: t, dataServers: make(map[string]*dataserver.Server),
 		identities: make(map[string]*proto.DataServerIdentity)}
-	c.runtime = mock.NewCoordinator(t, mock.NewConfigProvider(t, &proto.ClusterConfiguration{
-		LoadBalancer: &proto.LoadBalancer{ScheduleInterval: "200ms"}}))
+	c.configProvider = mock.NewConfigProvider(t, &proto.ClusterConfiguration{
+		LoadBalancer: &proto.LoadBalancer{ScheduleInterval: "200ms"}})
+	c.runtime = mock.NewCoordinator(t, c.configProvider)
 	t.Cleanup(func() {
 		assert.NoError(t, c.runtime.Close())
 		c.mu.Lock()
@@ -237,6 +281,27 @@ func (c *cluster) removeDataServer(name string) {
 	require.NoError(c.t, err)
 }
 
+// stopDataServer shuts a data server down.
+func (c *cluster) stopDataServer(name string) {
+	c.t.Helper()
+	c.mu.Lock()
+	s := c.dataServers[name]
+	delete(c.dataServers, name)
+	c.mu.Unlock()
+	require.NoError(c.t, s.Close())
+}
+
+// confirmDrained confirms the drain of a data server in the configuration, as
+// a user does once its status is DRAINED.
+func (c *cluster) confirmDrained(name string) {
+	c.t.Helper()
+	config, err := c.runtime.Metadata().GetConfig()
+	require.NoError(c.t, err)
+	updated := gproto.CloneOf(config.UnsafeBorrow())
+	updated.Annotations = map[string]string{proto.AnnotationConfirmedDrainedDataServers: name}
+	mock.PutConfig(c.t, c.configProvider, updated)
+}
+
 func (c *cluster) createNamespace(namespace *proto.Namespace) {
 	c.t.Helper()
 	namespace.KeySorting = "natural"
@@ -245,6 +310,15 @@ func (c *cluster) createNamespace(namespace *proto.Namespace) {
 
 func (c *cluster) status() *proto.ClusterStatus {
 	return mock.StatusSnapshot(c.t, c.runtime.Metadata())
+}
+
+// dataServerState returns the stored state of a data server, and false if it
+// has no stored status.
+func (c *cluster) dataServerState(name string) (proto.DataServerState, bool) {
+	c.t.Helper()
+	status, found, err := c.runtime.Metadata().GetDataServerStatus(name)
+	require.NoError(c.t, err)
+	return status.UnsafeBorrow().GetState(), found
 }
 
 // waitBalanced waits until the cluster stays balanced for stableChecks checks
