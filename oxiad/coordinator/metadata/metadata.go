@@ -31,7 +31,7 @@ import (
 //     term, leader, ensemble and split state.
 //   - The configuration, which the operators maintain, through the management
 //     API or the configuration file: the coordinators, the namespaces, the
-//     data servers to run them on, and the load balancer settings.
+//     data servers to run them on, and the settings of the scheduler.
 //
 // Reads are served from a cache of each document. The cache loads the
 // document when it is empty: at first, and after a failed write, which may
