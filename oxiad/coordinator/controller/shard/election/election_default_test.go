@@ -618,9 +618,12 @@ func TestElectionFenceNewTermAndAddFollowerReturnsAddFollowerError(t *testing.T)
 // The election hands the new leader the commit offsets that its followers
 // reported when they got fenced, and none for a follower that predates them.
 func TestElectionBecomeLeaderPassesTheCommitOffsetsOfTheFollowers(t *testing.T) {
-	s1 := testDataServer("s1")
-	s2 := testDataServer("s2")
-	s3 := testDataServer("s3")
+	named := func(name string) *proto.DataServerIdentity {
+		return &proto.DataServerIdentity{Name: &name, Internal: name + ":8191", Public: name + ":9091"}
+	}
+	s1 := named("s1")
+	s2 := named("s2")
+	s3 := named("s3")
 	rpc := rpctest.NewRpcProvider()
 	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
 
@@ -632,13 +635,14 @@ func TestElectionBecomeLeaderPassesTheCommitOffsetsOfTheFollowers(t *testing.T) 
 		[]*proto.DataServerIdentity{s1, s2, s3}, nil)
 	require.NoError(t, err)
 	require.Len(t, candidates, 3)
-	assert.Equal(t, map[string]int64{s1.GetInternal(): 8, s2.GetInternal(): 9}, commitOffsets)
+	assert.Equal(t, map[string]int64{"s1": 8, "s2": 9}, commitOffsets)
 
 	leader, followers := e.chooseLeader(candidates, sharding.HeadEntries{})
 	require.Equal(t, s1, leader)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	require.NoError(t, e.becomeLeader(2, leader, followers, commitOffsets, 3, nil))
-	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithCommitOffsets(t, 5, 2, map[string]int64{s2.GetInternal(): 9})
+	// The leader knows its followers by their internal address
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithCommitOffsets(t, 5, 2, map[string]int64{"s2:8191": 9})
 }
 
 // A follower that joins after the election hands the leader the commit offset

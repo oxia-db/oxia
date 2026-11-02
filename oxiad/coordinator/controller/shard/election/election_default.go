@@ -137,8 +137,8 @@ func (e *election) refreshEnsembleInfo(meta *proto.ShardMetadata) (ensemble []*p
 }
 
 // fenceQuorum fences the ensemble with the term. It returns the head entries of
-// the fenced members, and their commit offsets by internal address, for the
-// members that report one.
+// the fenced members, and their commit offsets by name, for the members that
+// report one.
 //
 //nolint:revive
 func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemble []*proto.DataServerIdentity,
@@ -229,7 +229,7 @@ func (e *election) fenceQuorum(term int64, options *proto.NewTermOptions, ensemb
 			enabledFeatures[f] = true
 		}
 		if fencingResponse.Response.CommitOffset != nil {
-			commitOffsets[fencingResponse.DataServer.GetInternal()] = fencingResponse.Response.GetCommitOffset()
+			commitOffsets[fencingResponse.DataServer.GetNameOrDefault()] = fencingResponse.Response.GetCommitOffset()
 		}
 		if slices.Contains(ensemble, fencingResponse.DataServer) {
 			ensembleHeads[fencingResponse.DataServer] = fencingResponse.Response.HeadEntryId
@@ -260,7 +260,7 @@ gracePeriod:
 				enabledFeatures[f] = true
 			}
 			if r.Response.CommitOffset != nil {
-				commitOffsets[r.DataServer.GetInternal()] = r.Response.GetCommitOffset()
+				commitOffsets[r.DataServer.GetNameOrDefault()] = r.Response.GetCommitOffset()
 			}
 			if slices.Contains(ensemble, r.DataServer) {
 				ensembleHeads[r.DataServer] = r.Response.HeadEntryId
@@ -365,7 +365,8 @@ func (e *election) becomeLeader(term int64, leader *proto.DataServerIdentity, fo
 	followerCommitOffsets := make(map[string]int64)
 	for server, e := range followers {
 		followersMap[server.GetInternal()] = e
-		if commitOffset, ok := commitOffsets[server.GetInternal()]; ok {
+		// The leader knows its followers by their internal address
+		if commitOffset, ok := commitOffsets[server.GetNameOrDefault()]; ok {
 			followerCommitOffsets[server.GetInternal()] = commitOffset
 		}
 	}
