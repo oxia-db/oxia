@@ -65,6 +65,12 @@ func newPlan(s *stats.ClusterStats) *plan {
 	return pl
 }
 
+// apply charges op to the limits and to the load of the plan.
+func (pl *plan) apply(op candidate.Candidate) {
+	pl.count(op)
+	pl.dataServerLoad.Move(pl.clusterStats, op)
+}
+
 // count charges op to the limits of the plan.
 func (pl *plan) count(op candidate.Candidate) {
 	pl.plannedShards[op.Shard] = true

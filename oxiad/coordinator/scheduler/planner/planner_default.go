@@ -66,30 +66,23 @@ func New(filters []filter.Filter, tiers []tier.Tier) Planner {
 func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked) {
 	pl := newPlan(s)
 	var actions []action.Action
-	for i, ph := range p.phases {
-		// Pick the best op of the phase, one after the other, applying each to
-		// the load, until no op is left within the limits
-		planned := 0
-		for ; ; planned++ {
-			c, found := p.findBest(pl, ph)
-			if !found {
-				break
-			}
-			pl.count(c)
-			pl.dataServerLoad.Move(s, c)
-			p.logger.Info("Planned an op", slog.String("kind", c.Kind.String()), slog.String("namespace", c.Namespace),
-				slog.Int64("shard", c.Shard), slog.String("from", c.From), slog.String("to", c.To),
-				slog.String("reason", c.Reason))
-			switch c.Kind {
-			case candidate.TransferLeader:
-				actions = append(actions, action.NewLeaderTransferAction(c.Shard, c.To))
-			case candidate.Split:
-				actions = append(actions, action.NewSplitAction(c.Namespace, c.Shard))
-			default:
-				actions = append(actions, action.NewChangeEnsembleAction(c.Shard, s.DataServers[c.From].GetIdentity(),
-					s.DataServers[c.To].GetIdentity()))
-			}
+	add := func(c candidate.Candidate) {
+		pl.apply(c)
+		p.logger.Info("Planned an op", slog.String("kind", c.Kind.String()), slog.String("namespace", c.Namespace),
+			slog.Int64("shard", c.Shard), slog.String("from", c.From), slog.String("to", c.To),
+			slog.String("reason", c.Reason))
+		switch c.Kind {
+		case candidate.TransferLeader:
+			actions = append(actions, action.NewLeaderTransferAction(c.Shard, c.To))
+		case candidate.Split:
+			actions = append(actions, action.NewSplitAction(c.Namespace, c.Shard))
+		default:
+			actions = append(actions, action.NewChangeEnsembleAction(c.Shard, s.DataServers[c.From].GetIdentity(),
+				s.DataServers[c.To].GetIdentity()))
 		}
+	}
+	for i, ph := range p.phases {
+		planned := p.planPhase(pl, ph, add)
 		if planned > 0 || i == len(p.phases)-1 {
 			break
 		}
@@ -102,6 +95,37 @@ func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked)
 		}
 	}
 	return actions, p.findBlocked(s, pl.dataServerNames)
+}
+
+// planPhase plans the ops of ph with add, and returns how many: the best op,
+// one after the other, applying each to the load, until no op is left within
+// the limits.
+func (p *planner) planPhase(pl *plan, ph phase, add func(candidate.Candidate)) int {
+	planned := 0
+	var leaders *leaderGraph
+	for {
+		if c, found := p.findBest(pl, ph); found {
+			add(c)
+			planned++
+			continue
+		}
+		// No transfer evens out the leaders alone: a path may still pass one
+		// on through other data servers
+		if ph.kind != candidate.TransferLeader {
+			return planned
+		}
+		if leaders == nil {
+			leaders = p.newLeaderGraph(pl)
+		}
+		path := leaders.findPath(pl)
+		if path == nil {
+			return planned
+		}
+		for _, c := range path {
+			add(c)
+		}
+		planned += len(path)
+	}
 }
 
 func (*planner) Place(s *stats.ClusterStats, namespace string, replicas int, antiAffinities []*proto.AntiAffinity,
