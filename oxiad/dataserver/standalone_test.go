@@ -15,6 +15,7 @@
 package dataserver
 
 import (
+	"encoding/json"
 	"math"
 	"net"
 	"os"
@@ -24,12 +25,18 @@ import (
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/oauth2-proxy/mockoidc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 	"github.com/oxia-db/oxia/oxiad/common/vfs"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
@@ -270,6 +277,45 @@ func TestNewStandaloneFailsWhenTLSCertIsMissing(t *testing.T) {
 			assert.NoError(t, standaloneServer.Close())
 		})
 	}
+}
+
+func TestNewStandaloneAuthenticatesPublicRequests(t *testing.T) {
+	mockOIDC, err := mockoidc.Run()
+	require.NoError(t, err)
+	defer func() { _ = mockOIDC.Shutdown() }()
+
+	oidcOptions, err := json.Marshal(auth.OIDCOptions{AllowedIssueURLs: mockOIDC.Issuer(), AllowedAudiences: "oxia"})
+	require.NoError(t, err)
+	config := NewTestConfig(t.TempDir())
+	config.DataServerOptions.Server.Public.Auth = auth.Options{
+		Provider:       auth.ProviderOIDC,
+		ProviderParams: string(oidcOptions),
+	}
+	standaloneServer, err := NewStandalone(config)
+	require.NoError(t, err)
+	defer standaloneServer.Close()
+
+	conn, err := grpc.NewClient(standaloneServer.ServiceAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+	client := proto.NewOxiaClientClient(conn)
+	request := &proto.WriteRequest{Shard: pb.Int64(0), Puts: []*proto.PutRequest{{Key: "a", Value: []byte("a")}}}
+
+	_, err = client.Write(t.Context(), request)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+
+	token, err := mockOIDC.Keypair.SignJWT(&jwt.RegisteredClaims{
+		Audience:  jwt.ClaimStrings{"oxia"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		Issuer:    mockOIDC.Issuer(),
+		Subject:   "user",
+	})
+	require.NoError(t, err)
+	ctx := metadata.AppendToOutgoingContext(t.Context(), auth.MetadataAuthorizationKey, auth.TokenPrefix+token)
+	response, err := client.Write(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, response.GetPuts(), 1)
+	assert.Equal(t, proto.Status_OK, response.GetPuts()[0].GetStatus())
 }
 
 func TestNewStandaloneFailsWhenMetricsPortIsInUse(t *testing.T) {
