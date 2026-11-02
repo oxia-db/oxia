@@ -87,6 +87,10 @@ func (m *MockAdminClient) DeleteDataServer(_ context.Context, dataServer string)
 	return nil, errors.New("failed to delete data server")
 }
 
+func (m *MockAdminClient) ConfirmDrainedDataServer(_ context.Context, dataServer string) error {
+	return m.MethodCalled("ConfirmDrainedDataServer", dataServer).Error(0)
+}
+
 func (m *MockAdminClient) CreateNamespace(_ context.Context, namespace *proto.Namespace) (*proto.Namespace, error) {
 	args := m.MethodCalled("CreateNamespace", namespace)
 	if v, ok := args.Get(0).(*proto.Namespace); ok {

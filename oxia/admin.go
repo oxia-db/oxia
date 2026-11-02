@@ -29,6 +29,7 @@ type AdminClient interface {
 	CreateDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error)
 	PatchDataServer(ctx context.Context, dataServer *proto.DataServer) (*proto.DataServer, error)
 	DeleteDataServer(ctx context.Context, dataServer string) (*proto.DataServer, error)
+	ConfirmDrainedDataServer(ctx context.Context, dataServer string) error
 
 	CreateNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error)
 	PatchNamespace(ctx context.Context, namespace *proto.Namespace) (*proto.Namespace, error)

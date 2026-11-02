@@ -150,7 +150,8 @@ type Metadata interface {
 	// namespace, or the defaults if it doesn't exist.
 	GetNamespaceTermOptions(name string) (*commonproto.NewTermOptions, error)
 
-	// CreateDataServer adds a data server to the configuration, or returns
+	// CreateDataServer adds a data server to the configuration, and removes
+	// its name from the confirmed-drained-data-servers annotation, or returns
 	// ErrAlreadyExists, also while a data server of the same name is
 	// draining or drained.
 	CreateDataServer(dataServer *commonproto.DataServer) error
@@ -158,10 +159,19 @@ type Metadata interface {
 	// and returns it, or ErrNotFound.
 	PatchDataServer(dataServer *commonproto.DataServer) (*commonproto.DataServer, error)
 	// DeleteDataServer removes a data server from the configuration, which
-	// starts its drain, and returns it, or ErrNotFound, or
-	// ErrFailedPrecondition if a namespace would be left with fewer data
-	// servers than its replication factor.
+	// starts its drain, and its name from the confirmed-drained-data-servers
+	// annotation, and returns it. It returns ErrFailedPrecondition if a
+	// namespace would be left with fewer data servers than its replication
+	// factor. A data server that already left, but still has a stored status,
+	// is returned with its name and its stored metadata; one without a stored
+	// status is ErrNotFound.
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
+	// ConfirmDrainedDataServer adds a data server stored DRAINED to the
+	// confirmed-drained-data-servers annotation. It does nothing for a name
+	// that is already there. It returns ErrFailedPrecondition for a data
+	// server of the configuration, or one not DRAINED, and ErrNotFound for
+	// one without a stored status.
+	ConfirmDrainedDataServer(name string) error
 	// ListDataServer returns every data server of the configuration, with its
 	// identity and its metadata, by name: the internal address of a data
 	// server without a name. It doesn't read the stored status: a data server

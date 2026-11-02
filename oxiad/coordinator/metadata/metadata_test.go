@@ -496,6 +496,13 @@ func TestMetadataReadsReturnStatusLoadError(t *testing.T) {
 				Identity: &commonproto.DataServerIdentity{Name: gproto.String("s3")},
 			})
 		}},
+		{"DeleteDataServer", func(_ *testing.T, metadata Metadata) error {
+			_, err := metadata.DeleteDataServer("s3")
+			return err
+		}},
+		{"ConfirmDrainedDataServer", func(_ *testing.T, metadata Metadata) error {
+			return metadata.ConfirmDrainedDataServer("s3")
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
@@ -942,6 +949,83 @@ func TestMetadataDeleteDrainedDataServerStatus(t *testing.T) {
 		Identity: &commonproto.DataServerIdentity{Name: gproto.String("drained"), Public: "drained:6648",
 			Internal: "drained:6649"},
 	}))
+}
+
+// Deleting a data server removes its name from the confirmed drains, so that
+// its drain is confirmed only once it is drained again.
+func TestMetadataDeleteDataServerRemovesItsConfirmedDrain(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	config := loaded(t, configProvider)
+	config.Value.Annotations = map[string]string{commonproto.AnnotationConfirmedDrainedDataServers: "s2,s3"}
+	_, err := configProvider.Store(*config)
+	require.NoError(t, err)
+	metadata := newTestMetadata(t, newStatusProvider(), configProvider, "")
+
+	_, err = metadata.DeleteDataServer("s2")
+	require.NoError(t, err)
+	require.Equal(t, []string{"s3"}, loaded(t, configProvider).Value.GetConfirmedDrainedDataServers())
+}
+
+// Deleting a data server that already left returns it, with its stored
+// metadata, without writing the configuration: only a data server without a
+// stored status isn't found.
+func TestMetadataDeleteDataServerReturnsALeftDataServer(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	metadata := newTestMetadata(t, newStatusProvider(), configProvider, "")
+	require.NoError(t, metadata.PatchDataServerStatus("s3", func(status *commonproto.DataServerStatus) (bool, error) {
+		status.State = commonproto.DataServerState_DATA_SERVER_STATE_DRAINING
+		status.Metadata = &commonproto.DataServerMetadata{Labels: map[string]string{"zone": "a"}}
+		return true, nil
+	}))
+	version := loaded(t, configProvider).Version
+
+	deleted, err := metadata.DeleteDataServer("s3")
+	require.NoError(t, err)
+	require.Equal(t, "s3", deleted.GetIdentity().GetName())
+	require.Equal(t, map[string]string{"zone": "a"}, deleted.GetMetadata().GetLabels())
+	require.Equal(t, version, loaded(t, configProvider).Version)
+
+	_, err = metadata.DeleteDataServer("unknown")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+// Creating a data server removes its name from the confirmed drains.
+func TestMetadataCreateDataServerRemovesItsConfirmedDrain(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	config := loaded(t, configProvider)
+	config.Value.Annotations = map[string]string{commonproto.AnnotationConfirmedDrainedDataServers: "s3"}
+	_, err := configProvider.Store(*config)
+	require.NoError(t, err)
+	metadata := newTestMetadata(t, newStatusProvider(), configProvider, "")
+
+	require.NoError(t, metadata.CreateDataServer(&commonproto.DataServer{
+		Identity: &commonproto.DataServerIdentity{Name: gproto.String("s3"), Public: "s3:6648", Internal: "s3:6649"},
+	}))
+	require.Empty(t, loaded(t, configProvider).Value.GetAnnotations())
+}
+
+// Only a drained data server that left the configuration is confirmed. A
+// confirmed one stays confirmed, without a write, also once its status is
+// deleted.
+func TestMetadataConfirmDrainedDataServer(t *testing.T) {
+	configProvider := newStoredConfigProvider(t, nil)
+	metadata := newTestMetadata(t, newDrainedStatusProvider(t), configProvider, "")
+
+	require.ErrorIs(t, metadata.ConfirmDrainedDataServer("s1"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, metadata.ConfirmDrainedDataServer("draining"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, metadata.ConfirmDrainedDataServer("unknown"), errs.ErrNotFound)
+	require.Empty(t, loaded(t, configProvider).Value.GetAnnotations())
+
+	require.NoError(t, metadata.ConfirmDrainedDataServer("drained"))
+	confirmed := loaded(t, configProvider)
+	require.Equal(t, []string{"drained"}, confirmed.Value.GetConfirmedDrainedDataServers())
+
+	require.NoError(t, metadata.ConfirmDrainedDataServer("drained"))
+	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
+	require.NoError(t, err)
+	require.True(t, deleted)
+	require.NoError(t, metadata.ConfirmDrainedDataServer("drained"))
+	require.Equal(t, confirmed.Version, loaded(t, configProvider).Version)
 }
 
 // A failed write reports that nothing was deleted.

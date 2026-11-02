@@ -132,7 +132,7 @@ func (m *defaultMetadata) computeConfig(fn func(*commonproto.ClusterConfiguratio
 		return err
 	}
 	next, err := fn(metadatacodec.ClusterConfigCodec.Clone(current.Value), current.Version)
-	if err != nil {
+	if err != nil || next == nil {
 		return err
 	}
 
@@ -597,6 +597,7 @@ func (m *defaultMetadata) CreateDataServer(dataServer *commonproto.DataServer) e
 		}
 
 		config.Servers = append(config.Servers, dataServer.GetIdentity())
+		config.RemoveConfirmedDrainedDataServer(name)
 		if metadata := dataServer.GetMetadata(); metadata != nil {
 			if config.ServerMetadata == nil {
 				config.ServerMetadata = map[string]*commonproto.DataServerMetadata{}
@@ -674,14 +675,51 @@ func (m *defaultMetadata) DeleteDataServer(name string) (*commonproto.DataServer
 			if config.ServerMetadata != nil {
 				delete(config.ServerMetadata, name)
 			}
+			config.RemoveConfirmedDrainedDataServer(name)
 			return config, nil
 		}
 		return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
 	}); err != nil {
-		return nil, err
+		if !errors.Is(err, errs.ErrNotFound) {
+			return nil, err
+		}
+		status, found, statusErr := m.GetDataServerStatus(name)
+		if statusErr != nil {
+			return nil, statusErr
+		}
+		if !found {
+			return nil, err
+		}
+		return &commonproto.DataServer{
+			Identity: &commonproto.DataServerIdentity{Name: &name},
+			Metadata: status.UnsafeBorrow().GetMetadata().CloneVT(),
+		}, nil
 	}
 
 	return deleted, nil
+}
+
+func (m *defaultMetadata) ConfirmDrainedDataServer(name string) error {
+	status, found, err := m.GetDataServerStatus(name)
+	if err != nil {
+		return err
+	}
+	return m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
+		if _, configured := config.GetDataServer(name); configured {
+			return nil, fmt.Errorf("%w: data server %q is in the configuration", errs.ErrFailedPrecondition, name)
+		}
+		if slices.Contains(config.GetConfirmedDrainedDataServers(), name) {
+			return nil, nil
+		}
+		if !found {
+			return nil, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
+		}
+		if state := status.UnsafeBorrow().GetState(); state != commonproto.DataServerState_DATA_SERVER_STATE_DRAINED {
+			return nil, fmt.Errorf("%w: data server %q is %s", errs.ErrFailedPrecondition, name, state)
+		}
+		config.AddConfirmedDrainedDataServer(name)
+		return config, nil
+	})
 }
 
 func (m *defaultMetadata) ListDataServer() (map[string]commonobject.Borrowed[*commonproto.DataServer], error) {

@@ -43,6 +43,8 @@ type mockAdminRpcClient struct {
 	patchDataServerErr      error
 	deleteDataServerResp    *proto.DeleteDataServerResponse
 	deleteDataServerErr     error
+	confirmDrainedReq       *proto.ConfirmDrainedDataServerRequest
+	confirmDrainedErr       error
 	createNamespaceResp     *proto.CreateNamespaceResponse
 	createNamespaceErr      error
 	patchNamespaceResp      *proto.PatchNamespaceResponse
@@ -78,6 +80,15 @@ func (m *mockAdminRpcClient) PatchDataServer(context.Context, *proto.PatchDataSe
 
 func (m *mockAdminRpcClient) DeleteDataServer(context.Context, *proto.DeleteDataServerRequest, ...grpc.CallOption) (*proto.DeleteDataServerResponse, error) {
 	return m.deleteDataServerResp, m.deleteDataServerErr
+}
+
+func (m *mockAdminRpcClient) ConfirmDrainedDataServer(
+	_ context.Context,
+	req *proto.ConfirmDrainedDataServerRequest,
+	_ ...grpc.CallOption,
+) (*proto.ConfirmDrainedDataServerResponse, error) {
+	m.confirmDrainedReq = req
+	return &proto.ConfirmDrainedDataServerResponse{}, m.confirmDrainedErr
 }
 
 func (m *mockAdminRpcClient) CreateNamespace(context.Context, *proto.CreateNamespaceRequest, ...grpc.CallOption) (*proto.CreateNamespaceResponse, error) {
@@ -253,6 +264,7 @@ func TestAdminClientRequestsFailOnServerError(t *testing.T) {
 				createDataServerErr: errServer,
 				patchDataServerErr:  errServer,
 				deleteDataServerErr: errServer,
+				confirmDrainedErr:   errServer,
 				createNamespaceErr:  errServer,
 				patchNamespaceErr:   errServer,
 				deleteNamespaceErr:  errServer,
@@ -273,6 +285,9 @@ func TestAdminClientRequestsFailOnServerError(t *testing.T) {
 			return admin.PatchDataServer(ctx, &proto.DataServer{})
 		},
 		"delete-data-server": func() (any, error) { return admin.DeleteDataServer(ctx, "server-1") },
+		"confirm-drained-data-server": func() (any, error) {
+			return nil, admin.ConfirmDrainedDataServer(ctx, "server-1")
+		},
 		"create-namespace": func() (any, error) {
 			return admin.CreateNamespace(ctx, &proto.Namespace{Name: "ns"})
 		},
@@ -511,6 +526,18 @@ func TestAdminClientDeleteDataServerReturnsResponse(t *testing.T) {
 	assert.Equal(t, "public-1", dataServer.Identity.GetPublic())
 	assert.Equal(t, "internal-1", dataServer.Identity.GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-1"}, dataServer.Metadata.GetLabels())
+}
+
+func TestAdminClientConfirmDrainedDataServerSendsTheName(t *testing.T) {
+	adminClient := &mockAdminRpcClient{}
+	admin := &adminClientImpl{
+		adminAddr:  "admin-addr",
+		clientPool: &mockAdminClientPool{adminClient: adminClient},
+	}
+
+	require.NoError(t, admin.ConfirmDrainedDataServer(context.Background(), "server-1"))
+	require.NotNil(t, adminClient.confirmDrainedReq)
+	assert.Equal(t, "server-1", adminClient.confirmDrainedReq.GetDataServer())
 }
 
 func TestAdminClientCreateNamespaceReturnsResponse(t *testing.T) {
