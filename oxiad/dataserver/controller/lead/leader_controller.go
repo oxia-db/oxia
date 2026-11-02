@@ -962,6 +962,26 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		return followerHeadEntryId, nil
 	}
 
+	if lastEntryInFollowerTerm.Offset == wal.InvalidOffset && lc.wal.FirstOffset() != 0 &&
+		lc.quorumAckTracker.CommitOffset() != wal.InvalidOffset {
+		// The wal of the leader has no entry of the follower's term or an
+		// earlier one, and doesn't start at the first offset: the leader
+		// installed a snapshot, or trimmed its wal. The entries the follower
+		// has in common with the leader, if any, are among the committed ones
+		// the leader has in its database only, and it can't tell which: they may
+		// be the follower's committed entries, that the follower refuses to
+		// truncate. The follower starts over from a snapshot of the leader,
+		// whose installation replaces its wal and its database.
+		lc.log.Info(
+			"Follower is behind the wal of the leader, sending a snapshot",
+			slog.Int64("term", term),
+			slog.String("follower", follower),
+			slog.Any("follower-head-entry", followerHeadEntryId),
+			slog.Int64("wal-first-offset", lc.wal.FirstOffset()),
+		)
+		return constant2.InvalidEntryId, nil
+	}
+
 	tr, err := lc.rpcClient.Truncate(follower, &proto.TruncateRequest{
 		Namespace:   lc.namespace,
 		Shard:       shardId,

@@ -3550,6 +3550,97 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 	}
 }
 
+// A follower of an earlier term than every entry in the wal of the leader has
+// no entry in common with that wal. If the wal starts at the first offset, the
+// follower gets truncated to an empty wal. If it starts after a snapshot, the
+// entries the follower has in common with the leader may be in the leader's
+// database, and the follower may have committed them, so it refuses to truncate
+// them: it gets a snapshot of the leader instead (oxia-db/chaos#85).
+func TestLeaderController_BecomeLeaderWithFollowerBehindTheWalOfTheLeader(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The first entry in the wal of the leader, of term 2. The leader's
+		// database holds the entries 0 to 9.
+		walFirstOffset int64
+		truncated      bool
+	}{
+		{name: "wal from the first offset", walFirstOffset: 0, truncated: true},
+		{name: "wal after a snapshot", walFirstOffset: 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var shard int64 = 1
+
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			walObject, err := walFactory.NewWal(constant.DefaultNamespace, shard, nil)
+			require.NoError(t, err)
+			db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
+				1*time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			previousCrc := uint32(1)
+			for i := int64(0); i < 10; i++ {
+				wr := &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}}
+				value, err := pb.Marshal(wrapInLogEntryValue(wr))
+				require.NoError(t, err)
+				if i >= test.walFirstOffset {
+					_, err = walObject.AppendAsyncWithPreviousCrc(
+						&proto.LogEntry{Term: 2, Offset: i, Value: value}, &previousCrc)
+					require.NoError(t, err)
+				}
+				_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
+				require.NoError(t, err)
+			}
+			require.NoError(t, walObject.Sync(context.Background()))
+			require.NoError(t, db.UpdateTerm(2, database.TermOptions{}))
+			require.NoError(t, db.Close())
+			require.NoError(t, walObject.Close())
+
+			rpcClient := rpc.NewMockRpcClient()
+			rpcClient.TruncateResps <- rpc.TruncateResps{Response: &proto.TruncateResponse{
+				HeadEntryId: &proto.EntryId{Term: 3, Offset: wal.InvalidOffset},
+			}}
+			lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
+				walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 3})
+			require.NoError(t, err)
+			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              3,
+				ReplicationFactor: 3,
+				FollowerMaps: map[string]*proto.EntryId{
+					"f1": {Term: 1, Offset: 5},
+				},
+			})
+			require.NoError(t, err)
+
+			if test.truncated {
+				req := <-rpcClient.TruncateReqs
+				AssertProtoEqual(t, constant2.InvalidEntryId, req.HeadEntryId)
+				select {
+				case req := <-rpcClient.AppendReqs:
+					assert.EqualValues(t, 0, req.Entry.Offset)
+				case <-time.After(10 * time.Second):
+					assert.Fail(t, "the leader sent no entry to the follower")
+				}
+				assert.Empty(t, rpcClient.SendSnapshotStream.Requests, "the follower got a snapshot")
+			} else {
+				assert.Empty(t, rpcClient.TruncateReqs, "the follower got truncated")
+				assert.Eventually(t, func() bool { return len(rpcClient.SendSnapshotStream.Requests) > 0 },
+					10*time.Second, 10*time.Millisecond, "the follower got no snapshot")
+			}
+
+			// Complete a snapshot in progress: the leader waits for it to close
+			rpcClient.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: 9}
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 func TestLeaderControllerCheckpointHoldsTheCommitOffsetAndTerm(t *testing.T) {
 	var shard int64 = 1
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
