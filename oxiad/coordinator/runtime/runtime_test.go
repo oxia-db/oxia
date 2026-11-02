@@ -453,10 +453,7 @@ func TestRuntimeDrainedDataServerReturnsMetadataErrors(t *testing.T) {
 		"configuration": {getDataServer: func(string) (commonobject.Borrowed[*proto.DataServer], bool, error) {
 			return commonobject.Borrowed[*proto.DataServer]{}, false, metadataErr
 		}},
-		"delete": {deleteDrainedDataServerStatus: func(string) (bool, error) { return false, metadataErr }},
-		"status": {getDataServerStatus: func(string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
-			return commonobject.Borrowed[*proto.DataServerStatus]{}, false, metadataErr
-		}},
+		"delete": {deleteDrainedDataServerStatus: func(string) error { return metadataErr }},
 	} {
 		fake.Metadata = newTestMetadata(t, &proto.ClusterConfiguration{})
 		c := newNamespaceTestRuntime(t, fake)
@@ -1404,9 +1401,8 @@ type fakeMetadata struct {
 	getNamespace          func(name string) (commonobject.Borrowed[*proto.Namespace], bool, error)
 	listDataServer        func() (map[string]commonobject.Borrowed[*proto.DataServer], error)
 	getDataServer         func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
-	getDataServerStatus   func(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error)
 
-	deleteDrainedDataServerStatus func(name string) (bool, error)
+	deleteDrainedDataServerStatus func(name string) error
 }
 
 func (m *fakeMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool, error) {
@@ -1416,14 +1412,7 @@ func (m *fakeMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.
 	return m.Metadata.GetDataServer(name)
 }
 
-func (m *fakeMetadata) GetDataServerStatus(name string) (commonobject.Borrowed[*proto.DataServerStatus], bool, error) {
-	if m.getDataServerStatus != nil {
-		return m.getDataServerStatus(name)
-	}
-	return m.Metadata.GetDataServerStatus(name)
-}
-
-func (m *fakeMetadata) DeleteDrainedDataServerStatus(name string) (bool, error) {
+func (m *fakeMetadata) DeleteDrainedDataServerStatus(name string) error {
 	if m.deleteDrainedDataServerStatus != nil {
 		return m.deleteDrainedDataServerStatus(name)
 	}

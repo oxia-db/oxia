@@ -477,11 +477,14 @@ func (m *defaultMetadata) PatchDataServerStatus(name string,
 	})
 }
 
-func (m *defaultMetadata) DeleteDrainedDataServerStatus(name string) (bool, error) {
-	deleted := false
-	err := m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
-		if clusterStatus.GetDataServers()[name].GetState() != commonproto.DataServerState_DATA_SERVER_STATE_DRAINED {
-			return clusterStatus, false, nil
+func (m *defaultMetadata) DeleteDrainedDataServerStatus(name string) error {
+	return m.computeStatus(func(clusterStatus *commonproto.ClusterStatus, _ metadatacommon.Version) (*commonproto.ClusterStatus, bool, error) {
+		status, found := clusterStatus.GetDataServers()[name]
+		if !found {
+			return nil, false, fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
+		}
+		if state := status.GetState(); state != commonproto.DataServerState_DATA_SERVER_STATE_DRAINED {
+			return nil, false, fmt.Errorf("%w: data server %q is %s", errs.ErrFailedPrecondition, name, state)
 		}
 		for _, namespace := range clusterStatus.GetNamespaces() {
 			for _, shard := range namespace.GetShards() {
@@ -490,10 +493,8 @@ func (m *defaultMetadata) DeleteDrainedDataServerStatus(name string) (bool, erro
 			}
 		}
 		delete(clusterStatus.DataServers, name)
-		deleted = true
 		return clusterStatus, true, nil
 	})
-	return deleted && err == nil, err
 }
 
 func (m *defaultMetadata) GetConfig() (commonobject.Borrowed[*commonproto.ClusterConfiguration], error) {

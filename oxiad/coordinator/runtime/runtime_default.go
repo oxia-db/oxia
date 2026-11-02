@@ -208,18 +208,7 @@ func (c *runtime) DrainedDataServer(name string) error {
 	} else if configured {
 		return fmt.Errorf("%w: data server %q is in the configuration", errs.ErrFailedPrecondition, name)
 	}
-	deleted, err := c.metadata.DeleteDrainedDataServerStatus(name)
-	if err != nil || deleted {
-		return err
-	}
-	status, found, err := c.metadata.GetDataServerStatus(name)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("%w: data server %q", errs.ErrNotFound, name)
-	}
-	return fmt.Errorf("%w: data server %q is %s", errs.ErrFailedPrecondition, name, status.UnsafeBorrow().GetState())
+	return c.metadata.DeleteDrainedDataServerStatus(name)
 }
 
 func (c *runtime) RefreshShardControllers() {

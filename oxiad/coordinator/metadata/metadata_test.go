@@ -918,16 +918,11 @@ func TestMetadataDeleteDrainedDataServerStatus(t *testing.T) {
 	metadata := newTestMetadata(t, statusProvider, configProvider, "")
 	version := loaded(t, statusProvider).Version
 
-	for _, name := range []string{"draining", "unknown"} {
-		deleted, err := metadata.DeleteDrainedDataServerStatus(name)
-		require.NoError(t, err)
-		require.False(t, deleted, name)
-	}
+	require.ErrorIs(t, metadata.DeleteDrainedDataServerStatus("draining"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, metadata.DeleteDrainedDataServerStatus("unknown"), errs.ErrNotFound)
 	require.Equal(t, version, loaded(t, statusProvider).Version, "nothing to delete: nothing is written")
 
-	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
-	require.NoError(t, err)
-	require.True(t, deleted)
+	require.NoError(t, metadata.DeleteDrainedDataServerStatus("drained"))
 
 	status := loaded(t, statusProvider).Value
 	require.NotContains(t, status.GetDataServers(), "drained")
@@ -1011,9 +1006,7 @@ func TestMetadataDeleteDrainedDataServerStatusReturnsWriteError(t *testing.T) {
 		store:    failStore("store unavailable"),
 	}, newConfigProvider(), "")
 
-	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
-	require.ErrorContains(t, err, "store unavailable")
-	require.False(t, deleted)
+	require.ErrorContains(t, metadata.DeleteDrainedDataServerStatus("drained"), "store unavailable")
 	require.Contains(t, loaded(t, statusProvider).Value.GetDataServers(), "drained")
 }
 

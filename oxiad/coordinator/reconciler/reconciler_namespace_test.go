@@ -615,8 +615,8 @@ func (m *mockNamespaceMetadata) PatchDataServerStatus(name string,
 	return nil
 }
 
-func (*mockNamespaceMetadata) DeleteDrainedDataServerStatus(string) (bool, error) {
-	return false, nil
+func (*mockNamespaceMetadata) DeleteDrainedDataServerStatus(string) error {
+	return nil
 }
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
