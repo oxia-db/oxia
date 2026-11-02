@@ -264,7 +264,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 	case initShardMeta.Split != nil && len(initShardMeta.Split.ChildShardIds) == 0:
 		// Child shard during a split: the SplitController manages its lifecycle.
 		// Wait until the split is complete (Split metadata cleared) before
-		// entering the normal event loop, to prevent the load balancer from
+		// entering the normal event loop, to prevent the scheduler from
 		// triggering elections that would interfere with the split controller.
 		s.logger.Info("Child shard during split, waiting for split to complete")
 		s.waitForSplitComplete()
@@ -332,7 +332,7 @@ func (s *controller) run(bo backoff.BackOff) error {
 
 // waitForSplitComplete blocks until the Split metadata is cleared from this
 // shard in the status resource, indicating the split controller has finished
-// and the shard can operate normally. This prevents the load balancer from
+// and the shard can operate normally. This prevents the scheduler from
 // triggering elections that would interfere with the split controller.
 func (s *controller) waitForSplitComplete() {
 	ticker := time.NewTicker(500 * time.Millisecond)

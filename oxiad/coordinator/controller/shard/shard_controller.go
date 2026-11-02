@@ -24,19 +24,19 @@ import (
 // Controller manages one shard for the coordinator. A single event loop applies
 // the requests and the notifications about the shard, one at a time:
 //
-//	runtime, balancer                        data server controllers
+//	runtime, scheduler                       data server controllers
 //	   | Dispatch, Delete,                      | BecameUnavailable,
 //	   | Refresh                                | FeaturesDiscovered
 //	   v                                        v
-//	+--------------------------- event loop ----------------------------+
-//	| elect a leader      when the leader fails, the balancer moves it, |
-//	|                     an address changes, or the ensemble supports  |
-//	|                     features that the term doesn't pin            |
-//	| change the ensemble with a new election                           |
-//	| delete the shard    from its ensemble, then its status            |
-//	| periodic tasks      delete the shard from the removed members,    |
-//	|                     and check the features of the term            |
-//	+-------------------------------------------------------------------+
+//	+--------------------------- event loop -----------------------------+
+//	| elect a leader      when the leader fails, the scheduler moves it, |
+//	|                     an address changes, or the ensemble supports   |
+//	|                     features that the term doesn't pin             |
+//	| change the ensemble with a new election                            |
+//	| delete the shard    from its ensemble, then its status             |
+//	| periodic tasks      delete the shard from the removed members,     |
+//	|                     and check the features of the term             |
+//	+--------------------------------------------------------------------+
 //	   |
 //	   v the shard status (metadata), the data servers, ShardEventListener
 //
