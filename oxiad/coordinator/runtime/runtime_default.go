@@ -642,10 +642,11 @@ func New(
 
 	// init node controller
 	for _, node := range dataServers {
-		stored := dataServerStatus[node.GetNameOrDefault()].UnsafeBorrow().GetState()
-		dataServer := &proto.DataServer{Identity: node, Metadata: &proto.DataServerMetadata{}}
-		// A draining data server keeps the addresses that it drains from,
-		// also when the configuration has its name again
+		storedStatus := dataServerStatus[node.GetNameOrDefault()].UnsafeBorrow()
+		stored := storedStatus.GetState()
+		dataServer := &proto.DataServer{Identity: node, Metadata: storedStatus.GetMetadata()}
+		// A draining data server keeps the addresses that it drains from, and
+		// its stored metadata, also when the configuration has its name again
 		if configured, found := config.UnsafeBorrow().GetDataServer(node.GetNameOrDefault()); found &&
 			stored != proto.DataServerState_DATA_SERVER_STATE_DRAINING {
 			dataServer = configured

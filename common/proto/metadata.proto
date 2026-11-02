@@ -70,6 +70,10 @@ message DataServerStatus {
   DataServerState state = 1;
   // @gotags: yaml:"supportedFeatures,omitempty"
   repeated replication.Feature supported_features = 2;
+  // The metadata of the data server in the configuration, kept once the data
+  // server leaves it: its replicas keep their labels until they are drained.
+  // @gotags: yaml:"metadata,omitempty"
+  DataServerMetadata metadata = 3;
 }
 
 message AntiAffinity {

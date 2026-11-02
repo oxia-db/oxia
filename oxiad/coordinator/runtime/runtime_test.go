@@ -279,11 +279,14 @@ func TestRuntimeNewStartsControllersOfStoredDataServers(t *testing.T) {
 }
 
 // A draining data server keeps the addresses of the shards that it drains
-// from, also when the configuration has its name again, at other addresses.
-func TestRuntimeNewKeepsAddressesOfDrainingDataServerAddedAgain(t *testing.T) {
+// from, and its stored metadata, also when the configuration has its name
+// again, at other addresses and with other labels.
+func TestRuntimeNewKeepsAddressesAndMetadataOfDrainingDataServerAddedAgain(t *testing.T) {
 	draining := &proto.DataServerIdentity{Name: new("s1"), Public: "old:9091", Internal: "old:8191"}
 	readded := &proto.DataServerIdentity{Name: new("s1"), Public: "new:9091", Internal: "new:8191"}
-	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{readded}})
+	stored := &proto.DataServerMetadata{Labels: map[string]string{"zone": "old"}}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{readded},
+		ServerMetadata: map[string]*proto.DataServerMetadata{"s1": {Labels: map[string]string{"zone": "new"}}}})
 	require.NoError(t, metadata.CreateNamespaceStatus("ns", &proto.NamespaceStatus{
 		ReplicationFactor: 1,
 		Shards: map[int64]*proto.ShardMetadata{
@@ -298,6 +301,7 @@ func TestRuntimeNewKeepsAddressesOfDrainingDataServerAddedAgain(t *testing.T) {
 	}))
 	require.NoError(t, metadata.PatchDataServerStatus("s1", func(status *proto.DataServerStatus) (bool, error) {
 		status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
+		status.Metadata = stored
 		return true, nil
 	}))
 
@@ -309,7 +313,9 @@ func TestRuntimeNewKeepsAddressesOfDrainingDataServerAddedAgain(t *testing.T) {
 	c.RLock()
 	defer c.RUnlock()
 	require.Contains(t, c.dataServerControllers, "s1")
-	assert.Equal(t, "old:8191", c.dataServerControllers["s1"].GetDataServer().UnsafeBorrow().GetIdentity().GetInternal())
+	dataServer := c.dataServerControllers["s1"].GetDataServer().UnsafeBorrow()
+	assert.Equal(t, "old:8191", dataServer.GetIdentity().GetInternal())
+	assert.Equal(t, stored.GetLabels(), dataServer.GetMetadata().GetLabels())
 }
 
 // A shard deletion reported after Close started is left to Close, which

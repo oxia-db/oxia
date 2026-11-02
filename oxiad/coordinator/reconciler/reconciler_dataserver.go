@@ -40,7 +40,9 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	// stored: the runtime knows the data servers that drain, and the error
 	// fails the pass, which is retried
 	statuses, err := r.runtime.Metadata().ListDataServerStatus()
-	var unstored []string
+	// stale holds the data servers whose stored status lacks their state, or
+	// their metadata as the configuration has it
+	var stale []*proto.DataServer
 
 	for _, dataServer := range snapshot.ListDataServers() {
 		serverName := dataServer.GetNameOrDefault()
@@ -64,8 +66,9 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 			continue
 		}
 		r.runtime.CreateDataServer(serverName, dataServer)
-		if _, stored := statuses[serverName]; !stored && err == nil {
-			unstored = append(unstored, serverName)
+		stored, found := statuses[serverName]
+		if err == nil && (!found || !stored.UnsafeBorrow().GetMetadata().EqualVT(dataServer.GetMetadata())) {
+			stale = append(stale, dataServer)
 		}
 	}
 
@@ -78,14 +81,21 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	r.runtime.RefreshShardControllers()
 
 	err = multierr.Append(err, r.deleteConfirmedDrained(snapshot))
-	for _, serverName := range unstored {
-		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(serverName,
+	for _, dataServer := range stale {
+		err = multierr.Append(err, r.runtime.Metadata().PatchDataServerStatus(dataServer.GetNameOrDefault(),
 			func(status *proto.DataServerStatus) (bool, error) {
-				if status.GetState() != proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED {
-					return false, nil
+				changed := false
+				if status.GetState() == proto.DataServerState_DATA_SERVER_STATE_UNSPECIFIED {
+					status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
+					changed = true
 				}
-				status.State = proto.DataServerState_DATA_SERVER_STATE_RUNNING
-				return true, nil
+				// The status keeps the metadata once the data server leaves the
+				// configuration, for the replicas that it still has to drain
+				if !status.GetMetadata().EqualVT(dataServer.GetMetadata()) {
+					status.Metadata = dataServer.GetMetadata().CloneVT()
+					changed = true
+				}
+				return changed, nil
 			}))
 	}
 	return err

@@ -303,6 +303,10 @@ func (m *fakeMetadata) ListDataServer() (map[string]commonobject.Borrowed[*proto
 	return result, m.listDataServerErr
 }
 
+func (*fakeMetadata) ListDataServerStatus() (map[string]commonobject.Borrowed[*proto.DataServerStatus], error) {
+	return map[string]commonobject.Borrowed[*proto.DataServerStatus]{}, nil
+}
+
 func (m *fakeMetadata) ListNamespace() (map[string]commonobject.Borrowed[*proto.Namespace], error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

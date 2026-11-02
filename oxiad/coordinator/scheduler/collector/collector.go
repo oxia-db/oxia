@@ -98,14 +98,22 @@ func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name
 // a read that failed.
 func (c *Collector) Collect() (*stats.ClusterStats, error) {
 	dataServers, errDataServers := c.metadata.ListDataServer()
+	dataServerStatuses, errDataServerStatuses := c.metadata.ListDataServerStatus()
 	namespaces, errNamespaces := c.metadata.ListNamespace()
 	statuses, errStatuses := c.metadata.ListNamespaceStatus()
-	if err := errors.Join(errDataServers, errNamespaces, errStatuses); err != nil {
+	if err := errors.Join(errDataServers, errDataServerStatuses, errNamespaces, errStatuses); err != nil {
 		return nil, err
 	}
 	s := stats.New(dataServers, namespaces, statuses)
 	for name, dataServer := range s.DataServers {
 		dataServer.Down = !c.running(name)
+		// A removed data server is no longer in the configuration: its stored
+		// status keeps its labels, which the anti-affinities of its replicas
+		// still need until they are drained
+		if dataServer.Removed {
+			dataServer.DataServer = &proto.DataServer{Identity: dataServer.GetIdentity(),
+				Metadata: dataServerStatuses[name].UnsafeBorrow().GetMetadata()}
+		}
 	}
 	return s, nil
 }
