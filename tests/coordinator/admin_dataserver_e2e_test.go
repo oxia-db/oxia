@@ -153,12 +153,12 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// The confirmed drain forgets the data server; a retried confirm succeeds
-	require.NoError(t, client.ConfirmDrainedDataServer(t.Context(), serverName))
+	require.NoError(t, client.DrainedDataServer(t.Context(), serverName))
 	require.Eventually(t, func() bool {
 		_, err := client.GetDataServer(t.Context(), serverName)
 		return grpcstatus.Code(err) == codes.NotFound
 	}, 10*time.Second, 10*time.Millisecond)
-	require.NoError(t, client.ConfirmDrainedDataServer(t.Context(), serverName))
+	require.NoError(t, client.DrainedDataServer(t.Context(), serverName))
 	_, err = client.DeleteDataServer(t.Context(), serverName)
 	assert.Equal(t, codes.NotFound, grpcstatus.Code(err))
 }

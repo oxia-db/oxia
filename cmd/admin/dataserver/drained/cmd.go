@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package confirmdrained
+package drained
 
 import (
 	"errors"
@@ -25,7 +25,7 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:   "confirm-drained <name>",
+	Use:   "drained <name>",
 	Short: "Confirm the drain of a deleted data server",
 	Long: `Confirm the drain of a deleted data server, once it is DATA_SERVER_STATE_DRAINED
 and shut down: the coordinator then forgets it, and drops it from the pending
@@ -51,5 +51,5 @@ func exec(cmd *cobra.Command, args []string) error {
 		_ = client.Close()
 	}(client)
 
-	return client.ConfirmDrainedDataServer(cmd.Context(), name)
+	return client.DrainedDataServer(cmd.Context(), name)
 }

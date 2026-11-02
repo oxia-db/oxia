@@ -33,7 +33,7 @@ var Cmd = &cobra.Command{
 replicas move to the other data servers. Get the data server to follow the
 drain: it is DATA_SERVER_STATE_DRAINING, then DATA_SERVER_STATE_DRAINED once
 no ensemble has it and every shard caught up, when the next one can be
-deleted. Shut it down, then run confirm-drained to forget it. Deleting a data
+deleted. Shut it down, then run drained to forget it. Deleting a data
 server that already left returns it again.`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,

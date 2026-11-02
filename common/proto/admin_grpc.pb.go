@@ -36,18 +36,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OxiaAdmin_ListDataServers_FullMethodName          = "/io.oxia.proto.v1.OxiaAdmin/ListDataServers"
-	OxiaAdmin_GetDataServer_FullMethodName            = "/io.oxia.proto.v1.OxiaAdmin/GetDataServer"
-	OxiaAdmin_CreateDataServer_FullMethodName         = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
-	OxiaAdmin_PatchDataServer_FullMethodName          = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
-	OxiaAdmin_DeleteDataServer_FullMethodName         = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
-	OxiaAdmin_ConfirmDrainedDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/ConfirmDrainedDataServer"
-	OxiaAdmin_CreateNamespace_FullMethodName          = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
-	OxiaAdmin_PatchNamespace_FullMethodName           = "/io.oxia.proto.v1.OxiaAdmin/PatchNamespace"
-	OxiaAdmin_DeleteNamespace_FullMethodName          = "/io.oxia.proto.v1.OxiaAdmin/DeleteNamespace"
-	OxiaAdmin_GetNamespace_FullMethodName             = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
-	OxiaAdmin_ListNamespaces_FullMethodName           = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
-	OxiaAdmin_SplitShard_FullMethodName               = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
+	OxiaAdmin_ListDataServers_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/ListDataServers"
+	OxiaAdmin_GetDataServer_FullMethodName     = "/io.oxia.proto.v1.OxiaAdmin/GetDataServer"
+	OxiaAdmin_CreateDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/CreateDataServer"
+	OxiaAdmin_PatchDataServer_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/PatchDataServer"
+	OxiaAdmin_DeleteDataServer_FullMethodName  = "/io.oxia.proto.v1.OxiaAdmin/DeleteDataServer"
+	OxiaAdmin_DrainedDataServer_FullMethodName = "/io.oxia.proto.v1.OxiaAdmin/DrainedDataServer"
+	OxiaAdmin_CreateNamespace_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/CreateNamespace"
+	OxiaAdmin_PatchNamespace_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/PatchNamespace"
+	OxiaAdmin_DeleteNamespace_FullMethodName   = "/io.oxia.proto.v1.OxiaAdmin/DeleteNamespace"
+	OxiaAdmin_GetNamespace_FullMethodName      = "/io.oxia.proto.v1.OxiaAdmin/GetNamespace"
+	OxiaAdmin_ListNamespaces_FullMethodName    = "/io.oxia.proto.v1.OxiaAdmin/ListNamespaces"
+	OxiaAdmin_SplitShard_FullMethodName        = "/io.oxia.proto.v1.OxiaAdmin/SplitShard"
 )
 
 // OxiaAdminClient is the client API for OxiaAdmin service.
@@ -59,7 +59,7 @@ type OxiaAdminClient interface {
 	CreateDataServer(ctx context.Context, in *CreateDataServerRequest, opts ...grpc.CallOption) (*CreateDataServerResponse, error)
 	PatchDataServer(ctx context.Context, in *PatchDataServerRequest, opts ...grpc.CallOption) (*PatchDataServerResponse, error)
 	DeleteDataServer(ctx context.Context, in *DeleteDataServerRequest, opts ...grpc.CallOption) (*DeleteDataServerResponse, error)
-	ConfirmDrainedDataServer(ctx context.Context, in *ConfirmDrainedDataServerRequest, opts ...grpc.CallOption) (*ConfirmDrainedDataServerResponse, error)
+	DrainedDataServer(ctx context.Context, in *DrainedDataServerRequest, opts ...grpc.CallOption) (*DrainedDataServerResponse, error)
 	CreateNamespace(ctx context.Context, in *CreateNamespaceRequest, opts ...grpc.CallOption) (*CreateNamespaceResponse, error)
 	PatchNamespace(ctx context.Context, in *PatchNamespaceRequest, opts ...grpc.CallOption) (*PatchNamespaceResponse, error)
 	DeleteNamespace(ctx context.Context, in *DeleteNamespaceRequest, opts ...grpc.CallOption) (*DeleteNamespaceResponse, error)
@@ -129,10 +129,10 @@ func (c *oxiaAdminClient) DeleteDataServer(ctx context.Context, in *DeleteDataSe
 	return out, nil
 }
 
-func (c *oxiaAdminClient) ConfirmDrainedDataServer(ctx context.Context, in *ConfirmDrainedDataServerRequest, opts ...grpc.CallOption) (*ConfirmDrainedDataServerResponse, error) {
+func (c *oxiaAdminClient) DrainedDataServer(ctx context.Context, in *DrainedDataServerRequest, opts ...grpc.CallOption) (*DrainedDataServerResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ConfirmDrainedDataServerResponse)
-	err := c.cc.Invoke(ctx, OxiaAdmin_ConfirmDrainedDataServer_FullMethodName, in, out, cOpts...)
+	out := new(DrainedDataServerResponse)
+	err := c.cc.Invoke(ctx, OxiaAdmin_DrainedDataServer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ type OxiaAdminServer interface {
 	CreateDataServer(context.Context, *CreateDataServerRequest) (*CreateDataServerResponse, error)
 	PatchDataServer(context.Context, *PatchDataServerRequest) (*PatchDataServerResponse, error)
 	DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error)
-	ConfirmDrainedDataServer(context.Context, *ConfirmDrainedDataServerRequest) (*ConfirmDrainedDataServerResponse, error)
+	DrainedDataServer(context.Context, *DrainedDataServerRequest) (*DrainedDataServerResponse, error)
 	CreateNamespace(context.Context, *CreateNamespaceRequest) (*CreateNamespaceResponse, error)
 	PatchNamespace(context.Context, *PatchNamespaceRequest) (*PatchNamespaceResponse, error)
 	DeleteNamespace(context.Context, *DeleteNamespaceRequest) (*DeleteNamespaceResponse, error)
@@ -243,8 +243,8 @@ func (UnimplementedOxiaAdminServer) PatchDataServer(context.Context, *PatchDataS
 func (UnimplementedOxiaAdminServer) DeleteDataServer(context.Context, *DeleteDataServerRequest) (*DeleteDataServerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDataServer not implemented")
 }
-func (UnimplementedOxiaAdminServer) ConfirmDrainedDataServer(context.Context, *ConfirmDrainedDataServerRequest) (*ConfirmDrainedDataServerResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ConfirmDrainedDataServer not implemented")
+func (UnimplementedOxiaAdminServer) DrainedDataServer(context.Context, *DrainedDataServerRequest) (*DrainedDataServerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DrainedDataServer not implemented")
 }
 func (UnimplementedOxiaAdminServer) CreateNamespace(context.Context, *CreateNamespaceRequest) (*CreateNamespaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateNamespace not implemented")
@@ -375,20 +375,20 @@ func _OxiaAdmin_DeleteDataServer_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OxiaAdmin_ConfirmDrainedDataServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConfirmDrainedDataServerRequest)
+func _OxiaAdmin_DrainedDataServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DrainedDataServerRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(OxiaAdminServer).ConfirmDrainedDataServer(ctx, in)
+		return srv.(OxiaAdminServer).DrainedDataServer(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: OxiaAdmin_ConfirmDrainedDataServer_FullMethodName,
+		FullMethod: OxiaAdmin_DrainedDataServer_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OxiaAdminServer).ConfirmDrainedDataServer(ctx, req.(*ConfirmDrainedDataServerRequest))
+		return srv.(OxiaAdminServer).DrainedDataServer(ctx, req.(*DrainedDataServerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -529,8 +529,8 @@ var OxiaAdmin_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OxiaAdmin_DeleteDataServer_Handler,
 		},
 		{
-			MethodName: "ConfirmDrainedDataServer",
-			Handler:    _OxiaAdmin_ConfirmDrainedDataServer_Handler,
+			MethodName: "DrainedDataServer",
+			Handler:    _OxiaAdmin_DrainedDataServer_Handler,
 		},
 		{
 			MethodName: "CreateNamespace",

@@ -817,7 +817,7 @@ type ClusterConfiguration struct {
 	// that joins with it is a new one, and must start with an empty disk.
 	//
 	// The admin API follows the same steps: DeleteDataServer does 1 and 2 in a
-	// single write, and ConfirmDrainedDataServer does 4. CreateDataServer
+	// single write, and DrainedDataServer does 4. CreateDataServer
 	// removes the name from this list too.
 	//
 	 

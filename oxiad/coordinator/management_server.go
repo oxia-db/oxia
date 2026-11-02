@@ -326,7 +326,7 @@ func (management *ManagementServer) DeleteDataServer(_ context.Context, req *pro
 	}, nil
 }
 
-func (management *ManagementServer) ConfirmDrainedDataServer(_ context.Context, req *proto.ConfirmDrainedDataServerRequest) (*proto.ConfirmDrainedDataServerResponse, error) {
+func (management *ManagementServer) DrainedDataServer(_ context.Context, req *proto.DrainedDataServerRequest) (*proto.DrainedDataServerResponse, error) {
 	runtime, err := management.getRuntime()
 	if err != nil {
 		return nil, err
@@ -348,7 +348,7 @@ func (management *ManagementServer) ConfirmDrainedDataServer(_ context.Context, 
 		return nil, grpcstatus.Errorf(codes.Internal, "failed to confirm the drain of data server %q: %v", req.DataServer, err)
 	}
 
-	return &proto.ConfirmDrainedDataServerResponse{}, nil
+	return &proto.DrainedDataServerResponse{}, nil
 }
 
 func (management *ManagementServer) ListNamespaces(_ context.Context, _ *proto.ListNamespacesRequest) (*proto.ListNamespacesResponse, error) {

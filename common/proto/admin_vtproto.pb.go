@@ -213,11 +213,11 @@ func (m *DeleteDataServerResponse) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (m *ConfirmDrainedDataServerRequest) CloneVT() *ConfirmDrainedDataServerRequest {
+func (m *DrainedDataServerRequest) CloneVT() *DrainedDataServerRequest {
 	if m == nil {
-		return (*ConfirmDrainedDataServerRequest)(nil)
+		return (*DrainedDataServerRequest)(nil)
 	}
-	r := new(ConfirmDrainedDataServerRequest)
+	r := new(DrainedDataServerRequest)
 	r.DataServer = m.DataServer
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
@@ -226,15 +226,15 @@ func (m *ConfirmDrainedDataServerRequest) CloneVT() *ConfirmDrainedDataServerReq
 	return r
 }
 
-func (m *ConfirmDrainedDataServerRequest) CloneMessageVT() proto.Message {
+func (m *DrainedDataServerRequest) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
-func (m *ConfirmDrainedDataServerResponse) CloneVT() *ConfirmDrainedDataServerResponse {
+func (m *DrainedDataServerResponse) CloneVT() *DrainedDataServerResponse {
 	if m == nil {
-		return (*ConfirmDrainedDataServerResponse)(nil)
+		return (*DrainedDataServerResponse)(nil)
 	}
-	r := new(ConfirmDrainedDataServerResponse)
+	r := new(DrainedDataServerResponse)
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -242,7 +242,7 @@ func (m *ConfirmDrainedDataServerResponse) CloneVT() *ConfirmDrainedDataServerRe
 	return r
 }
 
-func (m *ConfirmDrainedDataServerResponse) CloneMessageVT() proto.Message {
+func (m *DrainedDataServerResponse) CloneMessageVT() proto.Message {
 	return m.CloneVT()
 }
 
@@ -702,7 +702,7 @@ func (this *DeleteDataServerResponse) EqualMessageVT(thatMsg proto.Message) bool
 	}
 	return this.EqualVT(that)
 }
-func (this *ConfirmDrainedDataServerRequest) EqualVT(that *ConfirmDrainedDataServerRequest) bool {
+func (this *DrainedDataServerRequest) EqualVT(that *DrainedDataServerRequest) bool {
 	if this == that {
 		return true
 	} else if this == nil || that == nil {
@@ -714,14 +714,14 @@ func (this *ConfirmDrainedDataServerRequest) EqualVT(that *ConfirmDrainedDataSer
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
-func (this *ConfirmDrainedDataServerRequest) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*ConfirmDrainedDataServerRequest)
+func (this *DrainedDataServerRequest) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*DrainedDataServerRequest)
 	if !ok {
 		return false
 	}
 	return this.EqualVT(that)
 }
-func (this *ConfirmDrainedDataServerResponse) EqualVT(that *ConfirmDrainedDataServerResponse) bool {
+func (this *DrainedDataServerResponse) EqualVT(that *DrainedDataServerResponse) bool {
 	if this == that {
 		return true
 	} else if this == nil || that == nil {
@@ -730,8 +730,8 @@ func (this *ConfirmDrainedDataServerResponse) EqualVT(that *ConfirmDrainedDataSe
 	return string(this.unknownFields) == string(that.unknownFields)
 }
 
-func (this *ConfirmDrainedDataServerResponse) EqualMessageVT(thatMsg proto.Message) bool {
-	that, ok := thatMsg.(*ConfirmDrainedDataServerResponse)
+func (this *DrainedDataServerResponse) EqualMessageVT(thatMsg proto.Message) bool {
+	that, ok := thatMsg.(*DrainedDataServerResponse)
 	if !ok {
 		return false
 	}
@@ -1476,7 +1476,7 @@ func (m *DeleteDataServerResponse) MarshalToSizedBufferVT(dAtA []byte) (int, err
 	return len(dAtA) - i, nil
 }
 
-func (m *ConfirmDrainedDataServerRequest) MarshalVT() (dAtA []byte, err error) {
+func (m *DrainedDataServerRequest) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -1489,12 +1489,12 @@ func (m *ConfirmDrainedDataServerRequest) MarshalVT() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *ConfirmDrainedDataServerRequest) MarshalToVT(dAtA []byte) (int, error) {
+func (m *DrainedDataServerRequest) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *ConfirmDrainedDataServerRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *DrainedDataServerRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -1516,7 +1516,7 @@ func (m *ConfirmDrainedDataServerRequest) MarshalToSizedBufferVT(dAtA []byte) (i
 	return len(dAtA) - i, nil
 }
 
-func (m *ConfirmDrainedDataServerResponse) MarshalVT() (dAtA []byte, err error) {
+func (m *DrainedDataServerResponse) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -1529,12 +1529,12 @@ func (m *ConfirmDrainedDataServerResponse) MarshalVT() (dAtA []byte, err error) 
 	return dAtA[:n], nil
 }
 
-func (m *ConfirmDrainedDataServerResponse) MarshalToVT(dAtA []byte) (int, error) {
+func (m *DrainedDataServerResponse) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *ConfirmDrainedDataServerResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *DrainedDataServerResponse) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -2267,7 +2267,7 @@ func (m *DeleteDataServerResponse) SizeVT() (n int) {
 	return n
 }
 
-func (m *ConfirmDrainedDataServerRequest) SizeVT() (n int) {
+func (m *DrainedDataServerRequest) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -2281,7 +2281,7 @@ func (m *ConfirmDrainedDataServerRequest) SizeVT() (n int) {
 	return n
 }
 
-func (m *ConfirmDrainedDataServerResponse) SizeVT() (n int) {
+func (m *DrainedDataServerResponse) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -3430,7 +3430,7 @@ func (m *DeleteDataServerResponse) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *ConfirmDrainedDataServerRequest) UnmarshalVT(dAtA []byte) error {
+func (m *DrainedDataServerRequest) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -3453,10 +3453,10 @@ func (m *ConfirmDrainedDataServerRequest) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: DrainedDataServerRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DrainedDataServerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -3513,7 +3513,7 @@ func (m *ConfirmDrainedDataServerRequest) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *ConfirmDrainedDataServerResponse) UnmarshalVT(dAtA []byte) error {
+func (m *DrainedDataServerResponse) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -3536,10 +3536,10 @@ func (m *ConfirmDrainedDataServerResponse) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: DrainedDataServerResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DrainedDataServerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:
@@ -5677,7 +5677,7 @@ func (m *DeleteDataServerResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *ConfirmDrainedDataServerRequest) UnmarshalVTUnsafe(dAtA []byte) error {
+func (m *DrainedDataServerRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -5700,10 +5700,10 @@ func (m *ConfirmDrainedDataServerRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: DrainedDataServerRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DrainedDataServerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -5764,7 +5764,7 @@ func (m *ConfirmDrainedDataServerRequest) UnmarshalVTUnsafe(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *ConfirmDrainedDataServerResponse) UnmarshalVTUnsafe(dAtA []byte) error {
+func (m *DrainedDataServerResponse) UnmarshalVTUnsafe(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -5787,10 +5787,10 @@ func (m *ConfirmDrainedDataServerResponse) UnmarshalVTUnsafe(dAtA []byte) error 
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: DrainedDataServerResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ConfirmDrainedDataServerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DrainedDataServerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:

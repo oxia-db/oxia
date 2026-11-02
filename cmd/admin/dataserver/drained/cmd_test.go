@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package confirmdrained
+package drained
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func runCmd(args ...string) (string, error) {
 	})
 	root.SetOut(actual)
 	root.SetErr(actual)
-	root.SetArgs(append([]string{"confirm-drained"}, args...))
+	root.SetArgs(append([]string{"drained"}, args...))
 	err := root.Execute()
 	return strings.TrimSpace(actual.String()), err
 }
@@ -48,7 +48,7 @@ func TestExecConfirmsTheDrain(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ConfirmDrainedDataServer", "server-1").Return(nil)
+	commons.MockedAdminClient.On("DrainedDataServer", "server-1").Return(nil)
 
 	out, err := runCmd(" server-1 ")
 
@@ -81,7 +81,7 @@ func TestExecReturnsConfirmError(t *testing.T) {
 	commons.MockedAdminClient = commons.NewMockAdminClient()
 	t.Cleanup(func() { commons.MockedAdminClient = nil })
 	commons.MockedAdminClient.On("Close").Return(nil)
-	commons.MockedAdminClient.On("ConfirmDrainedDataServer", "server-1").Return(errors.New("not drained"))
+	commons.MockedAdminClient.On("DrainedDataServer", "server-1").Return(errors.New("not drained"))
 
 	out, err := runCmd("server-1")
 

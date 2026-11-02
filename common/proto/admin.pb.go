@@ -522,27 +522,27 @@ func (x *DeleteDataServerResponse) GetDataServer() *DataServer {
 	return nil
 }
 
-type ConfirmDrainedDataServerRequest struct {
+type DrainedDataServerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DataServer    string                 `protobuf:"bytes,1,opt,name=data_server,json=dataServer,proto3" json:"data_server,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ConfirmDrainedDataServerRequest) Reset() {
-	*x = ConfirmDrainedDataServerRequest{}
+func (x *DrainedDataServerRequest) Reset() {
+	*x = DrainedDataServerRequest{}
 	mi := &file_admin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ConfirmDrainedDataServerRequest) String() string {
+func (x *DrainedDataServerRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ConfirmDrainedDataServerRequest) ProtoMessage() {}
+func (*DrainedDataServerRequest) ProtoMessage() {}
 
-func (x *ConfirmDrainedDataServerRequest) ProtoReflect() protoreflect.Message {
+func (x *DrainedDataServerRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_admin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -554,38 +554,38 @@ func (x *ConfirmDrainedDataServerRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ConfirmDrainedDataServerRequest.ProtoReflect.Descriptor instead.
-func (*ConfirmDrainedDataServerRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use DrainedDataServerRequest.ProtoReflect.Descriptor instead.
+func (*DrainedDataServerRequest) Descriptor() ([]byte, []int) {
 	return file_admin_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *ConfirmDrainedDataServerRequest) GetDataServer() string {
+func (x *DrainedDataServerRequest) GetDataServer() string {
 	if x != nil {
 		return x.DataServer
 	}
 	return ""
 }
 
-type ConfirmDrainedDataServerResponse struct {
+type DrainedDataServerResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ConfirmDrainedDataServerResponse) Reset() {
-	*x = ConfirmDrainedDataServerResponse{}
+func (x *DrainedDataServerResponse) Reset() {
+	*x = DrainedDataServerResponse{}
 	mi := &file_admin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ConfirmDrainedDataServerResponse) String() string {
+func (x *DrainedDataServerResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ConfirmDrainedDataServerResponse) ProtoMessage() {}
+func (*DrainedDataServerResponse) ProtoMessage() {}
 
-func (x *ConfirmDrainedDataServerResponse) ProtoReflect() protoreflect.Message {
+func (x *DrainedDataServerResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_admin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -597,8 +597,8 @@ func (x *ConfirmDrainedDataServerResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ConfirmDrainedDataServerResponse.ProtoReflect.Descriptor instead.
-func (*ConfirmDrainedDataServerResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use DrainedDataServerResponse.ProtoReflect.Descriptor instead.
+func (*DrainedDataServerResponse) Descriptor() ([]byte, []int) {
 	return file_admin_proto_rawDescGZIP(), []int{12}
 }
 
@@ -1234,11 +1234,11 @@ const file_admin_proto_rawDesc = "" +
 	"dataServer\"Y\n" +
 	"\x18DeleteDataServerResponse\x12=\n" +
 	"\vdata_server\x18\x01 \x01(\v2\x1c.io.oxia.proto.v1.DataServerR\n" +
-	"dataServer\"B\n" +
-	"\x1fConfirmDrainedDataServerRequest\x12\x1f\n" +
+	"dataServer\";\n" +
+	"\x18DrainedDataServerRequest\x12\x1f\n" +
 	"\vdata_server\x18\x01 \x01(\tR\n" +
-	"dataServer\"\"\n" +
-	" ConfirmDrainedDataServerResponse\"S\n" +
+	"dataServer\"\x1b\n" +
+	"\x19DrainedDataServerResponse\"S\n" +
 	"\x16CreateNamespaceRequest\x129\n" +
 	"\tnamespace\x18\x01 \x01(\v2\x1b.io.oxia.proto.v1.NamespaceR\tnamespace\"T\n" +
 	"\x17CreateNamespaceResponse\x129\n" +
@@ -1271,14 +1271,14 @@ const file_admin_proto_rawDesc = "" +
 	"\f_split_point\"j\n" +
 	"\x12SplitShardResponse\x12(\n" +
 	"\x10left_child_shard\x18\x01 \x01(\x03R\x0eleftChildShard\x12*\n" +
-	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\xe9\t\n" +
+	"\x11right_child_shard\x18\x02 \x01(\x03R\x0frightChildShard2\xd3\t\n" +
 	"\tOxiaAdmin\x12f\n" +
 	"\x0fListDataServers\x12(.io.oxia.proto.v1.ListDataServersRequest\x1a).io.oxia.proto.v1.ListDataServersResponse\x12`\n" +
 	"\rGetDataServer\x12&.io.oxia.proto.v1.GetDataServerRequest\x1a'.io.oxia.proto.v1.GetDataServerResponse\x12i\n" +
 	"\x10CreateDataServer\x12).io.oxia.proto.v1.CreateDataServerRequest\x1a*.io.oxia.proto.v1.CreateDataServerResponse\x12f\n" +
 	"\x0fPatchDataServer\x12(.io.oxia.proto.v1.PatchDataServerRequest\x1a).io.oxia.proto.v1.PatchDataServerResponse\x12i\n" +
-	"\x10DeleteDataServer\x12).io.oxia.proto.v1.DeleteDataServerRequest\x1a*.io.oxia.proto.v1.DeleteDataServerResponse\x12\x81\x01\n" +
-	"\x18ConfirmDrainedDataServer\x121.io.oxia.proto.v1.ConfirmDrainedDataServerRequest\x1a2.io.oxia.proto.v1.ConfirmDrainedDataServerResponse\x12f\n" +
+	"\x10DeleteDataServer\x12).io.oxia.proto.v1.DeleteDataServerRequest\x1a*.io.oxia.proto.v1.DeleteDataServerResponse\x12l\n" +
+	"\x11DrainedDataServer\x12*.io.oxia.proto.v1.DrainedDataServerRequest\x1a+.io.oxia.proto.v1.DrainedDataServerResponse\x12f\n" +
 	"\x0fCreateNamespace\x12(.io.oxia.proto.v1.CreateNamespaceRequest\x1a).io.oxia.proto.v1.CreateNamespaceResponse\x12c\n" +
 	"\x0ePatchNamespace\x12'.io.oxia.proto.v1.PatchNamespaceRequest\x1a(.io.oxia.proto.v1.PatchNamespaceResponse\x12f\n" +
 	"\x0fDeleteNamespace\x12(.io.oxia.proto.v1.DeleteNamespaceRequest\x1a).io.oxia.proto.v1.DeleteNamespaceResponse\x12]\n" +
@@ -1301,36 +1301,36 @@ func file_admin_proto_rawDescGZIP() []byte {
 
 var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_admin_proto_goTypes = []any{
-	(*ListDataServersRequest)(nil),           // 0: io.oxia.proto.v1.ListDataServersRequest
-	(*ListDataServersResponse)(nil),          // 1: io.oxia.proto.v1.ListDataServersResponse
-	(*GetDataServerRequest)(nil),             // 2: io.oxia.proto.v1.GetDataServerRequest
-	(*GetDataServerResponse)(nil),            // 3: io.oxia.proto.v1.GetDataServerResponse
-	(*DataServerView)(nil),                   // 4: io.oxia.proto.v1.DataServerView
-	(*CreateDataServerRequest)(nil),          // 5: io.oxia.proto.v1.CreateDataServerRequest
-	(*CreateDataServerResponse)(nil),         // 6: io.oxia.proto.v1.CreateDataServerResponse
-	(*PatchDataServerRequest)(nil),           // 7: io.oxia.proto.v1.PatchDataServerRequest
-	(*PatchDataServerResponse)(nil),          // 8: io.oxia.proto.v1.PatchDataServerResponse
-	(*DeleteDataServerRequest)(nil),          // 9: io.oxia.proto.v1.DeleteDataServerRequest
-	(*DeleteDataServerResponse)(nil),         // 10: io.oxia.proto.v1.DeleteDataServerResponse
-	(*ConfirmDrainedDataServerRequest)(nil),  // 11: io.oxia.proto.v1.ConfirmDrainedDataServerRequest
-	(*ConfirmDrainedDataServerResponse)(nil), // 12: io.oxia.proto.v1.ConfirmDrainedDataServerResponse
-	(*CreateNamespaceRequest)(nil),           // 13: io.oxia.proto.v1.CreateNamespaceRequest
-	(*CreateNamespaceResponse)(nil),          // 14: io.oxia.proto.v1.CreateNamespaceResponse
-	(*PatchNamespaceRequest)(nil),            // 15: io.oxia.proto.v1.PatchNamespaceRequest
-	(*PatchNamespaceResponse)(nil),           // 16: io.oxia.proto.v1.PatchNamespaceResponse
-	(*DeleteNamespaceRequest)(nil),           // 17: io.oxia.proto.v1.DeleteNamespaceRequest
-	(*DeleteNamespaceResponse)(nil),          // 18: io.oxia.proto.v1.DeleteNamespaceResponse
-	(*ListNamespacesRequest)(nil),            // 19: io.oxia.proto.v1.ListNamespacesRequest
-	(*ListNamespacesResponse)(nil),           // 20: io.oxia.proto.v1.ListNamespacesResponse
-	(*GetNamespaceRequest)(nil),              // 21: io.oxia.proto.v1.GetNamespaceRequest
-	(*GetNamespaceResponse)(nil),             // 22: io.oxia.proto.v1.GetNamespaceResponse
-	(*NamespaceView)(nil),                    // 23: io.oxia.proto.v1.NamespaceView
-	(*SplitShardRequest)(nil),                // 24: io.oxia.proto.v1.SplitShardRequest
-	(*SplitShardResponse)(nil),               // 25: io.oxia.proto.v1.SplitShardResponse
-	(*DataServer)(nil),                       // 26: io.oxia.proto.v1.DataServer
-	(*DataServerStatus)(nil),                 // 27: io.oxia.proto.v1.DataServerStatus
-	(*Namespace)(nil),                        // 28: io.oxia.proto.v1.Namespace
-	(*NamespaceStatus)(nil),                  // 29: io.oxia.proto.v1.NamespaceStatus
+	(*ListDataServersRequest)(nil),    // 0: io.oxia.proto.v1.ListDataServersRequest
+	(*ListDataServersResponse)(nil),   // 1: io.oxia.proto.v1.ListDataServersResponse
+	(*GetDataServerRequest)(nil),      // 2: io.oxia.proto.v1.GetDataServerRequest
+	(*GetDataServerResponse)(nil),     // 3: io.oxia.proto.v1.GetDataServerResponse
+	(*DataServerView)(nil),            // 4: io.oxia.proto.v1.DataServerView
+	(*CreateDataServerRequest)(nil),   // 5: io.oxia.proto.v1.CreateDataServerRequest
+	(*CreateDataServerResponse)(nil),  // 6: io.oxia.proto.v1.CreateDataServerResponse
+	(*PatchDataServerRequest)(nil),    // 7: io.oxia.proto.v1.PatchDataServerRequest
+	(*PatchDataServerResponse)(nil),   // 8: io.oxia.proto.v1.PatchDataServerResponse
+	(*DeleteDataServerRequest)(nil),   // 9: io.oxia.proto.v1.DeleteDataServerRequest
+	(*DeleteDataServerResponse)(nil),  // 10: io.oxia.proto.v1.DeleteDataServerResponse
+	(*DrainedDataServerRequest)(nil),  // 11: io.oxia.proto.v1.DrainedDataServerRequest
+	(*DrainedDataServerResponse)(nil), // 12: io.oxia.proto.v1.DrainedDataServerResponse
+	(*CreateNamespaceRequest)(nil),    // 13: io.oxia.proto.v1.CreateNamespaceRequest
+	(*CreateNamespaceResponse)(nil),   // 14: io.oxia.proto.v1.CreateNamespaceResponse
+	(*PatchNamespaceRequest)(nil),     // 15: io.oxia.proto.v1.PatchNamespaceRequest
+	(*PatchNamespaceResponse)(nil),    // 16: io.oxia.proto.v1.PatchNamespaceResponse
+	(*DeleteNamespaceRequest)(nil),    // 17: io.oxia.proto.v1.DeleteNamespaceRequest
+	(*DeleteNamespaceResponse)(nil),   // 18: io.oxia.proto.v1.DeleteNamespaceResponse
+	(*ListNamespacesRequest)(nil),     // 19: io.oxia.proto.v1.ListNamespacesRequest
+	(*ListNamespacesResponse)(nil),    // 20: io.oxia.proto.v1.ListNamespacesResponse
+	(*GetNamespaceRequest)(nil),       // 21: io.oxia.proto.v1.GetNamespaceRequest
+	(*GetNamespaceResponse)(nil),      // 22: io.oxia.proto.v1.GetNamespaceResponse
+	(*NamespaceView)(nil),             // 23: io.oxia.proto.v1.NamespaceView
+	(*SplitShardRequest)(nil),         // 24: io.oxia.proto.v1.SplitShardRequest
+	(*SplitShardResponse)(nil),        // 25: io.oxia.proto.v1.SplitShardResponse
+	(*DataServer)(nil),                // 26: io.oxia.proto.v1.DataServer
+	(*DataServerStatus)(nil),          // 27: io.oxia.proto.v1.DataServerStatus
+	(*Namespace)(nil),                 // 28: io.oxia.proto.v1.Namespace
+	(*NamespaceStatus)(nil),           // 29: io.oxia.proto.v1.NamespaceStatus
 }
 var file_admin_proto_depIdxs = []int32{
 	4,  // 0: io.oxia.proto.v1.ListDataServersResponse.data_servers:type_name -> io.oxia.proto.v1.DataServerView
@@ -1356,7 +1356,7 @@ var file_admin_proto_depIdxs = []int32{
 	5,  // 20: io.oxia.proto.v1.OxiaAdmin.CreateDataServer:input_type -> io.oxia.proto.v1.CreateDataServerRequest
 	7,  // 21: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:input_type -> io.oxia.proto.v1.PatchDataServerRequest
 	9,  // 22: io.oxia.proto.v1.OxiaAdmin.DeleteDataServer:input_type -> io.oxia.proto.v1.DeleteDataServerRequest
-	11, // 23: io.oxia.proto.v1.OxiaAdmin.ConfirmDrainedDataServer:input_type -> io.oxia.proto.v1.ConfirmDrainedDataServerRequest
+	11, // 23: io.oxia.proto.v1.OxiaAdmin.DrainedDataServer:input_type -> io.oxia.proto.v1.DrainedDataServerRequest
 	13, // 24: io.oxia.proto.v1.OxiaAdmin.CreateNamespace:input_type -> io.oxia.proto.v1.CreateNamespaceRequest
 	15, // 25: io.oxia.proto.v1.OxiaAdmin.PatchNamespace:input_type -> io.oxia.proto.v1.PatchNamespaceRequest
 	17, // 26: io.oxia.proto.v1.OxiaAdmin.DeleteNamespace:input_type -> io.oxia.proto.v1.DeleteNamespaceRequest
@@ -1368,7 +1368,7 @@ var file_admin_proto_depIdxs = []int32{
 	6,  // 32: io.oxia.proto.v1.OxiaAdmin.CreateDataServer:output_type -> io.oxia.proto.v1.CreateDataServerResponse
 	8,  // 33: io.oxia.proto.v1.OxiaAdmin.PatchDataServer:output_type -> io.oxia.proto.v1.PatchDataServerResponse
 	10, // 34: io.oxia.proto.v1.OxiaAdmin.DeleteDataServer:output_type -> io.oxia.proto.v1.DeleteDataServerResponse
-	12, // 35: io.oxia.proto.v1.OxiaAdmin.ConfirmDrainedDataServer:output_type -> io.oxia.proto.v1.ConfirmDrainedDataServerResponse
+	12, // 35: io.oxia.proto.v1.OxiaAdmin.DrainedDataServer:output_type -> io.oxia.proto.v1.DrainedDataServerResponse
 	14, // 36: io.oxia.proto.v1.OxiaAdmin.CreateNamespace:output_type -> io.oxia.proto.v1.CreateNamespaceResponse
 	16, // 37: io.oxia.proto.v1.OxiaAdmin.PatchNamespace:output_type -> io.oxia.proto.v1.PatchNamespaceResponse
 	18, // 38: io.oxia.proto.v1.OxiaAdmin.DeleteNamespace:output_type -> io.oxia.proto.v1.DeleteNamespaceResponse
