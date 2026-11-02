@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +111,13 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, "localhost:19002", patched.GetIdentity().GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, patched.GetMetadata().GetLabels())
 
+	// The reconciler creates the controller of server-1 in the background: only
+	// a data server that joined is drained, and reported, once it is deleted
+	require.Eventually(t, func() bool {
+		view, err := client.GetDataServer(t.Context(), serverName)
+		return err == nil && view.GetDataServerStatus().GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING
+	}, 10*time.Second, 10*time.Millisecond)
+
 	deleted, err := client.DeleteDataServer(t.Context(), serverName)
 	require.NoError(t, err)
 	require.NotNil(t, deleted)
@@ -119,10 +127,12 @@ func TestAdminDataServerCRUD(t *testing.T) {
 	assert.Equal(t, "localhost:19002", deleted.GetIdentity().GetInternal())
 	assert.Equal(t, map[string]string{"rack": "rack-3"}, deleted.GetMetadata().GetLabels())
 
-	// The deleted data server is reported, by name, until it is forgotten
-	dataServers, err = client.ListDataServers(t.Context())
-	require.NoError(t, err)
-	require.Len(t, dataServers, 2)
+	// The deleted data server is reported, by name, once the reconciler starts
+	// draining it, until it is forgotten
+	require.Eventually(t, func() bool {
+		dataServers, err = client.ListDataServers(t.Context())
+		return err == nil && len(dataServers) == 2
+	}, 10*time.Second, 10*time.Millisecond)
 	require.NotNil(t, dataServers[0].GetDataServer().GetIdentity())
 	assert.Equal(t, remainingServerName, dataServers[0].GetDataServer().GetIdentity().GetName())
 	assert.Equal(t, map[string]string{"rack": "rack-2"}, dataServers[0].GetDataServer().GetMetadata().GetLabels())
