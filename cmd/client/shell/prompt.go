@@ -16,6 +16,7 @@ package shell
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	prompt "github.com/c-bata/go-prompt"
@@ -48,6 +49,8 @@ var (
 		{Text: "patch", Description: "Patch a resource"},
 		{Text: "delete", Description: "Delete a resource"},
 	}
+	dataServerCommandSuggestions = append(slices.Clone(adminResourceSuggestions),
+		prompt.Suggest{Text: "drained", Description: "Confirm the drain of a deleted data server"})
 	shardCommandSuggestions = []prompt.Suggest{
 		{Text: "split", Description: "Split a shard"},
 	}
@@ -186,8 +189,10 @@ func suggestionsFor(args []string) []prompt.Suggest {
 		switch args[0] {
 		case commandAdmin:
 			switch args[1] {
-			case "namespace", "namespaces", "dataserver", "dataservers", "data-server", "data-servers":
+			case "namespace", "namespaces":
 				return adminResourceSuggestions
+			case "dataserver", "dataservers", "data-server", "data-servers":
+				return dataServerCommandSuggestions
 			case "shard", "shards":
 				return shardCommandSuggestions
 			default:

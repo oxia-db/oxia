@@ -38,7 +38,7 @@ func TestExecutorExecuteRejectsUnknownCommands(t *testing.T) {
 		{"unknown-resource", []string{"cluster"}, `unknown admin command "cluster"`},
 		{"namespace-empty", []string{"namespace"}, "usage: admin namespace list|get|create|patch|delete"},
 		{"namespace-unknown", []string{"namespaces", "rename"}, `unknown admin namespace command "rename"`},
-		{"dataserver-empty", []string{"dataserver"}, "usage: admin dataserver list|get|create|patch|delete"},
+		{"dataserver-empty", []string{"dataserver"}, "usage: admin dataserver list|get|create|patch|delete|drained"},
 		{"dataserver-unknown", []string{"data-servers", "rename"}, `unknown admin dataserver command "rename"`},
 		{"shard-empty", []string{"shard"}, "usage: admin shard split --shard ID [--namespace NAME] [--split-point HASH]"},
 		{"shard-unknown", []string{"shards", "merge"}, `unknown admin shard command "merge"`},
@@ -98,6 +98,7 @@ func TestExecutorExecuteReturnsClientFactoryError(t *testing.T) {
 		{"dataserver", "create", "--public", "p:1", "--internal", "i:1", "server"},
 		{"dataserver", "patch", "--public", "p:1", "server"},
 		{"dataserver", "delete", "server"},
+		{"dataserver", "drained", "server"},
 		{"shard", "split", "--shard", "1"},
 	} {
 		executor := Executor{
