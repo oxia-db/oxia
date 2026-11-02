@@ -32,12 +32,12 @@ type Runtime interface {
 
 	CreateDataServer(name string, dataServer *proto.DataServer) bool
 	DeleteDataServer(name string)
-	// ForgetDrainedDataServer deletes the stored status of a data server that
+	// DrainedDataServer deletes the stored status of a data server that
 	// left the configuration and is DRAINED, and drops it from the pending
 	// deletes of the shards: its name is then free. It returns
 	// ErrFailedPrecondition for a data server of the configuration, or one
 	// not DRAINED, and ErrNotFound for one without a stored status.
-	ForgetDrainedDataServer(name string) error
+	DrainedDataServer(name string) error
 
 	// ListLiveDataServer returns the data servers that have a controller and
 	// take shards: a draining or drained one is left out. The configured data

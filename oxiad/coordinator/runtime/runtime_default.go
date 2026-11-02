@@ -202,7 +202,7 @@ func (c *runtime) DeleteDataServer(name string) {
 	nc.Drain()
 }
 
-func (c *runtime) ForgetDrainedDataServer(name string) error {
+func (c *runtime) DrainedDataServer(name string) error {
 	if _, configured, err := c.metadata.GetDataServer(name); err != nil {
 		return err
 	} else if configured {

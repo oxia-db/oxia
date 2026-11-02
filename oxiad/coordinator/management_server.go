@@ -335,7 +335,7 @@ func (management *ManagementServer) DrainedDataServer(_ context.Context, req *pr
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	if err := runtime.ForgetDrainedDataServer(req.DataServer); err != nil {
+	if err := runtime.DrainedDataServer(req.DataServer); err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, dataServerNotFound, req.DataServer)
 		}

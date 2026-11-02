@@ -72,8 +72,8 @@ type testRuntime struct {
 	metadata coordmetadata.Metadata
 	// statuses are the statuses of the data servers that have a controller
 	statuses map[string]*proto.DataServerStatus
-	// forgetDrainedDataServer, when set, is called by ForgetDrainedDataServer
-	forgetDrainedDataServer func(name string) error
+	// drainedDataServer, when set, is called by DrainedDataServer
+	drainedDataServer func(name string) error
 }
 
 func (*testRuntime) Close() error { return nil }
@@ -100,9 +100,9 @@ func (*testRuntime) CreateDataServer(string, *proto.DataServer) bool { return fa
 
 func (*testRuntime) DeleteDataServer(string) {}
 
-func (r *testRuntime) ForgetDrainedDataServer(name string) error {
-	if r.forgetDrainedDataServer != nil {
-		return r.forgetDrainedDataServer(name)
+func (r *testRuntime) DrainedDataServer(name string) error {
+	if r.drainedDataServer != nil {
+		return r.drainedDataServer(name)
 	}
 	return errors.New("unexpected forget of a data server")
 }
@@ -1546,7 +1546,7 @@ func TestManagementServerDrainedDataServer(t *testing.T) {
 	var forgotten []string
 	management := newReadyManagementServer(metadata, &testRuntime{
 		metadata: metadata,
-		forgetDrainedDataServer: func(name string) error {
+		drainedDataServer: func(name string) error {
 			forgotten = append(forgotten, name)
 			return nil
 		},
@@ -1566,7 +1566,7 @@ func TestManagementServerDrainedDataServerRejectsInvalidRequest(t *testing.T) {
 	}
 }
 
-func TestManagementServerDrainedDataServerReturnsForgetErrors(t *testing.T) {
+func TestManagementServerDrainedDataServerReturnsRuntimeErrors(t *testing.T) {
 	for _, test := range []struct {
 		err  error
 		code codes.Code
@@ -1577,8 +1577,8 @@ func TestManagementServerDrainedDataServerReturnsForgetErrors(t *testing.T) {
 	} {
 		metadata := newTestMetadata(t, &proto.ClusterConfiguration{})
 		management := newReadyManagementServer(metadata, &testRuntime{
-			metadata:                metadata,
-			forgetDrainedDataServer: func(string) error { return test.err },
+			metadata:          metadata,
+			drainedDataServer: func(string) error { return test.err },
 		})
 
 		_, err := management.DrainedDataServer(context.Background(),

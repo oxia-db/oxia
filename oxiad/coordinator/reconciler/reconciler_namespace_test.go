@@ -706,7 +706,7 @@ type mockNamespaceRuntime struct {
 	createdDataServers  []string
 	drainedDataServers  []string
 	dataServerStatus    map[string]*proto.DataServerStatus
-	// forgottenDataServers are the names passed to ForgetDrainedDataServer,
+	// forgottenDataServers are the names passed to DrainedDataServer,
 	// which returns the error of forgetErrs for each
 	forgottenDataServers []string
 	forgetErrs           map[string]error
@@ -754,7 +754,7 @@ func (m *mockNamespaceRuntime) DeleteDataServer(name string) {
 	m.drainedDataServers = append(m.drainedDataServers, name)
 }
 
-func (m *mockNamespaceRuntime) ForgetDrainedDataServer(name string) error {
+func (m *mockNamespaceRuntime) DrainedDataServer(name string) error {
 	m.forgottenDataServers = append(m.forgottenDataServers, name)
 	return m.forgetErrs[name]
 }

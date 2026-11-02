@@ -115,7 +115,7 @@ func (r *dataServerReconciler) deleteConfirmedDrained(snapshot *proto.ClusterCon
 				slog.String("data-server", name))
 			continue
 		}
-		forgetErr := r.runtime.ForgetDrainedDataServer(name)
+		forgetErr := r.runtime.DrainedDataServer(name)
 		if forgetErr == nil {
 			slog.Info("Forgot a confirmed drained data server", slog.String("data-server", name))
 			continue

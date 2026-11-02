@@ -409,7 +409,7 @@ func TestRuntimeDeleteDataServerDrainsDataServer(t *testing.T) {
 // A drained data server that left the configuration is forgotten, with its
 // pending deletes; a configured, a draining or an unknown one isn't, and a
 // retry once forgotten is ErrNotFound.
-func TestRuntimeForgetDrainedDataServer(t *testing.T) {
+func TestRuntimeDrainedDataServer(t *testing.T) {
 	configured := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
 	drained := &proto.DataServerIdentity{Name: new("drained"), Public: "d:9091", Internal: "d:8191"}
 	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{configured}})
@@ -433,21 +433,21 @@ func TestRuntimeForgetDrainedDataServer(t *testing.T) {
 	}
 	c := newNamespaceTestRuntime(t, metadata)
 
-	require.ErrorIs(t, c.ForgetDrainedDataServer("s1"), errs.ErrFailedPrecondition)
-	require.ErrorIs(t, c.ForgetDrainedDataServer("draining"), errs.ErrFailedPrecondition)
-	require.ErrorIs(t, c.ForgetDrainedDataServer("unknown"), errs.ErrNotFound)
+	require.ErrorIs(t, c.DrainedDataServer("s1"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, c.DrainedDataServer("draining"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, c.DrainedDataServer("unknown"), errs.ErrNotFound)
 
-	require.NoError(t, c.ForgetDrainedDataServer("drained"))
+	require.NoError(t, c.DrainedDataServer("drained"))
 	_, found, err := metadata.GetDataServerStatus("drained")
 	require.NoError(t, err)
 	assert.False(t, found)
 	shard, _, err := metadata.GetShardStatus("ns", 0)
 	require.NoError(t, err)
 	assert.Empty(t, shard.UnsafeBorrow().GetPendingDeleteShardNodes())
-	assert.ErrorIs(t, c.ForgetDrainedDataServer("drained"), errs.ErrNotFound)
+	assert.ErrorIs(t, c.DrainedDataServer("drained"), errs.ErrNotFound)
 }
 
-func TestRuntimeForgetDrainedDataServerReturnsMetadataErrors(t *testing.T) {
+func TestRuntimeDrainedDataServerReturnsMetadataErrors(t *testing.T) {
 	metadataErr := errors.New("metadata unavailable")
 	for name, fake := range map[string]*fakeMetadata{
 		"configuration": {getDataServer: func(string) (commonobject.Borrowed[*proto.DataServer], bool, error) {
@@ -461,7 +461,7 @@ func TestRuntimeForgetDrainedDataServerReturnsMetadataErrors(t *testing.T) {
 		fake.Metadata = newTestMetadata(t, &proto.ClusterConfiguration{})
 		c := newNamespaceTestRuntime(t, fake)
 
-		assert.ErrorIs(t, c.ForgetDrainedDataServer("drained"), metadataErr, name)
+		assert.ErrorIs(t, c.DrainedDataServer("drained"), metadataErr, name)
 	}
 }
 
