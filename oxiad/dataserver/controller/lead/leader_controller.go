@@ -921,11 +921,6 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 	return nil
 }
 
-// truncateFollowerIfNeeded truncates the entries of the follower that the
-// leader doesn't have, and returns the head entry the follower is left with, or
-// an invalid entry for a follower that gets a snapshot of the leader. The commit
-// offset that the follower reported when it got fenced is nil when unknown.
-//
 //nolint:revive // cyclomatic complexity justified by the sequential cases
 func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId int64, followerHeadEntryId *proto.EntryId,
 	followerCommitOffset *int64) (*proto.EntryId, error) {
