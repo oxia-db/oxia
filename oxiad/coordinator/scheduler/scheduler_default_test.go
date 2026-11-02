@@ -17,7 +17,7 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"log/slog"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -25,16 +25,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/oxia-db/oxia/common/metric"
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/cache"
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
-	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 	"github.com/oxia-db/oxia/oxiad/coordinator/metadata/provider"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
 )
 
 func TestSchedulerDrainsARemovedDataServer(t *testing.T) {
@@ -158,14 +155,23 @@ func TestSchedulerWaitsTheIntervalAfterAFailedAction(t *testing.T) {
 	assert.Never(t, func() bool { return len(s.GetActions()) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 }
 
-func TestSchedulerSettleReportsWhetherEveryActionSucceeded(t *testing.T) {
-	s := &scheduler{logger: slog.Default(), collector: collector.New(t.Context(), nil, nil, nil),
-		splits: metric.NewCounter("test_splits", "Splits", "count", map[string]any{})}
-	split := action.NewSplitAction("a", 1)
-	failed := action.NewChangeEnsembleAction(2, nil, nil)
+func TestSchedulerHoldsTheSplitsDuringTheCooldownOfASplit(t *testing.T) {
+	metadata := newFakeMetadata(t)
+	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "10ms"}
+	metadata.config.AutoSplit = &proto.AutoSplitConfig{Enabled: true, MaxShardSizeMb: 1, StabilizationPeriod: "0s",
+		CooldownPeriod: "1h", CollectionInterval: "10ms"}
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Status: proto.ShardStatusSteadyState,
+		Ensemble: identities("n0", "n1", "n2"), Leader: identities("n0")[0],
+		Int32HashRange: &proto.HashRange{Max: math.MaxUint32}}})
+	s := New(t.Context(), metadata, running, &fakeProvider{stats: &proto.ShardStats{DbSizeBytes: 2 << 20}})
+	t.Cleanup(func() { assert.NoError(t, s.Close()) })
 
-	assert.True(t, s.settle([]model.Result{{Action: split}}, time.Now()))
-	assert.False(t, s.settle([]model.Result{{Action: split}, {Action: failed, Err: errors.New("not ready")}}, time.Now()))
+	split := (<-s.GetActions()).(*action.SplitAction)
+	assert.Equal(t, int64(1), split.GetShard())
+
+	// The shard is still over its threshold, but the cooldown holds it
+	split.Done(nil)
+	assert.Never(t, func() bool { return len(s.GetActions()) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 }
 
 func TestSchedulerLogsBlockedReplicas(t *testing.T) {
@@ -185,12 +191,7 @@ func TestSchedulerPlansAroundADataServerDown(t *testing.T) {
 		1: {Ensemble: identities("r", "n0")},
 		2: {Ensemble: identities("r", "n2")},
 	})
-	s := New(t.Context(), metadata, func(name string) (dataservercontroller.Status, bool) {
-		if name == "n1" {
-			return dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING), true
-		}
-		return running(name)
-	}, nil)
+	s := New(t.Context(), metadata, func(name string) bool { return name != "n1" }, nil)
 	t.Cleanup(func() { assert.NoError(t, s.Close()) })
 
 	targets := map[int64]string{}
@@ -212,11 +213,9 @@ func start(t *testing.T, metadata *fakeMetadata) Scheduler {
 	return s
 }
 
-// running reports every data server running, since it joined.
-func running(string) (dataservercontroller.Status, bool) {
-	status := dataservercontroller.NewStatus(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
-	status.SetAvailable(true)
-	return status, true
+// running reports every data server running.
+func running(string) bool {
+	return true
 }
 
 func identities(names ...string) []*proto.DataServerIdentity {
@@ -322,4 +321,17 @@ func (m *fakeMetadata) ListNamespaceStatus() (map[string]commonobject.Borrowed[*
 		result[name] = commonobject.Borrow(&proto.NamespaceStatus{Shards: shards})
 	}
 	return result, m.listNamespaceStatusErr
+}
+
+// fakeProvider answers GetStatus with stats for every shard; the other methods
+// of the interface panic.
+type fakeProvider struct {
+	rpc.ControllerRPCProvider
+
+	stats *proto.ShardStats
+}
+
+func (p *fakeProvider) GetStatus(context.Context, *proto.DataServerIdentity,
+	*proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	return &proto.GetStatusResponse{ShardStats: p.stats}, nil
 }
