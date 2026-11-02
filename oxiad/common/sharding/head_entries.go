@@ -20,21 +20,14 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-// HeadEntry is what a data server reports when it gets fenced: its head entry,
-// and its commit offset, or nil when it reports none.
-type HeadEntry struct {
-	*proto.EntryId
-	CommitOffset *int64
-}
-
 // HeadEntries are the head entries of the data servers of a shard.
-type HeadEntries map[*proto.DataServerIdentity]HeadEntry
+type HeadEntries map[*proto.DataServerIdentity]*proto.EntryId
 
 // LogValue logs the head entries by the name of their data server.
 func (h HeadEntries) LogValue() slog.Value {
 	attrs := make([]slog.Attr, 0, len(h))
-	for dataServer, head := range h {
-		attrs = append(attrs, slog.Any(dataServer.GetNameOrDefault(), head.EntryId))
+	for dataServer, entryId := range h {
+		attrs = append(attrs, slog.Any(dataServer.GetNameOrDefault(), entryId))
 	}
 	return slog.GroupValue(attrs...)
 }
