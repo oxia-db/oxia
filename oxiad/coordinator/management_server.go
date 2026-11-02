@@ -335,12 +335,9 @@ func (management *ManagementServer) DrainedDataServer(_ context.Context, req *pr
 		return nil, grpcstatus.Error(codes.InvalidArgument, "data server must not be empty")
 	}
 
-	if err := runtime.Metadata().DrainedDataServer(req.DataServer); err != nil {
+	if err := runtime.DrainedDataServer(req.DataServer); err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			return nil, grpcstatus.Errorf(codes.NotFound, dataServerNotFound, req.DataServer)
-		}
-		if errors.Is(err, errs.ErrMetaBadVersion) {
-			return nil, grpcstatus.Errorf(codes.Aborted, "failed to confirm the drain of data server %q due to concurrent config update", req.DataServer)
 		}
 		if errors.Is(err, errs.ErrFailedPrecondition) {
 			return nil, grpcstatus.Errorf(codes.FailedPrecondition, "failed to confirm the drain of data server %q: %v", req.DataServer, err)

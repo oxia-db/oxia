@@ -121,9 +121,9 @@ type Metadata interface {
 	PatchDataServerStatus(name string, modify func(status *commonproto.DataServerStatus) (bool, error)) error
 	// DeleteDrainedDataServerStatus deletes the status of a data server stored
 	// DRAINED, and drops it from the pending deletes of every shard, in a
-	// single write. It reports whether it deleted the status: it does nothing
-	// for a data server that isn't stored DRAINED.
-	DeleteDrainedDataServerStatus(name string) (bool, error)
+	// single write. It returns ErrNotFound for a data server without a stored
+	// status, and ErrFailedPrecondition for one not stored DRAINED.
+	DeleteDrainedDataServerStatus(name string) error
 
 	// GetConfig returns the configuration.
 	GetConfig() (commonobject.Borrowed[*commonproto.ClusterConfiguration], error)
@@ -166,12 +166,6 @@ type Metadata interface {
 	// is returned with its name and its stored metadata; one without a stored
 	// status is ErrNotFound.
 	DeleteDataServer(name string) (*commonproto.DataServer, error)
-	// DrainedDataServer adds a data server stored DRAINED to the
-	// confirmed-drained-data-servers annotation. It does nothing for a name
-	// that is already there. It returns ErrFailedPrecondition for a data
-	// server of the configuration, or one not DRAINED, and ErrNotFound for
-	// one without a stored status.
-	DrainedDataServer(name string) error
 	// ListDataServer returns every data server of the configuration, with its
 	// identity and its metadata, by name: the internal address of a data
 	// server without a name. It doesn't read the stored status: a data server

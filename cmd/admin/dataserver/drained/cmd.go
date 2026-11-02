@@ -28,10 +28,10 @@ var Cmd = &cobra.Command{
 	Use:   "drained <name>",
 	Short: "Confirm the drain of a deleted data server",
 	Long: `Confirm the drain of a deleted data server, once it is DATA_SERVER_STATE_DRAINED
-and shut down: the coordinator then forgets it, and drops it from the pending
-deletes of the shards. Its copies on disk are left as they are. Get the data
-server to follow it: it is not found once forgotten, and its name is free for a
-new data server, which must start with an empty disk.`,
+and shut down: the coordinator forgets it, and drops it from the pending deletes
+of the shards, before it returns. Its copies on disk are left as they are. Its
+name is then free for a new data server, which must start with an empty disk.
+A data server already forgotten is not found.`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         exec,
 	SilenceUsage: true,

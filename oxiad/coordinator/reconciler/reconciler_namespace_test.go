@@ -457,9 +457,6 @@ type mockNamespaceMetadata struct {
 	listDataServerStatusErr  error
 	patchDataServerStatusErr error
 	staleDataServerStatus    map[string]*proto.DataServerStatus
-	// deleteDrainedDataServerStatusErr, when set, fails the deletes of the
-	// statuses of the drained data servers
-	deleteDrainedDataServerStatusErr error
 }
 
 func (*mockNamespaceMetadata) Close() error { return nil }
@@ -618,17 +615,8 @@ func (m *mockNamespaceMetadata) PatchDataServerStatus(name string,
 	return nil
 }
 
-func (m *mockNamespaceMetadata) DeleteDrainedDataServerStatus(name string) (bool, error) {
-	if m.deleteDrainedDataServerStatusErr != nil {
-		return false, m.deleteDrainedDataServerStatusErr
-	}
-	if m.status.GetDataServers()[name].GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
-		return false, nil
-	}
-	cloned := gproto.Clone(m.status).(*proto.ClusterStatus)
-	delete(cloned.DataServers, name)
-	m.status = cloned
-	return true, nil
+func (*mockNamespaceMetadata) DeleteDrainedDataServerStatus(string) error {
+	return nil
 }
 
 func (*mockNamespaceMetadata) CreateNamespace(*proto.Namespace) error {
@@ -670,10 +658,6 @@ func (*mockNamespaceMetadata) PatchDataServer(*proto.DataServer) (*proto.DataSer
 
 func (*mockNamespaceMetadata) DeleteDataServer(string) (*proto.DataServer, error) {
 	return &proto.DataServer{}, nil
-}
-
-func (*mockNamespaceMetadata) DrainedDataServer(string) error {
-	return nil
 }
 
 func (*mockNamespaceMetadata) ListDataServer() (map[string]commonobject.Borrowed[*proto.DataServer], error) {
@@ -722,6 +706,10 @@ type mockNamespaceRuntime struct {
 	createdDataServers  []string
 	drainedDataServers  []string
 	dataServerStatus    map[string]*proto.DataServerStatus
+	// forgottenDataServers are the names passed to DrainedDataServer,
+	// which returns the error of forgetErrs for each
+	forgottenDataServers []string
+	forgetErrs           map[string]error
 }
 
 func (*mockNamespaceRuntime) Close() error { return nil }
@@ -764,6 +752,11 @@ func (m *mockNamespaceRuntime) DeleteDataServer(name string) {
 	}
 	status.State = proto.DataServerState_DATA_SERVER_STATE_DRAINING
 	m.drainedDataServers = append(m.drainedDataServers, name)
+}
+
+func (m *mockNamespaceRuntime) DrainedDataServer(name string) error {
+	m.forgottenDataServers = append(m.forgottenDataServers, name)
+	return m.forgetErrs[name]
 }
 
 func (*mockNamespaceRuntime) RefreshShardControllers() {}

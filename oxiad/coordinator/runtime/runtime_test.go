@@ -406,6 +406,62 @@ func TestRuntimeDeleteDataServerDrainsDataServer(t *testing.T) {
 	assert.NotContains(t, c.ListLiveDataServer(), "s1")
 }
 
+// A drained data server that left the configuration is forgotten, with its
+// pending deletes; a configured, a draining or an unknown one isn't, and a
+// retry once forgotten is ErrNotFound.
+func TestRuntimeDrainedDataServer(t *testing.T) {
+	configured := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	drained := &proto.DataServerIdentity{Name: new("drained"), Public: "d:9091", Internal: "d:8191"}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{Servers: []*proto.DataServerIdentity{configured}})
+	require.NoError(t, metadata.CreateNamespaceStatus("ns", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{0: {
+			Ensemble:                []*proto.DataServerIdentity{configured},
+			PendingDeleteShardNodes: []*proto.DataServerIdentity{drained},
+			Int32HashRange:          &proto.HashRange{Min: 0, Max: math.MaxUint32},
+		}},
+	}))
+	for name, state := range map[string]proto.DataServerState{
+		"s1":       proto.DataServerState_DATA_SERVER_STATE_RUNNING,
+		"draining": proto.DataServerState_DATA_SERVER_STATE_DRAINING,
+		"drained":  proto.DataServerState_DATA_SERVER_STATE_DRAINED,
+	} {
+		require.NoError(t, metadata.PatchDataServerStatus(name, func(status *proto.DataServerStatus) (bool, error) {
+			status.State = state
+			return true, nil
+		}))
+	}
+	c := newNamespaceTestRuntime(t, metadata)
+
+	require.ErrorIs(t, c.DrainedDataServer("s1"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, c.DrainedDataServer("draining"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, c.DrainedDataServer("unknown"), errs.ErrNotFound)
+
+	require.NoError(t, c.DrainedDataServer("drained"))
+	_, found, err := metadata.GetDataServerStatus("drained")
+	require.NoError(t, err)
+	assert.False(t, found)
+	shard, _, err := metadata.GetShardStatus("ns", 0)
+	require.NoError(t, err)
+	assert.Empty(t, shard.UnsafeBorrow().GetPendingDeleteShardNodes())
+	assert.ErrorIs(t, c.DrainedDataServer("drained"), errs.ErrNotFound)
+}
+
+func TestRuntimeDrainedDataServerReturnsMetadataErrors(t *testing.T) {
+	metadataErr := errors.New("metadata unavailable")
+	for name, fake := range map[string]*fakeMetadata{
+		"configuration": {getDataServer: func(string) (commonobject.Borrowed[*proto.DataServer], bool, error) {
+			return commonobject.Borrowed[*proto.DataServer]{}, false, metadataErr
+		}},
+		"delete": {deleteDrainedDataServerStatus: func(string) error { return metadataErr }},
+	} {
+		fake.Metadata = newTestMetadata(t, &proto.ClusterConfiguration{})
+		c := newNamespaceTestRuntime(t, fake)
+
+		assert.ErrorIs(t, c.DrainedDataServer("drained"), metadataErr, name)
+	}
+}
+
 func TestRuntimeCreateNamespaceReturnsStatusReadError(t *testing.T) {
 	server := &proto.DataServerIdentity{Public: "server:6648", Internal: "server:6649"}
 	namespace := &proto.Namespace{Name: "default", InitialShardCount: 2, ReplicationFactor: 1}
@@ -1344,6 +1400,23 @@ type fakeMetadata struct {
 	listNamespace         func() (map[string]commonobject.Borrowed[*proto.Namespace], error)
 	getNamespace          func(name string) (commonobject.Borrowed[*proto.Namespace], bool, error)
 	listDataServer        func() (map[string]commonobject.Borrowed[*proto.DataServer], error)
+	getDataServer         func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
+
+	deleteDrainedDataServerStatus func(name string) error
+}
+
+func (m *fakeMetadata) GetDataServer(name string) (commonobject.Borrowed[*proto.DataServer], bool, error) {
+	if m.getDataServer != nil {
+		return m.getDataServer(name)
+	}
+	return m.Metadata.GetDataServer(name)
+}
+
+func (m *fakeMetadata) DeleteDrainedDataServerStatus(name string) error {
+	if m.deleteDrainedDataServerStatus != nil {
+		return m.deleteDrainedDataServerStatus(name)
+	}
+	return m.Metadata.DeleteDrainedDataServerStatus(name)
 }
 
 func (m *fakeMetadata) GetConfig() (commonobject.Borrowed[*proto.ClusterConfiguration], error) {

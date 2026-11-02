@@ -202,6 +202,15 @@ func (c *runtime) DeleteDataServer(name string) {
 	nc.Drain()
 }
 
+func (c *runtime) DrainedDataServer(name string) error {
+	if _, configured, err := c.metadata.GetDataServer(name); err != nil {
+		return err
+	} else if configured {
+		return fmt.Errorf("%w: data server %q is in the configuration", errs.ErrFailedPrecondition, name)
+	}
+	return c.metadata.DeleteDrainedDataServerStatus(name)
+}
+
 func (c *runtime) RefreshShardControllers() {
 	c.Lock()
 	defer c.Unlock()

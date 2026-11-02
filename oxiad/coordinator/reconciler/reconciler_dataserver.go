@@ -16,6 +16,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/emirpasic/gods/v2/sets/hashset"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/common/dataserver"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
 	"github.com/oxia-db/oxia/oxiad/coordinator/runtime"
 )
 
@@ -101,9 +103,10 @@ func (r *dataServerReconciler) Reconcile(_ context.Context, snapshot *proto.Clus
 	return err
 }
 
-// deleteConfirmedDrained deletes the status of the data servers whose drain
-// the configuration confirms. A data server still in the configuration is
-// ignored, and one not DRAINED yet is left to a later pass.
+// deleteConfirmedDrained forgets the data servers whose drain the
+// configuration confirms. A data server still in the configuration is
+// ignored, one not DRAINED yet is left to a later pass, and one already
+// forgotten is skipped.
 func (r *dataServerReconciler) deleteConfirmedDrained(snapshot *proto.ClusterConfiguration) error {
 	var err error
 	for _, name := range snapshot.GetConfirmedDrainedDataServers() {
@@ -112,13 +115,13 @@ func (r *dataServerReconciler) deleteConfirmedDrained(snapshot *proto.ClusterCon
 				slog.String("data-server", name))
 			continue
 		}
-		deleted, deleteErr := r.runtime.Metadata().DeleteDrainedDataServerStatus(name)
-		if deleteErr != nil {
-			err = multierr.Append(err, deleteErr)
+		forgetErr := r.runtime.DrainedDataServer(name)
+		if forgetErr == nil {
+			slog.Info("Forgot a confirmed drained data server", slog.String("data-server", name))
 			continue
 		}
-		if deleted {
-			slog.Info("Deleted the status of a confirmed drained data server", slog.String("data-server", name))
+		if !errors.Is(forgetErr, errs.ErrNotFound) && !errors.Is(forgetErr, errs.ErrFailedPrecondition) {
+			err = multierr.Append(err, forgetErr)
 		}
 	}
 	return err

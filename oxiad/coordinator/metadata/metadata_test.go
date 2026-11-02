@@ -500,9 +500,6 @@ func TestMetadataReadsReturnStatusLoadError(t *testing.T) {
 			_, err := metadata.DeleteDataServer("s3")
 			return err
 		}},
-		{"DrainedDataServer", func(_ *testing.T, metadata Metadata) error {
-			return metadata.DrainedDataServer("s3")
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
@@ -921,16 +918,11 @@ func TestMetadataDeleteDrainedDataServerStatus(t *testing.T) {
 	metadata := newTestMetadata(t, statusProvider, configProvider, "")
 	version := loaded(t, statusProvider).Version
 
-	for _, name := range []string{"draining", "unknown"} {
-		deleted, err := metadata.DeleteDrainedDataServerStatus(name)
-		require.NoError(t, err)
-		require.False(t, deleted, name)
-	}
+	require.ErrorIs(t, metadata.DeleteDrainedDataServerStatus("draining"), errs.ErrFailedPrecondition)
+	require.ErrorIs(t, metadata.DeleteDrainedDataServerStatus("unknown"), errs.ErrNotFound)
 	require.Equal(t, version, loaded(t, statusProvider).Version, "nothing to delete: nothing is written")
 
-	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
-	require.NoError(t, err)
-	require.True(t, deleted)
+	require.NoError(t, metadata.DeleteDrainedDataServerStatus("drained"))
 
 	status := loaded(t, statusProvider).Value
 	require.NotContains(t, status.GetDataServers(), "drained")
@@ -1007,28 +999,6 @@ func TestMetadataCreateDataServerRemovesItsConfirmedDrain(t *testing.T) {
 // Only a drained data server that left the configuration is confirmed. A
 // confirmed one stays confirmed, without a write, also once its status is
 // deleted.
-func TestMetadataDrainedDataServer(t *testing.T) {
-	configProvider := newStoredConfigProvider(t, nil)
-	metadata := newTestMetadata(t, newDrainedStatusProvider(t), configProvider, "")
-
-	require.ErrorIs(t, metadata.DrainedDataServer("s1"), errs.ErrFailedPrecondition)
-	require.ErrorIs(t, metadata.DrainedDataServer("draining"), errs.ErrFailedPrecondition)
-	require.ErrorIs(t, metadata.DrainedDataServer("unknown"), errs.ErrNotFound)
-	require.Empty(t, loaded(t, configProvider).Value.GetAnnotations())
-
-	require.NoError(t, metadata.DrainedDataServer("drained"))
-	confirmed := loaded(t, configProvider)
-	require.Equal(t, []string{"drained"}, confirmed.Value.GetConfirmedDrainedDataServers())
-
-	require.NoError(t, metadata.DrainedDataServer("drained"))
-	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
-	require.NoError(t, err)
-	require.True(t, deleted)
-	require.NoError(t, metadata.DrainedDataServer("drained"))
-	require.Equal(t, confirmed.Version, loaded(t, configProvider).Version)
-}
-
-// A failed write reports that nothing was deleted.
 func TestMetadataDeleteDrainedDataServerStatusReturnsWriteError(t *testing.T) {
 	statusProvider := newDrainedStatusProvider(t)
 	metadata := newTestMetadata(t, fakeProvider[*commonproto.ClusterStatus]{
@@ -1036,9 +1006,7 @@ func TestMetadataDeleteDrainedDataServerStatusReturnsWriteError(t *testing.T) {
 		store:    failStore("store unavailable"),
 	}, newConfigProvider(), "")
 
-	deleted, err := metadata.DeleteDrainedDataServerStatus("drained")
-	require.ErrorContains(t, err, "store unavailable")
-	require.False(t, deleted)
+	require.ErrorContains(t, metadata.DeleteDrainedDataServerStatus("drained"), "store unavailable")
 	require.Contains(t, loaded(t, statusProvider).Value.GetDataServers(), "drained")
 }
 
