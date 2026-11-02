@@ -183,6 +183,12 @@ message NewTermResponse {
   // verifies that the term's negotiated feature set covers all of them
   // before proceeding with the election.
   repeated Feature features_enabled = 2;
+
+  // The commit offset of the node: its entries up to it, and up to its head
+  // entry, are committed. It doesn't move once the node is fenced, as the node
+  // doesn't apply any entry past it. The leader doesn't truncate the node below
+  // it. Absent when the node predates it.
+  optional int64 commit_offset = 3;
 }
 
 message BecomeLeaderRequest {
@@ -197,6 +203,11 @@ message BecomeLeaderRequest {
   // quorum support. This enables feature negotiation during leader election
   // to support safe rolling upgrades where new and old nodes can coexist.
   repeated Feature features_supported = 6;
+
+  // The commit offsets that the followers reported when they got fenced, by
+  // follower, see NewTermResponse.commit_offset. A follower is absent when it
+  // didn't report one.
+  map<string, int64> follower_commit_offsets = 7;
 }
 
 message AddFollowerRequest {
@@ -236,6 +247,10 @@ message AddFollowerRequest {
   // tells from the bounds of its range that it shares with the parent. Absent
   // when the request comes from a coordinator that predates it.
   optional io.oxia.proto.v1.Int32HashRange split_parent_hash_range = 10;
+
+  // The commit offset that the follower reported when it got fenced, see
+  // NewTermResponse.commit_offset. Absent when it didn't report one.
+  optional int64 follower_commit_offset = 11;
 }
 
 message FollowerFeatures {

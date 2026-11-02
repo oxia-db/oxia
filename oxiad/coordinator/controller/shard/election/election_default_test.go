@@ -72,10 +72,10 @@ func TestElectionFenceQuorumReturnsHeadEntries(t *testing.T) {
 		[]*proto.DataServerIdentity{s1, s2, s3}, &proto.EnsembleChangeMetadata{From: removed, To: s3})
 	require.NoError(t, err)
 	assert.Len(t, candidates, 2)
-	assert.EqualValues(t, 100, candidates[s1].GetOffset())
-	assert.EqualValues(t, 95, candidates[s2].GetOffset())
+	assert.EqualValues(t, 100, candidates[s1].HeadEntryId.GetOffset())
+	assert.EqualValues(t, 95, candidates[s2].HeadEntryId.GetOffset())
 	assert.Len(t, retainedHeads, 1)
-	assert.EqualValues(t, 101, retainedHeads[removed].GetOffset())
+	assert.EqualValues(t, 101, retainedHeads[removed].HeadEntryId.GetOffset())
 	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, features)
 }
 
@@ -462,8 +462,8 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 	s4 := testDataServer("s4")
 	for _, test := range []struct {
 		name          string
-		ensembleHeads sharding.HeadEntries
-		retainedHeads sharding.HeadEntries
+		ensembleHeads sharding.Candidates
+		retainedHeads sharding.Candidates
 		leader        *proto.DataServerIdentity
 		ensemble      []*proto.DataServerIdentity
 		changeFrom    *proto.DataServerIdentity
@@ -472,7 +472,7 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		followers     []*proto.DataServerIdentity
 	}{{
 		name:          "higher term wins over a higher offset",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 3, Offset: 1}, s3: {Term: 2, Offset: 9}, s4: {Term: 2, Offset: 4}},
+		ensembleHeads: sharding.Candidates{s1: candidate(3, 1), s3: candidate(2, 9), s4: candidate(2, 4)},
 		leader:        s1,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
 		changeFrom:    s2,
@@ -480,8 +480,8 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		followers:     []*proto.DataServerIdentity{s3, s4},
 	}, {
 		name:          "candidate ties with the retained data server",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}, s4: {Term: -1, Offset: -1}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.Candidates{s1: candidate(2, 5), s3: candidate(2, 4), s4: candidate(-1, -1)},
+		retainedHeads: sharding.Candidates{s2: candidate(2, 5)},
 		leader:        s1,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
 		changeFrom:    s2,
@@ -489,32 +489,32 @@ func TestElectionChooseLeaderChoosesHighestHeadEntry(t *testing.T) {
 		followers:     []*proto.DataServerIdentity{s3, s4},
 	}, {
 		name:          "to has the highest head entry",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 6}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.Candidates{s1: candidate(2, 5), s3: candidate(2, 4), s4: candidate(2, 6)},
+		retainedHeads: sharding.Candidates{s2: candidate(2, 5)},
 		leader:        s4,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s4},
 		pending:       []*proto.DataServerIdentity{s2},
 		followers:     []*proto.DataServerIdentity{s1, s3},
 	}, {
 		name:          "from ahead by offset",
-		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 1, Offset: 9}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.Candidates{s3: candidate(2, 4), s4: candidate(1, 9)},
+		retainedHeads: sharding.Candidates{s2: candidate(2, 5)},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
 		pending:       []*proto.DataServerIdentity{s4},
 		followers:     []*proto.DataServerIdentity{s3},
 	}, {
 		name:          "from ahead by term, to isn't the lowest",
-		ensembleHeads: sharding.HeadEntries{s3: {Term: 2, Offset: 4}, s4: {Term: 2, Offset: 9}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 3, Offset: 5}},
+		ensembleHeads: sharding.Candidates{s3: candidate(2, 4), s4: candidate(2, 9)},
+		retainedHeads: sharding.Candidates{s2: candidate(3, 5)},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
 		pending:       []*proto.DataServerIdentity{s4},
 		followers:     []*proto.DataServerIdentity{s3},
 	}, {
 		name:          "from ahead, to missed the fence",
-		ensembleHeads: sharding.HeadEntries{s1: {Term: 2, Offset: 4}, s3: {Term: 2, Offset: 3}},
-		retainedHeads: sharding.HeadEntries{s2: {Term: 2, Offset: 5}},
+		ensembleHeads: sharding.Candidates{s1: candidate(2, 4), s3: candidate(2, 3)},
+		retainedHeads: sharding.Candidates{s2: candidate(2, 5)},
 		leader:        s2,
 		ensemble:      []*proto.DataServerIdentity{s1, s3, s2},
 		pending:       []*proto.DataServerIdentity{s4},
@@ -544,7 +544,7 @@ func TestElectionChooseLeaderChoosesAmongTiedHeadEntries(t *testing.T) {
 	s1 := testDataServer("s1")
 	s2 := testDataServer("s2")
 	s3 := testDataServer("s3")
-	heads := sharding.HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 5}, s3: {Term: 2, Offset: 4}}
+	heads := sharding.Candidates{s1: candidate(2, 5), s2: candidate(2, 5), s3: candidate(2, 4)}
 	for _, test := range []struct {
 		name      string
 		preferred string
@@ -615,6 +615,59 @@ func TestElectionFenceNewTermAndAddFollowerReturnsAddFollowerError(t *testing.T)
 	assert.Equal(t, int64(3), request.GetFollowerHeadEntryId().GetOffset())
 }
 
+// The election hands the new leader the commit offsets that its followers
+// reported when they got fenced, and none for a follower that predates them.
+func TestElectionBecomeLeaderPassesTheCommitOffsetsOfTheFollowers(t *testing.T) {
+	named := func(name string) *proto.DataServerIdentity {
+		return &proto.DataServerIdentity{Name: &name, Internal: name + ":8191", Public: name + ":9091"}
+	}
+	s1 := named("s1")
+	s2 := named("s2")
+	s3 := named("s3")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+
+	rpc.GetNode(s1).NewTermResponseWithCommitOffset(1, 10, 8)
+	rpc.GetNode(s2).NewTermResponseWithCommitOffset(1, 9, 9)
+	rpc.GetNode(s3).NewTermResponse(1, 7, nil)
+
+	candidates, _, _, err := e.fenceQuorum(2, &proto.NewTermOptions{},
+		[]*proto.DataServerIdentity{s1, s2, s3}, nil)
+	require.NoError(t, err)
+	require.Len(t, candidates, 3)
+	assert.EqualValues(t, 8, *candidates[s1].CommitOffset)
+	assert.EqualValues(t, 9, *candidates[s2].CommitOffset)
+	assert.Nil(t, candidates[s3].CommitOffset)
+
+	leader, followers := e.chooseLeader(candidates, sharding.Candidates{})
+	require.Equal(t, s1, leader)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	require.NoError(t, e.becomeLeader(2, leader, followers, 3, nil))
+	// The leader knows its followers by their internal address
+	rpc.GetNode(s1).ExpectBecomeLeaderRequestWithCommitOffsets(t, 5, 2, map[string]int64{"s2:8191": 9})
+}
+
+// A follower that joins after the election hands the leader the commit offset
+// it reported when it got fenced, if any.
+func TestElectionFenceNewTermAndAddFollowerPassesTheCommitOffset(t *testing.T) {
+	leader := testDataServer("leader")
+	follower := testDataServer("follower")
+	rpc := rpctest.NewRpcProvider()
+	e := newTestElection(t, nil, rpc, 5, &proto.ShardMetadata{})
+
+	rpc.GetNode(follower).NewTermResponseWithCommitOffset(1, 3, 2)
+	rpc.GetNode(leader).AddFollowerResponse(nil)
+	require.NoError(t, e.fenceNewTermAndAddFollower(t.Context(), 2, &proto.NewTermOptions{}, leader, follower))
+	request := rpc.GetNode(leader).ExpectAddFollowerRequest(t, 5, 2)
+	require.NotNil(t, request.FollowerCommitOffset)
+	assert.EqualValues(t, 2, request.GetFollowerCommitOffset())
+
+	rpc.GetNode(follower).NewTermResponse(1, 3, nil)
+	rpc.GetNode(leader).AddFollowerResponse(nil)
+	require.NoError(t, e.fenceNewTermAndAddFollower(t.Context(), 2, &proto.NewTermOptions{}, leader, follower))
+	assert.Nil(t, rpc.GetNode(leader).ExpectAddFollowerRequest(t, 5, 2).FollowerCommitOffset)
+}
+
 // A follower that rejects the term of the election as invalid is in a newer
 // term already: the election stops trying to add it.
 func TestElectionFencingFailedFollowersStopsOnInvalidTerm(t *testing.T) {
@@ -628,7 +681,7 @@ func TestElectionFencingFailedFollowersStopsOnInvalidTerm(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		e.fencingFailedFollowers(2, &proto.NewTermOptions{}, []*proto.DataServerIdentity{leader, follower}, leader,
-			map[*proto.DataServerIdentity]*proto.EntryId{})
+			sharding.Candidates{})
 		close(done)
 	}()
 	requireClosed(t, done, "fencingFailedFollowers to stop")
@@ -955,6 +1008,10 @@ func testDataServer(id string) *proto.DataServerIdentity {
 
 // newTestElection creates an election of the shard, as its shard controller
 // does, that the test drives step by step.
+func candidate(term int64, offset int64) sharding.Candidate {
+	return sharding.Candidate{HeadEntryId: &proto.EntryId{Term: term, Offset: offset}}
+}
+
 func newTestElection(t *testing.T, metadata coordmetadata.Metadata, rpc coordrpc.ControllerRPCProvider, shard int64,
 	shardMeta *proto.ShardMetadata) *election {
 	t.Helper()

@@ -388,7 +388,9 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 	if err := lc.wal.Sync(lc.ctx); err != nil {
 		return nil, err
 	}
-	headEntryId, err := HeadEntryId(lc.wal, lc.db)
+	// The tracker is closed: the leader doesn't apply any entry past the commit
+	// offset of its database anymore
+	headEntryId, commitOffset, err := GetLogState(lc.wal, lc.db)
 	if err != nil {
 		return nil, err
 	}
@@ -399,11 +401,13 @@ func (lc *leaderController) newTerm(req *proto.NewTermRequest) (*proto.NewTermRe
 		"Leader successfully initialized in new term",
 		slog.Int64("term", lc.term.Load()),
 		slog.Any("last-entry", headEntryId),
+		slog.Int64("commit-offset", commitOffset),
 	)
 
 	return &proto.NewTermResponse{
 		HeadEntryId:     headEntryId,
 		FeaturesEnabled: lc.db.EnabledFeatures(),
+		CommitOffset:    &commitOffset,
 	}, nil
 }
 
@@ -469,7 +473,11 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
 
 	for follower, followerHeadEntryId := range req.FollowerMaps {
-		if err := lc.addFollower(follower, followerHeadEntryId); err != nil { //nolint:contextcheck
+		var followerCommitOffset *int64
+		if commitOffset, ok := req.FollowerCommitOffsets[follower]; ok {
+			followerCommitOffset = &commitOffset
+		}
+		if err := lc.addFollower(follower, followerHeadEntryId, followerCommitOffset); err != nil { //nolint:contextcheck
 			return err
 		}
 	}
@@ -670,7 +678,7 @@ func (lc *leaderController) AddFollower(req *proto.AddFollowerRequest) (*proto.A
 		return nil, errors.New("all followers are already attached")
 	}
 
-	if err := lc.addFollower(req.FollowerName, req.FollowerHeadEntryId); err != nil {
+	if err := lc.addFollower(req.FollowerName, req.FollowerHeadEntryId, req.FollowerCommitOffset); err != nil {
 		return nil, err
 	}
 
@@ -779,9 +787,11 @@ func (lc *leaderController) Freeze(req *proto.FreezeShardRequest) (*proto.Freeze
 	return &proto.FreezeShardResponse{HeadOffset: headOffset}, nil
 }
 
-func (lc *leaderController) addFollower(follower string, followerHeadEntryId *proto.EntryId) error {
+func (lc *leaderController) addFollower(follower string, followerHeadEntryId *proto.EntryId,
+	followerCommitOffset *int64) error {
 	term := lc.term.Load()
-	truncatedHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, lc.shardId, followerHeadEntryId)
+	truncatedHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, lc.shardId, followerHeadEntryId,
+		followerCommitOffset)
 	if err != nil {
 		lc.log.Warn(
 			"Failed to truncate follower",
@@ -827,7 +837,9 @@ func (lc *leaderController) addFollower(follower string, followerHeadEntryId *pr
 
 func (lc *leaderController) addObserver(observerKey string, follower string, followerHeadEntryId *proto.EntryId,
 	targetShardId int64, splitHashRange *proto.Int32HashRange, splitParentHashRange *proto.Int32HashRange) error {
-	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, targetShardId, followerHeadEntryId)
+	// The commit offset of an observer is of the shard it observes for, not of
+	// the leader's
+	followerHeadEntryId, err := lc.truncateFollowerIfNeeded(follower, targetShardId, followerHeadEntryId, nil)
 	if err != nil {
 		lc.log.Error(
 			"Failed to truncate observer follower",
@@ -909,7 +921,9 @@ func (lc *leaderController) applyAllEntriesIntoDB() error {
 	return nil
 }
 
-func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId int64, followerHeadEntryId *proto.EntryId) (*proto.EntryId, error) {
+//nolint:revive // cyclomatic complexity justified by the sequential cases
+func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId int64, followerHeadEntryId *proto.EntryId,
+	followerCommitOffset *int64) (*proto.EntryId, error) {
 	term := lc.term.Load()
 	lc.log.Debug(
 		"Needs truncation?",
@@ -917,7 +931,15 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		slog.String("follower", follower),
 		slog.Any("leader-head-entry", lc.leaderElectionHeadEntryId),
 		slog.Any("follower-head-entry", followerHeadEntryId),
+		slog.Any("follower-commit-offset", followerCommitOffset),
 	)
+	if followerCommitOffset != nil && *followerCommitOffset > lc.quorumAckTracker.HeadOffset() {
+		// The leader has every committed entry: one that misses entries the
+		// follower knows to be committed must not lead, or they'd get lost
+		return nil, errors.Wrapf(constant.ErrResourceConflict,
+			"the follower has committed entries the leader doesn't have. follower-commit-offset: %d - leader-head-offset: %d",
+			*followerCommitOffset, lc.quorumAckTracker.HeadOffset())
+	}
 	if followerHeadEntryId.Term == wal.InvalidTerm {
 		// There is nothing to truncate in the empty wal of the follower. If it
 		// was seeded from a snapshot, it reports the snapshot's commit offset,
@@ -960,6 +982,40 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 			slog.Any("follower-head-entry", followerHeadEntryId),
 		)
 		return followerHeadEntryId, nil
+	}
+
+	if followerCommitOffset != nil {
+		followerCommittedOffset := min(*followerCommitOffset, followerHeadEntryId.Offset)
+		if followerCommittedOffset > lastEntryInFollowerTerm.Offset {
+			leaderFirstOffset := lc.wal.FirstOffset()
+			// The leader streams the follower from its next entry, if its wal has it
+			followerNextOffset := followerCommittedOffset + 1
+			if followerNextOffset < leaderFirstOffset {
+				lc.log.Info(
+					"Follower is behind the wal of the leader, sending a snapshot",
+					slog.Int64("term", term),
+					slog.String("follower", follower),
+					slog.Any("follower-head-entry", followerHeadEntryId),
+					slog.Int64("follower-commit-offset", *followerCommitOffset),
+					slog.Int64("wal-first-offset", leaderFirstOffset),
+				)
+				return constant2.InvalidEntryId, nil
+			}
+			if followerHeadEntryId.Offset == followerCommittedOffset {
+				return followerHeadEntryId, nil
+			}
+			lastEntryInFollowerTerm = &proto.EntryId{Term: wal.InvalidTerm, Offset: followerCommittedOffset}
+		}
+	} else if lastEntryInFollowerTerm.Offset == wal.InvalidOffset && lc.wal.FirstOffset() != 0 &&
+		lc.quorumAckTracker.CommitOffset() != wal.InvalidOffset {
+		lc.log.Info(
+			"Follower is behind the wal of the leader, sending a snapshot",
+			slog.Int64("term", term),
+			slog.String("follower", follower),
+			slog.Any("follower-head-entry", followerHeadEntryId),
+			slog.Int64("wal-first-offset", lc.wal.FirstOffset()),
+		)
+		return constant2.InvalidEntryId, nil
 	}
 
 	tr, err := lc.rpcClient.Truncate(follower, &proto.TruncateRequest{
@@ -1702,27 +1758,19 @@ func getLastEntryIdInWal(walObject wal.Wal) (*proto.EntryId, error) {
 	return &proto.EntryId{Term: entry.Term, Offset: entry.Offset}, nil
 }
 
-// HeadEntryId returns the head entry that a node reports when it gets fenced
-// with a new term: the leader election picks the node with the highest one, by
-// term and then by offset. It's the last entry of the wal, except for a node
-// seeded from a snapshot, whose wal is empty while its database holds the
-// entries up to the snapshot's commit offset. The term of those entries is not
-// known: the node reports the offset with an invalid term, which ranks it above
-// the nodes that hold fewer entries, or none, and below every node with entries
-// in its wal.
-func HeadEntryId(walObject wal.Wal, db database.DB) (*proto.EntryId, error) {
-	headEntryId, err := getLastEntryIdInWal(walObject)
-	if err != nil || headEntryId.Offset != wal.InvalidOffset {
-		return headEntryId, err
-	}
+func GetLogState(walObject wal.Wal, db database.DB) (*proto.EntryId, int64, error) {
 	commitOffset, err := db.ReadCommitOffset()
-	switch {
-	case err != nil:
-		return nil, err
-	case commitOffset == wal.InvalidOffset:
-		return headEntryId, nil
+	if err != nil {
+		return nil, wal.InvalidOffset, err
 	}
-	return &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}, nil
+	headEntryId, err := getLastEntryIdInWal(walObject)
+	if err != nil {
+		return nil, wal.InvalidOffset, err
+	}
+	if headEntryId.Offset == wal.InvalidOffset && commitOffset != wal.InvalidOffset {
+		headEntryId = &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}
+	}
+	return headEntryId, commitOffset, nil
 }
 
 // CommitOffset is the offset of the last entry applied to the database, rather

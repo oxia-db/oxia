@@ -23,24 +23,24 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
-func TestHeadEntriesLogValueGroupsByName(t *testing.T) {
+func TestCandidatesLogValueGroupsByName(t *testing.T) {
 	name := "s1"
 	entryId := &proto.EntryId{Term: 2, Offset: 5}
-	value := HeadEntries{{Name: &name, Public: "s1:9091", Internal: "s1:8191"}: entryId}.LogValue()
+	value := Candidates{{Name: &name, Public: "s1:9091", Internal: "s1:8191"}: {HeadEntryId: entryId}}.LogValue()
 
 	assert.Equal(t, slog.KindGroup, value.Kind())
 	assert.Equal(t, []slog.Attr{slog.Any("s1", entryId)}, value.Group())
 }
 
-func TestHeadEntriesMoveMovesHeadEntry(t *testing.T) {
+func TestCandidatesMoveMovesCandidate(t *testing.T) {
 	s1 := &proto.DataServerIdentity{Public: "s1", Internal: "s1"}
 	s2 := &proto.DataServerIdentity{Public: "s2", Internal: "s2"}
 	s3 := &proto.DataServerIdentity{Public: "s3", Internal: "s3"}
-	from := HeadEntries{s1: {Term: 2, Offset: 5}, s2: {Term: 2, Offset: 4}}
-	to := HeadEntries{s3: {Term: 1, Offset: 9}}
+	from := Candidates{s1: {HeadEntryId: &proto.EntryId{Term: 2, Offset: 5}}, s2: {HeadEntryId: &proto.EntryId{Term: 2, Offset: 4}}}
+	to := Candidates{s3: {HeadEntryId: &proto.EntryId{Term: 1, Offset: 9}}}
 
 	from.Move(s1, to)
 
-	assert.Equal(t, HeadEntries{s2: {Term: 2, Offset: 4}}, from)
-	assert.Equal(t, HeadEntries{s3: {Term: 1, Offset: 9}, s1: {Term: 2, Offset: 5}}, to)
+	assert.Equal(t, Candidates{s2: {HeadEntryId: &proto.EntryId{Term: 2, Offset: 4}}}, from)
+	assert.Equal(t, Candidates{s3: {HeadEntryId: &proto.EntryId{Term: 1, Offset: 9}}, s1: {HeadEntryId: &proto.EntryId{Term: 2, Offset: 5}}}, to)
 }
