@@ -76,15 +76,19 @@ func TestSchedulerKeepsRunningWhenTheMetadataCloses(t *testing.T) {
 	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "1h"}
 	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r", "n0")}})
 	s := start(t, metadata)
-	// The first round fails, so the next one waits the interval
-	(<-s.GetActions()).Error(errors.New("not ready"))
+	// The next round finds nothing to move, so the one after waits the interval
+	change := (<-s.GetActions()).(*action.ChangeEnsembleAction)
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities(change.To.GetInternal(), "n0")}})
+	change.Done(nil)
 	require.True(t, metadata.subscribed())
+	require.Never(t, func() bool { return len(s.GetActions()) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{2: {Ensemble: identities("r", "n0")}})
 	require.NoError(t, metadata.configCache.Close())
 
 	select {
 	case ac := <-s.GetActions():
-		assert.Equal(t, int64(1), ac.GetShard())
+		assert.Equal(t, int64(2), ac.GetShard())
 	case <-time.After(5 * time.Second):
 		assert.Fail(t, "the scheduler stopped when the metadata closed")
 	}
@@ -144,14 +148,31 @@ func TestSchedulerRunsTheNextRoundRightAwayAfterItsActionsSucceed(t *testing.T) 
 	}
 }
 
-func TestSchedulerWaitsTheIntervalAfterAFailedAction(t *testing.T) {
+func TestSchedulerBacksOffTheShardOfAFailedAction(t *testing.T) {
 	metadata := newFakeMetadata(t)
 	metadata.config.LoadBalancer = &proto.LoadBalancer{ScheduleInterval: "1h"}
 	metadata.setShards("a", map[int64]*proto.ShardMetadata{1: {Ensemble: identities("r", "n0")}})
 	s := start(t, metadata)
+	failed := <-s.GetActions()
 
-	(<-s.GetActions()).Error(errors.New("not ready"))
+	// The next round runs right away, and moves shard 2 but not shard 1
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{
+		1: {Ensemble: identities("r", "n0")},
+		2: {Ensemble: identities("r", "n0")},
+	})
+	failed.Error(errors.New("not ready"))
+	var change *action.ChangeEnsembleAction
+	select {
+	case ac := <-s.GetActions():
+		change = ac.(*action.ChangeEnsembleAction)
+		assert.Equal(t, int64(2), change.Shard)
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "a failed action holds the other shards")
+	}
 
+	// Shard 1 is deleted: its failure is forgotten, and nothing is left to move
+	metadata.setShards("a", map[int64]*proto.ShardMetadata{2: {Ensemble: identities(change.To.GetInternal(), "n0")}})
+	change.Done(nil)
 	assert.Never(t, func() bool { return len(s.GetActions()) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 }
 

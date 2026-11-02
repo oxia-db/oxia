@@ -30,8 +30,9 @@ func TestBlockedReportsTheReplicasThatNoDataServerCanTake(t *testing.T) {
 		"single": {Shards: map[int64]*stats.ShardStats{1: {Ensemble: []string{"r"}}}},
 		"zones": {AntiAffinities: []*proto.AntiAffinity{{Labels: []string{"zone"}}},
 			Shards: map[int64]*stats.ShardStats{2: {Ensemble: []string{"r", "n0"}}}},
-		"frozen": {Shards: map[int64]*stats.ShardStats{3: {Ensemble: []string{"r", "n0"}, Changing: true}}},
-		"free":   {Shards: map[int64]*stats.ShardStats{4: {Ensemble: []string{"r", "n0"}}}},
+		"frozen":  {Shards: map[int64]*stats.ShardStats{3: {Ensemble: []string{"r", "n0"}, Changing: true}}},
+		"backoff": {Shards: map[int64]*stats.ShardStats{5: {Ensemble: []string{"r"}, BackingOff: true}}},
+		"free":    {Shards: map[int64]*stats.ShardStats{4: {Ensemble: []string{"r", "n0"}}}},
 	}
 
 	assert.Equal(t, []model.Blocked{

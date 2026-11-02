@@ -35,4 +35,7 @@ func TestFrozenRejectsAFrozenShard(t *testing.T) {
 
 	s.Namespaces["a"].Shards[1].Changing, s.Namespaces["a"].Shards[1].Splitting = false, true
 	assert.ErrorIs(t, Frozen{}.Filter(s, move("n0", "n2")), errs.ErrFailedPrecondition)
+
+	s.Namespaces["a"].Shards[1].Splitting, s.Namespaces["a"].Shards[1].BackingOff = false, true
+	assert.ErrorIs(t, Frozen{}.Filter(s, move("n0", "n2")), errs.ErrUnavailable)
 }

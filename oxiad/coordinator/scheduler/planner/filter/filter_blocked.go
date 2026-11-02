@@ -28,7 +28,7 @@ import (
 // data server of a zone, with an anti-affinity on the zone. The reason is the
 // error of the filter that rejects the first data server that could otherwise
 // take the replica. It ignores the limits of a plan, and skips the shards that
-// a change or a split holds.
+// a change, a split or a backoff holds.
 func Blocked(filters []Filter, s *stats.ClusterStats) []model.Blocked {
 	dataServers := slices.Sorted(maps.Keys(s.DataServers))
 	var blocked []model.Blocked
@@ -38,7 +38,7 @@ func Blocked(filters []Filter, s *stats.ClusterStats) []model.Blocked {
 			shard := ns.Shards[id]
 		replicas:
 			for _, from := range shard.Ensemble {
-				if shard.Changing || shard.Splitting || !s.DataServers[from].Removed {
+				if shard.Changing || shard.Splitting || shard.BackingOff || !s.DataServers[from].Removed {
 					continue
 				}
 				op := model.Candidate{Namespace: name, Shard: id, From: from}

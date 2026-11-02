@@ -29,6 +29,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/collector"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/dispatcher"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
@@ -50,6 +51,9 @@ type scheduler struct {
 	planner    planner.Planner
 	dispatcher dispatcher.Dispatcher
 	collector  *collector.Collector
+	// failures holds when an op of each shard last failed, for the shards that
+	// back off; only the goroutine of the rounds uses it.
+	failures map[int64]time.Time
 
 	splitsCounter metric.Counter
 }
@@ -68,6 +72,7 @@ func New(ctx context.Context, metadata coordmetadata.Metadata, running func(name
 		planner:    p,
 		dispatcher: dispatcher.New(ctx, running, actions),
 		collector:  collector.New(ctx, metadata, running, provider),
+		failures:   make(map[int64]time.Time),
 		splitsCounter: metric.NewCounter("oxia_coordinator_autosplit_splits_initiated_total",
 			"Auto-splits started", "count", map[string]any{}),
 	}
@@ -125,6 +130,7 @@ func (s *scheduler) run() {
 			s.logger.Warn("Failed to read the cluster, retrying next round", slog.Any("error", err))
 			continue
 		}
+		s.backOff(snap, now, cluster.GetLoadBalancer().GetScheduleIntervalDurationOrDefault())
 		actions, blocked := s.planner.Plan(snap)
 		if len(actions) == 0 {
 			// The splits come last: sample the stats only once nothing else
@@ -135,13 +141,13 @@ func (s *scheduler) run() {
 		for _, replica := range blocked {
 			s.logger.Warn("A replica on a removed data server is blocked", slog.Any("replica", replica))
 		}
-		succeeded := true
 		for _, result := range s.dispatcher.Dispatch(snap, actions) {
 			_, splitting := result.Action.(*action.SplitAction)
 			switch {
 			case result.Err != nil:
-				s.logger.Warn("An action failed", slog.Any("action", result.Action), slog.Any("error", result.Err))
-				succeeded = false
+				s.logger.Warn("An action failed, its shard backs off", slog.Any("action", result.Action),
+					slog.Any("error", result.Err))
+				s.failures[result.Action.GetShard()] = now
 			case splitting:
 				s.collector.SetLastSplit(now)
 				s.splitsCounter.Inc()
@@ -149,10 +155,23 @@ func (s *scheduler) run() {
 			}
 		}
 		// The next round plans on the snapshot that these actions leave, right
-		// away if all of them succeeded: a failed one waits the interval, or
-		// the next round would retry it in a busy loop
-		if succeeded && len(actions) > 0 {
+		// away: the shard of a failed one backs off, or the next round would
+		// retry it in a busy loop
+		if len(actions) > 0 {
 			interval = 0
 		}
+	}
+}
+
+// backOff marks the shards of snap whose op failed less than interval before
+// now, so that the plan leaves them, and forgets the other failures.
+func (s *scheduler) backOff(snap *stats.ClusterStats, now time.Time, interval time.Duration) {
+	for id, failed := range s.failures {
+		shard := snap.GetShard(id)
+		if shard == nil || now.Sub(failed) >= interval {
+			delete(s.failures, id)
+			continue
+		}
+		shard.BackingOff = true
 	}
 }

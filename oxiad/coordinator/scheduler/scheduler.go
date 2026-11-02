@@ -67,10 +67,11 @@ import (
 // server down doesn't hold the other shards, and the dispatch checks them
 // again before it sends an op. A single goroutine runs the rounds. A round
 // waits for its ops, which the metadata shows once they are done, so the next
-// round plans on the cluster they leave; it runs right away if they all
-// succeeded, and waits the schedule interval after a failure. A shard
-// controller completes or fails every action it takes, so the wait has no
-// timeout.
+// round plans on the cluster they leave; it runs right away. The shard of a
+// failed op backs off for the schedule interval: the next rounds plan around
+// it, so that a failure holds neither the other shards nor a busy loop. A
+// shard controller completes or fails every action it takes, so the wait has
+// no timeout.
 //
 // Nobody calls the scheduler: New starts it, its owner closes it, and its only
 // output is GetActions. It runs the first round right away, then a round on

@@ -15,10 +15,13 @@
 package stats
 
 type ShardStats struct {
-	Ensemble   []string
-	Leader     string
-	Changing   bool
-	Splitting  bool
+	Ensemble  []string
+	Leader    string
+	Changing  bool
+	Splitting bool
+	// BackingOff is set by the scheduler, not read from the metadata: an op
+	// of the shard failed within the schedule interval.
+	BackingOff bool
 	Splittable bool
 	Overshoot  float64
 }
