@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package planner
+package algorithm
 
 import (
 	"fmt"
@@ -20,8 +20,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/oxia-db/oxia/common/proto"
+
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
 // n0 has two leaders and n3 none, and each other data server one: only a path
@@ -32,9 +35,8 @@ func TestLeaderGraphFindPathPassesALeaderAlongThreeDataServers(t *testing.T) {
 	addShard(s, "x", 1, "n0", "n1").Leader = "n0"
 	addShard(s, "y", 2, "n1", "n2").Leader = "n1"
 	addShard(s, "z", 3, "n2", "n3").Leader = "n2"
-	pl := newPlan(s)
 
-	path := newLeaderGraph(pl, filter.Defaults()).findPath(pl)
+	path := NewLeaderGraph(s, names(s), filter.Defaults()).FindPath(tier.NewLoad(s), allowAll)
 
 	assert.Equal(t, []string{"3 n2->n3 total-leaders", "2 n1->n2 total-leaders", "1 n0->n1 total-leaders"},
 		describePath(path))
@@ -50,9 +52,8 @@ func TestLeaderGraphFindPathStartsFromTheNextDataServers(t *testing.T) {
 	addShard(s, "w", 3, "n1").Leader = "n1"
 	addShard(s, "y", 4, "n1", "n3").Leader = "n1"
 	addShard(s, "z", 5, "n3", "n2").Leader = "n3"
-	pl := newPlan(s)
 
-	path := newLeaderGraph(pl, filter.Defaults()).findPath(pl)
+	path := NewLeaderGraph(s, names(s), filter.Defaults()).FindPath(tier.NewLoad(s), allowAll)
 
 	assert.Equal(t, []string{"5 n3->n2 total-leaders", "4 n1->n3 total-leaders"}, describePath(path))
 }
@@ -65,9 +66,37 @@ func TestLeaderGraphFindPathKeepsTheNamespacesBalanced(t *testing.T) {
 	addShard(s, "x", 1, "n0", "n1").Leader = "n0"
 	addShard(s, "x", 2, "n1").Leader = "n1"
 	addShard(s, "y", 3, "n1", "n2").Leader = "n2"
-	pl := newPlan(s)
 
-	assert.Nil(t, newLeaderGraph(pl, filter.Defaults()).findPath(pl))
+	assert.Nil(t, NewLeaderGraph(s, names(s), filter.Defaults()).FindPath(tier.NewLoad(s), allowAll))
+}
+
+// n0 and n1 share zone a, so no shard has both: within namespace a, n2 passes
+// a leader to n1, and n0 one to n2.
+func TestLeaderGraphFindPathEvensOutANamespaceFirst(t *testing.T) {
+	s := cluster(3)
+	for name, zone := range map[string]string{"n0": "a", "n1": "a", "n2": "b"} {
+		s.DataServers[name].Metadata = &proto.DataServerMetadata{Labels: map[string]string{"zone": zone}}
+	}
+	addShard(s, "a", 1, "n0", "n2").Leader = "n0"
+	addShard(s, "a", 2, "n0", "n2").Leader = "n0"
+	addShard(s, "a", 3, "n1", "n2").Leader = "n2"
+	s.Namespaces["a"].AntiAffinities = []*proto.AntiAffinity{{Labels: []string{"zone"}, Mode: "strict"}}
+
+	path := NewLeaderGraph(s, names(s), filter.Defaults()).FindPath(tier.NewLoad(s), allowAll)
+
+	assert.Equal(t, []string{"3 n2->n1 namespace-leaders", "1 n0->n2 namespace-leaders"}, describePath(path))
+}
+
+// The plan already targets n2: the only path, through n2, is blocked.
+func TestLeaderGraphFindPathSkipsTheTransfersThatTheLimitsBlock(t *testing.T) {
+	s := cluster(4)
+	addShard(s, "w", 0, "n0").Leader = "n0"
+	addShard(s, "x", 1, "n0", "n1").Leader = "n0"
+	addShard(s, "y", 2, "n1", "n2").Leader = "n1"
+	addShard(s, "z", 3, "n2", "n3").Leader = "n2"
+	allows := func(op model.Candidate) bool { return op.To != "n2" }
+
+	assert.Nil(t, NewLeaderGraph(s, names(s), filter.Defaults()).FindPath(tier.NewLoad(s), allows))
 }
 
 // A removed data server leads no counted leader: no path starts from it.
@@ -75,9 +104,8 @@ func TestLeaderGraphSkipsTheTransfersOfARemovedDataServer(t *testing.T) {
 	s := cluster(2)
 	removed(s, "r")
 	addShard(s, "x", 1, "r", "n0").Leader = "r"
-	pl := newPlan(s)
 
-	assert.Empty(t, newLeaderGraph(pl, filter.Defaults()).out)
+	assert.Empty(t, NewLeaderGraph(s, names(s), filter.Defaults()).out)
 }
 
 // describePath names each transfer of path by its shard, its source and

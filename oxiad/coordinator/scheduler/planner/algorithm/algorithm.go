@@ -12,61 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package planner
+// Package algorithm holds the searches of the planner: the greedy search of the
+// single best op, and the paths of leader transfers. They read the snapshot,
+// the load that the ops planned so far leave, and the limits of the plan.
+package algorithm
 
 import (
-	"cmp"
 	"maps"
 	"slices"
 
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
-
-// shardGreedy plans the ops of a phase one at a time: each time, the single op
-// that ranks first among those that the limits of the plan allow and the
-// filters pass.
-type shardGreedy struct {
-	phase   phase
-	filters []filter.Filter
-}
-
-func newShardGreedy(ph phase, filters []filter.Filter) *shardGreedy {
-	return &shardGreedy{phase: ph, filters: filters}
-}
-
-// findBest returns the op of the phase that the limits of pl allow, that the
-// filters pass and that ranks first: by its score, then moving a follower
-// before the leader, then the first in the order of the names, so that a plan
-// is the same every time.
-func (g *shardGreedy) findBest(pl *plan) (model.Candidate, bool) {
-	ph := g.phase
-	var bestOp model.Candidate
-	var bestScore tier.Score
-	bestLeader, found := 0, false
-	forEachCandidate(pl.clusterStats, pl.dataServerNames, ph.kind, func(op model.Candidate, shard *stats.ShardStats) {
-		if !pl.allows(op) || filter.Check(g.filters, pl.clusterStats, op) != nil {
-			return
-		}
-		sc := tier.Evaluate(ph.tiers, pl.clusterStats, pl.dataServerLoad, op)
-		if sc.Improved < 0 {
-			return
-		}
-		leader := 0
-		if op.From == shard.Leader {
-			leader = 1
-		}
-		if !found || cmp.Or(sc.Compare(bestScore), cmp.Compare(leader, bestLeader)) < 0 {
-			bestOp, bestScore, bestLeader, found = op, sc, leader, true
-		}
-	})
-	if found {
-		bestOp.Reason = ph.tiers[bestScore.Improved].GetName()
-	}
-	return bestOp, found
-}
 
 // forEachCandidate yields every op of kind with its shard: for a replace,
 // every member of a shard replaced with every data server; for a transfer,

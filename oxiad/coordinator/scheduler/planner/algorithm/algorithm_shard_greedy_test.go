@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package planner
+package algorithm
 
 import (
 	"testing"
@@ -22,8 +22,8 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
-	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
 // n0 and n1 hold two replicas each and n2 none: a replica moves to n2, from a
@@ -33,7 +33,7 @@ func TestShardGreedyFindBestPicksTheBestOp(t *testing.T) {
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
 	addShard(s, "a", 2, "n0", "n1").Leader = "n0"
 
-	c, found := replaceGreedy().findBest(newPlan(s))
+	c, found := replaceGreedy().FindBest(s, tier.NewLoad(s), names(s), allowAll)
 
 	require.True(t, found)
 	assert.Equal(t, model.Candidate{Kind: model.Replace, Namespace: "a", Shard: 1, From: "n1", To: "n2",
@@ -45,14 +45,17 @@ func TestShardGreedyFindBestSkipsTheOpsThatTheLimitsBlock(t *testing.T) {
 	s := cluster(4)
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
 	addShard(s, "a", 2, "n0", "n1").Leader = "n0"
-	g, pl := replaceGreedy(), newPlan(s)
+	g, load := replaceGreedy(), tier.NewLoad(s)
+	shards, targets := map[int64]bool{}, map[string]bool{}
+	allows := func(op model.Candidate) bool { return !shards[op.Shard] && !targets[op.To] }
 
-	first, found := g.findBest(pl)
+	first, found := g.FindBest(s, load, names(s), allows)
 	require.True(t, found)
 	assert.Equal(t, "n2", first.To)
-	pl.add(first)
+	shards[first.Shard], targets[first.To] = true, true
+	load.Move(s, first)
 
-	second, found := g.findBest(pl)
+	second, found := g.FindBest(s, load, names(s), allows)
 	require.True(t, found)
 	assert.Equal(t, "n3", second.To)
 	assert.NotEqual(t, first.Shard, second.Shard)
@@ -69,7 +72,7 @@ func TestShardGreedyFindBestSkipsTheOpsThatAFilterRejects(t *testing.T) {
 	addShard(s, "a", 2, "n0", "n1").Leader = "n1"
 	s.Namespaces["a"].AntiAffinities = []*proto.AntiAffinity{{Labels: []string{"zone"}}}
 
-	c, found := replaceGreedy().findBest(newPlan(s))
+	c, found := replaceGreedy().FindBest(s, tier.NewLoad(s), names(s), allowAll)
 
 	require.True(t, found)
 	assert.Equal(t, "n1", c.From)
@@ -80,29 +83,19 @@ func TestShardGreedyFindBestFindsNothingOnceBalanced(t *testing.T) {
 	s := cluster(2)
 	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
 
-	_, found := replaceGreedy().findBest(newPlan(s))
+	_, found := replaceGreedy().FindBest(s, tier.NewLoad(s), names(s), allowAll)
 
 	assert.False(t, found)
 }
 
-func TestForEachCandidateYieldsEveryOpOfAKind(t *testing.T) {
-	s := cluster(3)
-	addShard(s, "a", 1, "n0", "n1").Leader = "n0"
-	collect := func(kind model.Kind) []string {
-		var ops []string
-		forEachCandidate(s, []string{"n0", "n1", "n2"}, kind, func(op model.Candidate, _ *stats.ShardStats) {
-			ops = append(ops, op.From+">"+op.To)
-		})
-		return ops
-	}
-
-	assert.Equal(t, []string{"n0>n0", "n0>n1", "n0>n2", "n1>n0", "n1>n1", "n1>n2"}, collect(model.Replace))
-	assert.Equal(t, []string{"n0>n1"}, collect(model.TransferLeader))
-	assert.Equal(t, []string{">"}, collect(model.Split))
-}
-
 // replaceGreedy returns the greedy search of the replaces, with the default
 // filters and tiers.
-func replaceGreedy() *shardGreedy {
-	return newShardGreedy(defaultPlanner().phases[0], filter.Defaults())
+func replaceGreedy() *ShardGreedy {
+	var tiers []tier.Tier
+	for _, t := range tier.Defaults() {
+		if t.GetKind() == model.Replace {
+			tiers = append(tiers, t)
+		}
+	}
+	return NewShardGreedy(model.Replace, tiers, filter.Defaults())
 }

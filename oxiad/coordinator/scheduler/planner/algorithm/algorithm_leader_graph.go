@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package planner
+package algorithm
 
 import (
 	"cmp"
@@ -25,7 +25,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
 
-// leaderGraph holds the leader transfers of a plan that the filters allow, by
+// LeaderGraph holds the leader transfers of a plan that the filters allow, by
 // their source, to pass a leader on through other data servers when no
 // transfer evens out the leaders alone. E.g. with an anti-affinity on the
 // zone, two data servers of a zone never share a shard: a leader moves from
@@ -34,7 +34,7 @@ import (
 // The filters only read the snapshot, so the graph is built once per plan;
 // the limits of the plan, which its ops change, are checked during each
 // search.
-type leaderGraph struct {
+type LeaderGraph struct {
 	out        map[string][]model.Candidate
 	namespaces []string
 	// dataServers holds the data servers that can lead, in the order of their
@@ -42,19 +42,20 @@ type leaderGraph struct {
 	dataServers []string
 }
 
-// newLeaderGraph returns the graph of the transfers of pl that filters pass.
-func newLeaderGraph(pl *plan, filters []filter.Filter) *leaderGraph {
-	g := &leaderGraph{
+// NewLeaderGraph returns the graph of the transfers of s that filters pass,
+// between dataServers, the names of the data servers in order.
+func NewLeaderGraph(s *stats.ClusterStats, dataServers []string, filters []filter.Filter) *LeaderGraph {
+	g := &LeaderGraph{
 		out:        make(map[string][]model.Candidate),
-		namespaces: slices.Sorted(maps.Keys(pl.clusterStats.Namespaces)),
-		dataServers: slices.DeleteFunc(slices.Clone(pl.dataServerNames), func(name string) bool {
-			return pl.clusterStats.DataServers[name].Removed
+		namespaces: slices.Sorted(maps.Keys(s.Namespaces)),
+		dataServers: slices.DeleteFunc(slices.Clone(dataServers), func(name string) bool {
+			return s.DataServers[name].Removed
 		}),
 	}
-	forEachCandidate(pl.clusterStats, pl.dataServerNames, model.TransferLeader,
+	forEachCandidate(s, dataServers, model.TransferLeader,
 		func(op model.Candidate, _ *stats.ShardStats) {
 			// The load doesn't count the leaders of a removed data server
-			if pl.clusterStats.DataServers[op.From].Removed || filter.Check(filters, pl.clusterStats, op) != nil {
+			if s.DataServers[op.From].Removed || filter.Check(filters, s, op) != nil {
 				return
 			}
 			g.out[op.From] = append(g.out[op.From], op)
@@ -62,7 +63,8 @@ func newLeaderGraph(pl *plan, filters []filter.Filter) *leaderGraph {
 	return g
 }
 
-// findPath returns the transfers of the shortest path that moves a leader from
+// FindPath returns the transfers, under the limits that allows checks, of the
+// shortest path that moves a leader from
 // a data server to one with at least two fewer, through data servers whose
 // counts it leaves as they are, or nil. It evens out the leaders of each
 // namespace first, then of all of them, in the order of the tiers.
@@ -73,11 +75,10 @@ func newLeaderGraph(pl *plan, filters []filter.Filter) *leaderGraph {
 // they even out the leaders of the tier, and leave every namespace at least as
 // even: a run of k transfers of one namespace moves one of its leaders from a
 // data server to one that has k fewer.
-func (g *leaderGraph) findPath(pl *plan) []model.Candidate {
-	l := pl.dataServerLoad
+func (g *LeaderGraph) FindPath(l *tier.Load, allows func(model.Candidate) bool) []model.Candidate {
 	for _, namespace := range g.namespaces {
 		counts := l.GetLeaders(namespace)
-		path := g.search(pl, counts, func(op model.Candidate) bool {
+		path := g.search(allows, counts, func(op model.Candidate) bool {
 			return op.Namespace == namespace && counts[op.From] == counts[op.To]+1
 		})
 		if path != nil {
@@ -85,7 +86,7 @@ func (g *leaderGraph) findPath(pl *plan) []model.Candidate {
 		}
 	}
 	total := l.GetTotalLeaders()
-	path := g.search(pl, total, func(op model.Candidate) bool {
+	path := g.search(allows, total, func(op model.Candidate) bool {
 		counts := l.GetLeaders(op.Namespace)
 		return counts[op.From] == counts[op.To]+1 && total[op.From] <= total[op.To]+1
 	})
@@ -95,7 +96,7 @@ func (g *leaderGraph) findPath(pl *plan) []model.Candidate {
 // search returns the shortest path of transfers that allowed lets through,
 // from the data servers with the most counts to one with at least two fewer,
 // or from the next ones if none is reachable, or nil.
-func (g *leaderGraph) search(pl *plan, counts map[string]int, allowed func(model.Candidate) bool) []model.Candidate {
+func (g *LeaderGraph) search(allows func(model.Candidate) bool, counts map[string]int, allowed func(model.Candidate) bool) []model.Candidate {
 	levels := make([]int, 0, len(g.dataServers))
 	for _, name := range g.dataServers {
 		levels = append(levels, counts[name])
@@ -107,7 +108,7 @@ func (g *leaderGraph) search(pl *plan, counts map[string]int, allowed func(model
 		if top-levels[len(levels)-1] < 2 {
 			break
 		}
-		if path := g.bfs(pl, counts, top, allowed); path != nil {
+		if path := g.bfs(allows, counts, top, allowed); path != nil {
 			return path
 		}
 	}
@@ -117,7 +118,7 @@ func (g *leaderGraph) search(pl *plan, counts map[string]int, allowed func(model
 // bfs returns the shortest path of transfers that allowed lets through, from a
 // data server with top counts to one with at most top-2, from the target
 // back to the source, or nil.
-func (g *leaderGraph) bfs(pl *plan, counts map[string]int, top int, allowed func(model.Candidate) bool) []model.Candidate {
+func (g *LeaderGraph) bfs(allows func(model.Candidate) bool, counts map[string]int, top int, allowed func(model.Candidate) bool) []model.Candidate {
 	parents := make(map[string]model.Candidate)
 	visited := make(map[string]bool)
 	var queue []string
@@ -131,7 +132,7 @@ func (g *leaderGraph) bfs(pl *plan, counts map[string]int, top int, allowed func
 		from := queue[0]
 		queue = queue[1:]
 		for _, op := range g.out[from] {
-			if visited[op.To] || !pl.allows(op) || !allowed(op) {
+			if visited[op.To] || !allows(op) || !allowed(op) {
 				continue
 			}
 			visited[op.To] = true

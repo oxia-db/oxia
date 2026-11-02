@@ -26,6 +26,7 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator/action"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
+	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/algorithm"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/filter"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner/tier"
 )
@@ -62,10 +63,10 @@ func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked)
 	pl := newPlan(s)
 	for i, ph := range p.phases {
 		planned := 0
-		greedy := newShardGreedy(ph, p.filters)
-		var leaders *leaderGraph
+		greedy := algorithm.NewShardGreedy(ph.kind, ph.tiers, p.filters)
+		var leaders *algorithm.LeaderGraph
 		for {
-			if c, found := greedy.findBest(pl); found {
+			if c, found := greedy.FindBest(s, pl.dataServerLoad, pl.dataServerNames, pl.allows); found {
 				pl.add(c)
 				planned++
 				continue
@@ -74,9 +75,9 @@ func (p *planner) Plan(s *stats.ClusterStats) ([]action.Action, []model.Blocked)
 				break
 			}
 			if leaders == nil {
-				leaders = newLeaderGraph(pl, p.filters)
+				leaders = algorithm.NewLeaderGraph(s, pl.dataServerNames, p.filters)
 			}
-			path := leaders.findPath(pl)
+			path := leaders.FindPath(pl.dataServerLoad, pl.allows)
 			if path == nil {
 				break
 			}
