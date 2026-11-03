@@ -49,6 +49,20 @@ func TestRuntimeNewStartsTheBackupSchedulerWhenTheProviderServesBackups(t *testi
 	rt := r.(*runtime)
 	assert.NotNil(t, rt.backupScheduler, "the scheduler runs when the provider serves the backup calls")
 	assert.False(t, rt.isDataServerRunning("unknown"))
+	// A data server runs for the backups once it answers its health checks,
+	// until it drains
+	running := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	running.status.SetAvailable(true)
+	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+	draining.status.SetAvailable(true)
+	rt.Lock()
+	rt.dataServerControllers["running"] = running
+	rt.dataServerControllers["draining"] = draining
+	rt.dataServerControllers["unreachable"] = newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	rt.Unlock()
+	assert.True(t, rt.isDataServerRunning("running"))
+	assert.False(t, rt.isDataServerRunning("draining"))
+	assert.False(t, rt.isDataServerRunning("unreachable"))
 
 	plain, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
 	require.NoError(t, err)
