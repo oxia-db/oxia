@@ -73,14 +73,14 @@ func (j *cleanupJob) run(ctx context.Context) (cleanupResult, error) {
 	if err := j.expireManifests(ctx, expired, &result); err != nil {
 		return result, err
 	}
-	for _, shard := range shards {
-		live := make([]backup.Summary, 0, len(all))
-		for _, s := range all {
-			if _, gone := expired[s.ManifestKey()]; s.Shard == shard.Shard && !gone {
-				live = append(live, s)
-			}
+	live := map[int64][]backup.Summary{}
+	for _, s := range all {
+		if _, gone := expired[s.ManifestKey()]; !gone {
+			live[s.Shard] = append(live[s.Shard], s)
 		}
-		if err := j.sweepShard(ctx, shard, live, &result); err != nil {
+	}
+	for _, shard := range shards {
+		if err := j.sweepShard(ctx, shard, live[shard.Shard], &result); err != nil {
 			return result, err
 		}
 	}
