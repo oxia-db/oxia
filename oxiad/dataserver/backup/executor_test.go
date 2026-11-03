@@ -542,16 +542,6 @@ func TestExecutorForgetsAFinishedJobNobodyReports(t *testing.T) {
 	assert.NotEqual(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State, "the result is gone")
 }
 
-// collectBackups lists through the executor and gathers every backup sent.
-func collectBackups(ctx context.Context, e *Executor, req *proto.ListBackupsRequest) ([]*proto.BackupInfo, error) {
-	var all []*proto.BackupInfo
-	err := e.ListBackups(ctx, req, func(res *proto.ListBackupsResponse) error {
-		all = append(all, res.GetBackups()...)
-		return nil
-	})
-	return all, err
-}
-
 func TestExecutorListBackupsSendsOneMessagePerShard(t *testing.T) {
 	host := newFakeHost(t)
 	host.addShard(1, map[string][]byte{"MANIFEST-000001": []byte("m")})
@@ -588,4 +578,46 @@ func TestExecutorListBackupsSendsOneMessagePerShard(t *testing.T) {
 	errStop := errors.New("stop")
 	req.NewestAtOrBeforeMillis = nil
 	assert.ErrorIs(t, e.ListBackups(t.Context(), req, func(*proto.ListBackupsResponse) error { return errStop }), errStop)
+}
+
+func TestListShardsReturnsTheShardsWithBackupsOrTheOneGiven(t *testing.T) {
+	store := blob.NewMemory()
+	host := newFakeHost(t)
+	host.addShard(1, map[string][]byte{"MANIFEST-000001": []byte("m")})
+	host.addShard(2, map[string][]byte{"MANIFEST-000001": []byte("m")})
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	backupSeries(t, store, host, 1, start, time.Hour, 2)
+	backupSeries(t, store, host, 2, start, time.Hour, 1)
+
+	all, err := listShards(context.Background(), store, "ns", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []backup.ShardPath{{Namespace: "ns", Shard: 1}, {Namespace: "ns", Shard: 2}}, all)
+	shard := int64(7)
+	one, err := listShards(context.Background(), store, "ns", &shard)
+	require.NoError(t, err)
+	assert.Equal(t, []backup.ShardPath{{Namespace: "ns", Shard: 7}}, one, "the shard given, backups or not")
+	none, err := listShards(context.Background(), store, "other", nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+func TestNewestAtOrBeforeKeepsOneBackup(t *testing.T) {
+	at := func(hour int) backup.Summary {
+		t := time.Date(2026, 10, 1, hour, 0, 0, 0, time.UTC)
+		return backup.Summary{Namespace: "ns", Shard: 1, ID: backup.NewID(t, "abcd"), CreatedAt: t}
+	}
+	summaries := []backup.Summary{at(1), at(3), at(2)}
+	assert.Equal(t, []backup.Summary{at(2)}, newestAtOrBefore(summaries, time.Date(2026, 10, 1, 2, 30, 0, 0, time.UTC)))
+	assert.Equal(t, []backup.Summary{at(3)}, newestAtOrBefore(summaries, time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC)), "at the time counts")
+	assert.Nil(t, newestAtOrBefore(summaries, time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)))
+}
+
+// collectBackups lists through the executor and gathers every backup sent.
+func collectBackups(ctx context.Context, e *Executor, req *proto.ListBackupsRequest) ([]*proto.BackupInfo, error) {
+	var all []*proto.BackupInfo
+	err := e.ListBackups(ctx, req, func(res *proto.ListBackupsResponse) error {
+		all = append(all, res.GetBackups()...)
+		return nil
+	})
+	return all, err
 }

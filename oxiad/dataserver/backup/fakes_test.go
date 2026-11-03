@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxiad/backup"
+	"github.com/oxia-db/oxia/oxiad/backup/blob"
 
 	// The "mem://" destinations of the tests.
 	_ "github.com/oxia-db/oxia/oxiad/backup/blob/blobtest"
@@ -286,4 +288,33 @@ func readObject(ctx context.Context, t *testing.T, store interface {
 
 func fullRange() *proto.HashRange {
 	return &proto.HashRange{Min: backup.FullRange.Min, Max: backup.FullRange.Max}
+}
+
+// backupSeries takes a backup of the shard every interval from start, count
+// times, with the store stamping the objects at the backup's time.
+func backupSeries(t *testing.T, store *blob.Memory, host *fakeHost, shard int64, start time.Time,
+	interval time.Duration, count int) []*LastBackup {
+	t.Helper()
+	record := &Record{Lineage: "l" + strings.Repeat("0", 14) + string(rune('a'+shard))}
+	var backups []*LastBackup
+	for i := range count {
+		now := start.Add(time.Duration(i) * interval)
+		store.SetClock(func() time.Time { return now })
+		host.write(shard, "00000"+string(rune('1'+i))+".sst", []byte(strings.Repeat("x", 100*(i+1))))
+		last, err := runBackup(t, store, host, shard, record, testPolicy(), now)
+		require.NoError(t, err)
+		record.LastBackup = last
+		backups = append(backups, last)
+	}
+	return backups
+}
+
+func manifestKeys(store *blob.Memory) []string {
+	var keys []string
+	for _, key := range store.Keys() {
+		if strings.HasSuffix(key, ".json") {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
