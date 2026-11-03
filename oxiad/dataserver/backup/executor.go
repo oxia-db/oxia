@@ -452,7 +452,7 @@ func newestAtOrBefore(summaries []backup.Summary, t time.Time) []backup.Summary 
 		if s.StartedAt().After(t) {
 			continue
 		}
-		if newest == nil || s.Newer(*newest) {
+		if newest == nil || s.Compare(*newest) > 0 {
 			newest = s
 		}
 	}
