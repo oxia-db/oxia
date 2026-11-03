@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/backup"
 	"github.com/oxia-db/oxia/oxiad/backup/blob"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
@@ -35,12 +36,12 @@ import (
 
 const eventually = 10 * time.Second
 
-func newTestExecutor(t *testing.T, host *fakeHost, clock *testClock) (*Executor, string, *blob.Memory) {
+func newTestExecutor(t *testing.T, host *fakeHost, clock *commontime.MockedClock) (*Executor, string, *blob.Memory) {
 	t.Helper()
 	destination := "mem://" + t.Name()
 	store := blob.SharedMemory(t.Name())
 	store.SetClock(clock.Now)
-	e := New(Options{Host: host, Clock: clock.Now, ReadCheckpoint: host.readCheckpoint})
+	e := New(Options{Host: host, Clock: clock, ReadCheckpoint: host.readCheckpoint})
 	t.Cleanup(func() { assert.NoError(t, e.Close()) })
 	return e, destination, store
 }
@@ -108,7 +109,7 @@ func TestExecutorBackupShardFollowsThePolicyAcrossRequests(t *testing.T) {
 	first := awaitBackup(t, e, req)
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, first.State)
 
-	clock.Advance(2 * time.Hour)
+	advance(clock, 2*time.Hour)
 	res, err := e.BackupShard(t.Context(), req)
 	require.NoError(t, err)
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED, res.State, "unchanged since the last backup")
@@ -138,7 +139,7 @@ func TestExecutorBackupShardStartsANewLineageWhenTheRecordIsGone(t *testing.T) {
 
 	// A snapshot install replaces the database directory, record included
 	host.shards[1].dir = t.TempDir()
-	clock.Advance(time.Hour)
+	advance(clock, time.Hour)
 	second := awaitBackup(t, e, req)
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, second.State)
 	assert.NotEqual(t, first.LastBackup.Lineage, second.LastBackup.Lineage)
@@ -529,7 +530,7 @@ func TestExecutorForgetsAFinishedJobNobodyReports(t *testing.T) {
 
 	// The shard moved away: nobody asks about it again. Another job's
 	// admission, after the retention, forgets its result
-	clock.Advance(finishedJobRetention + time.Second)
+	advance(clock, finishedJobRetention+time.Second)
 	res, err = e.BackupShard(t.Context(), backupRequest(destination, 2))
 	require.NoError(t, err)
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)

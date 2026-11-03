@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/backup"
 	"github.com/oxia-db/oxia/oxiad/backup/blob"
 
@@ -224,26 +225,16 @@ func (*fakeSnapshot) Chunk() (kvstore.SnapshotChunk, error) {
 }
 func (s *fakeSnapshot) Close() error { return os.RemoveAll(s.dir) }
 
-// testClock is a clock the tests advance.
-type testClock struct {
-	mu  sync.Mutex
-	now time.Time
+// newTestClock returns a clock the tests set, at a fixed start.
+func newTestClock() *commontime.MockedClock {
+	clock := &commontime.MockedClock{}
+	clock.Set(time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC).UnixMilli())
+	return clock
 }
 
-func newTestClock() *testClock {
-	return &testClock{now: time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC)}
-}
-
-func (c *testClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *testClock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
+// advance moves the clock forward by d.
+func advance(clock *commontime.MockedClock, d time.Duration) {
+	clock.Set(clock.Now().Add(d).UnixMilli())
 }
 
 // sstFiles returns checkpoint files: count SSTs of random-ish content, and

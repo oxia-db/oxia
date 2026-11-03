@@ -24,13 +24,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oxia-db/oxia/oxiad/dataserver/database"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/backup"
 	"github.com/oxia-db/oxia/oxiad/backup/blob"
+	"github.com/oxia-db/oxia/oxiad/dataserver/database"
 )
 
 // runBackup takes a backup of the shard of the host at the clock's time, on
@@ -54,7 +54,7 @@ func runBackup(t *testing.T, store blob.Store, host *fakeHost, shard int64, reco
 		hashRange:       backup.FullRange,
 		namespaceConfig: json.RawMessage(`{"name":"ns"}`),
 		now:             now,
-		clock:           time.Now,
+		clock:           commontime.SystemClock,
 		reuseWindow:     p.reuseWindow(DefaultGracePeriod),
 		uploadWorkers:   2,
 	}
@@ -246,7 +246,7 @@ func TestBackupJobRunFailsWhenCanceled(t *testing.T) {
 	cancel()
 	j := &backupJob{store: store, path: backup.ShardPath{Namespace: "ns", Shard: 1}, checkpoint: checkpoint,
 		record: &Record{Lineage: "abcd"}, policy: testPolicy(), hashRange: backup.FullRange, now: time.Now(),
-		clock: time.Now, reuseWindow: time.Hour, uploadWorkers: 2}
+		clock: commontime.SystemClock, reuseWindow: time.Hour, uploadWorkers: 2}
 	_, err = j.run(ctx)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Empty(t, manifestKeys(store))
@@ -270,7 +270,7 @@ func checkpointJob(t *testing.T, store blob.Store, dir string) *backupJob {
 		hashRange:       backup.FullRange,
 		namespaceConfig: json.RawMessage(`{"name":"ns"}`),
 		now:             time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC),
-		clock:           time.Now,
+		clock:           commontime.SystemClock,
 		reuseWindow:     time.Hour,
 		uploadWorkers:   2,
 	}

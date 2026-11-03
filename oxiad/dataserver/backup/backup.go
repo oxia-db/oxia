@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/backup"
 	"github.com/oxia-db/oxia/oxiad/backup/blob"
 	"github.com/oxia-db/oxia/oxiad/dataserver/database"
@@ -46,7 +47,7 @@ type backupJob struct {
 	// namespaceConfig is recorded in the manifest, see backup.Manifest.
 	namespaceConfig json.RawMessage
 	now             time.Time
-	clock           func() time.Time
+	clock           commontime.Clock
 	// reuseWindow is how old the last backup can be for the job to share its
 	// SSTs, see policy.reuseWindow.
 	reuseWindow   time.Duration
@@ -131,7 +132,7 @@ func (j *backupJob) run(ctx context.Context) (*LastBackup, error) {
 		Term:           manifest.Term,
 		SizeBytes:      manifest.Summary().SizeBytes,
 		UploadedBytes:  uploadedBytes,
-		DurationMillis: j.clock().Sub(started).Milliseconds(),
+		DurationMillis: j.clock.Now().Sub(started).Milliseconds(),
 		SSTs:           manifest.SSTs,
 	}, nil
 }

@@ -27,6 +27,7 @@ import (
 
 	"github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/backup"
 	"github.com/oxia-db/oxia/oxiad/backup/blob"
 
@@ -71,8 +72,8 @@ type Host interface {
 // Options configures an Executor. Only Host is required.
 type Options struct {
 	Host Host
-	// Clock is the time source, for the tests.
-	Clock func() time.Time
+	// Clock is the time source: commontime.SystemClock unless set.
+	Clock commontime.Clock
 	// ReadCheckpoint reads the commit offset and the term of a checkpoint
 	// from its files: database.ReadCheckpoint unless set, for the tests.
 	ReadCheckpoint func(path string) (commitOffset int64, term int64, err error)
@@ -92,7 +93,7 @@ type Options struct {
 // request that follows its end reads its result.
 type Executor struct {
 	host           Host
-	clock          func() time.Time
+	clock          commontime.Clock
 	readCheckpoint func(path string) (commitOffset int64, term int64, err error)
 	grace          time.Duration
 	uploadWorkers  int
@@ -153,7 +154,7 @@ func New(options Options) *Executor {
 		e.readCheckpoint = database.ReadCheckpoint
 	}
 	if e.clock == nil {
-		e.clock = time.Now
+		e.clock = commontime.SystemClock
 	}
 	if e.grace <= 0 {
 		e.grace = DefaultGracePeriod
@@ -281,7 +282,7 @@ func (e *Executor) BackupShard(_ context.Context, req *proto.BackupShardRequest)
 	if err != nil {
 		return nil, err
 	}
-	if !req.GetForce() && !backupNeeded(record.LastBackup, commitOffset, p, e.clock()) {
+	if !req.GetForce() && !backupNeeded(record.LastBackup, commitOffset, p, e.clock.Now()) {
 		return &proto.BackupShardResponse{
 			State:      proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED,
 			LastBackup: recordProto(record),
@@ -356,7 +357,7 @@ func (e *Executor) runBackup(ctx context.Context, req *proto.BackupShardRequest,
 		policy:          p,
 		hashRange:       backup.Range{Min: req.GetHashRange().GetMin(), Max: req.GetHashRange().GetMax()},
 		namespaceConfig: namespaceConfig,
-		now:             e.clock(),
+		now:             e.clock.Now(),
 		clock:           e.clock,
 		reuseWindow:     p.reuseWindow(e.grace),
 		uploadWorkers:   e.uploadWorkers,
@@ -526,7 +527,7 @@ func (e *Executor) start(key jobKey, limit int, fn func(ctx context.Context) (an
 	e.wg.Go(func() {
 		result, err := fn(e.ctx)
 		e.mu.Lock()
-		j.result, j.err, j.finishedAt = result, err, e.clock()
+		j.result, j.err, j.finishedAt = result, err, e.clock.Now()
 		e.running--
 		e.mu.Unlock()
 		close(j.done)
@@ -537,7 +538,7 @@ func (e *Executor) start(key jobKey, limit int, fn func(ctx context.Context) (an
 // forgetStaleJobs drops the finished jobs that no request reported within
 // finishedJobRetention, under mu.
 func (e *Executor) forgetStaleJobs() {
-	cutoff := e.clock().Add(-finishedJobRetention)
+	cutoff := e.clock.Now().Add(-finishedJobRetention)
 	for key, j := range e.jobs {
 		select {
 		case <-j.done:
