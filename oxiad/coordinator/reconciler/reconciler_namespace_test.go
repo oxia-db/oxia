@@ -929,6 +929,6 @@ func (*mockNamespaceRuntime) RequestBackup(string, *int64) (int, error) {
 	return 0, coordruntime.ErrBackupsUnsupported
 }
 
-func (*mockNamespaceRuntime) ListBackups(context.Context, string, *int64, string, func(*proto.ListBackupsResponse) error) error {
+func (*mockNamespaceRuntime) ListBackups(context.Context, *proto.ListBackupsRequest, func(*proto.ListBackupsResponse) error) error {
 	return coordruntime.ErrBackupsUnsupported
 }

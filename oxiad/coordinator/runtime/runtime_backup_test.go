@@ -68,7 +68,8 @@ func (p *backupRPCProvider) ListBackups(_ context.Context, node *proto.DataServe
 // every backup sent.
 func collectBackups(r Runtime, destination string) ([]*proto.BackupInfo, error) {
 	var all []*proto.BackupInfo
-	err := r.ListBackups(context.Background(), "ns", nil, destination, func(res *proto.ListBackupsResponse) error {
+	req := &proto.ListBackupsRequest{Namespace: "ns", Destination: destination}
+	err := r.ListBackups(context.Background(), req, func(res *proto.ListBackupsResponse) error {
 		all = append(all, res.GetBackups()...)
 		return nil
 	})
@@ -192,6 +193,12 @@ func TestRuntimeListBackupsGoesThroughARunningDataServer(t *testing.T) {
 	require.NoError(t, err)
 	provider.mu.Lock()
 	assert.Equal(t, "s3://other", provider.listReq.GetDestination(), "the destination given")
+	provider.mu.Unlock()
+	cutoff := int64(1791037507000)
+	require.NoError(t, r.ListBackups(context.Background(), &proto.ListBackupsRequest{Namespace: "ns",
+		NewestAtOrBeforeMillis: &cutoff}, func(*proto.ListBackupsResponse) error { return nil }))
+	provider.mu.Lock()
+	assert.Equal(t, cutoff, provider.listReq.GetNewestAtOrBeforeMillis(), "the request reaches the data server as asked")
 	provider.listErr = errors.New("bucket unavailable")
 	provider.mu.Unlock()
 	_, err = collectBackups(r, "")

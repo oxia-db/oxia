@@ -573,7 +573,7 @@ func (management *ManagementServer) ListBackups(req *proto.ListBackupsRequest, s
 	if err != nil {
 		return err
 	}
-	if err := runtime.ListBackups(stream.Context(), req.GetNamespace(), req.Shard, req.GetDestination(), stream.Send); err != nil {
+	if err := runtime.ListBackups(stream.Context(), req, stream.Send); err != nil {
 		return backupError(err)
 	}
 	return nil

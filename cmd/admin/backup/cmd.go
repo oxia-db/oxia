@@ -15,11 +15,13 @@
 package backup
 
 import (
+	"io"
+	"strconv"
+
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/backup/list"
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	cc "github.com/oxia-db/oxia/cmd/client/common"
 	"github.com/oxia-db/oxia/oxia"
 )
 
@@ -49,6 +51,13 @@ type Result struct {
 }
 
 func exec(cmd *cobra.Command, _ []string) error {
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
+		return err
+	}
 	client, err := commons.AdminConfig.NewAdminClient()
 	if err != nil {
 		return err
@@ -65,6 +74,14 @@ func exec(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	cc.WriteOutput(cmd.OutOrStdout(), Result{Shards: shards})
-	return nil
+	return writeResult(cmd.OutOrStdout(), outputFormat, Result{Shards: shards})
+}
+
+// writeResult writes the result in the output format: a table, or JSON or
+// YAML.
+func writeResult(out io.Writer, format string, result Result) error {
+	if commons.NormalizeOutputFormat(format) != commons.OutputTable {
+		return commons.WriteStructuredOutput(out, format, result)
+	}
+	return commons.WriteTable(out, []string{"SHARDS"}, [][]string{{strconv.FormatUint(uint64(result.Shards), 10)}})
 }

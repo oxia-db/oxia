@@ -15,12 +15,14 @@
 package list
 
 import (
+	"fmt"
+	"io"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	cc "github.com/oxia-db/oxia/cmd/client/common"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 )
@@ -65,6 +67,13 @@ type Result struct {
 }
 
 func exec(cmd *cobra.Command, _ []string) error {
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
+		return err
+	}
 	client, err := commons.AdminConfig.NewAdminClient()
 	if err != nil {
 		return err
@@ -81,8 +90,25 @@ func exec(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	cc.WriteOutput(cmd.OutOrStdout(), toResult(backups))
-	return nil
+	return writeBackups(cmd.OutOrStdout(), outputFormat, backups)
+}
+
+// writeBackups writes the backups in the output format: a table, or the
+// result as JSON or YAML.
+func writeBackups(out io.Writer, format string, backups []*proto.BackupInfo) error {
+	result := toResult(backups)
+	if commons.NormalizeOutputFormat(format) != commons.OutputTable {
+		return commons.WriteStructuredOutput(out, format, result)
+	}
+	rows := make([][]string, 0, len(result.Backups))
+	for _, b := range result.Backups {
+		rows = append(rows, []string{strconv.FormatInt(b.Shard, 10), b.BackupID, b.Time,
+			strconv.FormatInt(b.CommitOffset, 10), strconv.FormatInt(b.Term, 10),
+			fmt.Sprintf("%d-%d", b.HashRangeMin, b.HashRangeMax), strconv.FormatUint(b.SizeBytes, 10),
+			strconv.FormatUint(uint64(b.SSTCount), 10)})
+	}
+	return commons.WriteTable(out, []string{"SHARD", "BACKUP ID", "TIME", "COMMIT OFFSET", "TERM", "HASH RANGE",
+		"SIZE", "SSTS"}, rows)
 }
 
 func toResult(backups []*proto.BackupInfo) Result {
@@ -91,7 +117,7 @@ func toResult(backups []*proto.BackupInfo) Result {
 		result.Backups = append(result.Backups, Backup{
 			Shard:        b.GetShard(),
 			BackupID:     b.GetBackupId(),
-			Time:         time.UnixMilli(b.GetTimestampMillis()).UTC().Format(time.RFC3339),
+			Time:         time.UnixMilli(b.GetTimestampMillis()).UTC().Format(time.RFC3339Nano),
 			CommitOffset: b.GetCommitOffset(),
 			Term:         b.GetTerm(),
 			HashRangeMin: b.GetHashRange().GetMin(),

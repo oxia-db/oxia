@@ -1867,7 +1867,7 @@ func (*testRuntime) RequestBackup(string, *int64) (int, error) {
 	return 0, coordruntime.ErrBackupsUnsupported
 }
 
-func (*testRuntime) ListBackups(context.Context, string, *int64, string, func(*proto.ListBackupsResponse) error) error {
+func (*testRuntime) ListBackups(context.Context, *proto.ListBackupsRequest, func(*proto.ListBackupsResponse) error) error {
 	return coordruntime.ErrBackupsUnsupported
 }
 
@@ -1875,16 +1875,16 @@ func (*testRuntime) ListBackups(context.Context, string, *int64, string, func(*p
 type backupTestRuntime struct {
 	*testRuntime
 	requestBackup func(namespace string, shard *int64) (int, error)
-	listBackups   func(namespace string, shard *int64, destination string, visit func(*proto.ListBackupsResponse) error) error
+	listBackups   func(req *proto.ListBackupsRequest, visit func(*proto.ListBackupsResponse) error) error
 }
 
 func (r *backupTestRuntime) RequestBackup(namespace string, shard *int64) (int, error) {
 	return r.requestBackup(namespace, shard)
 }
 
-func (r *backupTestRuntime) ListBackups(_ context.Context, namespace string, shard *int64, destination string,
+func (r *backupTestRuntime) ListBackups(_ context.Context, req *proto.ListBackupsRequest,
 	visit func(*proto.ListBackupsResponse) error) error {
-	return r.listBackups(namespace, shard, destination, visit)
+	return r.listBackups(req, visit)
 }
 
 // listBackupsStream collects what the admin service sends.
@@ -1908,8 +1908,9 @@ func TestManagementServerBackupOperations(t *testing.T) {
 	runtime := &backupTestRuntime{
 		testRuntime:   &testRuntime{metadata: metadata},
 		requestBackup: func(string, *int64) (int, error) { return 3, nil },
-		listBackups: func(namespace string, _ *int64, destination string, visit func(*proto.ListBackupsResponse) error) error {
-			return visit(&proto.ListBackupsResponse{Backups: []*proto.BackupInfo{{Shard: 7, BackupId: namespace + "@" + destination}}})
+		listBackups: func(req *proto.ListBackupsRequest, visit func(*proto.ListBackupsResponse) error) error {
+			return visit(&proto.ListBackupsResponse{Backups: []*proto.BackupInfo{{Shard: 7,
+				BackupId: req.GetNamespace() + "@" + req.GetDestination(), TimestampMillis: req.GetNewestAtOrBeforeMillis()}}})
 		},
 	}
 	management := newReadyManagementServer(metadata, runtime)
@@ -1918,9 +1919,12 @@ func TestManagementServerBackupOperations(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, requested.GetShards())
 	listed := &listBackupsStream{}
-	require.NoError(t, management.ListBackups(&proto.ListBackupsRequest{Namespace: "ns", Destination: "s3://b"}, listed))
+	cutoff := int64(1791037507000)
+	require.NoError(t, management.ListBackups(&proto.ListBackupsRequest{Namespace: "ns", Destination: "s3://b",
+		NewestAtOrBeforeMillis: &cutoff}, listed))
 	require.Len(t, listed.backups, 1)
 	assert.Equal(t, "ns@s3://b", listed.backups[0].GetBackupId())
+	assert.Equal(t, cutoff, listed.backups[0].GetTimestampMillis(), "the request reaches the runtime as it is")
 
 	// The errors of the runtime map to gRPC codes
 	for name, test := range map[string]struct {
@@ -1933,7 +1937,7 @@ func TestManagementServerBackupOperations(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			runtime.requestBackup = func(string, *int64) (int, error) { return 0, test.err }
-			runtime.listBackups = func(string, *int64, string, func(*proto.ListBackupsResponse) error) error { return test.err }
+			runtime.listBackups = func(*proto.ListBackupsRequest, func(*proto.ListBackupsResponse) error) error { return test.err }
 			_, err := management.RequestBackup(context.Background(), &proto.RequestBackupRequest{Namespace: "ns"})
 			assert.Equal(t, test.code, grpcstatus.Code(err))
 			err = management.ListBackups(&proto.ListBackupsRequest{Namespace: "ns"}, &listBackupsStream{})

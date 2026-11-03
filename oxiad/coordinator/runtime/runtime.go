@@ -66,9 +66,8 @@ type Runtime interface {
 	// returns how many. It returns ErrBackupsUnsupported when the RPC
 	// provider has no OxiaBackup service.
 	RequestBackup(namespace string, shard *int64) (int, error)
-	// ListBackups lists the backups of a namespace, or of one of its shards,
-	// at the destination of the policy or the given one, through a running
-	// data server: a message per shard, given to visit as they arrive.
-	ListBackups(ctx context.Context, namespace string, shard *int64, destination string,
-		visit func(*proto.ListBackupsResponse) error) error
+	// ListBackups lists the backups the request asks for, at its destination
+	// or at the one of the policy when it names none, through a running data
+	// server: a message per shard, given to visit as they arrive.
+	ListBackups(ctx context.Context, req *proto.ListBackupsRequest, visit func(*proto.ListBackupsResponse) error) error
 }

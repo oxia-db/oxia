@@ -82,13 +82,18 @@ func (c *runtime) RequestBackup(namespace string, shard *int64) (int, error) {
 	return c.backupScheduler.RequestBackup(namespace, shard), nil
 }
 
-func (c *runtime) ListBackups(ctx context.Context, namespace string, shard *int64, destination string,
+func (c *runtime) ListBackups(ctx context.Context, req *proto.ListBackupsRequest,
 	visit func(*proto.ListBackupsResponse) error) error {
-	backupRPC, node, destination, err := c.backupCaller(destination)
+	backupRPC, node, destination, err := c.backupCaller(req.GetDestination())
 	if err != nil {
 		return err
 	}
-	req := &proto.ListBackupsRequest{Destination: destination, Namespace: namespace, Shard: shard}
+	req = &proto.ListBackupsRequest{
+		Destination:            destination,
+		Namespace:              req.GetNamespace(),
+		Shard:                  req.Shard,
+		NewestAtOrBeforeMillis: req.NewestAtOrBeforeMillis,
+	}
 	if err := backupRPC.ListBackups(ctx, node, req, visit); err != nil {
 		return fmt.Errorf("list the backups through %s: %w", node.GetNameOrDefault(), err)
 	}
