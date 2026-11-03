@@ -39,8 +39,9 @@ const recordFileName = "oxia-backup.json"
 type Record struct {
 	Lineage string `json:"lineage"`
 	// Destination is where the last backup went. The record of another
-	// destination is the record of no backup: the SSTs it lists are not
-	// there.
+	// destination is the record of no backup, and of no lineage: the SSTs
+	// it lists are not there, and the keys of its lineage may hold the
+	// files of the backups at the old destination.
 	Destination string      `json:"destination,omitempty"`
 	LastBackup  *LastBackup `json:"last_backup,omitempty"`
 }
@@ -83,21 +84,17 @@ func readRecord(dir string) (*Record, bool, error) {
 }
 
 // loadRecord returns the record of the database in dir, for the backups to
-// destination: a new lineage when there is none, and the record of another
-// destination without its last backup. The new lineage, or the new
-// destination, is only persisted with the next backup.
+// destination: a new lineage when there is none, or when the record is of
+// another destination, whose last backup is dropped. A lineage never writes
+// a key twice, which a lineage brought back to a destination it left would:
+// the record of a destination change is only persisted with the next backup.
 func loadRecord(dir string, destination string) (*Record, error) {
 	record, found, err := readRecord(dir)
 	if err != nil {
 		return nil, err
 	}
-	if !found {
-		lineage := backup.NewLineage()
-		record = &Record{Lineage: lineage}
-	}
-	if record.Destination != destination {
-		record.LastBackup = nil
-		record.Destination = destination
+	if !found || record.Destination != destination {
+		record = &Record{Lineage: backup.NewLineage(), Destination: destination}
 	}
 	return record, nil
 }

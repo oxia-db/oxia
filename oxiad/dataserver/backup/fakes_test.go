@@ -348,3 +348,14 @@ func manifestKeys(store *blob.Memory) []string {
 	}
 	return keys
 }
+
+// sstKeys counts the SSTs in the store.
+func sstKeys(store *blob.Memory) int {
+	count := 0
+	for _, key := range store.Keys() {
+		if backup.IsSSTName(key[strings.LastIndex(key, "/")+1:]) {
+			count++
+		}
+	}
+	return count
+}

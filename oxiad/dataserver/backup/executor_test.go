@@ -267,8 +267,9 @@ func TestExecutorBackupShardUploadsEverythingToANewDestination(t *testing.T) {
 	host := newFakeHost(t)
 	host.addShard(1, 2)
 	clock := newTestClock()
-	e, destination, _ := newTestExecutor(t, host, clock)
-	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
+	e, destination, store := newTestExecutor(t, host, clock)
+	first := awaitBackup(t, e, backupRequest(destination, 1))
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, first.State)
 
 	// The policy moves to another destination: the record of the first one
 	// is no backup there, and nothing of it is shared
@@ -281,13 +282,18 @@ func TestExecutorBackupShardUploadsEverythingToANewDestination(t *testing.T) {
 	assert.Nil(t, res.LastBackup)
 	done := awaitBackup(t, e, req)
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, done.State)
-	ssts := 0
-	for _, key := range other.Keys() {
-		if backup.IsSSTName(key[strings.LastIndex(key, "/")+1:]) {
-			ssts++
-		}
-	}
-	assert.Equal(t, len(sstNames(host.files(1))), ssts, "every SST is at the new destination")
+	ssts := len(sstNames(host.files(1)))
+	assert.Equal(t, ssts, sstKeys(other), "every SST is at the new destination")
+	assert.NotEqual(t, first.LastBackup.Lineage, done.LastBackup.Lineage, "under a lineage of its own")
+
+	// Back to the first destination: a third lineage, next to the keys of
+	// the first one, which are not written again
+	advance(clock, time.Hour)
+	back := awaitBackup(t, e, backupRequest(destination, 1))
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, back.State)
+	assert.NotEqual(t, first.LastBackup.Lineage, back.LastBackup.Lineage)
+	assert.NotEqual(t, done.LastBackup.Lineage, back.LastBackup.Lineage)
+	assert.Equal(t, 2*ssts, sstKeys(store), "the SSTs of both lineages")
 }
 
 func TestExecutorBackupShardKeepsNoRecordWhenTheDatabaseIsReplacedDuringTheBackup(t *testing.T) {

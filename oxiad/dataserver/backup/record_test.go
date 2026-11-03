@@ -67,7 +67,7 @@ func TestWriteRecordThenLoadRecordRoundTrips(t *testing.T) {
 	assert.True(t, found)
 }
 
-func TestLoadRecordDropsTheLastBackupOfAnotherDestination(t *testing.T) {
+func TestLoadRecordStartsALineageForAnotherDestination(t *testing.T) {
 	dir := t.TempDir()
 	record := &Record{Lineage: "abcd", Destination: "mem://a", LastBackup: &LastBackup{
 		ID:   "2026-10-03T14-00-00Z-abcd",
@@ -76,8 +76,8 @@ func TestLoadRecordDropsTheLastBackupOfAnotherDestination(t *testing.T) {
 	require.NoError(t, writeRecord(dir, record))
 	loaded, err := loadRecord(dir, "mem://b")
 	require.NoError(t, err)
-	assert.Equal(t, "abcd", loaded.Lineage)
 	assert.Equal(t, "mem://b", loaded.Destination)
+	assert.NotEqual(t, "abcd", loaded.Lineage, "the keys of the old lineage may hold the backups of the old destination")
 	assert.Nil(t, loaded.LastBackup, "the SSTs of the last backup are not at the new destination")
 }
 
