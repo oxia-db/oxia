@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -480,6 +481,23 @@ func TestExecReturnsValidationError(t *testing.T) {
 	err := Cmd.ExecuteContext(t.Context())
 
 	assert.ErrorContains(t, err, "must be one of")
+}
+
+// A coordinator that fails to start fails the command.
+func TestExecReturnsCoordinatorStartError(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	resetCmd(t)
+	failpointErr := errors.New("failpoint")
+	failpoint.Enable("coordinator.newRuntime", failpointErr)
+	t.Cleanup(func() { failpoint.Disable("coordinator.newRuntime") })
+	Cmd.SetArgs([]string{"--metadata", "memory", "--public-addr", "localhost:0",
+		"--internal-addr", "localhost:0", "--metrics-addr", "localhost:0"})
+
+	err := Cmd.ExecuteContext(t.Context())
+
+	assert.ErrorIs(t, err, failpointErr)
 }
 
 // A coordinator that loses the leadership ends the command with an error, so
