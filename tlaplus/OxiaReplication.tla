@@ -222,7 +222,8 @@ NodeState == [id:              Nodes,
               snapshot_offset: Nat,             \* the entries up to it are in the database only
               snapshot:        SUBSET LogEntry, \* those entries, for the invariants only
               commit_entry_id:    EntryId,
-              head_entry_id:      EntryId,
+              head_entry_id:      EntryId, \* for an empty wal, the last entry of the database
+              election_head_entry_id: EntryId, \* the head of a leader when it became leader
               follow_cursor:   [Nodes -> Cursor]]
 
 CoordinatorStatuses == {NOT_RUNNING, RUNNING}
@@ -277,6 +278,7 @@ Init ==
                              snapshot        |-> {},
                              commit_entry_id    |-> NoEntryId,
                              head_entry_id      |-> NoEntryId,
+                             election_head_entry_id |-> NoEntryId,
                              follow_cursor   |-> [n1 \in Nodes |-> NoCursor]]]
         /\ coordinator_state = [o \in Coordinators |->
                             [id                        |-> o,
@@ -710,86 +712,92 @@ GetHighestEntryOfTerm(nstate, target_term) ==
                /\ IsHigherOrEqualId(entry.entry_id, e.entry_id)
     ELSE NoLogEntry
 
-NeedsTruncation(nstate, head_entry_id) ==
-    \/ /\ head_entry_id.term = nstate.head_entry_id.term
-       /\ head_entry_id.offset > nstate.head_entry_id.offset
-    \/ head_entry_id.term # nstate.head_entry_id.term
+\* The decision of the leader for a follower, as truncateFollowerIfNeeded:
+\* - refuse: the leader doesn't add the follower.
+\* - attach: the cursor of the follower starts at entry_id. A cursor at
+\*   NoEntryId gets a snapshot when the wal of the leader doesn't have the
+\*   first entry, as the implementation's cursor at -1.
+\* - truncate: the leader truncates the follower to the offset of entry_id.
+Refuse              == [kind |-> "refuse",   entry_id |-> NoEntryId]
+Attach(entry_id)    == [kind |-> "attach",   entry_id |-> entry_id]
+Truncate(entry_id)  == [kind |-> "truncate", entry_id |-> entry_id]
 
-\* The entries of the follower up to its commit offset, and up to its head,
-\* are committed: they are the same as the leader's
-FollowerCommittedOffset(candidate) ==
-    Min(candidate.commit_offset, candidate.head_entry_id.offset)
+\* The wal of the leader has the entries after the offset, which the
+\* follower has committed
+CanStreamAfter(nstate, offset) ==
+    /\ offset # 0
+    /\ offset <= nstate.commit_entry_id.offset
+    /\ offset >= nstate.snapshot_offset
 
-\* The follower knows of committed entries that the leader doesn't have: the
-\* leader refuses it, or would lose them
-RefusesFollower(nstate, candidate) ==
-    candidate.commit_offset > nstate.head_entry_id.offset
+\* election_head is the head of the wal of the leader when it became leader:
+\* as the implementation, the Add Follower requests compare with it
+FollowerDecision(nstate, election_head, candidate) ==
+    LET head      == candidate.head_entry_id
+        last      == GetHighestEntryOfTerm(nstate, head.term).entry_id
+        committed == Min(candidate.commit_offset, head.offset)
+    IN
+        \* the follower knows of committed entries the leader doesn't have
+        IF candidate.commit_offset > nstate.head_entry_id.offset
+        THEN Refuse
+        \* the wal of the follower is empty
+        ELSE IF head.term = 0
+        THEN IF CanStreamAfter(nstate, head.offset)
+             THEN Attach(head)
+             ELSE Attach(NoEntryId)
+        ELSE IF head.term = election_head.term /\ head.offset <= election_head.offset
+        THEN Attach(head)
+        ELSE IF head.term > election_head.term
+        THEN Refuse
+        ELSE IF head.term = last.term /\ head.offset <= last.offset
+        THEN Attach(head)
+        \* the committed entries of the follower are past the ones the wal of the
+        \* leader shows in common with it
+        ELSE IF committed > last.offset
+        THEN IF committed + 1 < nstate.snapshot_offset + 1
+             THEN Attach(NoEntryId)
+             ELSE IF head.offset = committed
+             THEN Attach(head)
+             \* as the implementation, without the term of the entry
+             ELSE Truncate([offset |-> committed, term |-> 0])
+        ELSE Truncate(last)
 
-\* The committed entries of the follower are past the ones the wal of the
-\* leader shows in common with it, e.g. when the leader trimmed its wal
-UsesCommitOffset(nstate, candidate) ==
-    /\ NeedsTruncation(nstate, candidate.head_entry_id)
-    /\ FollowerCommittedOffset(candidate) >
-            GetHighestEntryOfTerm(nstate, candidate.head_entry_id.term).entry_id.offset
+RefusesFollower(nstate, election_head, candidate) ==
+    FollowerDecision(nstate, election_head, candidate).kind = "refuse"
 
-\* The wal of the leader doesn't have the next entry of the follower
-NeedsSnapshot(nstate, candidate) ==
-    /\ UsesCommitOffset(nstate, candidate)
-    /\ FollowerCommittedOffset(candidate) + 1 < nstate.snapshot_offset + 1
+SendsTruncate(nstate, election_head, candidate) ==
+    FollowerDecision(nstate, election_head, candidate).kind = "truncate"
 
-SendsTruncate(nstate, candidate) ==
-    IF UsesCommitOffset(nstate, candidate)
-    THEN /\ ~NeedsSnapshot(nstate, candidate)
-         /\ candidate.head_entry_id.offset # FollowerCommittedOffset(candidate)
-    ELSE NeedsTruncation(nstate, candidate.head_entry_id)
-
-\* The implementation truncates the follower by offset, without the term of
-\* the entry: the spec uses the entry of the leader at that offset, which is
-\* the same as the follower's, as it's committed
-TruncateEntryId(nstate, candidate) ==
-    IF UsesCommitOffset(nstate, candidate)
-    THEN (CHOOSE e \in FullLog(nstate) :
-            e.entry_id.offset = FollowerCommittedOffset(candidate)).entry_id
-    ELSE GetHighestEntryOfTerm(nstate, candidate.head_entry_id.term).entry_id
-
-GetCursor(nstate, candidate) ==
-    IF NeedsSnapshot(nstate, candidate)
-    \* the cursor is behind the wal of the leader: the follower gets a snapshot
-    THEN [status         |-> ATTACHED,
-          last_pushed    |-> NoEntryId,
-          last_confirmed |-> NoEntryId]
-    ELSE IF SendsTruncate(nstate, candidate)
-    THEN [status         |-> PENDING_TRUNCATE,
-          last_pushed    |-> NoEntryId,
-          last_confirmed |-> NoEntryId]
-    ELSE [status         |-> ATTACHED,
-          last_pushed    |-> candidate.head_entry_id,
-          last_confirmed |-> candidate.head_entry_id]
+GetCursor(nstate, election_head, candidate) ==
+    LET decision == FollowerDecision(nstate, election_head, candidate)
+    IN  IF decision.kind = "truncate"
+        THEN [status         |-> PENDING_TRUNCATE,
+              last_pushed    |-> NoEntryId,
+              last_confirmed |-> NoEntryId]
+        ELSE [status         |-> ATTACHED,
+              last_pushed    |-> decision.entry_id,
+              last_confirmed |-> decision.entry_id]
 
 GetCursors(nstate, follower_map) ==
     [n \in Nodes |->
          IF follower_map[n] # NIL
-         THEN GetCursor(nstate, follower_map[n])
+         THEN GetCursor(nstate, nstate.head_entry_id, follower_map[n])
          ELSE NoCursor]
 
 
-GetTruncateRequest(nstate, follower, candidate) ==
+GetTruncateRequest(nstate, follower, election_head, candidate) ==
     [type        |-> TRUNCATE_REQUEST,
      dest_node   |-> follower,
      source_node |-> nstate.id,
-     head_entry_id  |-> TruncateEntryId(nstate, candidate),
+     head_entry_id  |-> FollowerDecision(nstate, election_head, candidate).entry_id,
      term       |-> nstate.term]
 
-FollowersToTruncate(nstate, follower_map) ==
-    { f \in DOMAIN follower_map :
-            /\ follower_map[f] # NIL
-            /\ SendsTruncate(nstate, follower_map[f]) }
+GetTruncateRequests(nstate, followers, follower_map) ==
+    { GetTruncateRequest(nstate, f, nstate.head_entry_id, follower_map[f])
+        : f \in { f \in followers : SendsTruncate(nstate, nstate.head_entry_id, follower_map[f]) } }
 
-GetTruncateRequests(nstate, follower_map) ==
-    {
-        GetTruncateRequest(nstate, f, follower_map[f])
-            : f \in FollowersToTruncate(nstate, follower_map)
-    }
+Followers(follower_map) ==
+    { f \in Nodes : follower_map[f] # NIL }
+
 
 GetBecomeLeaderResponse(n, term, o) ==
     [type     |-> BECOME_LEADER_RESPONSE,
@@ -802,26 +810,35 @@ NodeHandlesBecomeLeaderRequest ==
     \E msg \in DOMAIN messages :
         /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
         /\ node_state[msg.node].term = msg.term
-        /\ \A f \in Nodes : msg.follower_map[f] # NIL => ~RefusesFollower(node_state[msg.node], msg.follower_map[f])
-        /\ LET truncate_requests == GetTruncateRequests(node_state[msg.node], msg.follower_map)
+        /\ LET nstate == node_state[msg.node]
+           IN \A f \in Followers(msg.follower_map) : ~RefusesFollower(nstate, nstate.head_entry_id, msg.follower_map[f])
+        /\ LET nstate            == node_state[msg.node]
+               truncate_requests == GetTruncateRequests(nstate, Followers(msg.follower_map), msg.follower_map)
                leader_response   == GetBecomeLeaderResponse(msg.node, msg.term, msg.coordinator)
-               updated_cursors   == GetCursors(node_state[msg.node], msg.follower_map)
+               updated_cursors   == GetCursors(nstate, msg.follower_map)
            IN
               \* state changes
               /\ node_state' = [node_state EXCEPT ![msg.node] =
-                                          [@ EXCEPT !.status        = LEADER,
-                                                    !.leader        = msg.node,
-                                                    !.rep_factor    = msg.rep_factor,
-                                                    !.follow_cursor = updated_cursors]]
+                                          [@ EXCEPT !.status                 = LEADER,
+                                                    !.leader                 = msg.node,
+                                                    !.rep_factor             = msg.rep_factor,
+                                                    !.election_head_entry_id = nstate.head_entry_id,
+                                                    !.follow_cursor          = updated_cursors]]
               /\ ProcessedOneAndSendMore(msg, truncate_requests \union {leader_response})
               /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Node refuses a Become Leader request
 
-  A follower reported a commit offset past the head of the new leader:
-  the leader misses committed entries, and would lose them. It stays
-  fenced, and the election doesn't complete.
+  The leader refuses a follower, see FollowerDecision: the follower
+  reported a commit offset past the head of the leader, which misses
+  committed entries and would lose them, or a head of a term higher than
+  the leader's. It stays fenced, and the election doesn't complete.
+
+  Key points:
+  - As the implementation, the leader handles the followers one by one,
+    in any order: the followers it handled before the refused one got
+    their truncation.
 ----------------------------------------------------------*)
 
 NodeRefusesBecomeLeaderRequest ==
@@ -829,9 +846,15 @@ NodeRefusesBecomeLeaderRequest ==
     \E msg \in DOMAIN messages :
         /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
         /\ node_state[msg.node].term = msg.term
-        /\ \E f \in Nodes : msg.follower_map[f] # NIL /\ RefusesFollower(node_state[msg.node], msg.follower_map[f])
-        \* state changes
-        /\ MessageProcessed(msg)
+        /\ LET nstate  == node_state[msg.node]
+               refused == { f \in Followers(msg.follower_map) :
+                                RefusesFollower(nstate, nstate.head_entry_id, msg.follower_map[f]) }
+           IN
+              /\ refused # {}
+              \* the followers it handled before, in any order, got their truncation
+              /\ \E handled \in SUBSET (Followers(msg.follower_map) \ refused) :
+                    \* state changes
+                    ProcessedOneAndSendMore(msg, GetTruncateRequests(nstate, handled, msg.follower_map))
         /\ UNCHANGED << metadata, metadata_version, node_state, coordinator_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
@@ -950,8 +973,12 @@ CoordinatorFinishesEnsembleChange ==
 
   The leader creates a cursor and will send a truncate
   request to the follower if their log might need
-  truncating first, unless the follower reported a commit
-  offset past the head of the leader: the leader refuses it.
+  truncating first, unless it refuses the follower, see
+  FollowerDecision.
+
+  Key points:
+  - As the implementation, the leader compares the head of the
+    follower with its head when it became leader.
 ----------------------------------------------------------*)
 
 LeaderHandlesAddFollowerRequest ==
@@ -962,17 +989,21 @@ LeaderHandlesAddFollowerRequest ==
         /\ node_state[msg.node].status = LEADER
         /\ node_state[msg.node].follow_cursor[msg.follower].status = NIL
         \* state changes
-        /\ IF RefusesFollower(node_state[msg.node], msg.candidate)
-           THEN /\ MessageProcessed(msg)
-                /\ UNCHANGED node_state
-           ELSE /\ node_state' = [node_state EXCEPT ![msg.node].follow_cursor[msg.follower] =
-                                    GetCursor(node_state[msg.node], msg.candidate)]
-                /\ IF SendsTruncate(node_state[msg.node], msg.candidate)
-                   THEN ProcessedOneAndSendAnother(msg,
-                                                   GetTruncateRequest(node_state[msg.node],
-                                                                      msg.follower,
-                                                                      msg.candidate))
-                   ELSE MessageProcessed(msg)
+        /\ LET nstate        == node_state[msg.node]
+               election_head == nstate.election_head_entry_id
+           IN
+              IF RefusesFollower(nstate, election_head, msg.candidate)
+              THEN /\ MessageProcessed(msg)
+                   /\ UNCHANGED node_state
+              ELSE /\ node_state' = [node_state EXCEPT ![msg.node].follow_cursor[msg.follower] =
+                                       GetCursor(nstate, election_head, msg.candidate)]
+                   /\ IF SendsTruncate(nstate, election_head, msg.candidate)
+                      THEN ProcessedOneAndSendAnother(msg,
+                                                      GetTruncateRequest(nstate,
+                                                                         msg.follower,
+                                                                         election_head,
+                                                                         msg.candidate))
+                      ELSE MessageProcessed(msg)
         /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
 
 
@@ -997,8 +1028,21 @@ GetTruncateResponse(msg, head_entry_id) ==
      head_entry_id  |-> head_entry_id,
      term       |-> msg.term]
 
+\* As the implementation, by offset
 TruncateLog(log, last_safe_entry_id) ==
-    { entry \in log : IsLowerOrEqualId(entry.entry_id, last_safe_entry_id) }
+    { entry \in log : entry.entry_id.offset <= last_safe_entry_id.offset }
+
+\* The head of a node with an empty wal is the last entry of its database,
+\* whose term the database records
+DatabaseHead(nstate) ==
+    IF nstate.snapshot_offset = 0
+    THEN NoEntryId
+    ELSE (CHOOSE e \in nstate.snapshot : e.entry_id.offset = nstate.snapshot_offset).entry_id
+
+TruncatedHead(nstate, truncated_log) ==
+    IF truncated_log = {}
+    THEN DatabaseHead(nstate)
+    ELSE HeadEntry(truncated_log).entry_id
 
 NodeHandlesTruncateRequest ==
     \* enabling conditions
@@ -1006,7 +1050,7 @@ NodeHandlesTruncateRequest ==
         /\ ReceivableMessageOfType(messages, msg, TRUNCATE_REQUEST)
         /\ LET nstate        == node_state[msg.dest_node]
                truncated_log == TruncateLog(nstate.log, msg.head_entry_id)
-               head_entry    == HeadEntry(truncated_log)
+               head_entry_id == TruncatedHead(nstate, truncated_log)
            IN
                 /\ nstate.status = FENCED
                 /\ nstate.term = msg.term
@@ -1016,9 +1060,9 @@ NodeHandlesTruncateRequest ==
                                                   !.term         = msg.term,
                                                   !.leader        = msg.source_node,
                                                   !.log           = truncated_log,
-                                                  !.head_entry_id    = head_entry.entry_id,
+                                                  !.head_entry_id    = head_entry_id,
                                                   !.follow_cursor = [n \in Nodes |-> NoCursor]]]
-                /\ ProcessedOneAndSendAnother(msg, GetTruncateResponse(msg, head_entry.entry_id))
+                /\ ProcessedOneAndSendAnother(msg, GetTruncateResponse(msg, head_entry_id))
                 /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
@@ -1093,7 +1137,7 @@ CanSendToFollower(lstate, follower) ==
     /\ node_state[follower].status # NOT_MEMBER
     /\ follower # lstate.id
     /\ lstate.follow_cursor[follower].status = ATTACHED
-    /\ IsHigherId(lstate.head_entry_id, lstate.follow_cursor[follower].last_pushed)
+    /\ lstate.head_entry_id.offset > lstate.follow_cursor[follower].last_pushed.offset
     \* the next entry is in the wal of the leader
     /\ lstate.follow_cursor[follower].last_pushed.offset >= lstate.snapshot_offset
 
@@ -1107,17 +1151,10 @@ IncludesAllSendableFollowers(lstate, followers) ==
         /\ f \notin followers
         /\ CanSendToFollower(lstate, f)
 
-\* Get the next lowest entry above the current follow cursor position
-\* specifically, choose an entry that is higher than the last pushed
-\* such that there is not another entry that is also higher than the
-\* last pushed but lower than the chosen entry. Only one entry can
-\* match that criteria.
+\* The entry after the follow cursor position. As the implementation, the
+\* cursors track offsets
 NextEntry(lstate, last_entry_id) ==
-    CHOOSE e1 \in lstate.log :
-        /\ IsHigherId(e1.entry_id, last_entry_id)
-        /\ ~\E e2 \in lstate.log :
-            /\ IsLowerId(e2.entry_id, e1.entry_id)
-            /\ IsHigherId(e2.entry_id, last_entry_id)
+    CHOOSE e \in lstate.log : e.entry_id.offset = last_entry_id.offset + 1
 
 GetAppendEntry(lstate, next_entries, follower) ==
     [type            |-> APPEND,
@@ -1176,15 +1213,25 @@ FollowerConfirmsEntry ==
            IN
                 /\ fstate.status \in {FOLLOWER, FENCED}
                 /\ fstate.term <= msg.term \* reconfig could mean leader has higher term than follower
+                \* the implementation rejects a gap, which the cursors never leave
+                /\ msg.entry.entry_id.offset <= fstate.head_entry_id.offset + 1
                 \* state changes
-                /\ node_state' = [node_state EXCEPT ![f].status       = FOLLOWER,
-                                                    ![f].term        = msg.term,
-                                                    ![f].leader       = msg.source_node,
-                                                    ![f].log          = @ \union { msg.entry },
-                                                    ![f].head_entry_id   = msg.entry.entry_id,
-                                                    ![f].commit_entry_id = msg.commit_entry_id]
-
-                /\ ProcessedOneAndSendAnother(msg, GetAddEntryOkResponse(msg, fstate, msg.entry))
+                /\ IF msg.entry.entry_id.offset <= fstate.head_entry_id.offset
+                   \* a duplicate: the follower acknowledges it only if its wal has it,
+                   \* which it doesn't after a snapshot
+                   THEN /\ node_state' = [node_state EXCEPT ![f].status = FOLLOWER,
+                                                             ![f].term   = msg.term,
+                                                             ![f].leader = msg.source_node]
+                        /\ IF fstate.log # {}
+                           THEN ProcessedOneAndSendAnother(msg, GetAddEntryOkResponse(msg, fstate, msg.entry))
+                           ELSE MessageProcessed(msg)
+                   ELSE /\ node_state' = [node_state EXCEPT ![f].status       = FOLLOWER,
+                                                             ![f].term        = msg.term,
+                                                             ![f].leader       = msg.source_node,
+                                                             ![f].log          = @ \union { msg.entry },
+                                                             ![f].head_entry_id   = msg.entry.entry_id,
+                                                             ![f].commit_entry_id = msg.commit_entry_id]
+                        /\ ProcessedOneAndSendAnother(msg, GetAddEntryOkResponse(msg, fstate, msg.entry))
                 /\ UNCHANGED << metadata, metadata_version, coordinator_state, metadata, confirmed, coordinator_stop_ctr >>
 
 
@@ -1252,7 +1299,7 @@ GetEntry(entry_id, nstate) ==
 EntryReachedQuorum(entry_id, follow_cursor, rep_factor) ==
     Cardinality({ n \in Nodes :
                     /\ follow_cursor[n].status = ATTACHED
-                    /\ IsLowerOrEqualId(entry_id, follow_cursor[n].last_confirmed) })
+                    /\ entry_id.offset <= follow_cursor[n].last_confirmed.offset })
                 >= (rep_factor \div 2)
 
 LogPrefixAtQuorum(nstate, entry_id, follow_cursor, rep_factor) ==
@@ -1333,7 +1380,7 @@ LeaderAdvertisesCommit ==
             /\ lstate.status = LEADER
             /\ f # leader
             /\ lstate.follow_cursor[f].status = ATTACHED
-            /\ IsLowerOrEqualId(lstate.commit_entry_id, lstate.follow_cursor[f].last_confirmed)
+            /\ lstate.commit_entry_id.offset <= lstate.follow_cursor[f].last_confirmed.offset
             /\ fstate.status = FOLLOWER
             /\ fstate.term = lstate.term
             /\ fstate.leader = leader
@@ -1375,11 +1422,9 @@ NodeTrimsLog ==
   which replaces the wal and the database of the follower.
 
   Key points:
-  - The transfer is atomic, and the follower keeps the entry at the
-    commit offset in its wal. The implementation leaves the wal of the
-    follower empty, and the follower reports the commit offset with an
-    invalid term as its head until it gets the next entry: the spec
-    doesn't model that head.
+  - The transfer is atomic. As the implementation, the wal of the
+    follower is empty: its head is the entry at the commit offset, whose
+    term the database records.
 ----------------------------------------------------------*)
 
 LeaderSendsSnapshot ==
@@ -1399,9 +1444,9 @@ LeaderSendsSnapshot ==
             /\ node_state' = [node_state EXCEPT
                                 ![f] = [@ EXCEPT !.status          = FOLLOWER,
                                                  !.leader          = leader,
-                                                 !.log             = { e \in lstate.log : e.entry_id.offset = commit.offset },
-                                                 !.snapshot        = { e \in FullLog(lstate) : e.entry_id.offset < commit.offset },
-                                                 !.snapshot_offset = commit.offset - 1,
+                                                 !.log             = {},
+                                                 !.snapshot        = { e \in FullLog(lstate) : e.entry_id.offset <= commit.offset },
+                                                 !.snapshot_offset = commit.offset,
                                                  !.commit_entry_id = commit,
                                                  !.head_entry_id   = commit],
                                 ![leader].follow_cursor[f] = [status         |-> ATTACHED,
@@ -1492,6 +1537,29 @@ NoTruncationBelowCommit ==
                                              node_state[msg.dest_node].head_entry_id.offset)
         ELSE TRUE
 
+\* A leader never refuses a follower whose head is an entry it has: the follower
+\* has no entry the leader misses (oxia-db/chaos#87)
+HasEntry(nstate, entry_id) ==
+    \E e \in FullLog(nstate) : e.entry_id = entry_id
+
+NoRefusalOfAFollowerOfTheLeaderLog ==
+    \A msg \in DOMAIN messages :
+        LET nstate == node_state[msg.node]
+        IN
+            /\ IF /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
+                  /\ nstate.term = msg.term
+                  /\ nstate.status = FENCED
+               THEN \A f \in Followers(msg.follower_map) :
+                        HasEntry(nstate, msg.follower_map[f].head_entry_id)
+                            => ~RefusesFollower(nstate, nstate.head_entry_id, msg.follower_map[f])
+               ELSE TRUE
+            /\ IF /\ ReceivableMessageOfType(messages, msg, ADD_FOLLOWER_REQUEST)
+                  /\ nstate.term = msg.term
+                  /\ nstate.status = LEADER
+               THEN HasEntry(nstate, msg.candidate.head_entry_id)
+                        => ~RefusesFollower(nstate, nstate.election_head_entry_id, msg.candidate)
+               ELSE TRUE
+
 \* messages should not contain conflicting data
 ValidMessages ==
     /\ ~\E msg \in DOMAIN messages :
@@ -1534,6 +1602,68 @@ AllValuesCommitted ==
 
 EventuallyAllValuesCommitted ==
     []<>AllValuesCommitted
+
+(*---------------------------------------------------------
+  A shard after a change of its ensemble (oxia-db/chaos#87)
+
+  The leader holds the committed entry in its wal, and the two other
+  members of the ensemble joined from a snapshot: their wal is empty,
+  and their database holds the entry. No coordinator runs yet: the next
+  one starts an election.
+----------------------------------------------------------*)
+
+SeededInit ==
+    LET ensemble == CHOOSE e \in SUBSET Nodes : Cardinality(e) = RepFactor
+        leader   == CHOOSE n \in ensemble : TRUE
+        value    == CHOOSE v \in Values : TRUE
+        entry_id == [offset |-> 1, term |-> 1]
+        entry    == [entry_id |-> entry_id, value |-> value]
+        \* the head of a member seeded from the snapshot
+        seeded_head == DatabaseHead([snapshot_offset |-> 1, snapshot |-> {entry}])
+    IN
+        /\ metadata_version = 1
+        /\ metadata = [shard_status |-> STEADY_STATE,
+                       term        |-> 1,
+                       ensemble     |-> ensemble,
+                       rep_factor   |-> RepFactor,
+                       leader       |-> leader,
+                       change       |-> NIL]
+        /\ node_state = [n \in Nodes |->
+                            [id              |-> n,
+                             status          |-> IF n = leader THEN LEADER
+                                                 ELSE IF n \in ensemble THEN FOLLOWER
+                                                 ELSE NOT_MEMBER,
+                             term           |-> IF n \in ensemble THEN 1 ELSE 0,
+                             leader          |-> IF n \in ensemble THEN leader ELSE NIL,
+                             rep_factor      |-> IF n = leader THEN RepFactor ELSE 0,
+                             log             |-> IF n = leader THEN {entry} ELSE {},
+                             snapshot_offset |-> IF n \in ensemble /\ n # leader THEN 1 ELSE 0,
+                             snapshot        |-> IF n \in ensemble /\ n # leader THEN {entry} ELSE {},
+                             commit_entry_id    |-> IF n \in ensemble THEN entry_id ELSE NoEntryId,
+                             head_entry_id      |-> IF n = leader THEN entry_id
+                                                    ELSE IF n \in ensemble THEN seeded_head
+                                                    ELSE NoEntryId,
+                             election_head_entry_id |-> NoEntryId,
+                             follow_cursor   |-> [n1 \in Nodes |->
+                                                    IF n = leader /\ n1 \in ensemble /\ n1 # leader
+                                                    THEN [status         |-> ATTACHED,
+                                                          last_pushed    |-> entry_id,
+                                                          last_confirmed |-> entry_id]
+                                                    ELSE NoCursor]]]
+        /\ coordinator_state = [o \in Coordinators |->
+                            [id                        |-> o,
+                             status                    |-> NOT_RUNNING,
+                             md_version                |-> 0,
+                             md                        |-> NIL,
+                             election_phase            |-> NIL,
+                             election_leader           |-> NIL,
+                             election_leader_head      |-> NoEntryId,
+                             election_fence_responses  |-> {}]]
+        /\ confirmed = (value :> TRUE)
+        /\ messages = <<>>
+        /\ coordinator_stop_ctr = 0
+
+SeededSpec == SeededInit /\ [][Next]_vars
 
 LivenessSpec == Init /\ [][Next]_vars /\ WF_vars(Next)    
 

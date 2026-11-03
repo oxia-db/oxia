@@ -164,6 +164,13 @@ tla:
 			-deadlock -workers auto -simulate num=20000 -depth 80 \
 			OxiaReplication.tla
 
+# Simulates a shard whose ensemble change left two members seeded from a snapshot
+tla-seeded:
+	cd tlaplus && \
+		java -XX:+UseParallelGC -DTLA-Library=.tools/CommunityModules-deps.jar -jar .tools/tla2tools.jar \
+			-deadlock -workers auto -simulate num=20000 -depth 80 -config OxiaReplicationSeeded.cfg \
+			OxiaReplication.tla
+
 # Checks every state of a small model, in about 30 minutes
 tla-full:
 	cd tlaplus && \
