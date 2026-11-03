@@ -233,7 +233,7 @@ func TestBackupJobRunTakesTheNextSecondAfterTheLastBackup(t *testing.T) {
 	second, err := runBackup(t, store, host, 1, &Record{Lineage: "abcd", LastBackup: first}, testPolicy(), now)
 	require.NoError(t, err)
 	assert.Equal(t, "2026-10-03T14-00-01Z-abcd", second.ID)
-	assert.Equal(t, now.Add(time.Second), second.Time)
+	assert.Equal(t, now, second.Time, "the ID moves to the next second, the backup is still at its start")
 }
 
 func TestBackupJobRunWritesNoManifestWhenAnUploadFails(t *testing.T) {

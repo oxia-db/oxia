@@ -130,7 +130,7 @@ func (j *backupJob) run(ctx context.Context) (*LastBackup, error) {
 	}
 	return &LastBackup{
 		ID:             manifest.ID,
-		Time:           id.Time,
+		Time:           started,
 		CommitOffset:   manifest.CommitOffset,
 		Term:           manifest.Term,
 		SizeBytes:      manifest.Summary().SizeBytes,
@@ -152,7 +152,8 @@ func compareNames(a, b string) int {
 }
 
 // newID returns the ID of the backup: the next second when the last backup
-// of the lineage started in the same one.
+// of the lineage started in the same one. The ID is a name: the time of the
+// backup is when it started, which the manifest and the record hold.
 func (j *backupJob) newID() backup.ID {
 	id := backup.NewID(j.now, j.record.Lineage)
 	if last := j.record.LastBackup; last != nil {
