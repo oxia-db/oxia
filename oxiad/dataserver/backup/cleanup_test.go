@@ -186,10 +186,10 @@ func (s *failingStore) Delete(ctx context.Context, keys []string) error {
 	return s.Store.Delete(ctx, keys)
 }
 
-// orphanedShard puts a shard with an expired backup and five unreferenced
-// SSTs older than the grace period in the store, and returns the job that
-// cleans it with the given store, and how many per-backup files the expired
-// backup holds.
+// orphanedShard puts a shard with an expired backup and a batch and one of
+// unreferenced SSTs older than the grace period in the store, and returns
+// the job that cleans it with the given store, and how many per-backup
+// files the expired backup holds.
 func orphanedShard(t *testing.T, memory *blob.Memory, store blob.Store) (*cleanupJob, int) {
 	t.Helper()
 	host := newFakeHost(t)
@@ -199,13 +199,13 @@ func orphanedShard(t *testing.T, memory *blob.Memory, store blob.Store) (*cleanu
 	expired, err := backup.ReadManifest(t.Context(), memory, "ns/shard-1/backups/"+backups[0].ID+".json")
 	require.NoError(t, err)
 	now := start.Add(6 * 24 * time.Hour)
-	for i := range 5 {
+	for i := range sweepBatchSize + 1 {
 		key := fmt.Sprintf("ns/shard-1/sst/orphan-%06d.sst", i)
 		require.NoError(t, memory.Put(t.Context(), key, strings.NewReader("x")))
 		memory.Touch(key, now.Add(-2*gracePeriod))
 	}
 	return &cleanupJob{store: store, namespace: "ns", retention: 4 * 24 * time.Hour, grace: gracePeriod,
-		now: now, log: slog.Default(), batchSize: 2}, len(expired.Files)
+		now: now, log: slog.Default()}, len(expired.Files)
 }
 
 func TestCleanupJobRunDeletesTheUnreferencedFilesABatchAtATime(t *testing.T) {
@@ -215,10 +215,11 @@ func TestCleanupJobRunDeletesTheUnreferencedFilesABatchAtATime(t *testing.T) {
 	result, err := j.run(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.backupsExpired)
-	// The per-backup files of the expired backup and the five orphans, two
-	// at a time, after the deletion of the manifest
-	assert.Equal(t, expiredFiles+5, result.filesDeleted)
-	assert.Equal(t, 1+(expiredFiles+5+1)/2, store.deleteCalls)
+	// The orphans and the per-backup files of the expired backup, a batch
+	// at a time, after the deletion of the manifest: a full batch of
+	// orphans, then the orphan left with the per-backup files
+	assert.Equal(t, sweepBatchSize+1+expiredFiles, result.filesDeleted)
+	assert.Equal(t, 1+2, store.deleteCalls)
 	for _, key := range memory.Keys() {
 		assert.NotContains(t, key, "orphan")
 	}

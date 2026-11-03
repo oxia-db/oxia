@@ -44,9 +44,6 @@ type cleanupJob struct {
 	grace time.Duration
 	now   time.Time
 	log   *slog.Logger
-	// batchSize is how many unreferenced files the sweep deletes at a time:
-	// sweepBatchSize unless set.
-	batchSize int
 }
 
 // sweepBatchSize is how many unreferenced files a sweep deletes at a time:
@@ -157,7 +154,7 @@ func (j *cleanupJob) sweepShard(ctx context.Context, shard backup.ShardPath, liv
 }
 
 // deleteBatch gathers the unreferenced files a sweep finds and deletes them
-// batchSize at a time.
+// sweepBatchSize at a time.
 type deleteBatch struct {
 	job     *cleanupJob
 	result  *cleanupResult
@@ -166,11 +163,7 @@ type deleteBatch struct {
 
 func (b *deleteBatch) add(ctx context.Context, object blob.Object) error {
 	b.objects = append(b.objects, object)
-	size := b.job.batchSize
-	if size <= 0 {
-		size = sweepBatchSize
-	}
-	if len(b.objects) < size {
+	if len(b.objects) < sweepBatchSize {
 		return nil
 	}
 	return b.flush(ctx)
