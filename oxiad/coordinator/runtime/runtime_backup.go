@@ -241,7 +241,10 @@ func (c *runtime) createRestoredStatus(target string, destination string, source
 	if borrowed, exists, err := c.metadata.GetNamespaceStatus(target); err != nil {
 		return nil, err
 	} else if exists {
-		return restoredShards(borrowed.UnsafeBorrow())
+		if err := sameRestore(target, borrowed.UnsafeBorrow(), destination, source, plan); err != nil {
+			return nil, err
+		}
+		return restoredShards(borrowed.UnsafeBorrow()), nil
 	}
 	baseShardID, err := c.metadata.AllocateShardIDs(uint32(len(plan)))
 	if err != nil {
@@ -265,8 +268,10 @@ func (c *runtime) createRestoredStatus(target string, destination string, source
 			return nil, fmt.Errorf("select the ensemble of shard %d: %w", shard, err)
 		}
 		namespaceStatus.Shards[shard] = &proto.ShardMetadata{
-			Status:         proto.ShardStatusUnknown,
-			Term:           -1,
+			Status: proto.ShardStatusUnknown,
+			// The installed database holds the term of the backup: the first
+			// election fences above it
+			Term:           part.Source.Term,
 			Ensemble:       ensemble,
 			Int32HashRange: &proto.HashRange{Min: part.Range.Min, Max: part.Range.Max},
 			Restore: &proto.RestoreMetadata{
@@ -280,18 +285,43 @@ func (c *runtime) createRestoredStatus(target string, destination string, source
 	if err := c.metadata.CreateNamespaceStatus(target, namespaceStatus); err != nil {
 		return nil, err
 	}
-	return restoredShards(namespaceStatus)
+	return restoredShards(namespaceStatus), nil
 }
 
-// restoredShards describes the shards of a restored namespace, from its
-// status.
-func restoredShards(status *proto.NamespaceStatus) ([]*proto.RestoredShard, error) {
+// sameRestore checks that the status of the target namespace, which an
+// earlier request created, restores the backups of plan from source at
+// destination, to the same ranges: a request for other backups fails
+// rather than take the shards of the earlier one for its own.
+func sameRestore(target string, status *proto.NamespaceStatus, destination string, source string,
+	plan []backup.Part) error {
+	parts := make(map[backup.Range]backup.Part, len(plan))
+	for _, part := range plan {
+		parts[part.Range] = part
+	}
+	if len(status.GetShards()) != len(parts) {
+		return fmt.Errorf("%w: namespace %s is being restored from other backups", errs.ErrAlreadyExists, target)
+	}
+	for _, meta := range status.GetShards() {
+		restore := meta.GetRestore()
+		if restore == nil {
+			return fmt.Errorf("%w: namespace %s exists and is not being restored", errs.ErrAlreadyExists, target)
+		}
+		hashRange := backup.Range{Min: meta.GetInt32HashRange().GetMin(), Max: meta.GetInt32HashRange().GetMax()}
+		part, ok := parts[hashRange]
+		if !ok || restore.GetDestination() != destination || restore.GetSourceNamespace() != source ||
+			restore.GetSourceShardId() != part.Source.Shard || restore.GetBackupId() != part.Source.ID.String() {
+			return fmt.Errorf("%w: namespace %s is being restored from other backups", errs.ErrAlreadyExists, target)
+		}
+	}
+	return nil
+}
+
+// restoredShards describes the shards of a namespace being restored, from
+// its status.
+func restoredShards(status *proto.NamespaceStatus) []*proto.RestoredShard {
 	shards := make([]*proto.RestoredShard, 0, len(status.GetShards()))
 	for id, meta := range status.GetShards() {
 		restore := meta.GetRestore()
-		if restore == nil {
-			return nil, fmt.Errorf("%w: the namespace exists and is not being restored", errs.ErrAlreadyExists)
-		}
 		shards = append(shards, &proto.RestoredShard{
 			Shard:       id,
 			HashRange:   meta.GetInt32HashRange(),
@@ -302,5 +332,5 @@ func restoredShards(status *proto.NamespaceStatus) ([]*proto.RestoredShard, erro
 	slices.SortFunc(shards, func(a, b *proto.RestoredShard) int {
 		return int(a.GetHashRange().GetMin()>>1) - int(b.GetHashRange().GetMin()>>1)
 	})
-	return shards, nil
+	return shards
 }

@@ -183,10 +183,7 @@ func TestRuntimeListBackupsGoesThroughARunningDataServer(t *testing.T) {
 	r, err := New(t.Context(), failing, func(string) rpc.ControllerRPCProvider { return provider })
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
-	require.Eventually(t, func() bool {
-		status, ok := r.GetLiveDataServerStatus("s1")
-		return ok && status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING
-	}, 10*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return r.(*runtime).isDataServerRunning("s1") }, 10*time.Second, 10*time.Millisecond)
 
 	backups, err := collectBackups(r, "")
 	require.NoError(t, err)
@@ -251,6 +248,7 @@ func backupInfo(shard int64, at time.Time, minHash, maxHash uint32, config *prot
 		Shard:           shard,
 		BackupId:        backup.NewID(at, "lineage").String(),
 		TimestampMillis: at.UnixMilli(),
+		Term:            40 + shard,
 		HashRange:       &proto.HashRange{Min: minHash, Max: maxHash},
 		NamespaceConfig: config,
 	}
@@ -391,10 +389,7 @@ func newRestoreTestCluster(t *testing.T, backups []*proto.BackupInfo) *restoreTe
 	r, err := New(t.Context(), failing, func(string) rpc.ControllerRPCProvider { return c.provider })
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
-	require.Eventually(t, func() bool {
-		status, ok := r.GetLiveDataServerStatus("s1")
-		return ok && status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING
-	}, 10*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return r.(*runtime).isDataServerRunning("s1") }, 10*time.Second, 10*time.Millisecond)
 	c.runtime = r
 	return c
 }
@@ -435,6 +430,7 @@ func TestRuntimeRestoreNamespaceCreatesTheShardsFromTheBackups(t *testing.T) {
 		assert.Equal(t, "s3://bucket/prefix", meta.GetRestore().GetDestination(), "the destination of the policy")
 		assert.Equal(t, "orders", meta.GetRestore().GetSourceNamespace())
 		assert.Equal(t, shard.GetBackupId(), meta.GetRestore().GetBackupId())
+		assert.EqualValues(t, 40+shard.GetSourceShard(), meta.GetTerm(), "the first election fences above the term of the backup")
 	}
 	c.provider.mu.Lock()
 	assert.Equal(t, "orders", c.provider.listReq.GetNamespace())
@@ -472,6 +468,37 @@ func TestRuntimeRestoreNamespaceResumesAnInterruptedRestore(t *testing.T) {
 	_, exists, err := c.metadata.GetNamespace("orders-restored")
 	require.NoError(t, err)
 	assert.True(t, exists)
+}
+
+func TestRuntimeRestoreNamespaceRefusesAStatusOfOtherBackups(t *testing.T) {
+	now := time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC)
+	info := backupInfo(1, now.Add(-time.Hour), 0, math.MaxUint32, &proto.Namespace{Name: "orders", ReplicationFactor: 1})
+	c := newRestoreTestCluster(t, []*proto.BackupInfo{info})
+	// The status of an earlier request, for another backup
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	require.NoError(t, c.metadata.CreateNamespaceStatus("orders-restored", &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{7: {
+			Status:         proto.ShardStatusUnknown,
+			Term:           41,
+			Ensemble:       []*proto.DataServerIdentity{server},
+			Int32HashRange: &proto.HashRange{Min: 0, Max: math.MaxUint32},
+			Restore: &proto.RestoreMetadata{Destination: "s3://bucket/prefix", SourceNamespace: "orders",
+				SourceShardId: 1, BackupId: "2026-10-03T12-00-00Z-other"},
+		}},
+	}))
+
+	_, err := c.runtime.RestoreNamespace(context.Background(), restoreRequest(now))
+	assert.ErrorIs(t, err, errs.ErrAlreadyExists)
+	assert.ErrorContains(t, err, "other backups")
+
+	// As many shards as the plan has, at least
+	require.NoError(t, c.metadata.PatchNamespaceStatus("orders-restored", func(status *proto.NamespaceStatus) (bool, error) {
+		status.Shards[8] = status.Shards[7]
+		return true, nil
+	}))
+	_, err = c.runtime.RestoreNamespace(context.Background(), restoreRequest(now))
+	assert.ErrorIs(t, err, errs.ErrAlreadyExists)
 }
 
 func TestRuntimeRestoreNamespaceRefusesAStatusThatIsNotARestore(t *testing.T) {

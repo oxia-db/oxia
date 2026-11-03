@@ -218,9 +218,12 @@ func (admin *adminClientImpl) ListBackups(ctx context.Context, namespace string,
 	})
 }
 
+// RestoreNamespace plans the restore from the manifests of the source,
+// which the coordinator reads before answering: the caller's context bounds
+// the call, not the usual timeout.
 func (admin *adminClientImpl) RestoreNamespace(ctx context.Context, sourceNamespace string, asOf time.Time,
 	targetNamespace string, destination string) ([]*proto.RestoredShard, error) {
-	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.RestoreNamespaceResponse, error) {
+	response, err := executeAdminRPCWithRedirectTimeout(ctx, admin, 0, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.RestoreNamespaceResponse, error) {
 		return client.RestoreNamespace(ctx, &proto.RestoreNamespaceRequest{
 			SourceNamespace: sourceNamespace,
 			TargetNamespace: targetNamespace,

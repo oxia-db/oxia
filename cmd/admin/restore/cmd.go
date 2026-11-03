@@ -16,12 +16,13 @@ package restore
 
 import (
 	"fmt"
+	"io"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/oxia-db/oxia/cmd/admin/commons"
-	cc "github.com/oxia-db/oxia/cmd/client/common"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia"
 )
@@ -74,6 +75,13 @@ func exec(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --as-of time: %w", err)
 	}
+	outputFormat, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+	if err := commons.ValidateOutputFormat(outputFormat); err != nil {
+		return err
+	}
 	client, err := commons.AdminConfig.NewAdminClient()
 	if err != nil {
 		return err
@@ -86,8 +94,21 @@ func exec(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	cc.WriteOutput(cmd.OutOrStdout(), toResult(toNamespace, shards))
-	return nil
+	return writeResult(cmd.OutOrStdout(), outputFormat, toResult(toNamespace, shards))
+}
+
+// writeResult writes the shards of the restored namespace in the output
+// format: a table, or the result as JSON or YAML.
+func writeResult(out io.Writer, format string, result Result) error {
+	if commons.NormalizeOutputFormat(format) != commons.OutputTable {
+		return commons.WriteStructuredOutput(out, format, result)
+	}
+	rows := make([][]string, 0, len(result.Shards))
+	for _, s := range result.Shards {
+		rows = append(rows, []string{result.Namespace, strconv.FormatInt(s.Shard, 10),
+			fmt.Sprintf("%d-%d", s.HashRangeMin, s.HashRangeMax), strconv.FormatInt(s.SourceShard, 10), s.BackupID})
+	}
+	return commons.WriteTable(out, []string{"NAMESPACE", "SHARD", "HASH RANGE", "SOURCE SHARD", "BACKUP ID"}, rows)
 }
 
 func toResult(namespace string, shards []*proto.RestoredShard) Result {

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -29,11 +30,20 @@ import (
 )
 
 func runCmd(args ...string) (string, error) {
+	// The command is shared by the runs: the output flag merged into it by
+	// an earlier root is reset
+	if f := Cmd.Flags().Lookup("output"); f != nil {
+		_ = f.Value.Set("")
+		f.Changed = false
+	}
 	actual := new(bytes.Buffer)
-	Cmd.SetOut(actual)
-	Cmd.SetErr(actual)
-	Cmd.SetArgs(args)
-	err := Cmd.Execute()
+	root := &cobra.Command{Use: "admin"}
+	root.PersistentFlags().StringP("output", "o", "", "Output format. One of: json|yaml|table")
+	root.AddCommand(Cmd)
+	root.SetOut(actual)
+	root.SetErr(actual)
+	root.SetArgs(append([]string{"restore"}, args...))
+	err := root.Execute()
 	return strings.TrimSpace(actual.String()), err
 }
 
@@ -51,11 +61,19 @@ func TestCmdRestoresANamespace(t *testing.T) {
 		}}, nil)
 
 	out, err := runCmd("--namespace", "orders", "--as-of", "2026-10-03T12:00:00Z", "--to-namespace", "orders-restored",
+		"--from", "s3://b/p", "-o", "json")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"namespace": "orders-restored"`)
+	assert.Contains(t, out, `"shard": 9`)
+	assert.Contains(t, out, `"backupId": "2026-10-03T11-00-00Z-abcd"`)
+	out, err = runCmd("--namespace", "orders", "--as-of", "2026-10-03T12:00:00Z", "--to-namespace", "orders-restored",
 		"--from", "s3://b/p")
 	require.NoError(t, err)
-	assert.Contains(t, out, `"namespace":"orders-restored"`)
-	assert.Contains(t, out, `"shard":9`)
-	assert.Contains(t, out, `"backupId":"2026-10-03T11-00-00Z-abcd"`)
+	assert.Contains(t, out, "SOURCE SHARD", "a table unless asked otherwise")
+	assert.Contains(t, out, "orders-restored")
+	_, err = runCmd("--namespace", "orders", "--as-of", "2026-10-03T12:00:00Z", "--to-namespace", "orders-restored",
+		"--from", "s3://b/p", "-o", "xml")
+	assert.ErrorContains(t, err, "unsupported output format")
 }
 
 func TestCmdRejectsAnInvalidAsOfTime(t *testing.T) {
@@ -83,4 +101,13 @@ func TestCmdReportsAClientThatCannotBeBuilt(t *testing.T) {
 
 	_, err := runCmd("--namespace", "orders", "--as-of", "2026-10-03T12:00:00Z", "--to-namespace", "orders-restored")
 	assert.Error(t, err)
+}
+
+func TestCmdNeedsTheOutputFlagOfTheAdminCommand(t *testing.T) {
+	// A copy without the flags merged by the admin command
+	bare := &cobra.Command{Use: Cmd.Use, RunE: Cmd.RunE, SilenceUsage: true}
+	bare.SetOut(new(bytes.Buffer))
+	bare.SetErr(new(bytes.Buffer))
+	bare.SetArgs(nil)
+	assert.ErrorContains(t, bare.Execute(), "flag accessed but not defined: output")
 }
