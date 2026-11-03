@@ -619,6 +619,23 @@ func TestWriteBatchSendFailureTellsIfTheRequestWasSent(t *testing.T) {
 	}
 }
 
+// An empty batch sends nothing. The batcher completes one when the first call
+// of a batch does not fit in it.
+func TestWriteBatchCompleteEmptyBatchSendsNothing(t *testing.T) {
+	factory := &writeBatchFactory{
+		execute: func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+			err := errors.New("the empty batch was sent")
+			require.FailNow(t, err.Error())
+			return nil, err
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+
+	factory.newBatch(&shardId).Complete()
+}
+
 // An empty batch sends nothing, like one that waits for its response.
 func TestWriteBatchSendEmptyBatchSendsNothing(t *testing.T) {
 	factory := &writeBatchFactory{
