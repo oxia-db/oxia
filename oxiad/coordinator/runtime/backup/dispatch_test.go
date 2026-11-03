@@ -191,12 +191,31 @@ func TestSchedulerApplyResponseSchedulesTheNextRequest(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &shardState{key: shardKey{namespace: "ns", shard: 1}, forced: true}
-			f.scheduler.applyResponse(state, tt.response, tt.err, enabledPolicy(), now, f.scheduler.log)
+			f.scheduler.applyResponse(state, tt.response, tt.err, enabledPolicy(), now, state.forceSeq, f.scheduler.log)
 			assert.WithinDuration(t, tt.nextDue, state.nextDue, 0)
 			assert.Equal(t, tt.failures, state.failures)
 			if tt.response != nil && tt.response.LastBackup != nil {
 				assert.WithinDuration(t, time.UnixMilli(tt.response.LastBackup.TimestampMillis).UTC(), state.lastBackup, 0)
 			}
+		})
+	}
+}
+
+func TestSchedulerApplyResponseKeepsAForceRequestedDuringTheRequest(t *testing.T) {
+	f := newFixture(t, enabledPolicy())
+	now := f.clock.Now()
+	record := &proto.BackupRecord{BackupId: "id", TimestampMillis: now.Add(-10 * time.Minute).UnixMilli()}
+	for _, jobState := range []proto.BackupJobState{proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED,
+		proto.BackupJobState_BACKUP_JOB_STATE_DONE} {
+		t.Run(jobState.String(), func(t *testing.T) {
+			state := &shardState{key: shardKey{namespace: "ns", shard: 1}}
+			seq := state.forceSeq
+			// A forced backup is requested while the request runs
+			state.forced, state.forceSeq = true, state.forceSeq+1
+			f.scheduler.applyResponse(state, &proto.BackupShardResponse{State: jobState, LastBackup: record}, nil,
+				enabledPolicy(), now, seq, f.scheduler.log)
+			assert.True(t, state.forced, "the request didn't carry the force")
+			assert.WithinDuration(t, now, state.nextDue, 0, "due at once")
 		})
 	}
 }
@@ -207,7 +226,7 @@ func TestSchedulerApplyResponseBacksOffUpToTheInterval(t *testing.T) {
 	now := f.clock.Now()
 	var delays []time.Duration
 	for range 12 {
-		f.scheduler.applyResponse(state, nil, errors.New("down"), enabledPolicy(), now, f.scheduler.log)
+		f.scheduler.applyResponse(state, nil, errors.New("down"), enabledPolicy(), now, state.forceSeq, f.scheduler.log)
 		delays = append(delays, state.nextDue.Sub(now))
 	}
 	assert.Equal(t, failureBackoff, delays[0])
@@ -280,7 +299,7 @@ func TestSchedulerApplyResponseFailsOnAnUnknownState(t *testing.T) {
 	state := &shardState{key: shardKey{namespace: "ns", shard: 1}}
 	now := f.clock.Now()
 	f.scheduler.applyResponse(state, &proto.BackupShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_UNKNOWN},
-		nil, enabledPolicy(), now, f.scheduler.log)
+		nil, enabledPolicy(), now, 0, f.scheduler.log)
 	assert.Equal(t, 1, state.failures)
 	assert.WithinDuration(t, now.Add(failureBackoff), state.nextDue, 0)
 }

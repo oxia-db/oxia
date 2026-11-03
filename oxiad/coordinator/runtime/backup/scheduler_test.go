@@ -17,6 +17,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -226,6 +227,40 @@ func TestSchedulerRoundForgetsAGoneShardAfterTheRetention(t *testing.T) {
 	_, gone = f.scheduler.gone[key]
 	f.scheduler.mu.Unlock()
 	assert.False(t, gone)
+}
+
+func TestSchedulerRequestBackupDuringARequestIsSentNext(t *testing.T) {
+	f := newFixture(t, enabledPolicy())
+	f.rpc.setStatus("s1", proto.ServingStatus_LEADER, 10)
+	f.rpc.setStatus("s2", proto.ServingStatus_FOLLOWER, 10)
+	f.rpc.setStatus("s3", proto.ServingStatus_FOLLOWER, 10)
+	// The first request waits until released: the forced backup is requested
+	// meanwhile, which the request didn't carry
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	f.rpc.setBackup(func(string, *proto.BackupShardRequest) (*proto.BackupShardResponse, error) {
+		once.Do(func() {
+			close(started)
+			<-release
+		})
+		return &proto.BackupShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED,
+			LastBackup: &proto.BackupRecord{TimestampMillis: f.clock.Now().UnixMilli()}}, nil
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.scheduler.round()
+	}()
+	<-started
+	assert.Equal(t, 1, f.scheduler.RequestBackup("ns", ptr(int64(1))))
+	close(release)
+	<-done
+
+	f.scheduler.round()
+	calls := f.rpc.backups()
+	require.Len(t, calls, 2)
+	assert.False(t, calls[0].req.Force)
+	assert.True(t, calls[1].req.Force, "the backup requested during the first request")
 }
 
 func TestByPriorityPutsTheForcedShardsFirstThenTheLongestDue(t *testing.T) {

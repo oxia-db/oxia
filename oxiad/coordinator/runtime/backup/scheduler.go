@@ -117,8 +117,11 @@ type shardState struct {
 	lastBackup time.Time
 	// nextDue is when the shard needs a request next
 	nextDue time.Time
-	// forced makes the next request take a backup whatever the policy says
-	forced bool
+	// forced makes the next request take a backup whatever the policy says;
+	// forceSeq counts the requests for one, which a response answers only
+	// when its request carried the latest, see applyResponse
+	forced   bool
+	forceSeq uint64
 	// unavailableSince is since when the backup replica can't take a due
 	// backup, zero when it can
 	unavailableSince time.Time
@@ -197,6 +200,7 @@ func (s *Scheduler) RequestBackup(namespace string, shard *int64) int {
 			continue
 		}
 		state.forced = true
+		state.forceSeq++
 		state.nextDue = s.clock.Now()
 		count++
 	}

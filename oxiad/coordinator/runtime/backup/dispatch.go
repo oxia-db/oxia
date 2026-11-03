@@ -108,7 +108,7 @@ func (s *Scheduler) dispatchShard(state *shardState, meta *proto.ShardMetadata, 
 	ctx, cancel := context.WithTimeout(s.ctx, rpcTimeout)
 	defer cancel()
 	s.mu.Lock()
-	forced := state.forced
+	forced, seq := state.forced, state.forceSeq
 	s.mu.Unlock()
 	res, err := s.rpc.BackupShard(ctx, replica, &proto.BackupShardRequest{
 		Namespace:       state.key.namespace,
@@ -119,7 +119,7 @@ func (s *Scheduler) dispatchShard(state *shardState, meta *proto.ShardMetadata, 
 		HashRange:       meta.GetInt32HashRange(),
 	})
 	s.requests.Inc()
-	s.applyResponse(state, res, err, policy, now, log.With(slog.String("replica", replica.GetNameOrDefault())))
+	s.applyResponse(state, res, err, policy, now, seq, log.With(slog.String("replica", replica.GetNameOrDefault())))
 }
 
 // ensureReplica returns the backup replica of the shard, assigning one when
@@ -274,9 +274,10 @@ func (s *Scheduler) replicaReady(shard int64, meta *proto.ShardMetadata, replica
 }
 
 // applyResponse updates the state of a shard from the response of its
-// replica.
+// replica. seq is the forced backup the request carried, if any: the one
+// requested after the request went out stays pending.
 func (s *Scheduler) applyResponse(state *shardState, res *proto.BackupShardResponse, err error,
-	policy *proto.BackupConfig, now time.Time, log *slog.Logger) {
+	policy *proto.BackupConfig, now time.Time, seq uint64, log *slog.Logger) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	interval := policy.GetIntervalDurationOrDefault()
@@ -292,16 +293,13 @@ func (s *Scheduler) applyResponse(state *shardState, res *proto.BackupShardRespo
 	}
 	switch res.GetState() {
 	case proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED:
-		state.forced = false
-		state.failures = 0
-		state.nextDue = now.Add(interval)
-		if next := state.lastBackup.Add(interval); next.After(now) {
-			state.nextDue = next
+		next := now.Add(interval)
+		if last := state.lastBackup.Add(interval); last.After(now) {
+			next = last
 		}
+		settleRequest(state, seq, next, now)
 	case proto.BackupJobState_BACKUP_JOB_STATE_DONE:
-		state.forced = false
-		state.failures = 0
-		state.nextDue = state.lastBackup.Add(interval)
+		settleRequest(state, seq, state.lastBackup.Add(interval), now)
 		s.completed.Inc()
 		log.Info("Backup completed", slog.String("backup-id", res.GetLastBackup().GetBackupId()),
 			slog.Int64("commit-offset", res.GetLastBackup().GetCommitOffset()),
@@ -316,6 +314,21 @@ func (s *Scheduler) applyResponse(state *shardState, res *proto.BackupShardRespo
 	default:
 		s.failRequest(state, interval, now)
 		log.Warn("Unexpected backup state", slog.Any("state", res.GetState()))
+	}
+}
+
+// settleRequest records the end of a request that found the backup fresh,
+// or took one: the next request is due at next, or now when a forced
+// backup was requested while this request ran, which it didn't carry. The
+// caller holds mu.
+func settleRequest(state *shardState, seq uint64, next time.Time, now time.Time) {
+	state.failures = 0
+	if state.forceSeq == seq {
+		state.forced = false
+	}
+	state.nextDue = next
+	if state.forced {
+		state.nextDue = now
 	}
 }
 
