@@ -1745,7 +1745,7 @@ func TestSplitChild_RecordInternalKeysFollowPartitionKey(t *testing.T) {
 				SessionId: new(int64(sessionId)), SecondaryIndexes: []*proto.SecondaryIndex{index},
 			})
 		}
-		_, err = db.ProcessWrite(write, int64(sessionId), 0, WrapperUpdateOperationCallback)
+		_, err = db.ProcessWrite(write, int64(sessionId), 0, 0, WrapperUpdateOperationCallback)
 		assert.NoError(t, err)
 
 		assert.NoError(t, database.FilterDBForSplit(db.RawKV(), child))

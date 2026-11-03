@@ -148,8 +148,8 @@ func (lc *leaderController) applyDeferredSplitFilter(ctx context.Context, term i
 			return
 		}
 
-		_, err := lc.proposeBlock(ctx, ctx.Done(), func(offset int64) statemachine.Proposal {
-			return statemachine.NewControlProposal(offset, &proto.ControlRequest{
+		_, err := lc.proposeBlock(ctx, ctx.Done(), func(offset int64, term int64) statemachine.Proposal {
+			return statemachine.NewControlProposal(offset, term, &proto.ControlRequest{
 				Value: &proto.ControlRequest_SplitFilter{
 					SplitFilter: &proto.SplitFilterRequest{
 						MaxRecords: splitFilterStepRecords,

@@ -97,7 +97,7 @@ func TestDBSimple(t *testing.T) {
 		},
 	}
 
-	res, err := db.ProcessWrite(req, 0, 0, NoOpCallback)
+	res, err := db.ProcessWrite(req, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(res.Puts))
@@ -200,7 +200,7 @@ func TestDBSameKeyMutations(t *testing.T) {
 	}
 
 	t0 := now()
-	writeRes, err := db.ProcessWrite(writeReq, 0, t0, NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, 0, 0, t0, NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 1, len(writeRes.Puts))
@@ -232,7 +232,7 @@ func TestDBSameKeyMutations(t *testing.T) {
 	}
 
 	t1 := now()
-	writeRes, err = db.ProcessWrite(writeReq, 1, t1, NoOpCallback)
+	writeRes, err = db.ProcessWrite(writeReq, 1, 0, t1, NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 2, len(writeRes.Puts))
@@ -303,7 +303,7 @@ func TestDBGetClientIdentity(t *testing.T) {
 		PartitionKey:     pb.String("pk"),
 		ClientIdentity:   pb.String("client-1"),
 		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "s"}},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, res.Puts[0].Status)
 
@@ -346,7 +346,7 @@ func TestDBList(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, now(), NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, 0, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(writeRes.Puts))
@@ -420,7 +420,7 @@ func TestDBDeleteRange(t *testing.T) {
 		}},
 	}
 
-	_, err = db.ProcessWrite(writeReq, wal.InvalidOffset, 0, NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, wal.InvalidOffset, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	writeReq = &proto.WriteRequest{
@@ -433,7 +433,7 @@ func TestDBDeleteRange(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, 0, NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	keys := make([]string, 0)
@@ -481,7 +481,7 @@ func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
 			Key:   "b",
 			Value: []byte("b"),
 		}},
-	}, 0, 0, NoOpCallback)
+	}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	// Without an end, the range reaches the internal keys, and the notifications
@@ -490,7 +490,7 @@ func TestDBDeleteRangeErrorClosesIterator(t *testing.T) {
 		DeleteRanges: []*proto.DeleteRangeRequest{{
 			StartInclusive: "a",
 		}},
-	}, 1, 0, NoOpCallback)
+	}, 1, 0, 0, NoOpCallback)
 	assert.ErrorContains(t, err, "failed to Deserialize storage entry")
 
 	assert.NotPanics(t, func() {
@@ -521,7 +521,7 @@ func TestDBDeleteRangeInvertedRange(t *testing.T) {
 
 			_, err = db.ProcessWrite(&proto.WriteRequest{
 				Puts: []*proto.PutRequest{{Key: "a"}, {Key: "b"}, {Key: "c"}},
-			}, 0, 0, NoOpCallback)
+			}, 0, 0, 0, NoOpCallback)
 			require.NoError(t, err)
 
 			res, err := db.ProcessWrite(&proto.WriteRequest{
@@ -529,7 +529,7 @@ func TestDBDeleteRangeInvertedRange(t *testing.T) {
 					StartInclusive: test.start,
 					EndExclusive:   test.end,
 				}},
-			}, 1, 0, NoOpCallback)
+			}, 1, 0, 0, NoOpCallback)
 			require.NoError(t, err)
 			assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
 			assert.Equal(t, []string{"a", "b", "c"}, keyIteratorToSlice(db.List(&proto.ListRequest{})))
@@ -607,12 +607,12 @@ func TestDB_RejectedWrite(t *testing.T) {
 			rejecting, dropping := newDB(), newDB()
 
 			for _, db := range []DB{rejecting, dropping} {
-				_, err := db.ProcessWrite(pb.Clone(setup).(*proto.WriteRequest), 0, 100, NoOpCallback)
+				_, err := db.ProcessWrite(pb.Clone(setup).(*proto.WriteRequest), 0, 0, 100, NoOpCallback)
 				require.NoError(t, err)
 			}
 			checksum := rejecting.ReadChecksum()
 
-			_, err := rejecting.ProcessWrite(test.rejected, 1, 101, NoOpCallback)
+			_, err := rejecting.ProcessWrite(test.rejected, 1, 0, 101, NoOpCallback)
 			assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 			assert.ErrorIs(t, err, test.cause)
 			commitOffset, err := rejecting.ReadCommitOffset()
@@ -621,7 +621,7 @@ func TestDB_RejectedWrite(t *testing.T) {
 			assert.Equal(t, checksum, rejecting.ReadChecksum())
 
 			for _, db := range []DB{rejecting, dropping} {
-				_, err := db.ProcessWrite(pb.Clone(next).(*proto.WriteRequest), 2, 102, NoOpCallback)
+				_, err := db.ProcessWrite(pb.Clone(next).(*proto.WriteRequest), 2, 0, 102, NoOpCallback)
 				require.NoError(t, err)
 			}
 			assert.Equal(t, dropping.ReadChecksum(), rejecting.ReadChecksum())
@@ -673,7 +673,7 @@ func TestDB_FailedWriteIsNotRejected(t *testing.T) {
 			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 				Key:   "a",
 				Value: []byte("a"),
-			}}}, 0, 0, NoOpCallback)
+			}}}, 0, 0, 0, NoOpCallback)
 			require.NoError(t, err)
 
 			// A value that is not a storage entry, at a regular key
@@ -682,7 +682,7 @@ func TestDB_FailedWriteIsNotRejected(t *testing.T) {
 			require.NoError(t, batch.Commit())
 			require.NoError(t, batch.Close())
 
-			_, err = db.ProcessWrite(test.request, 1, 0, test.callback)
+			_, err = db.ProcessWrite(test.request, 1, 0, 0, test.callback)
 			assert.ErrorContains(t, err, test.cause)
 			assert.NotErrorIs(t, err, errs.ErrDBWriteRejected)
 
@@ -740,7 +740,7 @@ func TestDB_ReadCommitOffset(t *testing.T) {
 			Value: []byte("a"),
 		}},
 	}
-	_, err = db.ProcessWrite(writeReq, offset, 0, NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, offset, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	commitOffset, err = db.ReadCommitOffset()
@@ -779,7 +779,7 @@ func TestDB_EnabledFeaturePersistence(t *testing.T) {
 						Features: []proto.Feature{enabledFeature},
 					},
 				},
-			}, commitOffset, 0, NoOpCallback)
+			}, commitOffset, 0, 0, NoOpCallback)
 			assert.NoError(t, err)
 			assert.True(t, db.IsFeatureEnabled(enabledFeature))
 			assert.NoError(t, db.Close())
@@ -847,7 +847,7 @@ func TestDB_OrderedWrites(t *testing.T) {
 				db.EnableFeature(proto.Feature_FEATURE_ORDERED_WRITES)
 			}
 
-			res, err := db.ProcessWrite(newRequest(test.withOpIndex), 0, 0, NoOpCallback)
+			res, err := db.ProcessWrite(newRequest(test.withOpIndex), 0, 0, 0, NoOpCallback)
 			assert.NoError(t, err)
 
 			// The responses stay grouped by type, in the order of the requests
@@ -891,7 +891,7 @@ func TestDB_SecondaryIndexNameValidation(t *testing.T) {
 			SecondaryKey: "email",
 		}},
 	}
-	response, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{legacyPut}}, 0, 0, FailureCallback{})
+	response, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{legacyPut}}, 0, 0, 0, FailureCallback{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, response.GetPuts()[0].GetStatus())
 
@@ -901,7 +901,7 @@ func TestDB_SecondaryIndexNameValidation(t *testing.T) {
 				Features: []proto.Feature{proto.Feature_FEATURE_SECONDARY_INDEX_NAME_VALIDATION},
 			},
 		},
-	}, 1, 0, NoOpCallback)
+	}, 1, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	callbackPut := &proto.PutRequest{
@@ -932,7 +932,7 @@ func TestDB_SecondaryIndexNameValidation(t *testing.T) {
 	}
 	response, err = db.ProcessWrite(&proto.WriteRequest{
 		Puts: []*proto.PutRequest{callbackPut, sequencePut, validPut},
-	}, 2, 0, FailureCallback{})
+	}, 2, 0, 0, FailureCallback{})
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[0].GetStatus())
 	assert.Equal(t, proto.Status_INVALID_ARGUMENT, response.GetPuts()[1].GetStatus())
@@ -1023,7 +1023,7 @@ func TestDB_ProcessControlRequestRejectsUnsupportedFeature(t *testing.T) {
 				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, unknownFeature},
 			},
 		},
-	}, 0, 0, NoOpCallback)
+	}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
 	assert.False(t, testDB.IsFeatureEnabled(unknownFeature))
 	assert.False(t, testDB.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
@@ -1131,7 +1131,7 @@ func TestDB_Delete(t *testing.T) {
 			Value: []byte("a"),
 		}},
 	}
-	_, err = db.ProcessWrite(writeReq, offset, 0, NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, offset, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.NoError(t, db.Delete())
@@ -1174,7 +1174,7 @@ func TestDB_FloorCeiling(t *testing.T) {
 			Value: []byte("4"),
 		}},
 	}
-	_, err = db.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	// ---------------------------------------------------------------
@@ -1325,7 +1325,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Key:              "a",
 		Value:            []byte("0"),
 		SequenceKeyDelta: []uint64{3},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1333,7 +1333,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{0},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	resp, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1342,7 +1342,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		PartitionKey:      pb.String("x"),
 		ExpectedVersionId: pb.Int64(1),
 		SequenceKeyDelta:  []uint64{5},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_UNEXPECTED_VERSION_ID, resp.GetPuts()[0].Status)
 
@@ -1351,7 +1351,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{5},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 5), resp.GetPuts()[0].GetKey())
@@ -1361,7 +1361,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{3},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("a-%020d", 8), resp.GetPuts()[0].GetKey())
@@ -1372,7 +1372,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{6, 9},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 14, 9), resp.GetPuts()[0].GetKey())
@@ -1383,7 +1383,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{2},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	// Put bad existing suffix
@@ -1391,7 +1391,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Key:          "b+xxxx",
 		Value:        []byte("0"),
 		PartitionKey: pb.String("x"),
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1399,7 +1399,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{2},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("b-%020d", 2), resp.GetPuts()[0].GetKey())
@@ -1408,7 +1408,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Key:          "c+.....",
 		Value:        []byte("0"),
 		PartitionKey: pb.String("x"),
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	resp, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1416,7 +1416,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{2},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("c-%020d", 2), resp.GetPuts()[0].GetKey())
@@ -1427,7 +1427,7 @@ func TestDB_SequentialKeys(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{6, 9, 15},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, resp.GetPuts()[0].Status)
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d-%020d", 20, 18, 15), resp.GetPuts()[0].GetKey())
@@ -1470,7 +1470,7 @@ func TestDB_SequentialKeysReadFailure(t *testing.T) {
 		Value:            []byte("3"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, os.ErrPermission, "response: %v", resp)
 }
 
@@ -1488,7 +1488,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	// Seed a small sequence, then a huge delta that would wrap uint64 back onto
@@ -1498,7 +1498,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{5},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("b-%020d", 5), resp.GetPuts()[0].GetKey())
 
@@ -1507,7 +1507,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1515,7 +1515,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{maxSequence - 5},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	// The rejected puts left the tail untouched: a normal delta keeps advancing
@@ -1525,7 +1525,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{3},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("b-%020d", 8), resp.GetPuts()[0].GetKey())
 
@@ -1535,7 +1535,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{2, 4},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("c-%020d-%020d", 2, 4), resp.GetPuts()[0].GetKey())
 
@@ -1544,7 +1544,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1, maxSequence},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
@@ -1552,7 +1552,7 @@ func TestDB_SequentialKeysOverflow(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1, maxSequence - 4},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 
 	assert.NoError(t, db.Close())
@@ -1587,14 +1587,14 @@ func TestDB_SequenceTailSharedPrefix(t *testing.T) {
 				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 					{Key: "orders+archive-2025"},
 					{Key: "users+eu-west"},
-				}}, 0, 0, NoOpCallback)
+				}}, 0, 0, 0, NoOpCallback)
 				require.NoError(t, err)
 
 				var keys []string
 				for _, prefix := range []string{"orders", "orders", "users"} {
 					res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 						{Key: prefix, PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
-					}}, 0, 0, NoOpCallback)
+					}}, 0, 0, 0, NoOpCallback)
 					if err != nil {
 						assert.ErrorIs(t, err, errs.ErrDBInvalidSequentialKey)
 						keys = append(keys, "")
@@ -1636,7 +1636,7 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 				{Key: "max", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{maxSequence - 1}},
 				{Key: "plain-"},
-			}}, 0, 0, NoOpCallback)
+			}}, 0, 0, 0, NoOpCallback)
 			assert.NoError(t, err)
 			keys := keyIteratorToSlice(db.List(&proto.ListRequest{}))
 
@@ -1651,7 +1651,7 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 			_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 				test.put,
 				{Key: "valid", Value: []byte("0")},
-			}}, 1, 0, NoOpCallback)
+			}}, 1, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 			assert.ErrorIs(t, err, test.expectedErr)
 			assert.Equal(t, keys, keyIteratorToSlice(db.List(&proto.ListRequest{})))
@@ -1662,7 +1662,7 @@ func TestDB_SequenceKeyValidation(t *testing.T) {
 			res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 				test.put,
 				{Key: "valid", Value: []byte("0")},
-			}}, 2, 0, NoOpCallback)
+			}}, 2, 0, 0, NoOpCallback)
 			require.NoError(t, err)
 			assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.Puts[0].Status)
 			assert.Nil(t, res.Puts[0].Key)
@@ -1695,7 +1695,7 @@ func TestDB_SequenceKeyMissingDeltas(t *testing.T) {
 			Value:            []byte("0"),
 			PartitionKey:     pb.String("x"),
 			SequenceKeyDelta: deltas,
-		}}}, offset, 0, NoOpCallback)
+		}}}, offset, 0, 0, NoOpCallback)
 		if err != nil {
 			return "", err
 		}
@@ -1762,7 +1762,7 @@ func TestDBRangeScan(t *testing.T) {
 		}},
 	}
 
-	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, now(), NoOpCallback)
+	writeRes, err := db.ProcessWrite(writeReq, wal.InvalidOffset, 0, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 5, len(writeRes.Puts))
@@ -1814,7 +1814,7 @@ func TestDBRangeScanWithoutValues(t *testing.T) {
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 		{Key: "a", Value: []byte("0")},
 		{Key: "b", Value: []byte("1")},
-	}}, wal.InvalidOffset, now(), NoOpCallback)
+	}}, wal.InvalidOffset, 0, now(), NoOpCallback)
 	require.NoError(t, err)
 
 	it, err := db.RangeScan(&proto.RangeScanRequest{StartInclusive: "a", EndExclusive: "c", IncludeValues: new(false)})
@@ -1858,7 +1858,7 @@ func TestDb_versionId(t *testing.T) {
 		},
 	}
 
-	res, err := db.ProcessWrite(req, 0, 0, NoOpCallback)
+	res, err := db.ProcessWrite(req, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 3, len(res.Puts))
@@ -1935,7 +1935,7 @@ func TestDBVersionIDWithError(t *testing.T) {
 			},
 		},
 	}
-	_, err = db.ProcessWrite(errReq, 0, 0, &FailureCallback{})
+	_, err = db.ProcessWrite(errReq, 0, 0, 0, &FailureCallback{})
 	assert.Error(t, err)
 
 	req := &proto.WriteRequest{
@@ -1955,7 +1955,7 @@ func TestDBVersionIDWithError(t *testing.T) {
 		},
 	}
 
-	res, err := db.ProcessWrite(req, 0, 0, &FailureCallback{})
+	res, err := db.ProcessWrite(req, 0, 0, 0, &FailureCallback{})
 	assert.NoError(t, err)
 
 	assert.Equal(t, 3, len(res.Puts))
@@ -1994,7 +1994,7 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 		Value:            []byte("0"),
 		SequenceKeyDelta: []uint64{3},
 		PartitionKey:     pb.String("x"),
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	n1 := <-sw.Ch()
@@ -2010,7 +2010,7 @@ func TestDB_SequentialKeysNotification(t *testing.T) {
 		Value:            []byte("1"),
 		SequenceKeyDelta: []uint64{10},
 		PartitionKey:     pb.String("x"),
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	// Only get notification of the last value
@@ -2048,7 +2048,7 @@ func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
 		Value:            []byte("0"),
 		PartitionKey:     pb.String("x"),
 		SequenceKeyDelta: []uint64{1, 1},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("a-%020d-%020d", 1, 1), <-sw.Ch())
 
@@ -2073,7 +2073,7 @@ func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
 			SequenceKeyDelta: []uint64{1},
 		}},
 	}} {
-		_, err = db.ProcessWrite(request, int64(offset)+1, 0, NoOpCallback)
+		_, err = db.ProcessWrite(request, int64(offset)+1, 0, 0, NoOpCallback)
 		assert.ErrorIs(t, err, errs.ErrDBWriteRejected)
 		assert.Empty(t, sw.Ch())
 	}
@@ -2099,7 +2099,7 @@ func TestDB_OverrideVersionId(t *testing.T) {
 				OverrideModificationsCount: pb.Int64(5),
 			},
 		},
-	}, 0, 0, NoOpCallback)
+	}, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.Equal(t, 1, len(res.Puts))
@@ -2124,7 +2124,7 @@ func TestDB_OverrideVersionId(t *testing.T) {
 				Value: []byte("v1"),
 			},
 		},
-	}, 1, 0, NoOpCallback)
+	}, 1, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	r1 := res.Puts[0]
@@ -2140,7 +2140,7 @@ func TestDB_OverrideVersionId(t *testing.T) {
 				ExpectedVersionId: pb.Int64(100),
 			},
 		},
-	}, 2, 0, NoOpCallback)
+	}, 2, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	r2 := res.Puts[0]
@@ -2158,7 +2158,7 @@ func TestDB_OverrideVersionId(t *testing.T) {
 				OverrideVersionId: pb.Int64(200),
 			},
 		},
-	}, 3, 0, NoOpCallback)
+	}, 3, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	r3 := res.Puts[0]
@@ -2188,7 +2188,7 @@ func TestDB_ChecksumPersistence(t *testing.T) {
 			Value: []byte("value-a"),
 		}},
 	}
-	_, err = testDB.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	_, err = testDB.ProcessWrite(writeReq, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	// Checksum should have changed
@@ -2245,7 +2245,7 @@ func TestDB_ChecksumUpdatesOnWrite(t *testing.T) {
 				Value: []byte(fmt.Sprintf("value-%d", i)),
 			}},
 		}
-		_, err = testDB.ProcessWrite(writeReq, int64(i), 0, NoOpCallback)
+		_, err = testDB.ProcessWrite(writeReq, int64(i), 0, 0, NoOpCallback)
 		assert.NoError(t, err)
 
 		cs := testDB.(*db).committedChecksum.Load()
@@ -2289,9 +2289,9 @@ func TestDB_ChecksumDeterministic(t *testing.T) {
 		},
 	}
 
-	_, err = db1.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	_, err = db1.ProcessWrite(writeReq, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
-	_, err = db2.ProcessWrite(writeReq, 0, 0, NoOpCallback)
+	_, err = db2.ProcessWrite(writeReq, 0, 0, 0, NoOpCallback)
 	assert.NoError(t, err)
 
 	cs1 := db1.(*db).committedChecksum.Load().Value()
@@ -2327,7 +2327,7 @@ func TestDB_ShowInternalKeys(t *testing.T) {
 		}},
 	}
 
-	_, err = db.ProcessWrite(writeReq, wal.InvalidOffset, now(), NoOpCallback)
+	_, err = db.ProcessWrite(writeReq, wal.InvalidOffset, 0, now(), NoOpCallback)
 	assert.NoError(t, err)
 
 	listReq1 := &proto.ListRequest{
@@ -2579,7 +2579,7 @@ func TestNewDBFailsOnCorruptedInternalRecord(t *testing.T) {
 func TestDBProcessControlRequestRejectsUnknownType(t *testing.T) {
 	db := newNotificationsTestDB(t)
 
-	_, err := db.ProcessControlRequest(&proto.ControlRequest{}, 0, 0, NoOpCallback)
+	_, err := db.ProcessControlRequest(&proto.ControlRequest{}, 0, 0, 0, NoOpCallback)
 	assert.ErrorContains(t, err, "unknown control request type")
 	commitOffset, err := db.ReadCommitOffset()
 	require.NoError(t, err)
@@ -2590,12 +2590,12 @@ func TestDBProcessWriteFailsWhenDeleteRangeCallbackFails(t *testing.T) {
 	db := newNotificationsTestDB(t)
 	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
 		{Key: FailureCallbackKey, Value: []byte("v")},
-	}}, 0, 0, NoOpCallback)
+	}}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	_, err = db.ProcessWrite(&proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{
 		{StartInclusive: "a", EndExclusive: "z"},
-	}}, 1, 0, FailureCallback{})
+	}}, 1, 0, 0, FailureCallback{})
 	assert.ErrorContains(t, err, "failed to callback on delete range")
 
 	res, err := db.Get(&proto.GetRequest{Key: FailureCallbackKey})
@@ -2612,7 +2612,7 @@ func TestDBProcessWriteLogsOperationsAtDebugLevel(t *testing.T) {
 		Puts:         []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b", Value: []byte("v")}},
 		Deletes:      []*proto.DeleteRequest{{Key: "a"}},
 		DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "b", EndExclusive: "c"}},
-	}, 0, 0, NoOpCallback)
+	}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	assert.Contains(t, logs.String(), "Applied put operation")
@@ -2633,7 +2633,7 @@ func TestDBGetFailsOnCorruptedRecord(t *testing.T) {
 func TestDBRangeScanReturnsNotificationsAsStored(t *testing.T) {
 	db := newNotificationsTestDB(t)
 	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
-		0, 0, NoOpCallback)
+		0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	stored := dumpKV(t, db)
 
@@ -2737,6 +2737,7 @@ func TestDBProcessControlRequestFailsWhenWriteFails(t *testing.T) {
 		key  string
 	}{
 		{"commit-offset", opBatchPutMarshalable, commitOffsetKey},
+		{"commit-term", opBatchPutMarshalable, commitTermKey},
 		{"feature-flag", opBatchPutMarshalable, featureFlagKey(checksum)},
 		{"commit", opBatchCommit, ""},
 	} {
@@ -2746,7 +2747,7 @@ func TestDBProcessControlRequestFailsWhenWriteFails(t *testing.T) {
 
 			_, err := d.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{checksum}},
-			}}, 0, 0, NoOpCallback)
+			}}, 0, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errInjected)
 			assert.False(t, d.IsFeatureEnabled(checksum))
 			assertCommitOffset(t, d, kv, -1)
@@ -2762,6 +2763,7 @@ func TestDBProcessWriteFailsWhenWriteFails(t *testing.T) {
 	}{
 		{"record", opBatchPutMarshalable, "a"},
 		{"commit-offset", opBatchPutMarshalable, commitOffsetKey},
+		{"commit-term", opBatchPutMarshalable, commitTermKey},
 		{"last-version-id", opBatchPutMarshalable, commitLastVersionIdKey},
 		{"notifications", opBatchPutMarshalable, notificationKey(1)},
 		{"checksum", opBatchPutMarshalable, commitChecksumKey},
@@ -2771,13 +2773,13 @@ func TestDBProcessWriteFailsWhenWriteFails(t *testing.T) {
 			d, kv := newHookedTestDB(t)
 			_, err := d.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
-			}}, 0, 0, NoOpCallback)
+			}}, 0, 0, 0, NoOpCallback)
 			require.NoError(t, err)
 			checksum := d.ReadChecksum()
 			kv.failOn(test.op, test.key)
 
 			_, err = d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
-				1, 0, NoOpCallback)
+				1, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errInjected)
 			assert.Equal(t, checksum, d.ReadChecksum())
 			assertCommitOffset(t, d, kv, 0)
@@ -2795,6 +2797,7 @@ func TestDBProcessWriteFailsWhenRejectedWriteFailsToBeRecorded(t *testing.T) {
 		key  string
 	}{
 		{"commit-offset", opBatchPutMarshalable, commitOffsetKey},
+		{"commit-term", opBatchPutMarshalable, commitTermKey},
 		{"commit", opBatchCommit, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -2804,7 +2807,7 @@ func TestDBProcessWriteFailsWhenRejectedWriteFailsToBeRecorded(t *testing.T) {
 			// A sequential put without a partition key is rejected
 			_, err := d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 				Key: "a", Value: []byte("v"), SequenceKeyDelta: []uint64{1},
-			}}}, 0, 0, NoOpCallback)
+			}}}, 0, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errInjected)
 			assert.NotErrorIs(t, err, errs.ErrDBWriteRejected)
 			assertCommitOffset(t, d, kv, -1)
@@ -2812,12 +2815,47 @@ func TestDBProcessWriteFailsWhenRejectedWriteFailsToBeRecorded(t *testing.T) {
 	}
 }
 
+// The database records the term of the entry at its commit offset, with each
+// entry it applies: a node whose wal is empty reports it as the term of its head.
+func TestDBRecordsTheTermOfTheCommitOffset(t *testing.T) {
+	d, kv := newHookedTestDB(t)
+	commitTerm, err := d.ReadCommitTerm()
+	require.NoError(t, err)
+	assert.EqualValues(t, wal.InvalidTerm, commitTerm)
+
+	_, err = d.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_FeatureEnable{
+		FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
+	}}, 0, 2, 0, NoOpCallback)
+	require.NoError(t, err)
+	assertCommitTerm(t, d, 2)
+
+	_, err = d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
+		1, 3, 0, NoOpCallback)
+	require.NoError(t, err)
+	assertCommitTerm(t, d, 3)
+
+	// A sequential put without a partition key is rejected
+	_, err = d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+		Key: "b", Value: []byte("v"), SequenceKeyDelta: []uint64{1},
+	}}}, 2, 4, 0, NoOpCallback)
+	require.ErrorIs(t, err, errs.ErrDBWriteRejected)
+	assertCommitTerm(t, d, 4)
+	assertCommitOffset(t, d, kv, 2)
+}
+
+func assertCommitTerm(t *testing.T, d DB, expected int64) {
+	t.Helper()
+	commitTerm, err := d.ReadCommitTerm()
+	require.NoError(t, err)
+	assert.Equal(t, expected, commitTerm)
+}
+
 func TestDBProcessWriteDeleteFailsWhenWriteFails(t *testing.T) {
 	d, kv := newHookedTestDB(t)
 	putStorageEntry(t, d.kv, "a", nil)
 	kv.failOn(opBatchDelete, "a")
 
-	_, err := d.ProcessWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{{Key: "a"}}}, 0, 0, NoOpCallback)
+	_, err := d.ProcessWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{{Key: "a"}}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errInjected)
 	assert.True(t, keyExists(t, d.kv, "a"))
 }
@@ -2841,7 +2879,7 @@ func TestDBProcessWriteDeleteRangeFailsWhenStorageFails(t *testing.T) {
 
 			_, err := d.ProcessWrite(&proto.WriteRequest{DeleteRanges: []*proto.DeleteRangeRequest{{
 				StartInclusive: "a", EndExclusive: "c",
-			}}}, 0, 0, NoOpCallback)
+			}}}, 0, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errInjected)
 			assert.True(t, keyExists(t, d.kv, "a"))
 			assert.True(t, keyExists(t, d.kv, "b"))
@@ -2902,7 +2940,7 @@ func TestDBProcessWriteFailsWhenNotificationsMarshalFails(t *testing.T) {
 	d.marshalNotifications = failingMarshal[*proto.NotificationBatch]
 
 	_, err := d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
-		0, 0, NoOpCallback)
+		0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errInjected)
 	assert.False(t, keyExists(t, kv, "a"))
 }

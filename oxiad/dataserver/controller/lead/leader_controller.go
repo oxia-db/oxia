@@ -450,13 +450,9 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	lc.followers = make(map[string]FollowerCursor)
 	lc.observers = make(map[string]FollowerCursor)
 
+	var leaderCommitOffset int64
 	var err error
-	lc.leaderElectionHeadEntryId, err = getLastEntryIdInWal(lc.wal)
-	if err != nil {
-		return err
-	}
-
-	leaderCommitOffset, err := lc.db.ReadCommitOffset()
+	lc.leaderElectionHeadEntryId, leaderCommitOffset, err = GetLogState(lc.wal, lc.db)
 	if err != nil {
 		return err
 	}
@@ -960,8 +956,12 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 	}
 
 	// Coordinator should never send us a follower with an invalid term.
-	// Checking for sanity here.
-	if followerHeadEntryId.Term > lc.leaderElectionHeadEntryId.Term {
+	// Checking for sanity here. A leader seeded from a snapshot that doesn't
+	// record the term of its commit offset doesn't know the term of its head:
+	// the commit offset of the follower protects its committed entries
+	leaderHeadTermUnknown := lc.leaderElectionHeadEntryId.Term == wal.InvalidTerm &&
+		lc.leaderElectionHeadEntryId.Offset != wal.InvalidOffset
+	if !leaderHeadTermUnknown && followerHeadEntryId.Term > lc.leaderElectionHeadEntryId.Term {
 		return nil, constant.ErrInvalidTerm
 	}
 
@@ -1253,7 +1253,9 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
 		cb.OnComplete(response.WriteResponse)
 	}, cb.OnCompleteError)
-	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
+	lc.propose(ctx, func(offset int64, term int64) statemachine.Proposal {
+		return statemachine.NewWriteProposal(offset, term, request)
+	}, deferPropose)
 }
 
 // writeBlock proposes the write built by requestSupplier and waits for its
@@ -1263,8 +1265,8 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 // write lock, so none of its writes can be appended once it is stopped.
 func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
 	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
-	response, err := lc.proposeBlock(ctx, closed, func(offset int64) statemachine.Proposal {
-		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
+	response, err := lc.proposeBlock(ctx, closed, func(offset int64, term int64) statemachine.Proposal {
+		return statemachine.NewWriteProposal(offset, term, requestSupplier(offset))
 	})
 	return response.WriteResponse, err
 }
@@ -1272,7 +1274,7 @@ func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct
 // proposeBlock proposes the proposal built by proposalSupplier and waits for
 // its result, like writeBlock.
 func (lc *leaderController) proposeBlock(ctx context.Context, closed <-chan struct{},
-	proposalSupplier func(offset int64) statemachine.Proposal) (statemachine.ApplyResponse, error) {
+	proposalSupplier func(offset int64, term int64) statemachine.Proposal) (statemachine.ApplyResponse, error) {
 	res := make(chan *entity.TWithError[statemachine.ApplyResponse], 1)
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
 		res <- &entity.TWithError[statemachine.ApplyResponse]{Err: nil, T: response}
@@ -1312,8 +1314,8 @@ func (lc *leaderController) proposeFeaturesEnableLocked(ctx context.Context, fea
 	}, func(err error) {
 		lc.log.Error("Failed to propose feature enable", slog.Int64("term", term), slog.Any("features", features), slog.Any("error", err))
 	})
-	return lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
-		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
+	return lc.proposeLocked(ctx, func(offset int64, term int64) statemachine.Proposal {
+		return statemachine.NewControlProposal(offset, term, &proto.ControlRequest{
 			Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{
 					Features: features,
@@ -1355,8 +1357,8 @@ func (lc *leaderController) proposeOrphanedEphemeralsDeleteLocked(ctx context.Co
 			Shard:   &lc.shardId,
 			Deletes: deletes[start:min(start+orphanedEphemeralsBatchSize, len(deletes))],
 		}
-		if err := lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
-			return statemachine.NewWriteProposal(offset, request)
+		if err := lc.proposeLocked(ctx, func(offset int64, term int64) statemachine.Proposal {
+			return statemachine.NewWriteProposal(offset, term, request)
 		}, concurrent.NewOnce(func(statemachine.ApplyResponse) {}, onError)); err != nil {
 			onError(err)
 			return
@@ -1371,8 +1373,8 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 	}, func(err error) {
 		lc.log.Warn("Failed to record checksum", slog.Int64("term", term), slog.Any("error", err))
 	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
-		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
+	lc.propose(ctx, func(offset int64, term int64) statemachine.Proposal {
+		return statemachine.NewControlProposal(offset, term, &proto.ControlRequest{
 			Value: &proto.ControlRequest_RecordChecksum{
 				RecordChecksum: &proto.RecordChecksumRequest{},
 			},
@@ -1380,7 +1382,7 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 	}, deferPropose)
 }
 
-func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
+func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64, term int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
 	lc.RLock()
 	err := lc.proposeLocked(ctx, proposalSupplier, cb)
 	lc.RUnlock()
@@ -1393,7 +1395,7 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 // leader lock, the read or the write one: the leader state can't change until
 // the proposal is appended. A non-nil return means the proposal was not
 // appended and the callback will not be invoked.
-func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
+func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier func(offset int64, term int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
 	// One proposal at a time: the entries must be appended in the order of
 	// their offsets, and their syncs requested in the same order, since the
 	// sync callbacks queue the entries for the database apply.
@@ -1415,7 +1417,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	tracker := lc.quorumAckTracker
 	termCtx := lc.termCtx
 	term := lc.term.Load()
-	proposal := proposalSupplier(newOffset)
+	proposal := proposalSupplier(newOffset, term)
 
 	if lc.log.Enabled(ctx, slog.LevelDebug) {
 		lc.log.Debug("Appending proposal to WAL",
@@ -1768,7 +1770,11 @@ func GetLogState(walObject wal.Wal, db database.DB) (*proto.EntryId, int64, erro
 		return nil, wal.InvalidOffset, err
 	}
 	if headEntryId.Offset == wal.InvalidOffset && commitOffset != wal.InvalidOffset {
-		headEntryId = &proto.EntryId{Term: wal.InvalidTerm, Offset: commitOffset}
+		commitTerm, err := db.ReadCommitTerm()
+		if err != nil {
+			return nil, wal.InvalidOffset, err
+		}
+		headEntryId = &proto.EntryId{Term: commitTerm, Offset: commitOffset}
 	}
 	return headEntryId, commitOffset, nil
 }

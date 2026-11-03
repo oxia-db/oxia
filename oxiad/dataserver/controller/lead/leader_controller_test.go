@@ -1271,7 +1271,7 @@ func TestLeaderController_AddFollower_Truncate(t *testing.T) {
 			Value:  value,
 		}))
 
-		_, err = db.ProcessWrite(wr, i-1, 0, database.NoOpCallback)
+		_, err = db.ProcessWrite(wr, i-1, 0, 0, database.NoOpCallback)
 		assert.NoError(t, err)
 	}
 
@@ -3427,7 +3427,7 @@ func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
 	require.NoError(t, err)
-	AssertProtoEqual(t, &proto.EntryId{Term: wal.InvalidTerm, Offset: 2}, res.HeadEntryId)
+	AssertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 2}, res.HeadEntryId)
 	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 1})
 	require.NoError(t, err)
 
@@ -3445,9 +3445,9 @@ func TestLeaderController_BecomeLeaderWithEmptyWalAfterSnapshot(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
-// A follower seeded from a snapshot reports the commit offset of the snapshot as
-// its head, with an invalid term, and its database holds the entries up to that
-// offset. There is nothing to truncate in its empty wal. If the wal of the leader
+// A follower seeded from a snapshot by a version that doesn't record the term of
+// the commit offset reports that offset as its head, with an invalid term, and
+// its database holds the entries up to that offset. There is nothing to truncate in its empty wal. If the wal of the leader
 // has the entries after that offset, the follower gets them from there: a
 // snapshot would wipe its data until it is installed, e.g. when the split of a
 // shard elects a child that all of its members observed, or when a leader
@@ -3494,7 +3494,7 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 						&proto.LogEntry{Term: 1, Offset: i, Value: value}, &previousCrc)
 					require.NoError(t, err)
 				}
-				_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
+				_, err = db.ProcessWrite(wr, i, 1, 0, database.NoOpCallback)
 				require.NoError(t, err)
 			}
 			require.NoError(t, walObject.Sync(context.Background()))
@@ -3543,6 +3543,93 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 
 			// Complete a snapshot in progress: the leader waits for it to close
 			rpcClient.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: 9}
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
+// A leader seeded from a snapshot has an empty wal: its head is the commit offset
+// of its database, with the term of the entry at it. A follower that has that
+// entry as its head gets the next entries, without a truncation. When the
+// database was written by a version that doesn't record that term, the leader
+// doesn't know the term of its head, and takes the follower by its commit offset
+// instead of refusing its term (oxia-db/chaos#87).
+func TestLeaderController_LeaderSeededFromSnapshotAddsAFollowerOfItsHead(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The term the database of the leader records for its commit offset
+		commitTerm  int64
+		addFollower bool
+	}{
+		{name: "become leader", commitTerm: 1},
+		{name: "add follower", commitTerm: 1, addFollower: true},
+		{name: "become leader with an unknown term", commitTerm: wal.InvalidTerm},
+		{name: "add follower with an unknown term", commitTerm: wal.InvalidTerm, addFollower: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var shard int64 = 1
+
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			// The database of the leader holds the entries 0 to 9, of term 1, and
+			// its wal is empty
+			db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
+				1*time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			for i := int64(0); i < 10; i++ {
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}},
+					i, test.commitTerm, 0, database.NoOpCallback)
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.UpdateTerm(1, database.TermOptions{}))
+			require.NoError(t, db.Close())
+
+			rpcClient := rpc.NewMockRpcClient()
+			lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
+				walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			res, err := lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+			require.NoError(t, err)
+			AssertProtoEqual(t, &proto.EntryId{Term: test.commitTerm, Offset: 9}, res.HeadEntryId)
+
+			followerHeadEntryId := &proto.EntryId{Term: 1, Offset: 9}
+			followerCommitOffset := int64(9)
+			becomeLeaderReq := &proto.BecomeLeaderRequest{Shard: shard, Term: 2, ReplicationFactor: 3}
+			if !test.addFollower {
+				becomeLeaderReq.FollowerMaps = map[string]*proto.EntryId{"f1": followerHeadEntryId}
+				becomeLeaderReq.FollowerCommitOffsets = map[string]int64{"f1": followerCommitOffset}
+			}
+			_, err = lc.BecomeLeader(context.Background(), becomeLeaderReq)
+			require.NoError(t, err)
+			if test.addFollower {
+				_, err = lc.AddFollower(&proto.AddFollowerRequest{
+					Shard:                shard,
+					Term:                 2,
+					FollowerName:         "f1",
+					FollowerHeadEntryId:  followerHeadEntryId,
+					FollowerCommitOffset: &followerCommitOffset,
+				})
+				require.NoError(t, err)
+			}
+
+			// The next entry of the leader, at offset 10
+			lc.Write(context.Background(), &proto.WriteRequest{
+				Shard: &shard,
+				Puts:  []*proto.PutRequest{{Key: "other-key", Value: []byte("")}},
+			}, concurrent.NewOnce(func(*proto.WriteResponse) {}, func(error) {}))
+			select {
+			case req := <-rpcClient.AppendReqs:
+				assert.EqualValues(t, 10, req.Entry.Offset)
+			case <-time.After(10 * time.Second):
+				assert.Fail(t, "the leader sent no entry to the follower")
+			}
+			assert.Empty(t, rpcClient.TruncateReqs, "the follower got truncated")
+			assert.Empty(t, rpcClient.SendSnapshotStream.Requests, "the follower got a snapshot")
+
 			assert.NoError(t, lc.Close())
 			assert.NoError(t, kvFactory.Close())
 			assert.NoError(t, walFactory.Close())
@@ -3752,7 +3839,7 @@ func newLeaderWithWalAfter(t *testing.T, walFirstOffset int64, walTermTwoOffset 
 				&proto.LogEntry{Term: term, Offset: i, Value: value}, &previousCrc)
 			require.NoError(t, err)
 		}
-		_, err = db.ProcessWrite(wr, i, 0, database.NoOpCallback)
+		_, err = db.ProcessWrite(wr, i, 0, 0, database.NoOpCallback)
 		require.NoError(t, err)
 	}
 	require.NoError(t, walObject.Sync(context.Background()))

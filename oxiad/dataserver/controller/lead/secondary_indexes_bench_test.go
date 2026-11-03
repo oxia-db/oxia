@@ -80,7 +80,7 @@ func BenchmarkSecondaryIndexRangeScan(b *testing.B) {
 				SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: fmt.Sprintf("%05d", j*7919%records)}},
 			})
 		}
-		if _, err := db.ProcessWrite(write, int64(i/batch), timestamp, WrapperUpdateOperationCallback); err != nil {
+		if _, err := db.ProcessWrite(write, int64(i/batch), 0, timestamp, WrapperUpdateOperationCallback); err != nil {
 			b.Fatal(err)
 		}
 		if i == records*9/10 {
@@ -146,7 +146,7 @@ func benchmarkSecondaryIndexesOverwrite(b *testing.B, features []proto.Feature, 
 	b.ResetTimer()
 	for i := range b.N {
 		put.SecondaryIndexes[0].SecondaryKey = firstSecondaryKeys[i%len(firstSecondaryKeys)]
-		if _, err := db.ProcessWrite(write, int64(i), timestamp, WrapperUpdateOperationCallback); err != nil {
+		if _, err := db.ProcessWrite(write, int64(i), 0, timestamp, WrapperUpdateOperationCallback); err != nil {
 			b.Fatal(err)
 		}
 	}

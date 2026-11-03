@@ -1181,7 +1181,7 @@ func TestSecondaryIndexListEndInclusiveSeeksToEndKey(t *testing.T) {
 		// After the entries of "a//"
 		add(fmt.Sprintf("p-d%03d", i), fmt.Sprintf("a//\x02%03d", i))
 	}
-	_, err = db.ProcessWrite(write, 0, 0, WrapperUpdateOperationCallback)
+	_, err = db.ProcessWrite(write, 0, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 
 	hooked := &hookedPrefixDB{DB: db}
@@ -1540,7 +1540,7 @@ func TestSecondaryIndexRangeScanIteratorKeyIsPrimaryKey(t *testing.T) {
 	db, _ := newReadErrorsTestDB(t)
 	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key: "/a", Value: []byte("v"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "s"}},
-	}}}, 0, 0, WrapperUpdateOperationCallback)
+	}}}, 0, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 
 	idx := "idx"
@@ -1575,7 +1575,7 @@ func TestSecondaryIndexRangeScanFailsWhenRecordReadFails(t *testing.T) {
 	child, _ := newReadErrorsTestDB(t)
 	_, err := child.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key: "/a", Value: []byte("v"), SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "s"}},
-	}}}, 0, 0, WrapperUpdateOperationCallback)
+	}}}, 0, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 	recordErr := errors.New("record read failed")
 	db := &hookedPrefixDB{DB: child, recordErr: recordErr}

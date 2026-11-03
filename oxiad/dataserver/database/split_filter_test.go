@@ -232,6 +232,7 @@ func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 
 	// Write metadata keys
 	putRawKey(t, kv, commitOffsetKey, []byte("42"))
+	putRawKey(t, kv, commitTermKey, []byte("4"))
 	putRawKey(t, kv, commitLastVersionIdKey, []byte("100"))
 	putRawKey(t, kv, commitChecksumKey, []byte("999"))
 	putRawKey(t, kv, featureFlagKey(proto.Feature_FEATURE_DB_CHECKSUM), []byte("1"))
@@ -242,6 +243,7 @@ func TestFilterDBForSplit_MetadataKeys(t *testing.T) {
 
 	// Kept
 	assert.True(t, keyExists(t, kv, commitOffsetKey))
+	assert.True(t, keyExists(t, kv, commitTermKey))
 	assert.True(t, keyExists(t, kv, commitLastVersionIdKey))
 	assert.True(t, keyExists(t, kv, featureFlagKey(proto.Feature_FEATURE_DB_CHECKSUM)))
 	assert.True(t, keyExists(t, kv, termKey))

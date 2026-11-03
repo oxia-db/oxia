@@ -72,7 +72,7 @@ func writeNotification(t *testing.T, d DB, offset int64) {
 	t.Helper()
 	_, err := d.ProcessWrite(&proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: fmt.Sprintf("k%d", offset), Value: []byte("v")}},
-	}, offset, now(), NoOpCallback)
+	}, offset, 0, now(), NoOpCallback)
 	require.NoError(t, err)
 }
 
@@ -153,7 +153,7 @@ func TestDB_NotificationsCacheChecksum(t *testing.T) {
 			Deletes: []*proto.DeleteRequest{{Key: fmt.Sprintf("k%d", offset-1)}},
 		}
 		for _, d := range replicas {
-			_, err := d.ProcessWrite(req.CloneVT(), offset, uint64(offset), NoOpCallback)
+			_, err := d.ProcessWrite(req.CloneVT(), offset, 0, uint64(offset), NoOpCallback)
 			require.NoError(t, err)
 		}
 		require.False(t, replicas[0].ReadChecksum().IsZero())
@@ -223,7 +223,7 @@ func TestDB_DeleteRangeNotificationRecordsCached(t *testing.T) {
 			StartInclusive: "__oxia/notifications/",
 			EndExclusive:   "__oxia/notifications/~",
 		}},
-	}, 3, now(), NoOpCallback)
+	}, 3, 0, now(), NoOpCallback)
 	require.NoError(t, err)
 	assert.Equal(t, proto.Status_OK, res.DeleteRanges[0].Status)
 
@@ -330,7 +330,7 @@ func writeNotificationBatches(t *testing.T, d DB, count int64) {
 	t.Helper()
 	for offset := int64(0); offset < count; offset++ {
 		_, err := d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
-			offset, 0, NoOpCallback)
+			offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
 	}
 }

@@ -199,9 +199,9 @@ func (d *db) recoverDeferredSplitFilter() error {
 // ProcessSplitParentWrite applies a write request of the parent of a split
 // child as the parent applied it, with the records of the other child (see
 // DeferredSplitFilter).
-func (d *db) ProcessSplitParentWrite(b *proto.WriteRequest, commitOffset int64, timestamp uint64,
+func (d *db) ProcessSplitParentWrite(b *proto.WriteRequest, commitOffset int64, commitTerm int64, timestamp uint64,
 	updateOperationCallback UpdateOperationCallback) (*proto.WriteResponse, error) {
-	return d.processWrite(b, commitOffset, timestamp, updateOperationCallback, nil)
+	return d.processWrite(b, commitOffset, commitTerm, timestamp, updateOperationCallback, nil)
 }
 
 // filterEntry returns se, the entry of the record at key that a write of the

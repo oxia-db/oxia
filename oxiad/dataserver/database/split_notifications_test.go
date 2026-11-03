@@ -216,20 +216,20 @@ func TestDB_InheritedNotifications(t *testing.T) {
 
 	// A batch of the parent in the snapshot that seeds the child, and one that
 	// the child applies after it
-	_, err = child.ProcessWrite(putKeys(keys, nil), 0, 0, NoOpCallback)
+	_, err = child.ProcessWrite(putKeys(keys, nil), 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	require.NoError(t, child.SetDeferredSplitFilter(&DeferredSplitFilter{
 		MinHash: right.Min, MaxHash: right.Max, ParentTerm: 1,
 	}, &proto.HashRange{Min: 0, Max: math.MaxUint32}))
-	_, err = child.ProcessSplitParentWrite(putKeys(keys, nil), 1, 0, NoOpCallback)
+	_, err = child.ProcessSplitParentWrite(putKeys(keys, nil), 1, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	assert.Equal(t, map[int64][]string{0: keys[2:], 1: keys[2:]}, readNotifiedKeys(t, child, 0))
 
 	// The first write of the child's own terms: the records it places by their
 	// partition key can have their key outside its range
-	_, err = child.ProcessWrite(putKeys(keys, partitionKeyIn(t, right)), 2, 0, NoOpCallback)
+	_, err = child.ProcessWrite(putKeys(keys, partitionKeyIn(t, right)), 2, 0, 0, NoOpCallback)
 	require.NoError(t, err)
-	_, err = child.ProcessWrite(putKeys(keys[:1], partitionKeyIn(t, right)), 3, 0, NoOpCallback)
+	_, err = child.ProcessWrite(putKeys(keys[:1], partitionKeyIn(t, right)), 3, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	expected := map[int64][]string{0: keys[2:], 1: keys[2:], 2: keys, 3: keys[:1]}
 	assert.Equal(t, expected, readNotifiedKeys(t, child, 0))
@@ -261,7 +261,7 @@ func TestDB_InheritedNotificationsFilterCompletion(t *testing.T) {
 	keys, _ := quarterKeys(t)
 	_, right := splitRanges()
 
-	_, err := db.ProcessWrite(putKeys(keys, nil), 0, 0, NoOpCallback)
+	_, err := db.ProcessWrite(putKeys(keys, nil), 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	require.NoError(t, db.SetDeferredSplitFilter(&DeferredSplitFilter{
 		MinHash: right.Min, MaxHash: right.Max, ParentTerm: 1,
@@ -272,11 +272,11 @@ func TestDB_InheritedNotificationsFilterCompletion(t *testing.T) {
 	for ; db.DeferredSplitFilter() != nil; offset++ {
 		_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
 			SplitFilter: &proto.SplitFilterRequest{MaxRecords: 1},
-		}}, offset, 0, NoOpCallback)
+		}}, offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
 	}
 
-	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, right)), offset, 0, NoOpCallback)
+	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, right)), offset, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	assert.Equal(t, map[int64][]string{0: keys[2:], offset: keys}, readNotifiedKeys(t, db, 0))
 }
@@ -291,19 +291,19 @@ func TestDB_InheritedNotificationsChildOfChild(t *testing.T) {
 	_, high := splitRanges()
 
 	// The high child of the whole hash space
-	_, err := db.ProcessWrite(putKeys(keys, nil), 0, 0, NoOpCallback)
+	_, err := db.ProcessWrite(putKeys(keys, nil), 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	require.NoError(t, db.SetDeferredSplitFilter(&DeferredSplitFilter{
 		MinHash: high.Min, MaxHash: high.Max, ParentTerm: 1,
 	}, &proto.HashRange{Min: 0, Max: math.MaxUint32}))
-	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, high)), 1, 0, NoOpCallback)
+	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, high)), 1, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	// Its low child, seeded with its snapshot
 	require.NoError(t, db.SetDeferredSplitFilter(&DeferredSplitFilter{
 		MinHash: quarters[2].Min, MaxHash: quarters[2].Max, ParentTerm: 2,
 	}, high))
-	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, quarters[2])), 2, 0, NoOpCallback)
+	_, err = db.ProcessWrite(putKeys(keys, partitionKeyIn(t, quarters[2])), 2, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	assert.Equal(t, map[int64][]string{0: keys[2:3], 1: keys[:3], 2: keys}, readNotifiedKeys(t, db, 0))
@@ -326,7 +326,7 @@ func TestDBCloseInheritedNotificationsFailsWhenWriteFails(t *testing.T) {
 			kv.failOn(test.op, test.key)
 
 			_, err := d.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
-				0, 0, NoOpCallback)
+				0, 0, 0, NoOpCallback)
 			assert.ErrorIs(t, err, errInjected)
 			assert.True(t, d.inheritedNotifications.Load().open())
 		})
@@ -355,7 +355,7 @@ func TestDBProcessControlRequestFailsWhenClosingInheritedNotificationsFails(t *t
 	// before it
 	_, err := d.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
 		SplitFilter: &proto.SplitFilterRequest{MaxRecords: 100},
-	}}, 0, 0, NoOpCallback)
+	}}, 0, 0, 0, NoOpCallback)
 	assert.ErrorIs(t, err, errInjected)
 	assert.Equal(t, filter, d.DeferredSplitFilter())
 	assert.True(t, d.inheritedNotifications.Load().open())

@@ -210,7 +210,7 @@ func TestNewStandaloneFailsWhenShardHasUnsupportedFeature(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_FeatureEnable{
 		FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
-	}}, commitOffset, 0, database.NoOpCallback)
+	}}, commitOffset, 0, 0, database.NoOpCallback)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	require.NoError(t, kvFactory.Close())

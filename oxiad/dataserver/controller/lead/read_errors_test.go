@@ -98,7 +98,7 @@ func TestSessionDeleteShadowKeysReadFailure(t *testing.T) {
 
 	_, err := db.ProcessWrite(&proto.WriteRequest{
 		Deletes: []*proto.DeleteRequest{{Key: SessionKey(sessionId)}},
-	}, 0, 0, WrapperUpdateOperationCallback)
+	}, 0, 0, 0, WrapperUpdateOperationCallback)
 	assert.ErrorIs(t, err, os.ErrPermission)
 }
 

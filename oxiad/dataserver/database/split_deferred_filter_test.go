@@ -92,7 +92,7 @@ func putDeferredSplitRecords(t *testing.T, db DB, records []deferredSplitRecord)
 			PartitionKey: record.partitionKey,
 		})
 	}
-	_, err := db.ProcessWrite(request, 0, 0, NoOpCallback)
+	_, err := db.ProcessWrite(request, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 }
 
@@ -328,9 +328,9 @@ func TestDeferredSplitFilter_ParentWrites(t *testing.T) {
 
 	for i, request := range requests {
 		offset := int64(i + 1)
-		parentRes, err := parent.ProcessWrite(request.CloneVT(), offset, 0, NoOpCallback)
+		parentRes, err := parent.ProcessWrite(request.CloneVT(), offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
-		childRes, err := child.ProcessSplitParentWrite(request.CloneVT(), offset, 0, NoOpCallback)
+		childRes, err := child.ProcessSplitParentWrite(request.CloneVT(), offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
 		assert.True(t, parentRes.EqualVT(childRes), "write %d: parent %v, child %v", i, parentRes, childRes)
 	}
@@ -372,7 +372,7 @@ func TestDeferredSplitFilter_ChildWrites(t *testing.T) {
 		Value:             []byte("child"),
 		PartitionKey:      partitionKeyIn(t, left),
 		ExpectedVersionId: pb.Int64(-1),
-	}}}, 100, 0, NoOpCallback)
+	}}}, 100, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	require.Equal(t, proto.Status_OK, res.Puts[0].Status)
 	assert.Equal(t, int64(0), res.Puts[0].Version.ModificationsCount)
@@ -385,7 +385,7 @@ func TestDeferredSplitFilter_ChildWrites(t *testing.T) {
 
 	res, err = db.ProcessWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{
 		{Key: deleted.key, PartitionKey: deleted.partitionKey},
-	}}, 101, 0, NoOpCallback)
+	}}, 101, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	assert.Equal(t, proto.Status_KEY_NOT_FOUND, res.Deletes[0].Status)
 
@@ -416,7 +416,7 @@ func applySplitFilterStep(t *testing.T, db DB, offset int64, maxRecords uint32) 
 	t.Helper()
 	_, err := db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
 		SplitFilter: &proto.SplitFilterRequest{MaxRecords: maxRecords},
-	}}, offset, 0, NoOpCallback)
+	}}, offset, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 }
 
@@ -502,7 +502,7 @@ func TestDeferredSplitFilter_StepBytes(t *testing.T) {
 		t.Helper()
 		_, err := db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
 			SplitFilter: &proto.SplitFilterRequest{MaxRecords: uint32(len(records)), MaxBytes: maxBytes},
-		}}, offset, 0, NoOpCallback)
+		}}, offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
 	}
 
@@ -542,7 +542,7 @@ func TestDeferredSplitFilter_StepsHierarchicalKeys(t *testing.T) {
 		{Key: "a\xff/b", Value: []byte("kept"), PartitionKey: partitionKeyIn(t, left)},
 		{Key: "b/x", Value: []byte("other"), PartitionKey: partitionKeyIn(t, right)},
 		{Key: "c/y", Value: []byte("other"), PartitionKey: partitionKeyIn(t, right)},
-	}}, 0, 0, NoOpCallback)
+	}}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	setLeftChildFilter(t, db)
 
@@ -575,7 +575,7 @@ func TestDeferredSplitFilter_StepKeepsChildRecords(t *testing.T) {
 	}
 	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key: replaced, Value: []byte("child"), PartitionKey: partitionKeyIn(t, left),
-	}}}, 100, 0, NoOpCallback)
+	}}}, 100, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	applySplitFilterStep(t, db, 101, uint32(len(records)))
@@ -670,7 +670,7 @@ func TestDeferredSplitFilterChildWriteFailsWhenDropCallbackFails(t *testing.T) {
 	require.NoError(t, db.SetDeferredSplitFilter(filterExcluding(FailureCallbackKey), nil))
 
 	_, err := db.ProcessWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{{Key: FailureCallbackKey}}},
-		0, 0, FailureCallback{})
+		0, 0, 0, FailureCallback{})
 	assert.ErrorContains(t, err, "failure injection")
 	assert.True(t, keyExists(t, db.RawKV(), FailureCallbackKey))
 }
@@ -683,7 +683,7 @@ func TestDeferredSplitFilterStepFailsWhenDropCallbackFails(t *testing.T) {
 
 	_, err := db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
 		SplitFilter: &proto.SplitFilterRequest{MaxRecords: 100},
-	}}, 0, 0, FailureCallback{})
+	}}, 0, 0, 0, FailureCallback{})
 	assert.ErrorContains(t, err, "failure injection")
 	assert.True(t, keyExists(t, db.RawKV(), FailureCallbackKey))
 	assert.Equal(t, filter, db.DeferredSplitFilter())
@@ -695,7 +695,7 @@ func TestPrefixIteratorKeepsIndexEntry(t *testing.T) {
 		Key:              "a",
 		Value:            []byte("v"),
 		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "x"}},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	filter := &DeferredSplitFilter{MinHash: 0, MaxHash: math.MaxUint32}
 
@@ -798,7 +798,7 @@ func TestPrefixIteratorKeepsIndexEntryFailsWhenRecordReadFails(t *testing.T) {
 		Key:              "a",
 		Value:            []byte("v"),
 		SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: "x"}},
-	}}}, 0, 0, NoOpCallback)
+	}}}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	it, err := d.KeyPrefixIterator(idxKeyPrefix+"/", "")
 	require.NoError(t, err)

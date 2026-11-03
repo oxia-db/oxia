@@ -202,7 +202,7 @@ func TestFollowerCursor_SendSnapshot(t *testing.T) {
 			Timestamp: uint64(i),
 		}))
 
-		_, err := db.ProcessWrite(wr, i, uint64(i), database.NoOpCallback)
+		_, err := db.ProcessWrite(wr, i, 0, uint64(i), database.NoOpCallback)
 		assert.NoError(t, err)
 	}
 
@@ -289,7 +289,7 @@ func TestFollowerCursor_StreamToFollowerRightBeforeWalStart(t *testing.T) {
 			Shard: &shard,
 			Puts:  []*proto.PutRequest{{Key: fmt.Sprintf("key-%d", i), Value: []byte("value")}},
 		}
-		_, err := db.ProcessWrite(wr, i, uint64(i), database.NoOpCallback)
+		_, err := db.ProcessWrite(wr, i, 0, uint64(i), database.NoOpCallback)
 		assert.NoError(t, err)
 	}
 	previousCrc := uint32(1)
@@ -354,7 +354,7 @@ func TestFollowerCursor_StreamToEmptyFollowerWhenWalComplete(t *testing.T) {
 			Timestamp: uint64(i),
 		}))
 
-		_, err := db.ProcessWrite(wr, i, uint64(i), database.NoOpCallback)
+		_, err := db.ProcessWrite(wr, i, 0, uint64(i), database.NoOpCallback)
 		assert.NoError(t, err)
 	}
 
@@ -405,7 +405,7 @@ func TestFollowerCursor_CloseWaitsForInFlightSnapshot(t *testing.T) {
 	}
 	// Keep the WAL empty: the empty follower can then only be brought up to
 	// date through a snapshot
-	_, err = db.ProcessWrite(wr, 0, 0, database.NoOpCallback)
+	_, err = db.ProcessWrite(wr, 0, 0, 0, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	stream := newBlockingSnapshotStream()
@@ -861,7 +861,7 @@ func TestFollowerCursorRetriesTheSnapshotWhenItCantBeRead(t *testing.T) {
 			_, err := db.ProcessWrite(&proto.WriteRequest{Shard: &shard, Puts: []*proto.PutRequest{{
 				Key:   "a",
 				Value: []byte("a"),
-			}}}, 0, 0, database.NoOpCallback)
+			}}}, 0, 0, 0, database.NoOpCallback)
 			require.NoError(t, err)
 			stream := rpc.NewMockRpcClient()
 

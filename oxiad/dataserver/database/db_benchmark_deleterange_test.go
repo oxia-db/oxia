@@ -53,7 +53,7 @@ func BenchmarkDeleteRange(b *testing.B) {
 					EndExclusive:   fmt.Sprintf("00000000000000000001-%020d", i),
 				},
 			},
-		}, int64(i), uint64(time.Now().UnixMilli()), NoOpCallback)
+		}, int64(i), 0, uint64(time.Now().UnixMilli()), NoOpCallback)
 		assert.NoError(b, err)
 	}
 }

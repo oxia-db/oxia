@@ -73,7 +73,7 @@ func TestDB_FeatureFlagsReadFailure(t *testing.T) {
 
 	_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_FeatureEnable{
 		FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
-	}}, 0, 0, NoOpCallback)
+	}}, 0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	flushIntoUnreadableSST(t, db.RawKV(), options.DataDir)
 	require.NoError(t, db.Close())
@@ -103,7 +103,7 @@ func TestDB_SequenceUpdatesReadFailure(t *testing.T) {
 			Value:            []byte("0"),
 			SequenceKeyDelta: []uint64{1},
 			PartitionKey:     pb.String("x"),
-		}}}, offset, 0, NoOpCallback)
+		}}}, offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
 	}
 	flushIntoUnreadableSST(t, db.RawKV(), options.DataDir)
@@ -125,7 +125,7 @@ func TestDB_NotificationsReadFailure(t *testing.T) {
 	for offset := int64(0); offset < 3; offset++ {
 		_, err = db.ProcessWrite(&proto.WriteRequest{
 			Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
-		}, offset, now(), NoOpCallback)
+		}, offset, 0, now(), NoOpCallback)
 		require.NoError(t, err)
 	}
 	flushIntoUnreadableSST(t, db.RawKV(), options.DataDir)
@@ -141,7 +141,7 @@ func TestDB_NotificationsReadFailure(t *testing.T) {
 func TestPrefixIteratorRecordFailsOnReadError(t *testing.T) {
 	db, dataDir := newReadErrorsTestDB(t)
 	_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}},
-		0, 0, NoOpCallback)
+		0, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 	flushIntoUnreadableSST(t, db.RawKV(), dataDir)
 

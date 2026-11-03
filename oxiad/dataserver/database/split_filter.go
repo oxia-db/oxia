@@ -238,6 +238,7 @@ func classifyInternalKey(
 ) (splitAction, error) {
 	switch {
 	case key == commitOffsetKey,
+		key == commitTermKey,
 		key == commitLastVersionIdKey,
 		key == termKey,
 		key == termOptionsKey,

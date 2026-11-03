@@ -50,13 +50,13 @@ func TestNotificationsTrimmer_GapFromControlRequests(t *testing.T) {
 	for offset := int64(0); offset < 25; offset++ {
 		var proposal Proposal
 		if controlOffsets[offset] {
-			proposal = NewControlProposal(offset, &proto.ControlRequest{
+			proposal = NewControlProposal(offset, 0, &proto.ControlRequest{
 				Value: &proto.ControlRequest_RecordChecksum{
 					RecordChecksum: &proto.RecordChecksumRequest{},
 				},
 			})
 		} else {
-			proposal = NewWriteProposal(offset, &proto.WriteRequest{
+			proposal = NewWriteProposal(offset, 0, &proto.WriteRequest{
 				Puts: []*proto.PutRequest{{
 					Key:   fmt.Sprintf("key-%d", offset),
 					Value: []byte("v"),

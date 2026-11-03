@@ -105,7 +105,7 @@ func benchmarkNotificationsTracker(b *testing.B, subscribers int, keys int) {
 	b.ResetTimer()
 	for i := range b.N {
 		received.Add(subscribers)
-		if _, err := db.ProcessWrite(write, int64(i), timestamp, NoOpCallback); err != nil {
+		if _, err := db.ProcessWrite(write, int64(i), 0, timestamp, NoOpCallback); err != nil {
 			b.Fatal(err)
 		}
 		received.Wait()

@@ -199,9 +199,9 @@ func TestLeaderController_SplitChildCopiesParent(t *testing.T) {
 	// After the split, the child assigns version ids from where the parent
 	// had got to
 	next := &proto.WriteRequest{Puts: []*proto.PutRequest{put(left[4], nil)}}
-	expected, err := parentDb.ProcessWrite(next.CloneVT(), status.HeadOffset+1, 0, WrapperUpdateOperationCallback)
+	expected, err := parentDb.ProcessWrite(next.CloneVT(), status.HeadOffset+1, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
-	actual, err := childDb.ProcessWrite(next.CloneVT(), status.HeadOffset+1, 0, WrapperUpdateOperationCallback)
+	actual, err := childDb.ProcessWrite(next.CloneVT(), status.HeadOffset+1, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 	assert.Equal(t, expected.Puts[0].Version.VersionId, actual.Puts[0].Version.VersionId)
 
@@ -344,9 +344,9 @@ func newSplitChildDB(t *testing.T, kvFactory kvstore.Factory, shard int64, write
 	require.NoError(t, err)
 	_, err = db.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_FeatureEnable{
 		FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature_FEATURE_SPLIT_DEFERRED_FILTER}},
-	}}, 0, 0, WrapperUpdateOperationCallback)
+	}}, 0, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
-	_, err = db.ProcessWrite(write, 1, 0, WrapperUpdateOperationCallback)
+	_, err = db.ProcessWrite(write, 1, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 	require.NoError(t, db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
 		MinHash: splitTestChildRange.Min, MaxHash: splitTestChildRange.Max, ParentTerm: 1,
@@ -633,9 +633,9 @@ func TestSessionDelete_DeferredSplitFilterNotifications(t *testing.T) {
 
 	_, err = db.ProcessSplitParentWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{
 		{Key: SessionKey(SessionId(otherSession))},
-	}}, 2, 0, WrapperUpdateOperationCallback)
+	}}, 2, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
-	_, err = db.ProcessWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{{Key: SessionKey(5)}}}, 3, 0,
+	_, err = db.ProcessWrite(&proto.WriteRequest{Deletes: []*proto.DeleteRequest{{Key: SessionKey(5)}}}, 3, 0, 0,
 		WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 
@@ -767,7 +767,7 @@ func TestSecondaryIndexes_DeferredSplitFilterRacingLastStep(t *testing.T) {
 			db := &hookedPrefixDB{DB: child, afterPrefixIterator: func() {
 				_, err := child.ProcessControlRequest(&proto.ControlRequest{Value: &proto.ControlRequest_SplitFilter{
 					SplitFilter: &proto.SplitFilterRequest{MaxRecords: uint32(len(write.Puts))},
-				}}, 2, 0, WrapperUpdateOperationCallback)
+				}}, 2, 0, 0, WrapperUpdateOperationCallback)
 				require.NoError(t, err)
 				require.Nil(t, child.DeferredSplitFilter())
 			}}
@@ -814,7 +814,7 @@ func TestSecondaryIndexes_DeferredSplitFilterReplacedRecord(t *testing.T) {
 	db := &hookedPrefixDB{DB: child, afterPrefixIterator: func() {
 		_, err := child.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 			Key: right[0], Value: []byte("child"), PartitionKey: &left[0],
-		}}}, 2, 0, WrapperUpdateOperationCallback)
+		}}}, 2, 0, 0, WrapperUpdateOperationCallback)
 		require.NoError(t, err)
 	}}
 	idx := "idx"
@@ -851,7 +851,7 @@ func TestSecondaryIndexesDeferredSplitFilterRacingWrites(t *testing.T) {
 					Puts: []*proto.PutRequest{{Key: left[2], Value: []byte("moved"),
 						SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: idx, SecondaryKey: "sec-99"}}}},
 					Deletes: []*proto.DeleteRequest{{Key: left[1]}},
-				}, 2, 0, WrapperUpdateOperationCallback)
+				}, 2, 0, 0, WrapperUpdateOperationCallback)
 				require.NoError(t, err)
 			}}
 
@@ -960,7 +960,7 @@ func TestLeaderControllerStartDeferredSplitFilterWithoutFeature(t *testing.T) {
 	db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
 		time.Hour, time2.SystemClock)
 	require.NoError(t, err)
-	_, err = db.ProcessWrite(splitChildRecords(5, left, right), 1, 0, WrapperUpdateOperationCallback)
+	_, err = db.ProcessWrite(splitChildRecords(5, left, right), 1, 0, 0, WrapperUpdateOperationCallback)
 	require.NoError(t, err)
 	require.NoError(t, db.SetDeferredSplitFilter(&database.DeferredSplitFilter{
 		MinHash: splitTestChildRange.Min, MaxHash: splitTestChildRange.Max, ParentTerm: 1,

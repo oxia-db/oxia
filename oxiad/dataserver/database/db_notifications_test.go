@@ -90,7 +90,7 @@ func TestDB_Notifications(t *testing.T) {
 			Key:   "a",
 			Value: []byte("0"),
 		}},
-	}, 0, t0, NoOpCallback)
+	}, 0, 0, t0, NoOpCallback)
 
 	notifications, err := readNotifications(context.Background(), db, 0)
 	assert.NoError(t, err)
@@ -112,7 +112,7 @@ func TestDB_Notifications(t *testing.T) {
 			Key:   "a",
 			Value: []byte("1"),
 		}},
-	}, 1, t1, NoOpCallback)
+	}, 1, 0, t1, NoOpCallback)
 
 	t2 := now()
 	wr2, _ := db.ProcessWrite(&proto.WriteRequest{
@@ -120,7 +120,7 @@ func TestDB_Notifications(t *testing.T) {
 			Key:   "b",
 			Value: []byte("0"),
 		}},
-	}, 2, t2, NoOpCallback)
+	}, 2, 0, t2, NoOpCallback)
 
 	notifications, err = readNotifications(context.Background(), db, 1)
 	assert.NoError(t, err)
@@ -159,7 +159,7 @@ func TestDB_Notifications(t *testing.T) {
 		Deletes: []*proto.DeleteRequest{{
 			Key: "a",
 		}},
-	}, 3, t3, NoOpCallback)
+	}, 3, 0, t3, NoOpCallback)
 
 	notifications, err = readNotifications(context.Background(), db, 3)
 	assert.NoError(t, err)
@@ -194,7 +194,7 @@ func TestDB_Notifications(t *testing.T) {
 			Key:   "x1",
 			Value: []byte("1"),
 		}},
-	}, 4, t4, NoOpCallback)
+	}, 4, 0, t4, NoOpCallback)
 
 	notifications, err = readNotifications(context.Background(), db, 4)
 	assert.NoError(t, err)
@@ -226,7 +226,7 @@ func TestDB_NotificationsCancelWait(t *testing.T) {
 			Key:   "a",
 			Value: []byte("0"),
 		}},
-	}, 0, t0, NoOpCallback)
+	}, 0, 0, t0, NoOpCallback)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -298,7 +298,7 @@ func TestDB_NotificationsCommitBeforeWaiterParks(t *testing.T) {
 
 	_, err = d.ProcessWrite(&proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
-	}, 0, now(), NoOpCallback)
+	}, 0, 0, now(), NoOpCallback)
 	require.NoError(t, err)
 
 	// The batch at offset 1 gets committed after the reader found it missing,
@@ -306,7 +306,7 @@ func TestDB_NotificationsCommitBeforeWaiterParks(t *testing.T) {
 	writeDone := runBeforeFirstWait(d.(*db).notificationsTracker, func() {
 		_, err := d.ProcessWrite(&proto.WriteRequest{
 			Puts: []*proto.PutRequest{{Key: "b", Value: []byte("0")}},
-		}, 1, now(), NoOpCallback)
+		}, 1, 0, now(), NoOpCallback)
 		assert.NoError(t, err)
 	})
 
@@ -383,10 +383,10 @@ func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
 					Key:   "a",
 					Value: []byte("0"),
 				}},
-			}, 0, now(), NoOpCallback)
+			}, 0, 0, now(), NoOpCallback)
 			assert.NoError(t, err)
 
-			_, err = db.ProcessControlRequest(tt.request, 1, now(), NoOpCallback)
+			_, err = db.ProcessControlRequest(tt.request, 1, 0, now(), NoOpCallback)
 			assert.NoError(t, err)
 			assert.NoError(t, db.Close())
 
@@ -406,7 +406,7 @@ func TestDB_NotificationsWaitAfterControlOnlyTailReopen(t *testing.T) {
 					Key:   "b",
 					Value: []byte("1"),
 				}},
-			}, 2, now(), NoOpCallback)
+			}, 2, 0, now(), NoOpCallback)
 			assert.NoError(t, err)
 
 			notifications, err = readNotifications(context.Background(), db, 1)
@@ -431,7 +431,7 @@ func TestDB_NotificationsDisabled(t *testing.T) {
 			Key:   "a",
 			Value: []byte("0"),
 		}},
-	}, 0, t0, NoOpCallback)
+	}, 0, 0, t0, NoOpCallback)
 
 	notifications, err := readNotifications(context.Background(), db, 0)
 	assert.Error(t, errs.ErrUnavailable, err)
@@ -454,7 +454,7 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 			{Key: "b", Value: []byte("1")},
 			{Key: "c", Value: []byte("2")},
 		},
-	}, 0, t0, NoOpCallback)
+	}, 0, 0, t0, NoOpCallback)
 
 	t1 := now()
 	_, _ = db.ProcessWrite(&proto.WriteRequest{
@@ -462,7 +462,7 @@ func TestDB_NotificationsDeleteRange(t *testing.T) {
 			StartInclusive: "a",
 			EndExclusive:   "c",
 		}},
-	}, 1, t1, NoOpCallback)
+	}, 1, 0, t1, NoOpCallback)
 
 	notifications, err := readNotifications(context.Background(), db, 1)
 	assert.NoError(t, err)
@@ -509,13 +509,13 @@ func TestDB_DeleteRangeNotificationRecords(t *testing.T) {
 				for i, key := range userKeys {
 					_, err := db.ProcessWrite(&proto.WriteRequest{
 						Puts: []*proto.PutRequest{{Key: key, Value: []byte("v")}},
-					}, int64(i), now(), NoOpCallback)
+					}, int64(i), 0, now(), NoOpCallback)
 					require.NoError(t, err)
 				}
 
 				res, err := db.ProcessWrite(&proto.WriteRequest{
 					DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
-				}, 3, now(), NoOpCallback)
+				}, 3, 0, now(), NoOpCallback)
 				if !enabled {
 					assert.ErrorIs(t, err, errs.ErrDBInvalidSystemRecord)
 					assert.EqualValues(t, 0, firstNotification(t, db))
@@ -568,7 +568,7 @@ func TestDB_DeleteRangeNotificationRecordsChecksum(t *testing.T) {
 			}
 			apply := func(offset int64, req *proto.WriteRequest) {
 				for _, db := range replicas {
-					_, err := db.ProcessWrite(req.CloneVT(), offset, uint64(offset), NoOpCallback)
+					_, err := db.ProcessWrite(req.CloneVT(), offset, 0, uint64(offset), NoOpCallback)
 					require.NoError(t, err)
 				}
 			}
@@ -635,13 +635,13 @@ func TestDB_DeleteRangeRegularAndInternalKeys(t *testing.T) {
 
 			_, err = db.ProcessWrite(&proto.WriteRequest{
 				Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b", Value: []byte("v")}},
-			}, 0, now(), NoOpCallback)
+			}, 0, 0, now(), NoOpCallback)
 			require.NoError(t, err)
 
 			callback := &deleteCountingCallback{}
 			res, err := db.ProcessWrite(&proto.WriteRequest{
 				DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: test.start, EndExclusive: test.end}},
-			}, 1, now(), callback)
+			}, 1, 0, now(), callback)
 			require.NoError(t, err)
 			assert.Equal(t, proto.Status_INVALID_ARGUMENT, res.DeleteRanges[0].Status)
 			assert.Zero(t, callback.deletes)
@@ -698,12 +698,12 @@ func TestDB_DeleteRangeWithoutEnd(t *testing.T) {
 					for _, key := range keys {
 						puts = append(puts, &proto.PutRequest{Key: key, Value: []byte("v")})
 					}
-					_, err = db.ProcessWrite(&proto.WriteRequest{Puts: puts}, 0, now(), NoOpCallback)
+					_, err = db.ProcessWrite(&proto.WriteRequest{Puts: puts}, 0, 0, now(), NoOpCallback)
 					require.NoError(t, err)
 
 					res, err := db.ProcessWrite(&proto.WriteRequest{
 						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "b"}},
-					}, 1, now(), NoOpCallback)
+					}, 1, 0, now(), NoOpCallback)
 					expectedKeys := keys
 					switch {
 					case enabled:
@@ -783,7 +783,7 @@ func TestDB_NotificationsInternalKeys(t *testing.T) {
 					},
 					notificationType: proto.NotificationType_KEY_DELETED,
 				}} {
-					_, err := db.ProcessWrite(test.request, int64(offset), now(), NoOpCallback)
+					_, err := db.ProcessWrite(test.request, int64(offset), 0, now(), NoOpCallback)
 					require.NoError(t, err)
 
 					nb := readNotificationBatch(t, db.RawKV(), int64(offset))
@@ -847,7 +847,7 @@ func TestDB_NotificationsDeleteRangeInternalKeys(t *testing.T) {
 					// "b/c" is on the second level of the hierarchical sorting
 					_, err = db.ProcessWrite(&proto.WriteRequest{
 						Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}, {Key: "b/c", Value: []byte("v")}},
-					}, 0, now(), NoOpCallback)
+					}, 0, 0, now(), NoOpCallback)
 					require.NoError(t, err)
 					if trimmed {
 						// As the trimmer of the replica does, outside of the log
@@ -859,7 +859,7 @@ func TestDB_NotificationsDeleteRangeInternalKeys(t *testing.T) {
 
 					res, err := db.ProcessWrite(&proto.WriteRequest{
 						DeleteRanges: []*proto.DeleteRangeRequest{{StartInclusive: "a", EndExclusive: test.end}},
-					}, 1, now(), NoOpCallback)
+					}, 1, 0, now(), NoOpCallback)
 					nb := readNotificationBatch(t, db.RawKV(), 1)
 					switch {
 					case enabled && test.mixed:
@@ -905,7 +905,7 @@ func TestDB_NotificationsReadBatchLimit(t *testing.T) {
 	for i := 0; i < total; i++ {
 		_, err := db.ProcessWrite(&proto.WriteRequest{
 			Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}},
-		}, int64(i), now(), NoOpCallback)
+		}, int64(i), 0, now(), NoOpCallback)
 		assert.NoError(t, err)
 	}
 
@@ -944,7 +944,7 @@ func TestDB_NotificationsWaitWhenNothingRetained(t *testing.T) {
 	write := func(offset int64) {
 		_, err := db.ProcessWrite(&proto.WriteRequest{
 			Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
-		}, offset, now(), NoOpCallback)
+		}, offset, 0, now(), NoOpCallback)
 		require.NoError(t, err)
 	}
 	assertReadWaits := func(startOffset int64) {

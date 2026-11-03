@@ -57,7 +57,7 @@ func TestNotificationsTrimmer(t *testing.T) {
 						Key:   fmt.Sprintf("key-%d", i),
 						Value: []byte("0"),
 					}},
-				}, i, uint64(i), NoOpCallback)
+				}, i, 0, uint64(i), NoOpCallback)
 				assert.NoError(t, err)
 			}
 
@@ -113,7 +113,7 @@ func TestNotificationsTrimmer_TrimmedOffset(t *testing.T) {
 			for i := int64(0); i < 10; i++ {
 				_, err = db.ProcessWrite(&proto.WriteRequest{
 					Puts: []*proto.PutRequest{{Key: fmt.Sprintf("key-%d", i), Value: []byte("0")}},
-				}, i, uint64(i), NoOpCallback)
+				}, i, 0, uint64(i), NoOpCallback)
 				require.NoError(t, err)
 			}
 

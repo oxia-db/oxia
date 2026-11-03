@@ -37,7 +37,7 @@ func TestReadCheckpointReturnsTheCommitOffsetAndTermOfTheFiles(t *testing.T) {
 	require.NoError(t, db.UpdateTerm(3, TermOptions{}))
 	for offset := range int64(5) {
 		_, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "k", Value: []byte("v")}}},
-			offset, 0, NoOpCallback)
+			offset, 0, 0, NoOpCallback)
 		require.NoError(t, err)
 	}
 
@@ -45,7 +45,7 @@ func TestReadCheckpointReturnsTheCommitOffsetAndTermOfTheFiles(t *testing.T) {
 	require.NoError(t, err)
 	// The files are what the checkpoint is: a later write doesn't change them
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "k", Value: []byte("w")}}},
-		5, 0, NoOpCallback)
+		5, 0, 0, NoOpCallback)
 	require.NoError(t, err)
 
 	commitOffset, term, err := ReadCheckpoint(snapshot.BasePath())

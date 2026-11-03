@@ -32,7 +32,7 @@ func TestNewWriteProposal(t *testing.T) {
 		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}},
 	}
 
-	proposal := NewWriteProposal(5, request)
+	proposal := NewWriteProposal(5, 0, request)
 
 	assert.EqualValues(t, 5, proposal.GetOffset())
 	assert.NotZero(t, proposal.GetTimestamp())
@@ -48,7 +48,7 @@ func TestNewControlProposal(t *testing.T) {
 		},
 	}
 
-	proposal := NewControlProposal(10, request)
+	proposal := NewControlProposal(10, 0, request)
 
 	assert.EqualValues(t, 10, proposal.GetOffset())
 	assert.NotZero(t, proposal.GetTimestamp())
@@ -63,7 +63,7 @@ func TestWriteProposal_ToLogEntry(t *testing.T) {
 		},
 	}
 
-	proposal := NewWriteProposal(1, request)
+	proposal := NewWriteProposal(1, 0, request)
 
 	entryValue := &proto.LogEntryValue{}
 	proposal.ToLogEntry(entryValue)
@@ -85,7 +85,7 @@ func TestControlProposal_ToLogEntry(t *testing.T) {
 		},
 	}
 
-	proposal := NewControlProposal(2, request)
+	proposal := NewControlProposal(2, 0, request)
 
 	entryValue := &proto.LogEntryValue{}
 	proposal.ToLogEntry(entryValue)
@@ -101,7 +101,7 @@ func TestControlProposal_ToLogEntry(t *testing.T) {
 func TestControlProposalApplyReturnsDBError(t *testing.T) {
 	db := newTestDB(t)
 
-	proposal := NewControlProposal(0, &proto.ControlRequest{
+	proposal := NewControlProposal(0, 0, &proto.ControlRequest{
 		Value: &proto.ControlRequest_FeatureEnable{
 			FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature(math.MaxInt32)}},
 		},
@@ -113,8 +113,8 @@ func TestControlProposalApplyReturnsDBError(t *testing.T) {
 
 func TestNewProposalFromLogEntry(t *testing.T) {
 	for _, proposal := range []Proposal{
-		NewWriteProposal(3, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}}),
-		NewControlProposal(4, &proto.ControlRequest{
+		NewWriteProposal(3, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a", Value: []byte("v")}}}),
+		NewControlProposal(4, 0, &proto.ControlRequest{
 			Value: &proto.ControlRequest_RecordChecksum{RecordChecksum: &proto.RecordChecksumRequest{}},
 		}),
 	} {

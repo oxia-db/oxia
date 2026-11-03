@@ -59,7 +59,7 @@ func marshalProposal(t *testing.T, proposal Proposal) []byte {
 func TestApplyProposal_Write(t *testing.T) {
 	db := newTestDB(t)
 
-	proposal := NewWriteProposal(0, &proto.WriteRequest{
+	proposal := NewWriteProposal(0, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "key1", Value: []byte("value1")},
 		},
@@ -83,7 +83,7 @@ func TestApplyProposal_Control_FeatureEnable(t *testing.T) {
 
 	assert.False(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
-	proposal := NewControlProposal(0, &proto.ControlRequest{
+	proposal := NewControlProposal(0, 0, &proto.ControlRequest{
 		Value: &proto.ControlRequest_FeatureEnable{
 			FeatureEnable: &proto.FeatureEnableRequest{
 				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
@@ -102,7 +102,7 @@ func TestApplyProposal_Write_MultipleKeys(t *testing.T) {
 	db := newTestDB(t)
 
 	// First write key "a"
-	_, err := NewWriteProposal(0, &proto.WriteRequest{
+	_, err := NewWriteProposal(0, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "a", Value: []byte("v1")},
 		},
@@ -110,7 +110,7 @@ func TestApplyProposal_Write_MultipleKeys(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Second write: put "b", delete non-existing "c", delete existing "a"
-	response, err := NewWriteProposal(1, &proto.WriteRequest{
+	response, err := NewWriteProposal(1, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "b", Value: []byte("v2"), ExpectedVersionId: pb.Int64(-1)},
 		},
@@ -134,7 +134,7 @@ func TestApplyProposal_Write_MultipleKeys(t *testing.T) {
 func TestApplyLogEntry_WriteRequest(t *testing.T) {
 	db := newTestDB(t)
 
-	proposal := NewWriteProposal(0, &proto.WriteRequest{
+	proposal := NewWriteProposal(0, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "follower-key", Value: []byte("follower-val")},
 		},
@@ -161,7 +161,7 @@ func TestApplyLogEntry_ControlRequest(t *testing.T) {
 
 	assert.False(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
-	proposal := NewControlProposal(0, &proto.ControlRequest{
+	proposal := NewControlProposal(0, 0, &proto.ControlRequest{
 		Value: &proto.ControlRequest_FeatureEnable{
 			FeatureEnable: &proto.FeatureEnableRequest{
 				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
@@ -192,7 +192,7 @@ func TestApplyLogEntry_SplitFilter(t *testing.T) {
 	assert.NoError(t, db.SetSplitFilter(&database.SplitFilter{MinHash: 0, MaxHash: 0x7FFFFFFF, ParentTerm: 1}))
 
 	apply := func(term int64, offset int64, value string) {
-		proposal := NewWriteProposal(offset, &proto.WriteRequest{
+		proposal := NewWriteProposal(offset, 0, &proto.WriteRequest{
 			Puts: []*proto.PutRequest{
 				{Key: "a", Value: []byte(value)},
 				{Key: "d", Value: []byte(value)},
@@ -237,7 +237,7 @@ func TestApplyLogEntry_SplitFilter(t *testing.T) {
 func TestApplyLogEntry_DeferredSplitFilter(t *testing.T) {
 	db := newTestDB(t)
 	apply := func(term int64, offset int64, put *proto.PutRequest) {
-		proposal := NewWriteProposal(offset, &proto.WriteRequest{Puts: []*proto.PutRequest{put}})
+		proposal := NewWriteProposal(offset, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{put}})
 		_, err := ApplyLogEntry(db, &proto.LogEntry{
 			Term:      term,
 			Offset:    offset,
@@ -294,7 +294,7 @@ func TestApplyProposal_ThenApplyLogEntry(t *testing.T) {
 	followerDB := newTestDB(t)
 
 	// Leader applies a write proposal
-	proposal := NewWriteProposal(0, &proto.WriteRequest{
+	proposal := NewWriteProposal(0, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{
 			{Key: "sync-key", Value: []byte("sync-val")},
 		},
@@ -345,7 +345,7 @@ func TestApplyLogEntry_RejectedWrite(t *testing.T) {
 		// Fewer deltas than the parts of the sequence
 		sequentialPut(1),
 	} {
-		proposal := NewWriteProposal(int64(offset), request)
+		proposal := NewWriteProposal(int64(offset), 0, request)
 		entry := &proto.LogEntry{
 			Term:      1,
 			Offset:    int64(offset),
@@ -377,7 +377,7 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	db := newTestDB(t)
 
 	// Entry 1: Enable feature
-	controlProposal := NewControlProposal(0, &proto.ControlRequest{
+	controlProposal := NewControlProposal(0, 0, &proto.ControlRequest{
 		Value: &proto.ControlRequest_FeatureEnable{
 			FeatureEnable: &proto.FeatureEnableRequest{
 				Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM},
@@ -394,7 +394,7 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	assert.True(t, db.IsFeatureEnabled(proto.Feature_FEATURE_DB_CHECKSUM))
 
 	// Entry 2: Write key "x"
-	write1 := NewWriteProposal(1, &proto.WriteRequest{
+	write1 := NewWriteProposal(1, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "x", Value: []byte("1")}},
 	})
 	_, err = ApplyLogEntry(db, &proto.LogEntry{
@@ -406,7 +406,7 @@ func TestApplyLogEntry_MultipleEntries(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Entry 3: Write key "y"
-	write2 := NewWriteProposal(2, &proto.WriteRequest{
+	write2 := NewWriteProposal(2, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "y", Value: []byte("2")}},
 	})
 	_, err = ApplyLogEntry(db, &proto.LogEntry{
@@ -447,10 +447,10 @@ func TestApplyLogEntry_ControlRequestPersistsCommitOffsetForWalReplay(t *testing
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, w.Close()) })
 
-	writeProposal := NewWriteProposal(0, &proto.WriteRequest{
+	writeProposal := NewWriteProposal(0, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "a", Value: []byte("0")}},
 	})
-	controlProposal := NewControlProposal(1, &proto.ControlRequest{
+	controlProposal := NewControlProposal(1, 0, &proto.ControlRequest{
 		Value: &proto.ControlRequest_RecordChecksum{
 			RecordChecksum: &proto.RecordChecksumRequest{},
 		},
@@ -486,7 +486,7 @@ func TestApplyLogEntry_ControlRequestPersistsCommitOffsetForWalReplay(t *testing
 	assert.EqualValues(t, 1, commitOffset)
 
 	assert.NoError(t, w.Clear())
-	nextWriteProposal := NewWriteProposal(2, &proto.WriteRequest{
+	nextWriteProposal := NewWriteProposal(2, 0, &proto.WriteRequest{
 		Puts: []*proto.PutRequest{{Key: "b", Value: []byte("1")}},
 	})
 	assert.NoError(t, w.Append(&proto.LogEntry{
@@ -512,7 +512,7 @@ func TestApplyLogEntryControlRequestError(t *testing.T) {
 
 	_, err := ApplyLogEntry(db, &proto.LogEntry{
 		Term:  1,
-		Value: marshalProposal(t, NewControlProposal(0, unsupportedFeatureRequest())),
+		Value: marshalProposal(t, NewControlProposal(0, 0, unsupportedFeatureRequest())),
 	}, database.NoOpCallback)
 	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
 
@@ -527,7 +527,7 @@ func TestApplyLogEntryWriteError(t *testing.T) {
 
 	_, err := ApplyLogEntry(db, &proto.LogEntry{
 		Term:  1,
-		Value: marshalProposal(t, NewWriteProposal(0, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a"}}})),
+		Value: marshalProposal(t, NewWriteProposal(0, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a"}}})),
 	}, &fakeUpdateOperationCallback{UpdateOperationCallback: database.NoOpCallback, onPut: failingOnPut(callbackErr)})
 	assert.ErrorIs(t, err, callbackErr)
 
@@ -547,7 +547,7 @@ func TestApplyLogEntryUnknownType(t *testing.T) {
 func TestApplyLogEntryWithSplitFilterControlRequest(t *testing.T) {
 	db := newTestDB(t)
 
-	proposal := NewControlProposal(3, &proto.ControlRequest{
+	proposal := NewControlProposal(3, 0, &proto.ControlRequest{
 		Value: &proto.ControlRequest_FeatureEnable{
 			FeatureEnable: &proto.FeatureEnableRequest{Features: []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}},
 		},
@@ -572,7 +572,7 @@ func TestApplyLogEntryWithSplitFilterControlRequestError(t *testing.T) {
 
 	_, err := ApplyLogEntryWithSplitFilter(db, &proto.LogEntry{
 		Term:  1,
-		Value: marshalProposal(t, NewControlProposal(0, unsupportedFeatureRequest())),
+		Value: marshalProposal(t, NewControlProposal(0, 0, unsupportedFeatureRequest())),
 	}, database.NoOpCallback, &proto.HashRange{Min: 0, Max: math.MaxUint32})
 	assert.ErrorIs(t, err, constant.ErrUnsupportedFeatures)
 }
@@ -591,7 +591,7 @@ func TestApplyLogEntryWithSplitFilterWriteError(t *testing.T) {
 
 	_, err := ApplyLogEntryWithSplitFilter(db, &proto.LogEntry{
 		Term:  1,
-		Value: marshalProposal(t, NewWriteProposal(0, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a"}}})),
+		Value: marshalProposal(t, NewWriteProposal(0, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "a"}}})),
 	}, &fakeUpdateOperationCallback{UpdateOperationCallback: database.NoOpCallback, onPut: failingOnPut(callbackErr)},
 		&proto.HashRange{Min: 0, Max: math.MaxUint32})
 	assert.ErrorIs(t, err, callbackErr)
@@ -602,7 +602,7 @@ func TestApplyLogEntryWithSplitFilterSkipsEntryOutsideRange(t *testing.T) {
 	db := newTestDB(t)
 
 	// The lower half of the hash space doesn't hold the key "d"
-	proposal := NewWriteProposal(4, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "d", Value: []byte("v")}}})
+	proposal := NewWriteProposal(4, 0, &proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "d", Value: []byte("v")}}})
 	_, err := ApplyLogEntryWithSplitFilter(db, &proto.LogEntry{
 		Term:      1,
 		Offset:    4,

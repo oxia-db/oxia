@@ -43,6 +43,7 @@ var _ Proposal = &WriteProposal{}
 
 type WriteProposal struct {
 	offset    int64
+	term      int64
 	timestamp uint64
 	request   *proto.WriteRequest
 }
@@ -60,13 +61,14 @@ func (wp *WriteProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 }
 
 func (wp *WriteProposal) Apply(db database.DB, callback database.UpdateOperationCallback) (ApplyResponse, error) {
-	resp, err := db.ProcessWrite(wp.request, wp.offset, wp.timestamp, callback)
+	resp, err := db.ProcessWrite(wp.request, wp.offset, wp.term, wp.timestamp, callback)
 	return ApplyResponse{WriteResponse: resp}, err
 }
 
-func NewWriteProposal(offset int64, request *proto.WriteRequest) Proposal {
+func NewWriteProposal(offset int64, term int64, request *proto.WriteRequest) Proposal {
 	return &WriteProposal{
 		offset:    offset,
+		term:      term,
 		request:   request,
 		timestamp: uint64(time.Now().UnixMilli()),
 	}
@@ -76,6 +78,7 @@ var _ Proposal = &ControlProposal{}
 
 type ControlProposal struct {
 	offset    int64
+	term      int64
 	timestamp uint64
 	request   *proto.ControlRequest
 }
@@ -93,7 +96,7 @@ func (c *ControlProposal) ToLogEntry(vtEntry *proto.LogEntryValue) {
 }
 
 func (c *ControlProposal) Apply(db database.DB, cb database.UpdateOperationCallback) (ApplyResponse, error) {
-	meta, err := db.ProcessControlRequest(c.request, c.offset, c.timestamp, cb)
+	meta, err := db.ProcessControlRequest(c.request, c.offset, c.term, c.timestamp, cb)
 	if err != nil {
 		return ApplyResponse{}, err
 	}
@@ -102,9 +105,10 @@ func (c *ControlProposal) Apply(db database.DB, cb database.UpdateOperationCallb
 	}, nil
 }
 
-func NewControlProposal(offset int64, request *proto.ControlRequest) Proposal {
+func NewControlProposal(offset int64, term int64, request *proto.ControlRequest) Proposal {
 	return &ControlProposal{
 		offset:    offset,
+		term:      term,
 		request:   request,
 		timestamp: uint64(time.Now().UnixMilli()),
 	}
@@ -120,13 +124,13 @@ func NewProposalFromLogEntry(entry *proto.LogEntry) (Proposal, error) {
 
 	switch value := logEntryValue.Value.(type) {
 	case *proto.LogEntryValue_ControlRequest:
-		return &ControlProposal{offset: entry.Offset, timestamp: entry.Timestamp, request: value.ControlRequest}, nil
+		return &ControlProposal{offset: entry.Offset, term: entry.Term, timestamp: entry.Timestamp, request: value.ControlRequest}, nil
 	case *proto.LogEntryValue_Requests:
 		writes := value.Requests.GetWrites()
 		if len(writes) != 1 {
 			return nil, fmt.Errorf("expected a single write request in the log entry, found %d", len(writes))
 		}
-		return &WriteProposal{offset: entry.Offset, timestamp: entry.Timestamp, request: writes[0]}, nil
+		return &WriteProposal{offset: entry.Offset, term: entry.Term, timestamp: entry.Timestamp, request: writes[0]}, nil
 	default:
 		return nil, errors.New("unknown proposal type")
 	}

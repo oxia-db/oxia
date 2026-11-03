@@ -290,7 +290,7 @@ func TestFollower_RestoreCommitOffset(t *testing.T) {
 	_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:   "xx",
 		Value: []byte(""),
-	}}}, 9, 0, database.NoOpCallback)
+	}}}, 9, 0, 0, database.NoOpCallback)
 	assert.NoError(t, err)
 
 	assert.NoError(t, db.UpdateTerm(6, database.TermOptions{}))
@@ -839,7 +839,7 @@ func prepareTestDb(t *testing.T, term int64) kvstore.Snapshot {
 				Key:   fmt.Sprintf("key-%d", i),
 				Value: []byte(fmt.Sprintf("value-%d", i)),
 			}},
-		}, int64(i), 0, database.NoOpCallback)
+		}, int64(i), term, 0, database.NoOpCallback)
 		assert.NoError(t, err)
 	}
 	assert.NoError(t, db.UpdateTerm(term, database.TermOptions{}))
@@ -1054,8 +1054,8 @@ func sendSnapshot(t *testing.T, stream *rpc.MockServerSendSnapshotStream, snapsh
 
 // A follower seeded from a snapshot has an empty wal, while its database holds
 // the entries up to the snapshot's commit offset. Fenced with a new term, it
-// must report them, so that an election doesn't take it for a follower without
-// any data.
+// reports the last of them, with its term, as its head: an election ranks it
+// as a replica with that entry in its wal.
 func TestFollower_NewTermAfterSnapshot(t *testing.T) {
 	var shardId int64
 	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
@@ -1074,7 +1074,7 @@ func TestFollower_NewTermAfterSnapshot(t *testing.T) {
 
 	res, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
 	require.NoError(t, err)
-	assertProtoEqual(t, &proto.EntryId{Term: wal.InvalidTerm, Offset: 99}, res.HeadEntryId)
+	assertProtoEqual(t, &proto.EntryId{Term: 1, Offset: 99}, res.HeadEntryId)
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
@@ -1644,7 +1644,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 				Key:   key,
 				Value: []byte(fmt.Sprintf("snapshot-%s", key)),
 			}},
-		}, int64(i), 0, database.NoOpCallback)
+		}, int64(i), 0, 0, database.NoOpCallback)
 		assert.NoError(t, err)
 	}
 	assert.NoError(t, snapshotDb.UpdateTerm(1, database.TermOptions{}))
@@ -2071,7 +2071,7 @@ func installSplitTestSnapshotWith(t *testing.T, fc FollowerController, term int6
 	for i, key := range []string{"a", "b", "c", "d", "e", "f"} {
 		_, err := parentDb.ProcessWrite(&proto.WriteRequest{
 			Puts: []*proto.PutRequest{{Key: key, Value: []byte("snapshot-" + key)}},
-		}, int64(i), 0, database.NoOpCallback)
+		}, int64(i), 0, 0, database.NoOpCallback)
 		require.NoError(t, err)
 	}
 	require.NoError(t, parentDb.UpdateTerm(term, termOptions))
@@ -2668,7 +2668,7 @@ func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
 		_, err = leaderDb.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 			Key:   "k",
 			Value: []byte(fmt.Sprintf("v%d", i)),
-		}}}, i, 0, database.NoOpCallback)
+		}}}, i, 0, 0, database.NoOpCallback)
 		require.NoError(t, err)
 	}
 	require.NoError(t, leaderDb.UpdateTerm(1, database.TermOptions{}))
@@ -2782,7 +2782,7 @@ func TestFollower_InstallSnapshotBelowAppliedEntries(t *testing.T) {
 	_, err = leaderDb.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
 		Key:   "k",
 		Value: []byte("s0"),
-	}}}, 0, 0, database.NoOpCallback)
+	}}}, 0, 0, 0, database.NoOpCallback)
 	require.NoError(t, err)
 	require.NoError(t, leaderDb.UpdateTerm(1, database.TermOptions{}))
 	snapshot, err := leaderDb.Snapshot()

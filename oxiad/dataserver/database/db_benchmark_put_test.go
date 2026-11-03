@@ -53,7 +53,7 @@ func BenchmarkPutOverwrite(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := range b.N {
-				if _, err := db.ProcessWrite(write, int64(i), timestamp, NoOpCallback); err != nil {
+				if _, err := db.ProcessWrite(write, int64(i), 0, timestamp, NoOpCallback); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -93,7 +93,7 @@ func BenchmarkPutBatch(b *testing.B) {
 							put.Key = fmt.Sprintf("key-%d-%03d", i, j)
 						}
 					}
-					if _, err := db.ProcessWrite(write, int64(i), timestamp, NoOpCallback); err != nil {
+					if _, err := db.ProcessWrite(write, int64(i), 0, timestamp, NoOpCallback); err != nil {
 						b.Fatal(err)
 					}
 				}
