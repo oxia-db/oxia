@@ -37,13 +37,9 @@ type backupJob struct {
 	store      blob.Store
 	path       backup.ShardPath
 	checkpoint *database.Checkpoint
-	// commitOffset and term are those the files of the checkpoint hold,
-	// see database.ReadCheckpoint.
-	commitOffset int64
-	term         int64
-	record       *Record
-	policy       policy
-	hashRange    backup.Range
+	record     *Record
+	policy     policy
+	hashRange  backup.Range
 	// namespaceConfig is recorded in the manifest, see backup.Manifest.
 	namespaceConfig json.RawMessage
 	now             time.Time
@@ -80,6 +76,13 @@ func (j *backupJob) run(ctx context.Context) (*LastBackup, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Reading the checkpoint opens it with Pebble, which adds its lock file
+	// to the directory: the listing comes first, so that the backup holds
+	// the files of the checkpoint alone
+	commitOffset, term, err := database.ReadCheckpoint(j.checkpoint.BasePath())
+	if err != nil {
+		return nil, fmt.Errorf("read the checkpoint: %w", err)
+	}
 	var uploads []upload
 	for _, name := range ssts {
 		if _, ok := reused[name]; !ok {
@@ -102,8 +105,8 @@ func (j *backupJob) run(ctx context.Context) (*LastBackup, error) {
 		Shard:           j.path.Shard,
 		Range:           j.hashRange,
 		NamespaceConfig: j.namespaceConfig,
-		Term:            j.term,
-		CommitOffset:    j.commitOffset,
+		Term:            term,
+		CommitOffset:    commitOffset,
 		CreatedAt:       started,
 	}
 	var uploadedBytes int64

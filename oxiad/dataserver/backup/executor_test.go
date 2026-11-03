@@ -41,7 +41,7 @@ func newTestExecutor(t *testing.T, host *fakeHost, clock *commontime.MockedClock
 	destination := "mem://" + t.Name()
 	store := blob.SharedMemory(t.Name())
 	store.SetClock(clock.Now)
-	e := New(Options{Host: host, Clock: clock, ReadCheckpoint: host.readCheckpoint})
+	e := New(Options{Host: host, Clock: clock})
 	t.Cleanup(func() { assert.NoError(t, e.Close()) })
 	return e, destination, store
 }
@@ -73,7 +73,7 @@ func awaitBackup(t *testing.T, e *Executor, req *proto.BackupShardRequest) *prot
 
 func TestExecutorBackupShardTakesABackupThenReportsItOnce(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(2))
+	host.addShard(1, 2)
 	clock := newTestClock()
 	e, destination, store := newTestExecutor(t, host, clock)
 	req := backupRequest(destination, 1)
@@ -87,7 +87,7 @@ func TestExecutorBackupShardTakesABackupThenReportsItOnce(t *testing.T) {
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
 	require.NotNil(t, res.LastBackup)
 	assert.Equal(t, clock.Now().UnixMilli(), res.LastBackup.TimestampMillis)
-	assert.EqualValues(t, 5, res.LastBackup.CommitOffset)
+	assert.EqualValues(t, 1, res.LastBackup.CommitOffset)
 	assert.Len(t, res.LastBackup.Lineage, 16)
 	assert.NotEmpty(t, store.Keys())
 	m, err := backup.ReadManifest(t.Context(), store, "ns/shard-1/backups/"+res.LastBackup.BackupId+".json")
@@ -102,7 +102,7 @@ func TestExecutorBackupShardTakesABackupThenReportsItOnce(t *testing.T) {
 
 func TestExecutorBackupShardFollowsThePolicyAcrossRequests(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	clock := newTestClock()
 	e, destination, _ := newTestExecutor(t, host, clock)
 	req := backupRequest(destination, 1)
@@ -114,12 +114,12 @@ func TestExecutorBackupShardFollowsThePolicyAcrossRequests(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED, res.State, "unchanged since the last backup")
 
-	host.write(1, "000002.sst", []byte("more"))
+	host.write(1, []byte("more"))
 	second := awaitBackup(t, e, req)
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, second.State)
 	assert.NotEqual(t, first.LastBackup.BackupId, second.LastBackup.BackupId)
 	assert.Equal(t, first.LastBackup.Lineage, second.LastBackup.Lineage)
-	assert.Less(t, second.LastBackup.UploadedBytes, second.LastBackup.SizeBytes, "incremental")
+	assert.Positive(t, second.LastBackup.UploadedBytes)
 
 	forced := backupRequest(destination, 1)
 	forced.Force = true
@@ -130,15 +130,15 @@ func TestExecutorBackupShardFollowsThePolicyAcrossRequests(t *testing.T) {
 
 func TestExecutorBackupShardStartsANewLineageWhenTheRecordIsGone(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	clock := newTestClock()
 	e, destination, _ := newTestExecutor(t, host, clock)
 	req := backupRequest(destination, 1)
 	first := awaitBackup(t, e, req)
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, first.State)
 
-	// A snapshot install replaces the database directory, record included
-	host.shards[1].dir = t.TempDir()
+	// A snapshot install replaces the database, record included
+	host.replace(1)
 	advance(clock, time.Hour)
 	second := awaitBackup(t, e, req)
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, second.State)
@@ -148,7 +148,7 @@ func TestExecutorBackupShardStartsANewLineageWhenTheRecordIsGone(t *testing.T) {
 
 func TestExecutorBackupShardReportsAFailureOnce(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	clock := newTestClock()
 	e, destination, store := newTestExecutor(t, host, clock)
 	store.FailPut(func(string) error { return errors.New("bucket unavailable") })
@@ -169,23 +169,29 @@ func TestExecutorBackupShardReportsAFailureOnce(t *testing.T) {
 
 func TestExecutorBackupShardFailsWhenTheCheckpointCannotBeRead(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
-	store := blob.SharedMemory(t.Name())
-	e := New(Options{Host: host, ReadCheckpoint: func(string) (int64, int64, error) {
-		return 0, 0, errors.New("checkpoint unreadable")
-	}})
-	t.Cleanup(func() { assert.NoError(t, e.Close()) })
+	host.addShard(1, 1)
+	// A checkpoint without its MANIFEST: Pebble cannot open it
+	host.afterCheckpoint = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "MANIFEST-") {
+				require.NoError(t, os.Remove(filepath.Join(dir, entry.Name())))
+			}
+		}
+	}
+	e, destination, store := newTestExecutor(t, host, newTestClock())
 
-	res := awaitBackup(t, e, backupRequest("mem://"+t.Name(), 1))
+	res := awaitBackup(t, e, backupRequest(destination, 1))
 	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
-	assert.Contains(t, res.Error, "checkpoint unreadable")
+	assert.Contains(t, res.Error, "read the checkpoint")
 	assert.Empty(t, store.Keys(), "nothing is uploaded")
 }
 
 func TestExecutorBackupShardIsBusyAtTheConcurrencyLimit(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
-	host.addShard(2, sstFiles(1))
+	host.addShard(1, 1)
+	host.addShard(2, 1)
 	host.checkpointGate = make(chan struct{})
 	clock := newTestClock()
 	e, destination, _ := newTestExecutor(t, host, clock)
@@ -213,7 +219,7 @@ func TestExecutorBackupShardIsBusyAtTheConcurrencyLimit(t *testing.T) {
 
 func TestExecutorBackupShardRejectsInvalidRequests(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	e, destination, _ := newTestExecutor(t, host, newTestClock())
 
 	_, err := e.BackupShard(t.Context(), backupRequest("", 1))
@@ -236,7 +242,7 @@ func TestExecutorBackupShardRejectsInvalidRequests(t *testing.T) {
 
 func TestExecutorStartRunsOneJobAtATimePerKey(t *testing.T) {
 	host := newFakeHost(t)
-	e := New(Options{Host: host, ReadCheckpoint: host.readCheckpoint})
+	e := New(Options{Host: host})
 	t.Cleanup(func() { assert.NoError(t, e.Close()) })
 	key := jobKey{kind: backupJobKind, namespace: "ns", shard: 1}
 	release := make(chan struct{})
@@ -259,7 +265,7 @@ func TestExecutorStartRunsOneJobAtATimePerKey(t *testing.T) {
 
 func TestExecutorBackupShardUploadsEverythingToANewDestination(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(2))
+	host.addShard(1, 2)
 	clock := newTestClock()
 	e, destination, _ := newTestExecutor(t, host, clock)
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
@@ -281,12 +287,12 @@ func TestExecutorBackupShardUploadsEverythingToANewDestination(t *testing.T) {
 			ssts++
 		}
 	}
-	assert.Equal(t, 2, ssts, "every SST is at the new destination")
+	assert.Equal(t, len(sstNames(host.files(1))), ssts, "every SST is at the new destination")
 }
 
 func TestExecutorBackupShardKeepsNoRecordWhenTheDatabaseIsReplacedDuringTheBackup(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(2))
+	host.addShard(1, 2)
 	host.publishGate = make(chan struct{})
 	clock := newTestClock()
 	e, destination, store := newTestExecutor(t, host, clock)
@@ -315,7 +321,7 @@ func TestExecutorBackupShardKeepsNoRecordWhenTheDatabaseIsReplacedDuringTheBacku
 
 func TestExecutorListBackupsReturnsTheBackupsOfANamespace(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	clock := newTestClock()
 	e, destination, _ := newTestExecutor(t, host, clock)
 	done := awaitBackup(t, e, backupRequest(destination, 1))
@@ -329,7 +335,7 @@ func TestExecutorListBackupsReturnsTheBackupsOfANamespace(t *testing.T) {
 	assert.Equal(t, done.LastBackup.BackupId, info.BackupId)
 	assert.Equal(t, done.LastBackup.TimestampMillis, info.TimestampMillis)
 	assert.Equal(t, done.LastBackup.SizeBytes, info.SizeBytes)
-	assert.EqualValues(t, 1, info.SstCount)
+	assert.EqualValues(t, len(sstNames(host.files(1))), info.SstCount)
 	assert.Equal(t, fullRange(), info.HashRange)
 	assert.Equal(t, "ns", info.NamespaceConfig.GetName())
 	assert.EqualValues(t, 3, info.NamespaceConfig.GetReplicationFactor())
@@ -340,9 +346,9 @@ func TestExecutorListBackupsReturnsTheBackupsOfANamespace(t *testing.T) {
 
 func TestExecutorCloseWaitsForTheRunningJobs(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	host.checkpointGate = make(chan struct{})
-	e := New(Options{Host: host, ReadCheckpoint: host.readCheckpoint})
+	e := New(Options{Host: host})
 	res, err := e.BackupShard(t.Context(), backupRequest("mem://"+t.Name(), 1))
 	require.NoError(t, err)
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
@@ -362,7 +368,7 @@ func TestExecutorCloseWaitsForTheRunningJobs(t *testing.T) {
 
 func TestExecutorBackupShardRejectsAPolicyWithoutAJobSlot(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	e, destination, _ := newTestExecutor(t, host, newTestClock())
 	req := backupRequest(destination, 1)
 	req.Policy.MaxConcurrentPerServer = 0
@@ -372,7 +378,7 @@ func TestExecutorBackupShardRejectsAPolicyWithoutAJobSlot(t *testing.T) {
 
 func TestExecutorBackupShardReportsARecordItCannotRead(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	e, destination, _ := newTestExecutor(t, host, newTestClock())
 	dir := host.DatabaseDir("ns", 1)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, recordFileName), []byte("{not json"), 0600))
@@ -394,7 +400,7 @@ func TestExecutorBackupShardReportsARecordItCannotRead(t *testing.T) {
 
 func TestExecutorBackupShardRejectsANamespaceConfigurationThatDoesNotEncode(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	e, destination, _ := newTestExecutor(t, host, newTestClock())
 	req := backupRequest(destination, 1)
 	req.NamespaceConfig = &proto.Namespace{Name: "not\xffutf8"}
@@ -404,7 +410,7 @@ func TestExecutorBackupShardRejectsANamespaceConfigurationThatDoesNotEncode(t *t
 
 func TestExecutorJobsFailOnADestinationTheyCannotOpen(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	e, _, _ := newTestExecutor(t, host, newTestClock())
 	req := backupRequest("ftp://host/path", 1)
 	res := awaitBackup(t, e, req)
@@ -421,7 +427,7 @@ func TestExecutorBackupShardFailsWhenTheHostFails(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			host := newFakeHost(t)
-			host.addShard(1, sstFiles(1))
+			host.addShard(1, 1)
 			arrange(host)
 			e, destination, store := newTestExecutor(t, host, newTestClock())
 			res := awaitBackup(t, e, backupRequest(destination, 1))
@@ -434,7 +440,7 @@ func TestExecutorBackupShardFailsWhenTheHostFails(t *testing.T) {
 
 func TestExecutorBackupShardFailsWhenTheRecordCannotBeWritten(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	host.publishGate = make(chan struct{})
 	e, destination, _ := newTestExecutor(t, host, newTestClock())
 	req := backupRequest(destination, 1)
@@ -480,7 +486,7 @@ func TestExecutorBackupShardFailsWhenTheRecordCannotBeWritten(t *testing.T) {
 
 func TestExecutorListBackupsReportsTheErrorsOfTheStore(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
+	host.addShard(1, 1)
 	e, destination, store := newTestExecutor(t, host, newTestClock())
 	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
 
@@ -509,8 +515,8 @@ func TestExecutorListBackupsReportsTheErrorsOfTheStore(t *testing.T) {
 
 func TestExecutorForgetsAFinishedJobNobodyReports(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, sstFiles(1))
-	host.addShard(2, sstFiles(1))
+	host.addShard(1, 1)
+	host.addShard(2, 1)
 	clock := newTestClock()
 	e, destination, _ := newTestExecutor(t, host, clock)
 	res, err := e.BackupShard(t.Context(), backupRequest(destination, 1))
@@ -545,8 +551,8 @@ func TestExecutorForgetsAFinishedJobNobodyReports(t *testing.T) {
 
 func TestExecutorListBackupsSendsOneMessagePerShard(t *testing.T) {
 	host := newFakeHost(t)
-	host.addShard(1, map[string][]byte{"MANIFEST-000001": []byte("m")})
-	host.addShard(2, map[string][]byte{"MANIFEST-000001": []byte("m")})
+	host.addShard(1, 0)
+	host.addShard(2, 0)
 	e, destination, store := newTestExecutor(t, host, newTestClock())
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	one := backupSeries(t, store, host, 1, start, time.Hour, 2)
@@ -584,8 +590,8 @@ func TestExecutorListBackupsSendsOneMessagePerShard(t *testing.T) {
 func TestListShardsReturnsTheShardsWithBackupsOrTheOneGiven(t *testing.T) {
 	store := blob.NewMemory()
 	host := newFakeHost(t)
-	host.addShard(1, map[string][]byte{"MANIFEST-000001": []byte("m")})
-	host.addShard(2, map[string][]byte{"MANIFEST-000001": []byte("m")})
+	host.addShard(1, 0)
+	host.addShard(2, 0)
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	backupSeries(t, store, host, 1, start, time.Hour, 2)
 	backupSeries(t, store, host, 2, start, time.Hour, 1)

@@ -38,12 +38,12 @@ import (
 )
 
 const (
-	// DefaultGracePeriod is how old a file no backup references must be for
-	// the cleanup to delete it: well above the longest a backup can take, so
+	// gracePeriod is how old a file no backup references must be for the
+	// cleanup to delete it: well above the longest a backup can take, so
 	// that the files of a backup that hasn't written its manifest yet stay.
-	DefaultGracePeriod = 24 * time.Hour
-	// DefaultUploadWorkers is how many files a backup uploads at once.
-	DefaultUploadWorkers = 4
+	gracePeriod = 24 * time.Hour
+	// uploadWorkers is how many files a backup uploads at once.
+	uploadWorkers = 4
 	// finishedJobRetention is how long the result of a finished job waits for
 	// the request that reports it. The coordinator asks again within its
 	// schedule interval; a shard whose backups moved to another server never
@@ -73,15 +73,8 @@ type Host interface {
 type Options struct {
 	Host Host
 	// Clock is the time source: commontime.SystemClock unless set.
-	Clock commontime.Clock
-	// ReadCheckpoint reads the commit offset and the term of a checkpoint
-	// from its files: database.ReadCheckpoint unless set, for the tests.
-	ReadCheckpoint func(path string) (commitOffset int64, term int64, err error)
-	// GracePeriod is DefaultGracePeriod unless set.
-	GracePeriod time.Duration
-	// UploadWorkers is DefaultUploadWorkers unless set.
-	UploadWorkers int
-	Logger        *slog.Logger
+	Clock  commontime.Clock
+	Logger *slog.Logger
 }
 
 // Executor serves the OxiaBackup requests on a data server. It runs the
@@ -92,12 +85,9 @@ type Options struct {
 // job goroutines access them under mu. A job stays in the map until the
 // request that follows its end reads its result.
 type Executor struct {
-	host           Host
-	clock          commontime.Clock
-	readCheckpoint func(path string) (commitOffset int64, term int64, err error)
-	grace          time.Duration
-	uploadWorkers  int
-	log            *slog.Logger
+	host  Host
+	clock commontime.Clock
+	log   *slog.Logger
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -139,28 +129,16 @@ type job struct {
 func New(options Options) *Executor {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Executor{
-		host:           options.Host,
-		clock:          options.Clock,
-		readCheckpoint: options.ReadCheckpoint,
-		grace:          options.GracePeriod,
-		uploadWorkers:  options.UploadWorkers,
-		log:            options.Logger,
-		ctx:            ctx,
-		cancel:         cancel,
-		jobs:           map[jobKey]*job{},
-		stores:         map[string]blob.Store{},
-	}
-	if e.readCheckpoint == nil {
-		e.readCheckpoint = database.ReadCheckpoint
+		host:   options.Host,
+		clock:  options.Clock,
+		log:    options.Logger,
+		ctx:    ctx,
+		cancel: cancel,
+		jobs:   map[jobKey]*job{},
+		stores: map[string]blob.Store{},
 	}
 	if e.clock == nil {
 		e.clock = commontime.SystemClock
-	}
-	if e.grace <= 0 {
-		e.grace = DefaultGracePeriod
-	}
-	if e.uploadWorkers <= 0 {
-		e.uploadWorkers = DefaultUploadWorkers
 	}
 	if e.log == nil {
 		e.log = slog.With(slog.String("component", "backup-executor"))
@@ -224,10 +202,10 @@ func parsePolicy(p *proto.BackupPolicy) (policy, error) {
 
 // reuseWindow is how old the last backup of a lineage can be for the next
 // one to share its SSTs: the cleanup never expires a backup younger than the
-// retention, and the margin covers the duration of the backup and the clock
-// differences between the data servers.
-func (p policy) reuseWindow(grace time.Duration) time.Duration {
-	return p.retention - min(grace, p.retention/4)
+// retention, and the margin, the grace period of the cleanup, covers the
+// duration of the backup and the clock differences between the data servers.
+func (p policy) reuseWindow() time.Duration {
+	return p.retention - min(gracePeriod, p.retention/4)
 }
 
 // backupNeeded reports whether the policy wants a new backup of a shard
@@ -326,11 +304,6 @@ func (e *Executor) runBackup(ctx context.Context, req *proto.BackupShardRequest,
 		return nil, fmt.Errorf("take the checkpoint: %w", err)
 	}
 	defer func() { _ = checkpoint.Close() }()
-	commitOffset, term, err := e.readCheckpoint(checkpoint.BasePath())
-	if err != nil {
-		e.backupsFailed.Inc()
-		return nil, fmt.Errorf("read the checkpoint: %w", err)
-	}
 	// The record is read from the database the checkpoint was taken from,
 	// and written back to that database alone: a snapshot install in between
 	// replaces the database, and the lineage of the old one, whose SSTs the
@@ -351,16 +324,14 @@ func (e *Executor) runBackup(ctx context.Context, req *proto.BackupShardRequest,
 		store:           store,
 		path:            backup.ShardPath{Namespace: req.GetNamespace(), Shard: req.GetShard()},
 		checkpoint:      checkpoint,
-		commitOffset:    commitOffset,
-		term:            term,
 		record:          record,
 		policy:          p,
 		hashRange:       backup.Range{Min: req.GetHashRange().GetMin(), Max: req.GetHashRange().GetMax()},
 		namespaceConfig: namespaceConfig,
 		now:             e.clock.Now(),
 		clock:           e.clock,
-		reuseWindow:     p.reuseWindow(e.grace),
-		uploadWorkers:   e.uploadWorkers,
+		reuseWindow:     p.reuseWindow(),
+		uploadWorkers:   uploadWorkers,
 	}
 	last, err := j.run(ctx)
 	if err != nil {
