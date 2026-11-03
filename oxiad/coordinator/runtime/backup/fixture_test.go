@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/proto"
+	commontime "github.com/oxia-db/oxia/common/time"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 	metadatacodec "github.com/oxia-db/oxia/oxiad/common/metadata/codec"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
@@ -150,27 +151,22 @@ type fixture struct {
 	t         *testing.T
 	metadata  coordmetadata.Metadata
 	rpc       *fakeRPC
-	clock     *testClock
+	clock     *commontime.MockedClock
 	scheduler *Scheduler
 	// down are the data servers that are not available
 	down map[string]bool
 }
 
-type testClock struct {
-	mu  sync.Mutex
-	now time.Time
+// newTestClock returns a clock the tests set, at a fixed start.
+func newTestClock() *commontime.MockedClock {
+	clock := &commontime.MockedClock{}
+	clock.Set(time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC).UnixMilli())
+	return clock
 }
 
-func (c *testClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *testClock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
+// advance moves the clock forward by d.
+func advance(clock *commontime.MockedClock, d time.Duration) {
+	clock.Set(clock.Now().Add(d).UnixMilli())
 }
 
 func newFixture(t *testing.T, policy *proto.BackupConfig) *fixture {
@@ -191,14 +187,14 @@ func newFixtureWithNamespaces(t *testing.T, policy *proto.BackupConfig, namespac
 		t:        t,
 		metadata: newTestMetadata(t, config),
 		rpc:      newFakeRPC(),
-		clock:    &testClock{now: time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC)},
+		clock:    newTestClock(),
 		down:     map[string]bool{},
 	}
 	f.scheduler = New(Options{
 		Metadata:  f.metadata,
 		RPC:       f.rpc,
 		Available: func(name string) bool { return !f.down[name] },
-		Clock:     f.clock.Now,
+		Clock:     f.clock,
 	})
 	t.Cleanup(f.scheduler.Close)
 	require.NoError(t, f.metadata.CreateNamespaceStatus("ns", &proto.NamespaceStatus{
@@ -322,7 +318,7 @@ func (f *fixture) withFailingMetadata(failing *failingMetadata) *Scheduler {
 		Metadata:  failing,
 		RPC:       f.rpc,
 		Available: func(name string) bool { return !f.down[name] },
-		Clock:     f.clock.Now,
+		Clock:     f.clock,
 	})
 	f.t.Cleanup(s.Close)
 	return s

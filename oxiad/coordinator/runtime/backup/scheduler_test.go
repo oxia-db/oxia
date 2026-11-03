@@ -112,7 +112,7 @@ func TestSchedulerRoundLetsASplitChildInheritItsParentsLastBackup(t *testing.T) 
 	})
 	f.scheduler.round()
 	require.Len(t, f.rpc.backups(), 1)
-	assert.Equal(t, lastBackup, f.state(1).lastBackup)
+	assert.WithinDuration(t, lastBackup, f.state(1).lastBackup, 0)
 
 	// The parent is gone, the children take over its range
 	require.NoError(t, f.metadata.PatchNamespaceStatus("ns", func(status *proto.NamespaceStatus) (bool, error) {
@@ -127,10 +127,10 @@ func TestSchedulerRoundLetsASplitChildInheritItsParentsLastBackup(t *testing.T) 
 	f.scheduler.round()
 	assert.Len(t, f.rpc.backups(), 1, "the children are not due before the parent's next backup")
 	assert.Nil(t, f.state(1))
-	assert.Equal(t, lastBackup, f.state(2).lastBackup)
-	assert.Equal(t, lastBackup.Add(time.Hour), f.state(3).nextDue)
+	assert.WithinDuration(t, lastBackup, f.state(2).lastBackup, 0)
+	assert.WithinDuration(t, lastBackup.Add(time.Hour), f.state(3).nextDue, 0)
 
-	f.clock.Advance(time.Hour)
+	advance(f.clock, time.Hour)
 	f.scheduler.round()
 	assert.Len(t, f.rpc.backups(), 3, "both children are due an interval after the parent's backup")
 }
@@ -193,7 +193,7 @@ func TestSchedulerNewDefaultsTheClock(t *testing.T) {
 	s := New(Options{Metadata: f.metadata, RPC: f.rpc, Available: func(string) bool { return true }})
 	t.Cleanup(s.Close)
 	assert.NotNil(t, s.clock)
-	assert.WithinDuration(t, time.Now(), s.clock(), time.Minute)
+	assert.WithinDuration(t, time.Now(), s.clock.Now(), time.Minute)
 }
 
 func TestSchedulerRoundSurvivesTheMetadataErrors(t *testing.T) {
@@ -220,7 +220,7 @@ func TestSchedulerRoundForgetsAGoneShardAfterTheRetention(t *testing.T) {
 	_, gone := f.scheduler.gone[key]
 	f.scheduler.mu.Unlock()
 	assert.True(t, gone, "a shard that went away is remembered for its successors")
-	f.clock.Advance(goneRetention + time.Second)
+	advance(f.clock, goneRetention+time.Second)
 	f.scheduler.round()
 	f.scheduler.mu.Lock()
 	_, gone = f.scheduler.gone[key]

@@ -31,6 +31,7 @@ import (
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/process"
 	"github.com/oxia-db/oxia/common/proto"
+	commontime "github.com/oxia-db/oxia/common/time"
 	"github.com/oxia-db/oxia/oxiad/backup"
 	coordmetadata "github.com/oxia-db/oxia/oxiad/coordinator/metadata"
 )
@@ -67,8 +68,8 @@ type Options struct {
 	// Available reports whether the data server of the given name is
 	// running.
 	Available func(name string) bool
-	// Clock is the time source, for the tests.
-	Clock  func() time.Time
+	// Clock is the time source: commontime.SystemClock unless set.
+	Clock  commontime.Clock
 	Logger *slog.Logger
 }
 
@@ -78,7 +79,7 @@ type Scheduler struct {
 	metadata  coordmetadata.Metadata
 	rpc       RPC
 	available func(name string) bool
-	clock     func() time.Time
+	clock     commontime.Clock
 	log       *slog.Logger
 
 	ctx    context.Context
@@ -150,7 +151,7 @@ func New(options Options) *Scheduler {
 		namespaces: map[string]*cleanupState{},
 	}
 	if s.clock == nil {
-		s.clock = time.Now
+		s.clock = commontime.SystemClock
 	}
 	if s.log == nil {
 		s.log = slog.With(slog.String("component", "backup-scheduler"))
@@ -196,7 +197,7 @@ func (s *Scheduler) RequestBackup(namespace string, shard *int64) int {
 			continue
 		}
 		state.forced = true
-		state.nextDue = s.clock()
+		state.nextDue = s.clock.Now()
 		count++
 	}
 	select {
@@ -248,7 +249,7 @@ func (s *Scheduler) round() time.Duration {
 		configs[ns.GetName()] = ns
 	}
 	covered := coveredNamespaces(namespaces, configs)
-	now := s.clock()
+	now := s.clock.Now()
 	due := s.reconcile(covered, now, policy)
 	s.dispatch(due, covered, configs, policy, now)
 	s.cleanups(configs, policy, now)
@@ -363,7 +364,7 @@ func (s *Scheduler) ageSeconds(state *shardState) int64 {
 	if state.lastBackup.IsZero() {
 		return -1
 	}
-	return int64(s.clock().Sub(state.lastBackup).Seconds())
+	return int64(s.clock.Now().Sub(state.lastBackup).Seconds())
 }
 
 // forget drops the state of a shard, or of every shard when key is nil.

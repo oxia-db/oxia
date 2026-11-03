@@ -34,10 +34,10 @@ func TestSchedulerCleanupsRunOncePerCleanupInterval(t *testing.T) {
 	assert.Equal(t, "mem://test", calls[0].req.Policy.Destination)
 	assert.Equal(t, "s1", calls[0].node)
 
-	f.clock.Advance(23 * time.Hour)
+	advance(f.clock, 23*time.Hour)
 	f.scheduler.round()
 	assert.Len(t, f.rpc.expires(), 1)
-	f.clock.Advance(time.Hour)
+	advance(f.clock, time.Hour)
 	f.scheduler.round()
 	calls = f.rpc.expires()
 	require.Len(t, calls, 2)
@@ -73,7 +73,7 @@ func TestSchedulerCleanupsTryAnotherServerWhenBusy(t *testing.T) {
 		return &proto.ExpireBackupsResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_BUSY}, nil
 	})
 	f.scheduler.round()
-	f.clock.Advance(30 * time.Second)
+	advance(f.clock, 30*time.Second)
 	f.scheduler.round()
 	calls := f.rpc.expires()
 	require.Len(t, calls, 2)
@@ -89,7 +89,7 @@ func TestSchedulerCleanupsBackOffAfterAFailure(t *testing.T) {
 	f.scheduler.round()
 	f.scheduler.round()
 	assert.Len(t, f.rpc.expires(), 1)
-	f.clock.Advance(failureBackoff)
+	advance(f.clock, failureBackoff)
 	f.scheduler.round()
 	assert.Len(t, f.rpc.expires(), 2)
 }
@@ -102,7 +102,7 @@ func TestSchedulerCleanupsSkipTheUnavailableServers(t *testing.T) {
 	require.Len(t, calls, 1)
 	assert.Equal(t, "s3", calls[0].node)
 	f.down["s3"] = true
-	f.clock.Advance(24 * time.Hour)
+	advance(f.clock, 24*time.Hour)
 	f.scheduler.round()
 	assert.Len(t, f.rpc.expires(), 1, "no server to run the cleanup")
 }
@@ -136,7 +136,7 @@ func TestSchedulerCleanupsBackOffAfterAFailedJob(t *testing.T) {
 	f.scheduler.round()
 	f.scheduler.round()
 	assert.Len(t, f.rpc.expires(), 1, "the failed cleanup backs off")
-	f.clock.Advance(failureBackoff)
+	advance(f.clock, failureBackoff)
 	f.scheduler.round()
 	assert.Len(t, f.rpc.expires(), 2)
 }

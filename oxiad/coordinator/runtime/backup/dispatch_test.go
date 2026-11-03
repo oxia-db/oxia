@@ -116,7 +116,7 @@ func TestSchedulerDispatchHoldsAFollowerThatIsNotCaughtUp(t *testing.T) {
 	f.scheduler.round()
 	assert.Equal(t, "s2", f.shard(1).GetBackupReplica().GetNameOrDefault())
 	assert.Empty(t, f.rpc.backups(), "s2 is behind the leader")
-	assert.Equal(t, f.clock.Now(), f.state(1).unavailableSince)
+	assert.WithinDuration(t, f.clock.Now(), f.state(1).unavailableSince, 0)
 
 	f.rpc.setStatus("s2", proto.ServingStatus_FOLLOWER, 10)
 	f.scheduler.round()
@@ -133,10 +133,10 @@ func TestSchedulerDispatchMovesTheReplicaAfterHalfAnInterval(t *testing.T) {
 	assert.Equal(t, "s2", f.shard(1).GetBackupReplica().GetNameOrDefault())
 	assert.Empty(t, f.rpc.backups())
 
-	f.clock.Advance(29 * time.Minute)
+	advance(f.clock, 29*time.Minute)
 	f.scheduler.round()
 	assert.Equal(t, "s2", f.shard(1).GetBackupReplica().GetNameOrDefault(), "not yet")
-	f.clock.Advance(time.Minute)
+	advance(f.clock, time.Minute)
 	f.scheduler.round()
 	assert.Equal(t, "s3", f.shard(1).GetBackupReplica().GetNameOrDefault(), "moved to the other follower")
 	assert.True(t, f.state(1).unavailableSince.IsZero())
@@ -154,7 +154,7 @@ func TestSchedulerDispatchMovesTheReplicaOfAnUnavailableServer(t *testing.T) {
 	f.down["s2"] = true
 	f.scheduler.round()
 	assert.Empty(t, f.rpc.backups())
-	f.clock.Advance(30 * time.Minute)
+	advance(f.clock, 30*time.Minute)
 	f.scheduler.round()
 	assert.Equal(t, "s3", f.shard(1).GetBackupReplica().GetNameOrDefault())
 }
@@ -192,10 +192,10 @@ func TestSchedulerApplyResponseSchedulesTheNextRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &shardState{key: shardKey{namespace: "ns", shard: 1}, forced: true}
 			f.scheduler.applyResponse(state, tt.response, tt.err, enabledPolicy(), now, f.scheduler.log)
-			assert.Equal(t, tt.nextDue, state.nextDue)
+			assert.WithinDuration(t, tt.nextDue, state.nextDue, 0)
 			assert.Equal(t, tt.failures, state.failures)
 			if tt.response != nil && tt.response.LastBackup != nil {
-				assert.Equal(t, time.UnixMilli(tt.response.LastBackup.TimestampMillis).UTC(), state.lastBackup)
+				assert.WithinDuration(t, time.UnixMilli(tt.response.LastBackup.TimestampMillis).UTC(), state.lastBackup, 0)
 			}
 		})
 	}
@@ -237,7 +237,7 @@ func TestSchedulerDispatchAcceptsAFencedFollowerAtTheLeadersCommitOffset(t *test
 	assert.Equal(t, "s2", calls[0].node)
 
 	f.rpc.setStatus("s2", proto.ServingStatus_NOT_MEMBER, 10)
-	f.clock.Advance(time.Hour)
+	advance(f.clock, time.Hour)
 	f.scheduler.round()
 	assert.Len(t, f.rpc.backups(), 1, "a member that doesn't host the shard isn't ready")
 }
@@ -282,7 +282,7 @@ func TestSchedulerApplyResponseFailsOnAnUnknownState(t *testing.T) {
 	f.scheduler.applyResponse(state, &proto.BackupShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_UNKNOWN},
 		nil, enabledPolicy(), now, f.scheduler.log)
 	assert.Equal(t, 1, state.failures)
-	assert.Equal(t, now.Add(failureBackoff), state.nextDue)
+	assert.WithinDuration(t, now.Add(failureBackoff), state.nextDue, 0)
 }
 
 func TestSchedulerEnsureReplicaGivesUpWhenTheAssignmentCannotBeStored(t *testing.T) {
