@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -761,7 +760,7 @@ func (d *db) GetSequenceUpdates(prefixKey string) (SequenceWaiter, error) {
 	sw, err := d.sequenceWaiterTracker.AddSequenceWaiter(prefixKey, func() (string, bool, error) {
 		it, err := d.kv.KeyRangeScanReverse(
 			fmt.Sprintf("%s-%020d", prefixKey, 0),
-			fmt.Sprintf("%s-%020d", prefixKey, math.MaxInt64),
+			fmt.Sprintf("%s-%020d", prefixKey, maxSequence),
 			kvstore.NoInternalKeys)
 		if err != nil {
 			return "", false, err

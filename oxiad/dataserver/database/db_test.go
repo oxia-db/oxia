@@ -2083,6 +2083,39 @@ func TestDB_SequentialKeysNotificationRejectedWrite(t *testing.T) {
 	assert.NoError(t, factory.Close())
 }
 
+// A subscription to the updates of a sequence starts from its highest key. The
+// sequence takes values up to the max of a uint64, so the read of its highest
+// key covers that whole range: a subscriber of a sequence past the max of an
+// int64 gets its highest key, not the highest one below that bound.
+func TestDBGetSequenceUpdatesAboveMaxInt64(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 0, time.SystemClock)
+			require.NoError(t, err)
+
+			for _, delta := range []uint64{5, 1 << 63} {
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{
+					Key:              "a",
+					Value:            []byte("0"),
+					PartitionKey:     pb.String("x"),
+					SequenceKeyDelta: []uint64{delta},
+				}}}, 0, 0, NoOpCallback)
+				require.NoError(t, err)
+			}
+
+			sw, err := db.GetSequenceUpdates("a")
+			require.NoError(t, err)
+			assert.Equal(t, fmt.Sprintf("a-%020d", uint64(5+1<<63)), <-sw.Ch())
+
+			assert.NoError(t, sw.Close())
+			assert.NoError(t, db.Close())
+			assert.NoError(t, factory.Close())
+		})
+	}
+}
+
 func TestDB_OverrideVersionId(t *testing.T) {
 	factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
 	assert.NoError(t, err)
