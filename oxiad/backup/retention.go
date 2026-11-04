@@ -33,7 +33,7 @@ import (
 //
 // The age of a backup is its start time (see Summary.StartedAt), the time a
 // restore selects by too; the ID only breaks the ties of backups started at
-// the same instant.
+// the same instant (Summary.Compare).
 func Expired(backups []Summary, retention time.Duration, now time.Time) []Summary {
 	cutoff := now.Add(-retention)
 	// The backups older than the retention, newest first: only they can
@@ -44,12 +44,7 @@ func Expired(backups []Summary, retention time.Duration, now time.Time) []Summar
 			old = append(old, b)
 		}
 	}
-	slices.SortFunc(old, func(a, b Summary) int {
-		if c := b.StartedAt().Compare(a.StartedAt()); c != 0 {
-			return c
-		}
-		return b.ID.Compare(a.ID)
-	})
+	slices.SortFunc(old, func(a, b Summary) int { return b.Compare(a) })
 
 	var expired []Summary
 	var newer coverage
