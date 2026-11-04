@@ -158,9 +158,15 @@ func (s Summary) ManifestKey() string {
 	return s.Path().ManifestKey(s.ID)
 }
 
-// Newer reports whether s was taken after other, in the order of ID.Compare.
-func (s Summary) Newer(other Summary) bool {
-	return s.ID.Compare(other.ID) > 0
+// Compare orders the backups of a shard by start time, then by ID: it is
+// negative when s started before other, positive when after, and zero for
+// the same backup. The retention, the listings and the restore planning
+// pick the newest backup in this one order.
+func (s Summary) Compare(other Summary) int {
+	if c := s.StartedAt().Compare(other.StartedAt()); c != 0 {
+		return c
+	}
+	return s.ID.Compare(other.ID)
 }
 
 // WriteManifest stores the manifest, which must be valid, at its key.

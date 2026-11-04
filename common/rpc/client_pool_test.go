@@ -180,6 +180,8 @@ func TestClientPoolGetRpcReturnsConnectionError(t *testing.T) {
 	assert.ErrorContains(t, err, "require transport level security")
 	_, err = pool.GetAminRpc(target)
 	assert.ErrorContains(t, err, "require transport level security")
+	_, err = pool.GetBackupRpc(target)
+	assert.ErrorContains(t, err, "require transport level security")
 
 	assert.Empty(t, pool.(*clientPool).connections)
 }
@@ -192,6 +194,8 @@ func TestClientPoolGetRpcReusesConnection(t *testing.T) {
 	_, err := pool.GetAminRpc(target)
 	require.NoError(t, err)
 	_, err = pool.GetReplicationRpc(target)
+	require.NoError(t, err)
+	_, err = pool.GetBackupRpc(target)
 	require.NoError(t, err)
 	assert.Len(t, pool.connections, 1)
 }

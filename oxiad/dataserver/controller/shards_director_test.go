@@ -400,3 +400,26 @@ func (f *fakeFollowerController) Close() error {
 func (f *fakeFollowerController) Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error) {
 	return f.delete(request)
 }
+
+func TestShardsDirectorNewInstallerFailsWhenClosed(t *testing.T) {
+	sd := newTestShardsDirector(t)
+	require.NoError(t, sd.Close())
+
+	_, err := sd.NewInstaller(constant.DefaultNamespace, 1)
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+}
+
+func TestShardsDirectorNewInstallerFollowerCloseError(t *testing.T) {
+	sd := newTestShardsDirector(t)
+	closeErr := errors.New("close failure")
+	follower := &fakeFollowerController{close: func() error { return closeErr }}
+	sd.followers[1] = follower
+
+	_, err := sd.NewInstaller(constant.DefaultNamespace, 1)
+	assert.ErrorIs(t, err, closeErr)
+
+	// The follower stays in place
+	fc, err := sd.GetFollower(1)
+	assert.NoError(t, err)
+	assert.Same(t, follower, fc)
+}
