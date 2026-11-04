@@ -1,0 +1,703 @@
+// Copyright 2023-2026 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package backup
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/oxia-db/oxia/common/proto"
+	commontime "github.com/oxia-db/oxia/common/time"
+	"github.com/oxia-db/oxia/oxiad/backup"
+	"github.com/oxia-db/oxia/oxiad/backup/blob"
+	"github.com/oxia-db/oxia/oxiad/common/errs"
+)
+
+const eventually = 10 * time.Second
+
+func newTestExecutor(t *testing.T, host *fakeHost, clock *commontime.MockedClock) (*Executor, string, *blob.Memory) {
+	t.Helper()
+	destination := "mem://" + t.Name()
+	store := blob.SharedMemory(t.Name())
+	store.SetClock(clock.Now)
+	e := New(Options{Host: host, Clock: clock})
+	t.Cleanup(func() { assert.NoError(t, e.Close()) })
+	return e, destination, store
+}
+
+func backupRequest(destination string, shard int64) *proto.BackupShardRequest {
+	return &proto.BackupShardRequest{
+		Namespace:       "ns",
+		Shard:           shard,
+		Policy:          protoPolicy(destination),
+		NamespaceConfig: &proto.Namespace{Name: "ns", ReplicationFactor: 3},
+		HashRange:       fullRange(),
+	}
+}
+
+// awaitBackup sends the request until the job it started ends, and returns
+// the response that reports its end.
+func awaitBackup(t *testing.T, e *Executor, req *proto.BackupShardRequest) *proto.BackupShardResponse {
+	t.Helper()
+	var res *proto.BackupShardResponse
+	require.Eventually(t, func() bool {
+		var err error
+		res, err = e.BackupShard(t.Context(), req)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING &&
+			res.State != proto.BackupJobState_BACKUP_JOB_STATE_STARTED
+	}, eventually, time.Millisecond)
+	return res
+}
+
+func TestExecutorBackupShardTakesABackupThenReportsItOnce(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 2)
+	clock := newTestClock()
+	e, destination, store := newTestExecutor(t, host, clock)
+	req := backupRequest(destination, 1)
+
+	res, err := e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	assert.Nil(t, res.LastBackup)
+
+	res = awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+	require.NotNil(t, res.LastBackup)
+	assert.Equal(t, clock.Now().UnixMilli(), res.LastBackup.TimestampMillis)
+	assert.EqualValues(t, 1, res.LastBackup.CommitOffset)
+	assert.Len(t, res.LastBackup.Lineage, 16)
+	assert.NotEmpty(t, store.Keys())
+	m, err := backup.ReadManifest(t.Context(), store, "ns/shard-1/backups/"+res.LastBackup.BackupId+".json")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"name":"ns","replicationFactor":3}`, string(m.NamespaceConfig))
+
+	res, err = e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED, res.State, "the policy is satisfied")
+	assert.Equal(t, m.ID, res.LastBackup.BackupId)
+}
+
+func TestExecutorBackupShardFollowsThePolicyAcrossRequests(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	req := backupRequest(destination, 1)
+	first := awaitBackup(t, e, req)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, first.State)
+
+	advance(clock, 2*time.Hour)
+	res, err := e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_NOT_NEEDED, res.State, "unchanged since the last backup")
+
+	host.write(1, []byte("more"))
+	second := awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, second.State)
+	assert.NotEqual(t, first.LastBackup.BackupId, second.LastBackup.BackupId)
+	assert.Equal(t, first.LastBackup.Lineage, second.LastBackup.Lineage)
+	assert.Positive(t, second.LastBackup.UploadedBytes)
+
+	forced := backupRequest(destination, 1)
+	forced.Force = true
+	third := awaitBackup(t, e, forced)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, third.State)
+	assert.NotEqual(t, second.LastBackup.BackupId, third.LastBackup.BackupId)
+}
+
+func TestExecutorBackupShardStartsANewLineageWhenTheRecordIsGone(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	req := backupRequest(destination, 1)
+	first := awaitBackup(t, e, req)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, first.State)
+
+	// A snapshot install replaces the database, record included
+	host.replace(1)
+	advance(clock, time.Hour)
+	second := awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, second.State)
+	assert.NotEqual(t, first.LastBackup.Lineage, second.LastBackup.Lineage)
+	assert.Equal(t, second.LastBackup.SizeBytes, second.LastBackup.UploadedBytes, "a full upload")
+}
+
+func TestExecutorBackupShardReportsAFailureOnce(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	clock := newTestClock()
+	e, destination, store := newTestExecutor(t, host, clock)
+	store.FailPut(func(string) error { return errors.New("bucket unavailable") })
+	req := backupRequest(destination, 1)
+
+	res := awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "bucket unavailable")
+	assert.Nil(t, res.LastBackup)
+
+	store.FailPut(nil)
+	res, err := e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State, "the next request starts again")
+	res = awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+}
+
+func TestExecutorBackupShardFailsWhenTheCheckpointCannotBeRead(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	// A checkpoint without its MANIFEST: Pebble cannot open it
+	host.afterCheckpoint = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "MANIFEST-") {
+				require.NoError(t, os.Remove(filepath.Join(dir, entry.Name())))
+			}
+		}
+	}
+	e, destination, store := newTestExecutor(t, host, newTestClock())
+
+	res := awaitBackup(t, e, backupRequest(destination, 1))
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "read the checkpoint")
+	assert.Empty(t, store.Keys(), "nothing is uploaded")
+}
+
+func TestExecutorBackupShardIsBusyAtTheConcurrencyLimit(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	host.addShard(2, 1)
+	host.checkpointGate = make(chan struct{})
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	first := backupRequest(destination, 1)
+	first.Policy.MaxConcurrentPerServer = 1
+	second := backupRequest(destination, 2)
+	second.Policy.MaxConcurrentPerServer = 1
+
+	res, err := e.BackupShard(t.Context(), first)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	res, err = e.BackupShard(t.Context(), first)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_RUNNING, res.State)
+	res, err = e.BackupShard(t.Context(), second)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_BUSY, res.State)
+
+	close(host.checkpointGate)
+	res = awaitBackup(t, e, first)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+	res = awaitBackup(t, e, second)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+}
+
+func TestExecutorBackupShardRejectsInvalidRequests(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, _ := newTestExecutor(t, host, newTestClock())
+
+	_, err := e.BackupShard(t.Context(), backupRequest("", 1))
+	assert.ErrorContains(t, err, "no destination")
+	req := backupRequest(destination, 1)
+	req.Policy.RetentionMillis = req.Policy.IntervalMillis
+	_, err = e.BackupShard(t.Context(), req)
+	assert.ErrorContains(t, err, "retention longer than its interval")
+	_, err = e.BackupShard(t.Context(), backupRequest(destination, 99))
+	assert.ErrorIs(t, err, errNotHosted)
+	// A request without a namespace must not reach the host, whose paths
+	// need one
+	noNamespace := backupRequest(destination, 1)
+	noNamespace.Namespace = ""
+	_, err = e.BackupShard(t.Context(), noNamespace)
+	assert.ErrorContains(t, err, "needs a namespace")
+	_, err = collectBackups(t.Context(), e, &proto.ListBackupsRequest{Destination: destination})
+	assert.ErrorContains(t, err, "no namespace")
+}
+
+func TestExecutorStartRunsOneJobAtATimePerKey(t *testing.T) {
+	host := newFakeHost(t)
+	e := New(Options{Host: host})
+	t.Cleanup(func() { assert.NoError(t, e.Close()) })
+	key := jobKey{kind: backupJobKind, namespace: "ns", shard: 1}
+	release := make(chan struct{})
+	parked := func(context.Context) (any, error) {
+		<-release
+		return "done", nil
+	}
+	// Two requests that both found no job at the key: the second one
+	// reports the job of the first instead of starting another
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, e.start(key, 2, parked))
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_RUNNING, e.start(key, 2, parked))
+	other := jobKey{kind: backupJobKind, namespace: "ns", shard: 2}
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, e.start(other, 2, parked), "another key is free")
+	close(release)
+	require.Eventually(t, func() bool {
+		state, _ := e.consume(key)
+		return state == proto.BackupJobState_BACKUP_JOB_STATE_DONE
+	}, eventually, time.Millisecond)
+}
+
+func TestExecutorBackupShardUploadsEverythingToANewDestination(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 2)
+	clock := newTestClock()
+	e, destination, store := newTestExecutor(t, host, clock)
+	first := awaitBackup(t, e, backupRequest(destination, 1))
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, first.State)
+
+	// The policy moves to another destination: the record of the first one
+	// is no backup there, and nothing of it is shared
+	other := blob.SharedMemory(t.Name() + "-other")
+	other.SetClock(clock.Now)
+	req := backupRequest(destination+"-other", 1)
+	res, err := e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	assert.Nil(t, res.LastBackup)
+	done := awaitBackup(t, e, req)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, done.State)
+	ssts := len(sstNames(host.files(1)))
+	assert.Equal(t, ssts, sstKeys(other), "every SST is at the new destination")
+	assert.NotEqual(t, first.LastBackup.Lineage, done.LastBackup.Lineage, "under a lineage of its own")
+
+	// Back to the first destination: a third lineage, next to the keys of
+	// the first one, which are not written again
+	advance(clock, time.Hour)
+	back := awaitBackup(t, e, backupRequest(destination, 1))
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, back.State)
+	assert.NotEqual(t, first.LastBackup.Lineage, back.LastBackup.Lineage)
+	assert.NotEqual(t, done.LastBackup.Lineage, back.LastBackup.Lineage)
+	assert.Equal(t, 2*ssts, sstKeys(store), "the SSTs of both lineages")
+}
+
+func TestExecutorBackupShardKeepsNoRecordWhenTheDatabaseIsReplacedDuringTheBackup(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 2)
+	host.publishGate = make(chan struct{})
+	clock := newTestClock()
+	e, destination, store := newTestExecutor(t, host, clock)
+	req := backupRequest(destination, 1)
+	res, err := e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	// The backup is uploaded and about to publish its record: a snapshot
+	// install replaces the database first
+	require.Eventually(t, func() bool {
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		return host.withDatabaseCalls == 2
+	}, eventually, time.Millisecond)
+	host.replace(1)
+	close(host.publishGate)
+
+	done := awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, done.State, "the backup of the old database is valid")
+	assert.Len(t, manifestKeys(store), 1)
+	assert.Nil(t, done.LastBackup, "the new database has no record of it")
+	_, found, err := readRecord(host.DatabaseDir("ns", 1))
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+func TestExecutorExpireBackupsRunsACleanupAndReportsItsCounts(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	clock := newTestClock()
+	e, destination, store := newTestExecutor(t, host, clock)
+	req := backupRequest(destination, 1)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, req).State)
+	// An orphan older than the grace period
+	require.NoError(t, store.Put(t.Context(), "ns/shard-1/sst/orphan-000001.sst", strings.NewReader("")))
+	store.Touch("ns/shard-1/sst/orphan-000001.sst", clock.Now().Add(-2*gracePeriod))
+
+	expire := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy(destination)}
+	res, err := e.ExpireBackups(t.Context(), expire)
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.ExpireBackups(t.Context(), expire)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State)
+	assert.EqualValues(t, 0, res.BackupsExpired)
+	assert.EqualValues(t, 1, res.FilesDeleted)
+	assert.NotContains(t, store.Keys(), "ns/shard-1/sst/orphan-000001.sst")
+
+	_, err = e.ExpireBackups(t.Context(), &proto.ExpireBackupsRequest{Policy: protoPolicy(destination)})
+	assert.ErrorContains(t, err, "no namespace")
+}
+
+func TestExecutorListBackupsReturnsTheBackupsOfANamespace(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	done := awaitBackup(t, e, backupRequest(destination, 1))
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, done.State)
+
+	backups, err := collectBackups(t.Context(), e, &proto.ListBackupsRequest{Destination: destination, Namespace: "ns"})
+	require.NoError(t, err)
+	require.Len(t, backups, 1)
+	info := backups[0]
+	assert.EqualValues(t, 1, info.Shard)
+	assert.Equal(t, done.LastBackup.BackupId, info.BackupId)
+	assert.Equal(t, done.LastBackup.TimestampMillis, info.TimestampMillis)
+	assert.Equal(t, done.LastBackup.SizeBytes, info.SizeBytes)
+	assert.EqualValues(t, len(sstNames(host.files(1))), info.SstCount)
+	assert.Equal(t, fullRange(), info.HashRange)
+	assert.Equal(t, "ns", info.NamespaceConfig.GetName())
+	assert.EqualValues(t, 3, info.NamespaceConfig.GetReplicationFactor())
+
+	_, err = collectBackups(t.Context(), e, &proto.ListBackupsRequest{Namespace: "ns"})
+	assert.ErrorContains(t, err, "no destination")
+}
+
+func TestExecutorCloseWaitsForTheRunningJobs(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	host.checkpointGate = make(chan struct{})
+	e := New(Options{Host: host})
+	res, err := e.BackupShard(t.Context(), backupRequest("mem://"+t.Name(), 1))
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	closed := make(chan error, 1)
+	go func() { closed <- e.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a job was running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(host.checkpointGate)
+	require.NoError(t, <-closed)
+	res, err = e.BackupShard(t.Context(), backupRequest("mem://"+t.Name(), 1))
+	require.NoError(t, err)
+	assert.NotEqual(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State, "no job starts after Close")
+}
+
+func TestExecutorBackupShardRejectsAPolicyWithoutAJobSlot(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, _ := newTestExecutor(t, host, newTestClock())
+	req := backupRequest(destination, 1)
+	req.Policy.MaxConcurrentPerServer = 0
+	_, err := e.BackupShard(t.Context(), req)
+	assert.ErrorContains(t, err, "at least one job")
+}
+
+func TestExecutorBackupShardReportsARecordItCannotRead(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, _ := newTestExecutor(t, host, newTestClock())
+	dir := host.DatabaseDir("ns", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, recordFileName), []byte("{not json"), 0600))
+	_, err := e.BackupShard(t.Context(), backupRequest(destination, 1))
+	assert.ErrorContains(t, err, "read the backup record")
+
+	// A record without a lineage is no record: the backup starts a lineage
+	require.NoError(t, os.WriteFile(filepath.Join(dir, recordFileName), []byte("{}"), 0600))
+	res, err := e.BackupShard(t.Context(), backupRequest(destination, 1))
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
+
+	// The record is read again to answer the request that reports the job
+	require.NoError(t, os.WriteFile(filepath.Join(dir, recordFileName), []byte("{not json"), 0600))
+	_, err = e.BackupShard(t.Context(), backupRequest(destination, 1))
+	assert.ErrorContains(t, err, "read the backup record")
+}
+
+func TestExecutorBackupShardRejectsANamespaceConfigurationThatDoesNotEncode(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, _ := newTestExecutor(t, host, newTestClock())
+	req := backupRequest(destination, 1)
+	req.NamespaceConfig = &proto.Namespace{Name: "not\xffutf8"}
+	_, err := e.BackupShard(t.Context(), req)
+	assert.ErrorContains(t, err, "encode the namespace configuration")
+}
+
+func TestExecutorJobsFailOnADestinationTheyCannotOpen(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, _, _ := newTestExecutor(t, host, newTestClock())
+	req := backupRequest("ftp://host/path", 1)
+	res := awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "unsupported destination scheme")
+	_, err := collectBackups(t.Context(), e, &proto.ListBackupsRequest{Destination: "ftp://host/path", Namespace: "ns"})
+	assert.ErrorContains(t, err, "unsupported destination scheme")
+}
+
+func TestExecutorBackupShardFailsWhenTheHostFails(t *testing.T) {
+	for name, arrange := range map[string]func(h *fakeHost){
+		"checkpoint":  func(h *fakeHost) { h.checkpointErr = errors.New("shard closing") },
+		"record read": func(h *fakeHost) { h.withDatabaseErr = errors.New("shard closing") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			host := newFakeHost(t)
+			host.addShard(1, 1)
+			arrange(host)
+			e, destination, store := newTestExecutor(t, host, newTestClock())
+			res := awaitBackup(t, e, backupRequest(destination, 1))
+			assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+			assert.Contains(t, res.Error, "shard closing")
+			assert.Empty(t, manifestKeys(store), "no backup exists")
+		})
+	}
+}
+
+func TestExecutorBackupShardFailsWhenTheRecordCannotBeWritten(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	host.publishGate = make(chan struct{})
+	e, destination, _ := newTestExecutor(t, host, newTestClock())
+	req := backupRequest(destination, 1)
+	res, err := e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		return host.withDatabaseCalls == 2
+	}, eventually, time.Millisecond)
+	// The record goes under a file: it cannot be written there
+	file := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(file, nil, 0600))
+	host.setPublishDir(1, filepath.Join(file, "db"))
+	close(host.publishGate)
+	res = awaitBackup(t, e, req)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "write the backup record")
+
+	// The request that reports a finished job reads the record too
+	host.setPublishDir(1, "")
+	host.publishGate = make(chan struct{})
+	host.mu.Lock()
+	host.withDatabaseCalls = 0
+	host.mu.Unlock()
+	res, err = e.BackupShard(t.Context(), req)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		return host.withDatabaseCalls == 2
+	}, eventually, time.Millisecond)
+	require.NoError(t, os.WriteFile(filepath.Join(host.DatabaseDir("ns", 1), recordFileName), []byte("{not json"), 0600))
+	host.setPublishDir(1, filepath.Join(file, "db"))
+	close(host.publishGate)
+	require.Eventually(t, func() bool {
+		_, err := e.BackupShard(t.Context(), req)
+		return err != nil && assert.ErrorContains(t, err, "read the backup record")
+	}, eventually, time.Millisecond)
+}
+
+func TestExecutorListBackupsReportsTheErrorsOfTheStore(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, store := newTestExecutor(t, host, newTestClock())
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := collectBackups(ctx, e, &proto.ListBackupsRequest{Destination: destination, Namespace: "ns"})
+	assert.ErrorIs(t, err, context.Canceled, "listing the shards")
+	shard := int64(1)
+	_, err = collectBackups(ctx, e, &proto.ListBackupsRequest{Destination: destination, Namespace: "ns", Shard: &shard})
+	assert.ErrorIs(t, err, context.Canceled, "listing the manifests of a shard")
+
+	// A manifest whose namespace configuration is not one
+	m := &backup.Manifest{
+		FormatVersion:   backup.ManifestFormatVersion,
+		ID:              "2026-10-03T14-00-00Z-ffff",
+		Lineage:         "ffff",
+		Namespace:       "ns",
+		Shard:           1,
+		Range:           backup.FullRange,
+		NamespaceConfig: json.RawMessage(`{"unknownField":1}`),
+	}
+	require.NoError(t, backup.WriteManifest(t.Context(), store, m))
+	_, err = collectBackups(t.Context(), e, &proto.ListBackupsRequest{Destination: destination, Namespace: "ns"})
+	assert.ErrorIs(t, err, errs.ErrInvalidArgument)
+}
+
+func TestExecutorForgetsAFinishedJobNobodyReports(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	host.addShard(2, 1)
+	clock := newTestClock()
+	e, destination, _ := newTestExecutor(t, host, clock)
+	res, err := e.BackupShard(t.Context(), backupRequest(destination, 1))
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	key := jobKey{kind: backupJobKind, namespace: "ns", shard: 1}
+	require.Eventually(t, func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		select {
+		case <-e.jobs[key].done:
+			return true
+		default:
+			return false
+		}
+	}, eventually, time.Millisecond)
+
+	// The shard moved away: nobody asks about it again. Another job's
+	// admission, after the retention, forgets its result
+	advance(clock, finishedJobRetention+time.Second)
+	res, err = e.BackupShard(t.Context(), backupRequest(destination, 2))
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	e.mu.Lock()
+	_, kept := e.jobs[key]
+	e.mu.Unlock()
+	assert.False(t, kept)
+	res, err = e.BackupShard(t.Context(), backupRequest(destination, 1))
+	require.NoError(t, err)
+	assert.NotEqual(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, res.State, "the result is gone")
+}
+
+func TestExecutorListBackupsSendsOneMessagePerShard(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 0)
+	host.addShard(2, 0)
+	e, destination, store := newTestExecutor(t, host, newTestClock())
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	one := backupSeries(t, store, host, 1, start, time.Hour, 2)
+	backupSeries(t, store, host, 2, start.Add(time.Hour), time.Hour, 1)
+
+	var messages []*proto.ListBackupsResponse
+	req := &proto.ListBackupsRequest{Destination: destination, Namespace: "ns"}
+	require.NoError(t, e.ListBackups(t.Context(), req, func(res *proto.ListBackupsResponse) error {
+		messages = append(messages, res)
+		return nil
+	}))
+	require.Len(t, messages, 2, "one message per shard")
+	require.Len(t, messages[0].GetBackups(), 2)
+	assert.EqualValues(t, 1, messages[0].GetBackups()[0].GetShard())
+	assert.Equal(t, one[0].ID, messages[0].GetBackups()[0].GetBackupId(), "oldest first")
+	require.Len(t, messages[1].GetBackups(), 1)
+	assert.EqualValues(t, 2, messages[1].GetBackups()[0].GetShard())
+
+	// As of a time, each shard sends its newest backup at or before it, or
+	// nothing
+	asOf := start.Add(30 * time.Minute).UnixMilli()
+	req.NewestAtOrBeforeMillis = &asOf
+	backups, err := collectBackups(t.Context(), e, req)
+	require.NoError(t, err)
+	require.Len(t, backups, 1)
+	assert.EqualValues(t, 1, backups[0].GetShard())
+	assert.Equal(t, one[0].ID, backups[0].GetBackupId())
+
+	// A receiver that fails stops the listing
+	errStop := errors.New("stop")
+	req.NewestAtOrBeforeMillis = nil
+	assert.ErrorIs(t, e.ListBackups(t.Context(), req, func(*proto.ListBackupsResponse) error { return errStop }), errStop)
+}
+
+func TestExecutorExpireBackupsReportsAFailedCleanup(t *testing.T) {
+	host := newFakeHost(t)
+	host.addShard(1, 1)
+	e, destination, store := newTestExecutor(t, host, newTestClock())
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, awaitBackup(t, e, backupRequest(destination, 1)).State)
+
+	invalid := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy("")}
+	_, err := e.ExpireBackups(t.Context(), invalid)
+	assert.ErrorContains(t, err, "no destination")
+
+	// A manifest that does not parse fails the cleanup, which is reported once
+	require.NoError(t, store.Put(t.Context(), "ns/shard-1/backups/2026-10-03T14-00-00Z-ffff.json", strings.NewReader("{")))
+	expire := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy(destination)}
+	res, err := e.ExpireBackups(t.Context(), expire)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.ExpireBackups(t.Context(), expire)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "invalid backup manifest")
+
+	// A destination that cannot be opened fails the cleanup too
+	unopenable := &proto.ExpireBackupsRequest{Namespace: "ns", Policy: protoPolicy("ftp://host/path")}
+	res, err = e.ExpireBackups(t.Context(), unopenable)
+	require.NoError(t, err)
+	require.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, res.State)
+	require.Eventually(t, func() bool {
+		res, err = e.ExpireBackups(t.Context(), unopenable)
+		require.NoError(t, err)
+		return res.State != proto.BackupJobState_BACKUP_JOB_STATE_RUNNING
+	}, eventually, time.Millisecond)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_FAILED, res.State)
+	assert.Contains(t, res.Error, "unsupported destination scheme")
+}
+
+func TestListShardsReturnsTheShardsWithBackupsOrTheOneGiven(t *testing.T) {
+	store := blob.NewMemory()
+	host := newFakeHost(t)
+	host.addShard(1, 0)
+	host.addShard(2, 0)
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	backupSeries(t, store, host, 1, start, time.Hour, 2)
+	backupSeries(t, store, host, 2, start, time.Hour, 1)
+
+	all, err := listShards(context.Background(), store, "ns", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []backup.ShardPath{{Namespace: "ns", Shard: 1}, {Namespace: "ns", Shard: 2}}, all)
+	shard := int64(7)
+	one, err := listShards(context.Background(), store, "ns", &shard)
+	require.NoError(t, err)
+	assert.Equal(t, []backup.ShardPath{{Namespace: "ns", Shard: 7}}, one, "the shard given, backups or not")
+	none, err := listShards(context.Background(), store, "other", nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+func TestNewestAtOrBeforeKeepsOneBackup(t *testing.T) {
+	at := func(hour int) backup.Summary {
+		t := time.Date(2026, 10, 1, hour, 0, 0, 0, time.UTC)
+		return backup.Summary{Namespace: "ns", Shard: 1, ID: backup.NewID(t, "abcd"), CreatedAt: t}
+	}
+	summaries := []backup.Summary{at(1), at(3), at(2)}
+	assert.Equal(t, []backup.Summary{at(2)}, newestAtOrBefore(summaries, time.Date(2026, 10, 1, 2, 30, 0, 0, time.UTC)))
+	assert.Equal(t, []backup.Summary{at(3)}, newestAtOrBefore(summaries, time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC)), "at the time counts")
+	assert.Nil(t, newestAtOrBefore(summaries, time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)))
+}
+
+// collectBackups lists through the executor and gathers every backup sent.
+func collectBackups(ctx context.Context, e *Executor, req *proto.ListBackupsRequest) ([]*proto.BackupInfo, error) {
+	var all []*proto.BackupInfo
+	err := e.ListBackups(ctx, req, func(res *proto.ListBackupsResponse) error {
+		all = append(all, res.GetBackups()...)
+		return nil
+	})
+	return all, err
+}

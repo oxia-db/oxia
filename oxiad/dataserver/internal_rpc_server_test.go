@@ -760,3 +760,25 @@ func (f *testFollowerController) SetSplitHashRange(hashRange *proto.HashRange, p
 	f.splitHashRange = hashRange
 	f.splitParentHashRange = parentHashRange
 }
+
+// The backup service is served on the internal endpoint: a request that
+// the executor rejects comes back as an error of the call.
+func TestInternalBackupRpcsReportTheExecutorErrors(t *testing.T) {
+	server := newInternalTestServer(t, newTestManifest(t, "cluster-a"), &internalTestAssignmentDispatcher{})
+	cnx := newInternalTestConn(t, server, "cluster-a")
+	client := proto.NewOxiaBackupClient(cnx)
+
+	_, err := client.BackupShard(t.Context(), &proto.BackupShardRequest{Shard: 1})
+	assert.ErrorContains(t, err, "needs a namespace")
+	stream, err := client.ListBackups(t.Context(), &proto.ListBackupsRequest{Namespace: "ns"})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	assert.ErrorContains(t, err, "no destination")
+}
+
+func TestInternalExpireBackupsReportsTheExecutorErrors(t *testing.T) {
+	server := newInternalTestServer(t, newTestManifest(t, "cluster-a"), &internalTestAssignmentDispatcher{})
+	cnx := newInternalTestConn(t, server, "cluster-a")
+	_, err := proto.NewOxiaBackupClient(cnx).ExpireBackups(t.Context(), &proto.ExpireBackupsRequest{})
+	assert.ErrorContains(t, err, "no namespace")
+}
