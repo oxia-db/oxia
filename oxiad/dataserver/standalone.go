@@ -34,8 +34,6 @@ import (
 	"github.com/oxia-db/oxia/oxiad/dataserver/database/kvstore"
 	dataserverrpc "github.com/oxia-db/oxia/oxiad/dataserver/rpc"
 
-	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
-
 	"github.com/oxia-db/oxia/oxiad/dataserver/wal"
 
 	"github.com/oxia-db/oxia/common/commonio"
@@ -147,7 +145,8 @@ func NewStandalone(config StandaloneConfig) (_ *Standalone, err error) {
 		return nil, err
 	}
 	s.rpc, err = newPublicRpcServer(rpc2.Default, publicServer.BindAddress, s.shardsDirector,
-		s.shardAssignmentDispatcher, config.DataServerOptions.FeatureFlags.IsAuthorityValidationEnabled(), s.healthServer, serverTLS, &auth.Disabled)
+		s.shardAssignmentDispatcher, config.DataServerOptions.FeatureFlags.IsAuthorityValidationEnabled(),
+		s.healthServer, serverTLS, &publicServer.Auth)
 	if err != nil {
 		return nil, err
 	}
