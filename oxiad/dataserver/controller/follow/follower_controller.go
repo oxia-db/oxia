@@ -339,7 +339,12 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 			return nil, constant.ErrNodeIsNotMember
 		}
 		if fc.logSynchronizer.IsValid() {
-			return nil, constant.ErrResourceConflict
+			// Only the leader of the term opens a stream, so a second one is that leader reconnecting. The old
+			// stream can be dead without the follower knowing it, e.g. after a partition that dropped the packets
+			// closing it, and nothing tells it from a live one: rejecting the new stream would keep the leader out
+			// until TCP gives up on the old one, so the new stream replaces it.
+			fc.log.Warn("Replacing the replication stream of the leader", slog.Int64("term", fc.term.Load()))
+			fc.logSynchronizer.Close()
 		}
 		fc.logSynchronizer = NewLogSynchronizer(LogSynchronizerParams{
 			Log:                    fc.log,

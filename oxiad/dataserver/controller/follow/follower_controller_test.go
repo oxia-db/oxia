@@ -1179,9 +1179,6 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
-	// It's not possible to add a new leader stream
-	assert.ErrorIs(t, fc.AppendEntries(stream), constant.ErrResourceConflict)
-
 	// When we fence again, the leader should have been cutoff
 	_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
 	assert.NoError(t, err)
@@ -1237,6 +1234,42 @@ func TestFollower_DupEntries(t *testing.T) {
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "4", "b": "5"}, wal.InvalidOffset))
 	r4 := stream.GetResponse()
 	assert.EqualValues(t, 0, r4.Offset)
+
+	assert.NoError(t, fc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// A partition can drop the packets that close the stream of the leader, so the follower keeps a dead stream. The
+// leader that reconnects within its term must replace it, instead of waiting for the follower to notice that it died.
+func TestFollowerControllerAppendEntriesReplacesStaleStream(t *testing.T) {
+	var shardId int64
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	fc, _ := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory, kvFactory, nil)
+	_, _ = fc.NewTerm(&proto.NewTermRequest{Term: 1})
+
+	stale := rpc.NewMockServerReplicateStream()
+	staleDone := make(chan error, 1)
+	go func() {
+		staleDone <- fc.AppendEntries(stale)
+		stale.Cancel() // returning from the handler cancels the stream, as gRPC does
+	}()
+	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
+
+	reconnected := rpc.NewMockServerReplicateStream()
+	go func() {
+		// cancelled due to fc.Close() below
+		assert.ErrorIs(t, fc.AppendEntries(reconnected), context.Canceled)
+		reconnected.Cancel()
+	}()
+
+	// The stale stream is cut off, and the new one serves the leader
+	assert.ErrorIs(t, <-staleDone, context.Canceled)
+	reconnected.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0"}, wal.InvalidOffset))
+	assert.EqualValues(t, 0, reconnected.GetResponse().Offset)
 
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
