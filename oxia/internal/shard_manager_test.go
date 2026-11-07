@@ -16,6 +16,8 @@ package internal
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"strconv"
 	"testing"
@@ -329,6 +331,19 @@ func (p *singleAssignmentsRpcProvider) GetShardAssignments(ctx context.Context, 
 	}}, nil
 }
 
+// The service address can keep routing to a data server that went away, or that lost the coordinator. When the
+// assignments stop coming, the client asks the servers that the last assignments named, instead of the same address.
+func TestShardManagerAsksTheLeadersWhenTheServiceAddressFails(t *testing.T) {
+	provider := &recordingAssignmentsRpcProvider{targets: make(chan string, 10), leader: "leader-1:6648"}
+	s, err := NewShardManager(NewShardStrategy(), provider, "service:6648", "default", time.Second, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	// The first attempt asks the service and gets the assignments, the stream breaks, and the next ones fail
+	targets := []string{<-provider.targets, <-provider.targets, <-provider.targets}
+	assert.Equal(t, []string{"service:6648", "service:6648", "leader-1:6648"}, targets)
+}
+
 // The shard manager reports the key sorting of the namespace that the server
 // sends with the assignments, or none when an older server does not send it.
 func TestShardManagerKeySorting(t *testing.T) {
@@ -430,4 +445,49 @@ func TestShardManagerRetriesPermanentErrorsAfterStart(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Sends the assignments to the first stream, which then breaks, and fails the next attempts that go to the service.
+// It records the target of every attempt.
+type recordingAssignmentsRpcProvider struct {
+	RpcProvider
+	targets chan string
+	leader  string
+	calls   int
+}
+
+func (p *recordingAssignmentsRpcProvider) GetShardAssignments(ctx context.Context, target string,
+	request *proto.ShardAssignmentsRequest) (proto.OxiaClient_GetShardAssignmentsClient, error) {
+	p.targets <- target
+	p.calls++
+	switch {
+	case p.calls == 1:
+		return &brokenAfterAssignmentsStream{assignments: &proto.ShardAssignments{
+			Namespaces: map[string]*proto.NamespaceShardsAssignment{
+				request.Namespace: {
+					Assignments: []*proto.ShardAssignment{{
+						Leader:          p.leader,
+						ShardBoundaries: &proto.ShardAssignment_Int32HashRange{Int32HashRange: &proto.Int32HashRange{MaxHashInclusive: 1 << 31}},
+					}},
+				},
+			},
+		}}, nil
+	case target == "service:6648":
+		return nil, errors.New("the service routes to a data server that went away")
+	default:
+		return &singleAssignmentsStream{ctx: ctx}, nil // the leader answers, and nothing changes
+	}
+}
+
+type brokenAfterAssignmentsStream struct {
+	grpc.ClientStream
+	assignments *proto.ShardAssignments
+}
+
+func (s *brokenAfterAssignmentsStream) Recv() (*proto.ShardAssignments, error) {
+	if assignments := s.assignments; assignments != nil {
+		s.assignments = nil
+		return assignments, nil
+	}
+	return nil, io.ErrUnexpectedEOF
 }

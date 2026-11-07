@@ -18,6 +18,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -68,13 +70,19 @@ type shardManagerImpl struct {
 	sync.RWMutex
 	updatedWg concurrent.WaitGroup
 
-	shardStrategy    ShardStrategy
-	rpcProvider      RpcProvider
-	serviceAddress   string
-	namespace        string
-	shards           map[int64]Shard
-	successors       map[int64][]Shard
-	keySorting       proto.KeySorting
+	shardStrategy  ShardStrategy
+	rpcProvider    RpcProvider
+	serviceAddress string
+	namespace      string
+	shards         map[int64]Shard
+	successors     map[int64][]Shard
+	keySorting     proto.KeySorting
+	// servers are the leaders of the last assignments, which the client asks for the assignments when the service
+	// address fails. Guarded by the lock.
+	servers []string
+	// attempt counts the attempts to receive the assignments since the last assignments arrived. Only the goroutine that
+	// receives the assignments uses it.
+	attempt          int
 	changed          chan struct{}
 	initialized      bool
 	onShardsReplaced ShardsReplacedListener
@@ -271,7 +279,8 @@ func (s *shardManagerImpl) receiveWithRecovery() {
 func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 	request := proto.ShardAssignmentsRequest{Namespace: s.namespace}
 
-	stream, err := s.rpcProvider.GetShardAssignments(s.ctx, s.serviceAddress, &request)
+	stream, err := s.rpcProvider.GetShardAssignments(s.ctx, s.bootstrapTarget(), &request)
+	s.attempt++
 	if err != nil {
 		return err
 	}
@@ -299,8 +308,19 @@ func (s *shardManagerImpl) receive(backOff backoff.BackOff) error {
 		s.keySorting = assignments.KeySorting
 		s.Unlock()
 		s.update(shards)
+		s.attempt = 0
 		backOff.Reset()
 	}
+}
+
+// bootstrapTarget is the address to ask for the assignments. The first attempt goes to the service address. When it
+// fails, e.g. because the service routes to a data server that went away or lost the coordinator, each attempt asks the
+// next server that the last assignments named, so that the client doesn't keep asking the same one.
+func (s *shardManagerImpl) bootstrapTarget() string {
+	s.RLock()
+	defer s.RUnlock()
+	candidates := append([]string{s.serviceAddress}, s.servers...)
+	return candidates[s.attempt%len(candidates)]
 }
 
 func (s *shardManagerImpl) update(updates []Shard) {
@@ -329,6 +349,14 @@ func (s *shardManagerImpl) update(updates []Shard) {
 	if len(removed) > 0 {
 		s.recordSuccessors(removed)
 	}
+	leaders := map[string]struct{}{}
+	for _, shard := range s.shards {
+		if shard.Leader != "" {
+			leaders[shard.Leader] = struct{}{}
+		}
+	}
+	s.servers = slices.Sorted(maps.Keys(leaders))
+
 	close(s.changed)
 	s.changed = make(chan struct{})
 	s.initialized = true
