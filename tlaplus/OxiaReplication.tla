@@ -34,7 +34,7 @@ CONSTANTS Coordinators,         \* The set of all coordinators (should only be o
           Values,            \* The set of all values that can be sent by clients
           RepFactor,         \* The desired initial replication factor
           Feature,           \* The set of features a node binary may support
-          ModelDowngrade     \* Whether the Downgrade action is enabled
+          ModelFeatureRaces  \* Whether the feature enable and downgrade actions are enabled
 
 \* State space
 CONSTANTS MaxTerms,         \* The max number of terms for the model checker to explore
@@ -551,6 +551,24 @@ Downgrade ==
         /\ f \in node_state[n].supported
         /\ node_state' = [node_state EXCEPT ![n].supported = @ \ {f}]
         /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  The leader enables the features pinned by the term
+
+  Once the leader starts, it appends the FeatureEnable control
+  entry that turns the pinned features on for the shard.
+  Enabling is monotonic: features are only ever added. The
+  action does not re-check the support of the members, so a
+  node that downgraded after the fence is caught by the safety
+  invariants instead.
+----------------------------------------------------------*)
+FeatureEnable ==
+    /\ metadata.leader # NIL
+    /\ node_state[metadata.leader].status = LEADER
+    /\ node_state[metadata.leader].term = metadata.term
+    /\ \E f \in metadata.pinned : f \notin metadata.enabled
+    /\ metadata' = [metadata EXCEPT !.enabled = @ \cup metadata.pinned]
+    /\ UNCHANGED << metadata_version, node_state, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Coordinator handles a fence response during the fencing
@@ -1265,7 +1283,8 @@ Next ==
     \/ CoordinatorStops                              \* a running coordinator stops, losing all local state
     \/ CoordinatorStartsElection                     \* election starts, fencing requests sent
     \/ NodeHandlesFencingRequest                  \* node fences itself, responds with head entry_id
-    \/ ModelDowngrade /\ Downgrade                \* a node restarts with an older binary, losing a feature
+    \/ ModelFeatureRaces /\ Downgrade             \* a node restarts with an older binary, losing a feature
+    \/ ModelFeatureRaces /\ FeatureEnable         \* the leader enables the features pinned by the term
     \/ CoordinatorHandlesFencingResponse             \* coordinator handles fence response, during the fencing
     \/ CoordinatorElectsLeader                       \* fence reached quorum, coordinator chooses and persists the leader
     \/ NodeHandlesBecomeLeaderRequest             \* new leader receives notification of leadership
