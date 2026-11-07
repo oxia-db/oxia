@@ -358,6 +358,40 @@ func TestDataServerControllerVerifyAfterWatchFailureDoesNotFenceAliveNode(t *tes
 	assert.NoError(t, nc.Close())
 }
 
+// A node that answers right after its watch stream broke may have restarted faster than the failure detector, and
+// lost the leaderships that were recorded for it: the shards are notified to verify their leader, without the node
+// being marked unavailable.
+func TestDataServerControllerVerifyAfterWatchFailureNotifiesTheShardsOfAliveNode(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	nc := NewController(context.Background(), dataServer, newTestMetadata(t), sap, nal, rpc, "test-instance", 1*time.Second, testHealthPolicy)
+
+	node := rpc.GetNode(addr)
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().IsAvailable()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	node.HealthClient.FailWatches(errors.New("stream reset"))
+
+	select {
+	case restarted := <-nal.MaybeRestartedEvents:
+		assert.Equal(t, addr.GetNameOrDefault(), restarted.GetNameOrDefault())
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the shards were not notified")
+	}
+	assert.Empty(t, nal.Events)
+	assert.True(t, nc.GetStatus().IsAvailable())
+
+	assert.NoError(t, nc.Close())
+}
+
 // slowPingHealthPolicy makes the ping cadence so slow that only the
 // watch-failure verification path can possibly fence the node, so the tests
 // below prove pod-death detection does not depend on the ping loop.

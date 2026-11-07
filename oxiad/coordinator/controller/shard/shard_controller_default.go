@@ -74,7 +74,10 @@ type controller struct {
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
-	changeEnsembleOp    chan *action.ChangeEnsembleAction
+	// dataServerRestartedOp carries the data servers that answer again after their health watch broke: they may have
+	// restarted and lost the leaderships that were recorded for them
+	dataServerRestartedOp chan *proto.DataServerIdentity
+	changeEnsembleOp      chan *action.ChangeEnsembleAction
 	// electionMailbox receives the mail of the current election, which the
 	// event loop ticks then
 	electionMailbox chan async.Mail
@@ -107,6 +110,20 @@ type controller struct {
 	becomeLeaderLatencyHistogram   metric.LatencyHistogram
 	failedLeaderElectionsCounter   metric.Counter
 	termGauge                      metric.Gauge
+}
+
+func (s *controller) MaybeRestarted(dataServer *proto.DataServerIdentity) {
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	if !channel.PushNoBlock(s.dataServerRestartedOp, dataServer) {
+		s.logger.Debug(
+			"Discarding data server restart notification because queue is full",
+			slog.Any("data-server", dataServer),
+		)
+	}
 }
 
 func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
@@ -162,6 +179,7 @@ func NewController(
 		electionOp:            make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:              make(chan any, chanBufferSize),
 		dataServerFailureOp:   make(chan *proto.DataServerIdentity, chanBufferSize),
+		dataServerRestartedOp: make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
@@ -307,6 +325,8 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailureWithRetries(n)
+		case n := <-s.dataServerRestartedOp:
+			s.handleDataServerRestartedWithRetries(n)
 		case <-s.featuresDiscoveredOp:
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
@@ -390,6 +410,40 @@ func (s *controller) handleDataServerFailureWithRetries(failedDataServer *proto.
 		)
 		_, _ = s.electLeader(shardMeta, nil, "")
 	}
+}
+
+// handleDataServerRestartedWithRetries starts an election when the leader answers again but does not lead the shard
+// in its term: it restarted before the failure detector noticed, and lost the leadership that was recorded for it.
+func (s *controller) handleDataServerRestartedWithRetries(dataServer *proto.DataServerIdentity) {
+	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	if err != nil {
+		s.logger.Warn(
+			"Failed to handle the restart of the data server, retrying later",
+			slog.Any("data-server", dataServer.GetNameOrDefault()),
+			slog.Any("error", err),
+		)
+		time.AfterFunc(time.Second, func() { s.MaybeRestarted(dataServer) })
+		return
+	}
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling the restart of a data server: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	if shardMeta.Leader == nil || shardMeta.Leader.GetNameOrDefault() != dataServer.GetNameOrDefault() ||
+		shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+		return
+	}
+
+	status, err := s.getStatus(shardMeta.Leader)
+	if err == nil && status.GetStatus() == proto.ServingStatus_LEADER && status.GetTerm() == shardMeta.GetTerm() {
+		return
+	}
+	s.logger.Info(
+		"The leader answers but does not lead the shard in its term: it restarted, starting a new election",
+		slog.Any("leader", dataServer.GetNameOrDefault()),
+		slog.Any("status", status.GetStatus()),
+		slog.Any("error", err),
+	)
+	_, _ = s.electLeader(shardMeta, nil, "")
 }
 
 // handleFeaturesDiscoveredWithRetries checks the features pinned by the current term

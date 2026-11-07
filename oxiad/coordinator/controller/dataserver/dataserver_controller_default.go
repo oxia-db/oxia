@@ -447,7 +447,10 @@ func (n *controller) verifyAfterWatchFailure() {
 	epoch := n.currentStatusEpoch()
 	switch err := n.doHealthPing(epoch, healthClient); {
 	case err == nil:
-		// The node is alive: the watch stream reset was transient
+		// The node is alive, and the watch stream reset can be transient. It can also be a restart that was faster
+		// than the failure detector: the node answers again, but it lost the leaderships that the coordinator
+		// recorded for it, which nothing else notices
+		n.listener.MaybeRestarted(n.dataServer.GetIdentity())
 	case errors.Is(err, errNotServing):
 		n.logger.Warn("Data server reported it is not serving")
 		n.becomeUnavailable(epoch)
