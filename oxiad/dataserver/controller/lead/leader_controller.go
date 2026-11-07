@@ -117,6 +117,14 @@ type LeaderController interface {
 	ProposeRecordChecksum(ctx context.Context)
 }
 
+// writeCommitTimeout is how long a write waits for a quorum to commit its entry. Past it the write fails with a
+// retryable error: a leader that lost its quorum, e.g. to a partition, would keep the write waiting until the partition
+// ends, although the coordinator elected a new leader meanwhile, and the client could write to it.
+const writeCommitTimeout = 3 * time.Second
+
+// noTimedOutOffset is the value of timedOutOffset when no write timed out in the term.
+const noTimedOutOffset int64 = -1
+
 type leaderController struct {
 	sync.RWMutex
 
@@ -131,8 +139,13 @@ type leaderController struct {
 	term              *atomic.Int64
 	replicationFactor uint32
 	quorumAckTracker  QuorumAckTracker
-	followers         map[string]FollowerCursor
-	observers         map[string]FollowerCursor
+	// timedOutOffset is the offset of the last entry whose write timed out waiting for a quorum in the term, or
+	// noTimedOutOffset. While the commit offset is below it the quorum is still missing, and the new writes fail at
+	// once instead of waiting for it. A single value derived with the commit offset, which has no flag to clear.
+	// Owner: the leader controller. Set by the timeout of a write, reset when a term begins, read by the proposals.
+	timedOutOffset atomic.Int64
+	followers      map[string]FollowerCursor
+	observers      map[string]FollowerCursor
 
 	// frozen, when set, makes the leader reject new write proposals without
 	// fencing it: existing follower/observer cursors keep streaming. Used
@@ -215,6 +228,7 @@ func newLeaderController(storageOptions *option.StorageOptions, namespace string
 			"Latency for write operations in the leader", labels),
 		followerAckOffsetGauges: map[string]metric.Gauge{},
 	}
+	lc.timedOutOffset.Store(noTimedOutOffset)
 
 	lc.checksumGauge = metric.NewSyncGauge("oxia_dataserver_db_checksum",
 		"The current DB checksum value", "count", labels)
@@ -468,6 +482,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	// followers seeded from the same snapshot drop them as duplicates.
 	headOffset := max(lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
 	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), headOffset, leaderCommitOffset)
+	lc.timedOutOffset.Store(noTimedOutOffset)
 	lc.registerOffsetGauges(lc.quorumAckTracker)
 	lc.termCtx, lc.termCancel = context.WithCancel(lc.ctx)
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
@@ -1404,6 +1419,10 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	if err := checkStatusIsLeader(lc.status); err != nil {
 		return err
 	}
+	if offset := lc.timedOutOffset.Load(); offset != noTimedOutOffset && lc.quorumAckTracker.CommitOffset() < offset {
+		return errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: no quorum committed the entry %d, so the new writes would wait for it too", offset)
+	}
 	if lc.frozen.Load() {
 		// The shard is frozen for split cutover: reject new writes with a
 		// retryable error so clients re-resolve and route to the child shards
@@ -1443,8 +1462,17 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	lc.marshalBuf = marshalBuf
 
 	lc.waitGroup.Add(1) // inflight proposal
+	// The entry stays in the wal after the write timed out: the quorum commits it later, or the next term truncates it,
+	// as for a write whose client gave up
+	cb = concurrent.NewOnce(cb.OnComplete, cb.OnCompleteError)
+	commitTimeout := time.AfterFunc(writeCommitTimeout, func() {
+		lc.timedOutOffset.Store(newOffset)
+		cb.OnCompleteError(errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: no quorum committed the entry %d in %s", newOffset, writeCommitTimeout))
+	})
 	deferDbWrite := func(entryCrc uint32, err error) {
 		if err != nil {
+			commitTimeout.Stop()
 			timer.DoneCtx(ctx)
 			lc.waitGroup.Done()
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
@@ -1453,6 +1481,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 		tracker.AdvanceHeadOffset(newOffset)
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
+				commitTimeout.Stop()
 				defer timer.DoneCtx(ctx)
 				response, err := lc.applyCommitted(termCtx, walLog, proposal)
 				if err != nil {
@@ -1467,6 +1496,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 				lc.waitGroup.Done()
 				cb.OnComplete(response)
 			}, func(err error) {
+				commitTimeout.Stop()
 				timer.DoneCtx(ctx)
 				lc.waitGroup.Done()
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))

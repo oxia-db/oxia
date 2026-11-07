@@ -1475,6 +1475,72 @@ func TestLeaderController_EntryVisibilityAfterBecomingLeader(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A leader that lost its quorum fails the writes with a retryable error, instead of keeping them waiting until the
+// quorum returns, so that the clients can look up the new leader that the coordinator elected meanwhile.
+func TestLeaderControllerWriteFailsWhenNoQuorumCommitsIt(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	provider := rpc.NewMockRpcClient()
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, provider, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 3,
+		FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+	})
+	assert.NoError(t, err)
+
+	put := func(key string) (*proto.WriteResponse, error) {
+		return lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte("v")}},
+		})
+	}
+
+	// The follower acknowledges nothing: the write fails when its timeout is over
+	start := time.Now()
+	_, err = put("a")
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.GreaterOrEqual(t, time.Since(start), writeCommitTimeout)
+	assert.Less(t, time.Since(start), writeCommitTimeout+3*time.Second)
+
+	// The next writes would wait for the same quorum: they fail at once
+	start = time.Now()
+	_, err = put("b")
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.Less(t, time.Since(start), time.Second)
+
+	// The quorum returns: the follower acknowledges the entries, and the leader accepts the writes again
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			select {
+			case req := <-provider.AppendReqs:
+				provider.AckResps <- &proto.Ack{Offset: req.Entry.Offset}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	assert.Eventually(t, func() bool {
+		_, err := put("c")
+		return err == nil
+	}, 10*time.Second, 50*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 // A write request that can't be applied has no effect: the leader answers the
 // client with the error, and applies the entry. A replica that applies the
 // entry when it becomes leader must move past it too.
