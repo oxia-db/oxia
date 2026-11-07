@@ -106,7 +106,7 @@ func TestFollower(t *testing.T) {
 	wg := concurrent.NewWaitGroup(1)
 
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 1)
 		stream.Cancel()
 		wg.Done()
 	}()
@@ -157,7 +157,7 @@ func TestFollower(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	wg2 := concurrent.NewWaitGroup(1)
 	go func() {
-		err := fc.AppendEntries(stream)
+		err := fc.AppendEntries(stream, 2)
 		assert.ErrorIs(t, err, context.Canceled)
 		stream.Cancel()
 		wg2.Done()
@@ -233,7 +233,7 @@ func TestReadingUpToCommitOffset(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -323,7 +323,7 @@ func TestFollower_AdvanceCommitOffsetToHead(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -394,7 +394,7 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -418,7 +418,7 @@ func TestFollower_DuplicateNewTermInFollowerState(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -455,7 +455,7 @@ func TestFollower_DuplicateEntryAckAfterReconnect(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	wg := concurrent.NewWaitGroup(1)
 	go func() {
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		wg.Done()
 	}()
 
@@ -472,7 +472,7 @@ func TestFollower_DuplicateEntryAckAfterReconnect(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	wg = concurrent.NewWaitGroup(1)
 	go func() {
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		wg.Done()
 	}()
 
@@ -527,7 +527,7 @@ func TestFollower_DuplicateEntryAckConcurrentAppends(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	wg := concurrent.NewWaitGroup(1)
 	go func() {
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		wg.Done()
 	}()
 
@@ -545,7 +545,7 @@ func TestFollower_DuplicateEntryAckConcurrentAppends(t *testing.T) {
 	stream2 := &syncerOnlySendStream{MockServerReplicateStream: rpc.NewMockServerReplicateStream(), t: t}
 	wg = concurrent.NewWaitGroup(1)
 	go func() {
-		assert.ErrorIs(t, fc.AppendEntries(stream2), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream2, 1), context.Canceled)
 		wg.Done()
 	}()
 
@@ -678,7 +678,7 @@ func TestFollower_CommitOffsetLastEntry(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -738,8 +738,9 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "1", "b": "1"}, wal.InvalidOffset))
 
-	// Follower will reject the entry because it's from an earlier term
-	err = fc.AppendEntries(stream)
+	// Follower will reject the entry because it's from an earlier term. The streams don't carry their term, so that
+	// the follower checks the term of each entry.
+	err = fc.AppendEntries(stream, constant.I64NegativeOne)
 	assert.Error(t, err)
 	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
@@ -752,7 +753,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, constant.I64NegativeOne), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -769,7 +770,7 @@ func TestFollowerController_RejectEntriesWithDifferentTerm(t *testing.T) {
 
 	stream = rpc.NewMockServerReplicateStream()
 	stream.AddRequest(createAddRequest(t, 6, 0, map[string]string{"a": "2", "b": "2"}, wal.InvalidOffset))
-	err = fc.AppendEntries(stream)
+	err = fc.AppendEntries(stream, constant.I64NegativeOne)
 	stream.Cancel()
 	assert.Equal(t, constant.ErrInvalidTerm, err)
 	assert.Equal(t, proto.ServingStatus_FENCED, fc.Status())
@@ -868,7 +869,7 @@ func TestFollower_HandleSnapshot(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		assert.NoError(t, fc.AppendEntries(stream))
+		assert.NoError(t, fc.AppendEntries(stream, 1))
 		stream.Cancel()
 	}()
 
@@ -1173,7 +1174,7 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 
 	go func() {
 		// cancelled due to NewTerm(2) below which closes the logSynchronizer
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -1186,7 +1187,7 @@ func TestFollower_DisconnectLeader(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 2), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -1208,7 +1209,7 @@ func TestFollower_DupEntries(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -1254,7 +1255,7 @@ func TestFollowerControllerAppendEntriesReplacesStaleStream(t *testing.T) {
 	stale := rpc.NewMockServerReplicateStream()
 	staleDone := make(chan error, 1)
 	go func() {
-		staleDone <- fc.AppendEntries(stale)
+		staleDone <- fc.AppendEntries(stale, 1)
 		stale.Cancel() // returning from the handler cancels the stream, as gRPC does
 	}()
 	assert.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
@@ -1262,7 +1263,7 @@ func TestFollowerControllerAppendEntriesReplacesStaleStream(t *testing.T) {
 	reconnected := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(reconnected), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(reconnected, 1), context.Canceled)
 		reconnected.Cancel()
 	}()
 
@@ -1274,6 +1275,58 @@ func TestFollowerControllerAppendEntriesReplacesStaleStream(t *testing.T) {
 	assert.NoError(t, fc.Close())
 	assert.NoError(t, kvFactory.Close())
 	assert.NoError(t, walFactory.Close())
+}
+
+// A deposed leader that still reaches the follower keeps reconnecting in its old term, and a leader that doesn't
+// send its term can't be told from it: neither cuts off the stream of the leader of the current term.
+func TestFollowerControllerAppendEntriesKeepsStreamOfCurrentTerm(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		streamTerm int64
+		err        error
+	}{
+		{"old-term", 1, constant.ErrInvalidTerm},
+		{"no-term", constant.I64NegativeOne, constant.ErrResourceConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var shardId int64
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, shardId, walFactory,
+				kvFactory, nil)
+			require.NoError(t, err)
+			_, err = fc.NewTerm(&proto.NewTermRequest{Term: 2})
+			require.NoError(t, err)
+
+			current := rpc.NewMockServerReplicateStream()
+			currentDone := make(chan error, 1)
+			go func() {
+				currentDone <- fc.AppendEntries(current, 2)
+				current.Cancel()
+			}()
+			require.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
+
+			stale := rpc.NewMockServerReplicateStream()
+			stale.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "stale"}, wal.InvalidOffset))
+			assert.ErrorIs(t, fc.AppendEntries(stale, test.streamTerm), test.err)
+			stale.Cancel()
+
+			current.AddRequest(createAddRequest(t, 2, 0, map[string]string{"a": "0"}, wal.InvalidOffset))
+			select {
+			case ack := <-current.Responses:
+				assert.EqualValues(t, 0, ack.Offset)
+			case err := <-currentDone:
+				require.FailNow(t, "the stream of the current leader was cut off", "error: %v", err)
+			}
+
+			assert.NoError(t, fc.Close())
+			assert.ErrorIs(t, <-currentDone, context.Canceled)
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
 }
 
 // A fresh follower (empty wal and db) whose first entries were lost in
@@ -1293,7 +1346,7 @@ func TestFollower_RejectGapOnEmptyWal(t *testing.T) {
 	stream1 := rpc.NewMockServerReplicateStream()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- fc.AppendEntries(stream1)
+		errCh <- fc.AppendEntries(stream1, 1)
 		stream1.Cancel()
 	}()
 
@@ -1306,7 +1359,7 @@ func TestFollower_RejectGapOnEmptyWal(t *testing.T) {
 	stream2 := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream2), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream2, 1), context.Canceled)
 		stream2.Cancel()
 	}()
 
@@ -1334,7 +1387,7 @@ func TestFollowerController_DeleteShard(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -1424,7 +1477,7 @@ func TestFollower_GetStatus(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 2), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -1477,7 +1530,7 @@ func TestFollower_HandleSnapshotWithWrongTerm(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		assert.NoError(t, fc.AppendEntries(stream))
+		assert.NoError(t, fc.AppendEntries(stream, 1))
 		stream.Cancel()
 	}()
 
@@ -1729,7 +1782,7 @@ func TestFollower_SplitHashRangeFiltering(t *testing.T) {
 	// The follower should apply only the in-range operations.
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 1)
 		stream.Cancel()
 	}()
 
@@ -1859,7 +1912,7 @@ func TestFollower_SplitReplayAfterCrashKeepsFilter(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 1)
 		stream.Cancel()
 	}()
 	stream.AddRequest(createAddRequest(t, 1, 6, map[string]string{"a": "wal-a", "d": "wal-d"}, wal.InvalidOffset))
@@ -1926,7 +1979,7 @@ func TestFollower_SplitHashRangeEndsAtNewTerm(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 2)
 		stream.Cancel()
 	}()
 	stream.AddRequest(createAddRequest(t, 2, 6, map[string]string{"a": "child-a", "d": "child-d"}, 6))
@@ -1998,7 +2051,7 @@ func TestFollower_SplitDeferredFilter(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 1)
 		stream.Cancel()
 	}()
 	// "d" was written at offset 3, with version 3
@@ -2162,7 +2215,7 @@ func TestFollower_CrashAfterWalTrim(t *testing.T) {
 
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 1)
 		stream.Cancel()
 	}()
 	// The entries fill a few WAL segments, and a small part of a database
@@ -2199,7 +2252,7 @@ func TestFollower_CrashAfterWalTrim(t *testing.T) {
 	require.NoError(t, err)
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 2)
 		stream.Cancel()
 	}()
 	stream.AddRequest(createAddRequest(t, 2, 21, map[string]string{"key-21": value}, 21))
@@ -2327,7 +2380,7 @@ func TestFollower_RejectedWrite(t *testing.T) {
 
 			stream := rpc.NewMockServerReplicateStream()
 			go func() {
-				_ = fc.AppendEntries(stream)
+				_ = fc.AppendEntries(stream, 1)
 				stream.Cancel()
 			}()
 
@@ -2471,7 +2524,7 @@ func TestFollower_CumulativeAcks(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	wg := concurrent.NewWaitGroup(1)
 	go func() {
-		_ = fc.AppendEntries(stream)
+		_ = fc.AppendEntries(stream, 1)
 		stream.Cancel()
 		wg.Done()
 	}()
@@ -2669,7 +2722,7 @@ func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	appendDone := make(chan error, 1)
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	for i := int64(0); i < 5; i++ {
 		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"k": fmt.Sprintf("v%d", i)}, wal.InvalidOffset))
@@ -2682,7 +2735,7 @@ func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
 
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: 4})
 	<-walFactory.paused
@@ -2743,7 +2796,7 @@ func TestFollower_InstallSnapshotWhileApplyingEntries(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 	stream.AddRequest(createAddRequest(t, 1, 10, map[string]string{"k": "v10"}, 10))
@@ -2788,7 +2841,7 @@ func TestFollower_InstallSnapshotBelowAppliedEntries(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	appendDone := make(chan error, 1)
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	for i := int64(0); i < 5; i++ {
 		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"k": fmt.Sprintf("v%d", i)}, wal.InvalidOffset))
@@ -2799,7 +2852,7 @@ func TestFollower_InstallSnapshotBelowAppliedEntries(t *testing.T) {
 
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: 4})
 	<-walFactory.paused
@@ -2832,7 +2885,7 @@ func TestFollower_InstallSnapshotBelowAppliedEntries(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 	req := createAddRequest(t, 1, 1, map[string]string{"k": "v1"}, 0)
@@ -2946,7 +2999,7 @@ func TestFollower_AppliesReceivedEntriesWithoutReadingWal(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -2990,7 +3043,7 @@ func TestFollower_ReadsEachCommittedEntryOnce(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	appendDone := make(chan error, 1)
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	for i := int64(0); i < entries; i++ {
 		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{"k": fmt.Sprintf("v%d", i)}, wal.InvalidOffset))
@@ -3003,7 +3056,7 @@ func TestFollower_ReadsEachCommittedEntryOnce(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 	for i := int64(0); i < entries; i++ {
@@ -3035,7 +3088,7 @@ func TestFollowerStateApplierRetriesFailedApply(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	appendDone := make(chan error, 1)
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"k": "v"}, wal.InvalidOffset))
 	assert.EqualValues(t, 0, stream.GetResponse().Offset)
@@ -3047,7 +3100,7 @@ func TestFollowerStateApplierRetriesFailedApply(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 	stream.AddRequest(&proto.Append{Term: 1, CommitOffset: 0})
@@ -3074,7 +3127,7 @@ func TestFollower_ReadsEntriesPastAppendedBoundFromWal(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 
@@ -3149,7 +3202,7 @@ func TestFollower_AppliesEntriesOnceSynced(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"k": "v0"}, wal.InvalidOffset))
@@ -3185,7 +3238,7 @@ func TestFollower_AppliesEntriesReplacedAfterTruncate(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	appendDone := make(chan error, 1)
 	go func() {
-		appendDone <- fc.AppendEntries(stream)
+		appendDone <- fc.AppendEntries(stream, 1)
 	}()
 	for i := int64(0); i < 5; i++ {
 		stream.AddRequest(createAddRequest(t, 1, i, map[string]string{fmt.Sprintf("k%d", i): "term-1"}, wal.InvalidOffset))
@@ -3206,7 +3259,7 @@ func TestFollower_AppliesEntriesReplacedAfterTruncate(t *testing.T) {
 	stream = rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled due to fc.Close() below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 2), context.Canceled)
 		stream.Cancel()
 	}()
 	for i := int64(2); i < 5; i++ {
@@ -3300,7 +3353,7 @@ func TestFollower_NewTermWaitsForPendingSyncs(t *testing.T) {
 	stream := rpc.NewMockServerReplicateStream()
 	go func() {
 		// cancelled by the new term below
-		assert.ErrorIs(t, fc.AppendEntries(stream), context.Canceled)
+		assert.ErrorIs(t, fc.AppendEntries(stream, 1), context.Canceled)
 		stream.Cancel()
 	}()
 	stream.AddRequest(createAddRequest(t, 1, 0, map[string]string{"a": "0"}, wal.InvalidOffset))
@@ -3480,7 +3533,7 @@ func TestFollowerControllerAppendEntriesRejectsNotMember(t *testing.T) {
 	fc, err := NewFollowerController(&option.StorageOptions{}, constant.DefaultNamespace, 0, walFactory, kvFactory, nil)
 	require.NoError(t, err)
 
-	assert.ErrorIs(t, fc.AppendEntries(rpc.NewMockServerReplicateStream()), constant.ErrNodeIsNotMember)
+	assert.ErrorIs(t, fc.AppendEntries(rpc.NewMockServerReplicateStream(), 1), constant.ErrNodeIsNotMember)
 	assert.NoError(t, fc.Close())
 }
 
@@ -3489,7 +3542,7 @@ func TestFollowerControllerRejectsRequestsOnceClosed(t *testing.T) {
 	fc := newFencedFollower(t, walFactory, kvFactory)
 	require.NoError(t, fc.Close())
 
-	assert.ErrorIs(t, fc.AppendEntries(rpc.NewMockServerReplicateStream()), constant.ErrResourceConflict)
+	assert.ErrorIs(t, fc.AppendEntries(rpc.NewMockServerReplicateStream(), 1), constant.ErrResourceConflict)
 	assert.ErrorIs(t, fc.InstallSnapshot(rpc.NewMockServerSendSnapshotStream()), constant.ErrResourceConflict)
 	_, err := fc.GetStatus(&proto.GetStatusRequest{})
 	assert.ErrorIs(t, err, constant.ErrResourceConflict)
@@ -3505,7 +3558,7 @@ func TestFollowerControllerRejectsRequestsClosedWhileWaitingForTheLock(t *testin
 		call func(fc FollowerController) error
 	}{
 		{"append-entries", func(fc FollowerController) error {
-			return fc.AppendEntries(rpc.NewMockServerReplicateStream())
+			return fc.AppendEntries(rpc.NewMockServerReplicateStream(), 1)
 		}},
 		{"new-term", func(fc FollowerController) error {
 			_, err := fc.NewTerm(&proto.NewTermRequest{Term: 2})
@@ -3609,7 +3662,7 @@ func TestFollowerControllerRejectsTruncateAndSnapshotWhileReplicating(t *testing
 
 	stream := rpc.NewMockServerReplicateStream()
 	appendErr := make(chan error, 1)
-	go func() { appendErr <- fc.AppendEntries(stream) }()
+	go func() { appendErr <- fc.AppendEntries(stream, 1) }()
 	require.Eventually(t, closeChanIsNotNil(fc), 10*time.Second, 10*time.Millisecond)
 
 	_, err := fc.Truncate(&proto.TruncateRequest{Term: 1, HeadEntryId: &proto.EntryId{Term: 1, Offset: 0}})
@@ -4087,7 +4140,7 @@ func appendUncommittedEntries(t *testing.T, fc FollowerController, count int64) 
 	t.Helper()
 	stream := rpc.NewMockServerReplicateStream()
 	appendErr := make(chan error, 1)
-	go func() { appendErr <- fc.AppendEntries(stream) }()
+	go func() { appendErr <- fc.AppendEntries(stream, 1) }()
 	for offset := int64(0); offset < count; offset++ {
 		stream.AddRequest(createAddRequest(t, 1, offset, map[string]string{"a": fmt.Sprint(offset)}, wal.InvalidOffset))
 	}
@@ -4104,7 +4157,7 @@ func openStream(t *testing.T, fc FollowerController) (*rpc.MockServerReplicateSt
 	t.Helper()
 	stream := rpc.NewMockServerReplicateStream()
 	appendErr := make(chan error, 1)
-	go func() { appendErr <- fc.AppendEntries(stream) }()
+	go func() { appendErr <- fc.AppendEntries(stream, 1) }()
 	return stream, func() {
 		stream.Cancel()
 		assert.ErrorIs(t, <-appendErr, context.Canceled)

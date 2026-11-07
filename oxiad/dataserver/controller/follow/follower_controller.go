@@ -93,7 +93,9 @@ type FollowerController interface {
 	// to a Follower.
 	Truncate(req *proto.TruncateRequest) (*proto.TruncateResponse, error)
 	Delete(request *proto.DeleteShardRequest) (*proto.DeleteShardResponse, error)
-	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error
+	// AppendEntries serves the replication stream of the leader of term, or of a leader that doesn't send its term
+	// when term is -1.
+	AppendEntries(stream proto.OxiaLogReplication_ReplicateServer, term int64) error
 	InstallSnapshot(stream proto.OxiaLogReplication_SendSnapshotServer) error
 
 	IsFeatureEnabled(f proto.Feature) bool
@@ -321,7 +323,7 @@ func (fc *followerController) FlushDatabase() error {
 	return fc.db.Flush()
 }
 
-func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer) error {
+func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_ReplicateServer, term int64) error {
 	if fc.closed.Load() {
 		return constant.ErrResourceConflict
 	}
@@ -338,12 +340,20 @@ func (fc *followerController) AppendEntries(stream proto.OxiaLogReplication_Repl
 		if proto.ServingStatus(fc.status.Load()) == proto.ServingStatus_NOT_MEMBER {
 			return nil, constant.ErrNodeIsNotMember
 		}
+		// A deposed leader that still reaches the follower keeps reconnecting in its old term
+		if term != constant.I64NegativeOne && term != fc.term.Load() {
+			return nil, constant.ErrInvalidTerm
+		}
 		if fc.logSynchronizer.IsValid() {
+			if term == constant.I64NegativeOne {
+				// Nothing tells a leader that doesn't send its term from a deposed one
+				return nil, constant.ErrResourceConflict
+			}
 			// Only the leader of the term opens a stream, so a second one is that leader reconnecting. The old
 			// stream can be dead without the follower knowing it, e.g. after a partition that dropped the packets
 			// closing it, and nothing tells it from a live one: rejecting the new stream would keep the leader out
 			// until TCP gives up on the old one, so the new stream replaces it.
-			fc.log.Warn("Replacing the replication stream of the leader", slog.Int64("term", fc.term.Load()))
+			fc.log.Warn("Replacing the replication stream of the leader", slog.Int64("term", term))
 			fc.logSynchronizer.Close()
 		}
 		fc.logSynchronizer = NewLogSynchronizer(LogSynchronizerParams{
