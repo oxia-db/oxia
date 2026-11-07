@@ -1,0 +1,136 @@
+# Distinct SDK clients observe committed records and can exchange CAS versions.
+
+put key=a value="from-a" create-only save=initial save-record=initial-record partition=route
+----
+ok key="a" modifications=0
+
+client name=observer
+----
+ok
+
+assert-record key=a unchanged=@initial-record persistent partition=route
+----
+ok
+
+get key=a save=observed partition=route
+----
+key="a" value="from-a" modifications=0
+
+put key=a value="from-b" expected-version=@observed save=updated save-record=updated-record partition=route
+----
+ok key="a" modifications=1
+
+assert-record key=a updated=@initial-record persistent partition=route
+----
+ok
+
+use-client name=default
+----
+ok
+
+assert-record key=a unchanged=@updated-record persistent partition=route
+----
+ok
+
+put key=a value="stale-a" expected-version=@initial partition=route
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@updated-record persistent partition=route
+----
+ok
+
+put key=b value="second" create-only save-record=second partition=route
+----
+ok key="b" modifications=0
+
+use-client name=observer
+----
+ok
+
+list start=a end=c unordered partition=route
+----
+key="a"
+key="b"
+
+range start=a end=c unordered partition=route
+----
+key="a" value="from-b" modifications=1
+key="b" value="second" modifications=0
+
+delete key=a expected-version=@updated partition=route
+----
+ok
+
+use-client name=default
+----
+ok
+
+assert-record key=a missing partition=route
+----
+ok
+
+put key=a value="reborn-a" create-only save=reborn save-record=reborn-record partition=route
+----
+ok key="a" modifications=0
+
+use-client name=observer
+----
+ok
+
+delete key=a expected-version=@updated partition=route
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@reborn-record persistent partition=route
+----
+ok
+
+put key=a value="last-b" expected-version=@reborn save=last save-record=last-record partition=route
+----
+ok key="a" modifications=1
+
+assert-record key=a updated=@reborn-record persistent partition=route
+----
+ok
+
+use-client name=default
+----
+ok
+
+assert-record key=a unchanged=@last-record persistent partition=route
+----
+ok
+
+delete key=a expected-version=@last partition=route
+----
+ok
+
+use-client name=observer
+----
+ok
+
+get key=a include-value=false persistent partition=route
+----
+error: key not found
+
+# Range deletion by B is also visible to A.
+delete-range start=a end=c partition=route
+----
+ok
+
+use-client name=default
+----
+ok
+
+assert-record key=b missing partition=route
+----
+ok
+
+list start=a end=c unordered partition=route
+----
+(empty)
+
+range start=a end=c unordered partition=route
+----
+(empty)

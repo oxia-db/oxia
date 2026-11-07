@@ -1,0 +1,145 @@
+# Depth precedes path-byte order; a slash sorts after other bytes within a depth.
+# A repeated separator in a//b creates an empty component at a deeper level.
+# The three occupied shards are observed; no production comparator generates golden output.
+
+put key=a//b value=deep save=deep
+----
+ok key="a//b" modifications=0
+
+put key=a/b value=child
+----
+ok key="a/b" modifications=0
+
+put key=a0 value=shallow save=shallow
+----
+ok key="a0" modifications=0
+
+put key=ab/c value=other-branch
+----
+ok key="ab/c" modifications=0
+
+put key=a value=parent save=parent
+----
+ok key="a" modifications=0
+
+put key=a/ value=trailing
+----
+ok key="a/" modifications=0
+
+placement keys=(a,a0,a/,a/b,ab/c,a//b) min-shards=3
+----
+ok
+
+get key=a save-record=parent
+----
+key="a" value="parent" modifications=0
+
+get key=a0 save-record=shallow
+----
+key="a0" value="shallow" modifications=0
+
+get key=a//b save-record=deep
+----
+key="a//b" value="deep" modifications=0
+
+get key=a0 comparison=higher
+----
+key="ab/c" value="other-branch" modifications=0
+
+get key=ab/c comparison=lower
+----
+key="a0" value="shallow" modifications=0
+
+get key=a/ comparison=lower
+----
+key="ab/c" value="other-branch" modifications=0
+
+get key=a/b comparison=higher
+----
+key="a//b" value="deep" modifications=0
+
+get key=b/x comparison=floor
+----
+key="a/b" value="child" modifications=0
+
+# Global output is normalized by primary-key bytes; interval membership is hierarchical.
+range start=a0 end=a//b unordered
+----
+key="a/" value="trailing" modifications=0
+key="a/b" value="child" modifications=0
+key="a0" value="shallow" modifications=0
+key="ab/c" value="other-branch" modifications=0
+
+list start=a0 end=a//b unordered
+----
+key="a/"
+key="a/b"
+key="a0"
+key="ab/c"
+
+range start=a/ end=a//b unordered
+----
+key="a/" value="trailing" modifications=0
+key="a/b" value="child" modifications=0
+
+delete-range start=ab/c end=a//b
+----
+ok
+
+get key=ab/c
+----
+error: key not found
+
+get key=a/
+----
+error: key not found
+
+get key=a/b
+----
+error: key not found
+
+assert-record key=ab/c missing
+----
+ok
+
+assert-record key=a/ missing
+----
+ok
+
+assert-record key=a/b missing
+----
+ok
+
+assert-record key=a unchanged=@parent
+----
+ok
+
+assert-record key=a0 unchanged=@shallow
+----
+ok
+
+assert-record key=a//b unchanged=@deep
+----
+ok
+
+get key=a0 comparison=higher
+----
+key="a//b" value="deep" modifications=0
+
+get key=a/b comparison=floor
+----
+key="a0" value="shallow" modifications=0
+
+get key=a/b comparison=ceiling
+----
+key="a//b" value="deep" modifications=0
+
+range start=a end="" unordered
+----
+key="a" value="parent" modifications=0
+key="a//b" value="deep" modifications=0
+key="a0" value="shallow" modifications=0
+
+put key=a//b value=deep-updated expected-version=@deep
+----
+ok key="a//b" modifications=1

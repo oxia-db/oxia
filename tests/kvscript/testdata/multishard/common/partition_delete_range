@@ -1,0 +1,97 @@
+# tenant and q select different shards. The same lexical interval is populated
+# on both, so a partition delete must not become a global delete.
+
+put key=a value=target-start partition=tenant
+----
+ok key="a" modifications=0
+
+put key=c value=target-middle partition=tenant
+----
+ok key="c" modifications=0
+
+put key=e value=target-end partition=tenant save=end
+----
+ok key="e" modifications=0
+
+put key=b value=other-first partition=q save=first
+----
+ok key="b" modifications=0
+
+put key=d value=other-second partition=q save=second
+----
+ok key="d" modifications=0
+
+placement keys=(a,c,e) partition=tenant require-override
+----
+ok
+
+placement keys=(b,d) partition=q require-override
+----
+ok
+
+placement keys=(c,d) min-shards=2
+----
+ok
+
+get key=e partition=tenant save-record=end
+----
+key="e" value="target-end" modifications=0
+
+get key=b partition=q save-record=first
+----
+key="b" value="other-first" modifications=0
+
+get key=d partition=q save-record=second
+----
+key="d" value="other-second" modifications=0
+
+delete-range start=a end=e partition=tenant
+----
+ok
+
+get key=a partition=tenant
+----
+error: key not found
+
+get key=c partition=tenant
+----
+error: key not found
+
+assert-record key=a partition=tenant missing
+----
+ok
+
+assert-record key=c partition=tenant missing
+----
+ok
+
+assert-record key=e partition=tenant unchanged=@end
+----
+ok
+
+assert-record key=b partition=q unchanged=@first
+----
+ok
+
+assert-record key=d partition=q unchanged=@second
+----
+ok
+
+range start=a end=f unordered
+----
+key="b" value="other-first" modifications=0
+key="d" value="other-second" modifications=0
+key="e" value="target-end" modifications=0
+
+# Every surviving version remains usable, including the excluded upper bound.
+put key=e value=end-updated partition=tenant expected-version=@end
+----
+ok key="e" modifications=1
+
+put key=b value=first-updated partition=q expected-version=@first
+----
+ok key="b" modifications=1
+
+put key=d value=second-updated partition=q expected-version=@second
+----
+ok key="d" modifications=1
