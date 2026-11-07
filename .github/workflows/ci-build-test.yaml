@@ -51,6 +51,14 @@ jobs:
           cache: 'true'
           cache-dependency-path: "go.work.sum"
 
+      # setup-go pins GOTOOLCHAIN=local for the steps that follow. If the
+      # self-hosted runner failed to install the version required by go.work,
+      # `go build` then fails instead of downloading the required toolchain.
+      # Restore the default (auto) so the build falls back to the required
+      # toolchain when the setup flakes.
+      - name: Allow automatic Go toolchain selection
+        run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
+
       - name: Add Go bin to PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
@@ -215,6 +223,11 @@ jobs:
           go-version-file: 'go.work'
           cache: 'true'
           cache-dependency-path: "go.work.sum"
+
+      # Same rationale as the Build & Test job: don't fail the build when the
+      # self-hosted runner didn't install the Go version required by go.work.
+      - name: Allow automatic Go toolchain selection
+        run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
