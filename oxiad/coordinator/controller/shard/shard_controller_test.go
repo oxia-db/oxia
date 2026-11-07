@@ -909,7 +909,7 @@ func TestNewControllerElectsLeaderWithNonRespondingServer(t *testing.T) {
 // instead of waiting for the connect timeout of gRPC.
 func TestNewControllerElectsLeaderWhenLeaderStatusDoesNotAnswer(t *testing.T) {
 	var shard int64 = 5
-	provider := rpctest.NewRpcProvider()
+	rpc := rpctest.NewRpcProvider()
 
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
@@ -924,15 +924,15 @@ func TestNewControllerElectsLeaderWhenLeaderStatusDoesNotAnswer(t *testing.T) {
 		Term:             1,
 		Leader:           s1,
 		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
-	}, feature.NoOpSupplier, &unreachableRpcProvider{RpcProvider: provider, unreachable: s1}, DefaultPeriodicTasksInterval)
+	}, feature.NoOpSupplier, &unreachableRpcProvider{RpcProvider: rpc, unreachable: s1}, DefaultPeriodicTasksInterval)
 
-	provider.GetNode(s2).NewTermResponse(1, 0, nil)
-	provider.GetNode(s3).NewTermResponse(1, -1, nil)
-	provider.GetNode(s2).BecomeLeaderResponse(nil)
+	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
 
-	provider.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
-	provider.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
-	provider.GetNode(s2).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectBecomeLeaderRequest(t, shard, 2, 3)
 
 	assert.WithinDuration(t, timeStart, time.Now(), getStatusTimeout+3*time.Second)
 	assert.Eventually(t, func() bool {
