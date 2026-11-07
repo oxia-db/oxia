@@ -407,7 +407,7 @@ func (s *internalRpcServer) Replicate(srv proto.OxiaLogReplication_ReplicateServ
 		return err
 	}
 
-	err = follower.AppendEntries(srv)
+	err = follower.AppendEntries(srv, term)
 	if err != nil && !errors.Is(err, io.EOF) {
 		log.Warn(
 			"Replicate failed",
