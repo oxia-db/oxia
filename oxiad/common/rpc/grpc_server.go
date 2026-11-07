@@ -37,6 +37,8 @@ import (
 )
 
 const (
+	internalKeepAliveTime                    = 3 * time.Second
+	internalKeepAliveTimeout                 = 2 * time.Second
 	defaultGrpcServerKeepAliveMinTime        = 5 * time.Second
 	defaultGrpcServerKeepPermitWithoutStream = true
 	ReadinessProbeService                    = "oxia-readiness"
@@ -75,6 +77,21 @@ type defaultGrpcServer struct {
 	serveDone chan struct{}
 }
 
+// internalServerName is the name of the server that the other data servers and the coordinator connect to.
+const internalServerName = "internal"
+
+// keepaliveParams pings the idle connections of the internal server, so that it notices the peers that went away
+// silently, e.g. behind a partition that drops the packets: nothing else closes such a connection for minutes. The
+// coordinator pushes the shard assignments on a stream that is idle between the changes, and a data server that does
+// not notice that it lost it keeps the old leaders of the shards to the clients. The public server keeps the default,
+// as it has many clients.
+func keepaliveParams(name string) keepalive.ServerParameters {
+	if name != internalServerName {
+		return keepalive.ServerParameters{}
+	}
+	return keepalive.ServerParameters{Time: internalKeepAliveTime, Timeout: internalKeepAliveTimeout}
+}
+
 func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.ServiceRegistrar),
 	tlsConf *tls.Config, authOptions *auth.Options, extraInterceptors *Interceptors) (GrpcServer, error) {
 	tcs := insecure.NewCredentials()
@@ -110,6 +127,7 @@ func newDefaultGrpcProvider(name, bindAddress string, registerFunc func(grpc.Ser
 			grpc.ChainStreamInterceptor(streamInterceptors...),
 			grpc.ChainUnaryInterceptor(unaryInterceptors...),
 			grpc.MaxRecvMsgSize(constant.MaxGrpcFrameSize),
+			grpc.KeepaliveParams(keepaliveParams(name)),
 			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 				MinTime:             defaultGrpcServerKeepAliveMinTime,
 				PermitWithoutStream: defaultGrpcServerKeepPermitWithoutStream,
