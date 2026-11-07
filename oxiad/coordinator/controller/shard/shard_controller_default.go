@@ -478,10 +478,21 @@ func (s *controller) checkTermFeatures(shardMeta *proto.ShardMetadata) {
 	_, _ = s.electLeader(shardMeta, nil, "")
 }
 
+// getStatusTimeout bounds a status request. A data server whose pod is gone neither refuses nor answers the
+// connection, so without a bound the request waits for the connect timeout of gRPC, 20 s, and a coordinator that
+// takes over verifies its shards for that long before it elects a new leader.
+const getStatusTimeout = 3 * time.Second
+
+func (s *controller) getStatus(dataServer *proto.DataServerIdentity) (*proto.GetStatusResponse, error) {
+	ctx, cancel := context.WithTimeout(s.ctx, getStatusTimeout)
+	defer cancel()
+	return s.rpc.GetStatus(ctx, dataServer, &proto.GetStatusRequest{Shard: s.shard})
+}
+
 // termFeatures returns the features pinned by the current term of the shard,
 // as its leader reports them.
 func (s *controller) termFeatures(shardMeta *proto.ShardMetadata) ([]proto.Feature, error) {
-	status, err := s.rpc.GetStatus(s.ctx, shardMeta.Leader, &proto.GetStatusRequest{Shard: s.shard})
+	status, err := s.getStatus(shardMeta.Leader)
 	switch {
 	case err != nil:
 		return nil, err
@@ -498,7 +509,7 @@ func (s *controller) verifyCurrentEnsemble(initShardMeta *proto.ShardMetadata) b
 	// is out of sync. We should just go back into the retry-to-fence follower
 	// loop. In practice, the current approach is easier for now.
 	for _, dataServer := range initShardMeta.Ensemble {
-		dataServerStatus, err := s.rpc.GetStatus(s.ctx, dataServer, &proto.GetStatusRequest{Shard: s.shard})
+		dataServerStatus, err := s.getStatus(dataServer)
 
 		switch {
 		case err != nil:
