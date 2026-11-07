@@ -904,6 +904,45 @@ func TestNewControllerElectsLeaderWithNonRespondingServer(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
+// A coordinator that takes over verifies the shards of the cluster. The pod of a data server that is gone neither
+// refuses nor answers the connection, so the verification gives up on it after the status timeout and elects a leader,
+// instead of waiting for the connect timeout of gRPC.
+func TestNewControllerElectsLeaderWhenLeaderStatusDoesNotAnswer(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+
+	timeStart := time.Now()
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, &unreachableRpcProvider{RpcProvider: rpc, unreachable: s1}, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s2).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s2).BecomeLeaderResponse(nil)
+
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+
+	assert.WithinDuration(t, timeStart, time.Now(), getStatusTimeout+3*time.Second)
+	assert.Eventually(t, func() bool {
+		return shardTerm(metadata, constant.DefaultNamespace, shard) == 2
+	}, 10*time.Second, 100*time.Millisecond)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s2)
+
+	assert.NoError(t, sc.Close())
+}
+
 func TestNewControllerSendsNewTermToFollowerUntilItRecovers(t *testing.T) {
 	var shard int64 = 5
 	rpc := rpctest.NewRpcProvider()
@@ -4613,4 +4652,20 @@ func expectEnsembleCaughtUp(t *testing.T, metadata coordmetadata.Metadata, rpc *
 	require.Eventually(t, func() bool {
 		return requireShardMetadata(t, metadata, constant.DefaultNamespace, shard).GetEnsembleCaughtUp()
 	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// unreachableRpcProvider never answers the status requests to a data server, until their context ends, as the
+// connection to a pod that is gone hangs.
+type unreachableRpcProvider struct {
+	*rpctest.RpcProvider
+	unreachable *proto.DataServerIdentity
+}
+
+func (p *unreachableRpcProvider) GetStatus(ctx context.Context, node *proto.DataServerIdentity,
+	req *proto.GetStatusRequest) (*proto.GetStatusResponse, error) {
+	if node.GetNameOrDefault() == p.unreachable.GetNameOrDefault() {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return p.RpcProvider.GetStatus(ctx, node, req)
 }
