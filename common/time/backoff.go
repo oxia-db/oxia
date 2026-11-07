@@ -34,12 +34,22 @@ func NewBackOff(ctx context.Context) backoff.BackOff {
 	return NewBackOffWithInitialInterval(ctx, DefaultInitialInterval)
 }
 
+// NewBackOffWithMaxInterval is NewBackOff, with a cap on the interval. The default one grows to a minute, so a caller
+// that has to notice a recovery within seconds would find its next attempt scheduled after the recovery.
+func NewBackOffWithMaxInterval(ctx context.Context, maxInterval time.Duration) backoff.BackOff {
+	return newBackOff(ctx, DefaultInitialInterval, maxInterval)
+}
+
 func NewBackOffWithInitialInterval(ctx context.Context, initialInterval time.Duration) backoff.BackOff {
+	return newBackOff(ctx, initialInterval, backoff.DefaultMaxInterval)
+}
+
+func newBackOff(ctx context.Context, initialInterval time.Duration, maxInterval time.Duration) backoff.BackOff {
 	return backoff.WithContext(&backoff.ExponentialBackOff{
 		InitialInterval:     initialInterval,
 		RandomizationFactor: backoff.DefaultRandomizationFactor,
 		Multiplier:          backoff.DefaultMultiplier,
-		MaxInterval:         backoff.DefaultMaxInterval,
+		MaxInterval:         maxInterval,
 		MaxElapsedTime:      0, // Never stop trying
 		Stop:                backoff.Stop,
 		Clock:               backoff.SystemClock,

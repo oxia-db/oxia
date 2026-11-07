@@ -53,3 +53,13 @@ func TestConcurrentBackOff_Context(t *testing.T) {
 	assert.Equal(t, ctx, NewConcurrentBackOff(NewBackOff(ctx)).Context())
 	assert.Equal(t, context.Background(), NewConcurrentBackOff(&backoff.ZeroBackOff{}).Context())
 }
+
+// The default backoff grows to a minute, while this one never waits longer than its cap, up to the jitter.
+func TestNewBackOffWithMaxIntervalNeverWaitsLongerThanTheCap(t *testing.T) {
+	maxInterval := 500 * stdtime.Millisecond
+	bo := NewBackOffWithMaxInterval(context.Background(), maxInterval)
+	bo.Reset()
+	for range 30 {
+		assert.LessOrEqual(t, bo.NextBackOff(), maxInterval+maxInterval/2)
+	}
+}

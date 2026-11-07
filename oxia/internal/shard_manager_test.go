@@ -344,8 +344,25 @@ func TestShardManagerAsksTheLeadersWhenTheServiceAddressFails(t *testing.T) {
 	assert.Equal(t, []string{"service:6648", "service:6648", "leader-1:6648"}, targets)
 }
 
-// The shard manager reports the key sorting of the namespace that the server
-// sends with the assignments, or none when an older server does not send it.
+// The assignments carry the leaders that the coordinator elects within seconds of a failure. The attempts to receive
+// them don't slow down to a minute while they fail, or the client would learn the leaders long after the election.
+func TestShardManagerRetriesTheAssignmentsAtLeastOncePerSecond(t *testing.T) {
+	provider := &recordingAssignmentsRpcProvider{targets: make(chan string, 100), leader: "leader-1:6648", failAll: true}
+	s, err := NewShardManager(NewShardStrategy(), provider, "service:6648", "default", 10*time.Second, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	// With the default backoff the 14th attempt comes after about 40 s: with a cap of 1 s, in less than 15 s
+	deadline := time.After(20 * time.Second)
+	for attempt := 1; attempt <= 14; attempt++ {
+		select {
+		case <-provider.targets:
+		case <-deadline:
+			require.FailNow(t, "the attempts slowed down", "attempt %d", attempt)
+		}
+	}
+}
+
 func TestShardManagerKeySorting(t *testing.T) {
 	for _, keySorting := range []proto.KeySorting{
 		proto.KeySorting_KEY_SORTING_UNKNOWN,
@@ -453,6 +470,8 @@ type recordingAssignmentsRpcProvider struct {
 	RpcProvider
 	targets chan string
 	leader  string
+	// failAll fails the attempts to every target, not only the service
+	failAll bool
 	calls   int
 }
 
@@ -472,7 +491,7 @@ func (p *recordingAssignmentsRpcProvider) GetShardAssignments(ctx context.Contex
 				},
 			},
 		}}, nil
-	case target == "service:6648":
+	case target == "service:6648" || p.failAll:
 		return nil, errors.New("the service routes to a data server that went away")
 	default:
 		return &singleAssignmentsStream{ctx: ctx}, nil // the leader answers, and nothing changes

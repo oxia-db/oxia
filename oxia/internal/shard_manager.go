@@ -36,6 +36,9 @@ import (
 	"github.com/oxia-db/oxia/common/proto"
 )
 
+// maxAssignmentsRetryInterval caps the wait between the attempts to receive the shard assignments.
+const maxAssignmentsRetryInterval = time.Second
+
 type ShardManager interface {
 	io.Closer
 	Get(key string) int64
@@ -230,7 +233,9 @@ func (s *shardManagerImpl) isClosed() bool {
 }
 
 func (s *shardManagerImpl) receiveWithRecovery() {
-	backOff := time2.NewBackOff(s.ctx)
+	// The assignments tell the client the leaders that the coordinator elected after a failure, within seconds: a wait
+	// that grows to a minute would put the next attempt after them
+	backOff := time2.NewBackOffWithMaxInterval(s.ctx, maxAssignmentsRetryInterval)
 	err := backoff.RetryNotify(
 		func() error {
 			err := s.receive(backOff)
