@@ -26,6 +26,7 @@ import (
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+	grpcbackoff "google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -43,6 +44,12 @@ const (
 	defaultGrpcClientKeepAliveTime       = 10 * time.Second
 	defaultGrpcClientKeepAliveTimeout    = 3 * time.Second
 	defaultGrpcClientPermitWithoutStream = true
+
+	// How long a connection attempt may take. The address of a pod that was deleted neither refuses nor answers,
+	// so the attempt hangs for the whole timeout, 20 s by default, and every request to it waits as long. Failing
+	// the attempt earlier fails those requests with Unavailable, which the callers retry after looking up the new
+	// leader of the shard.
+	defaultGrpcConnectTimeout = 3 * time.Second
 
 	// Cadence and per-ping timeout of the application-level connection health
 	// loop. The ping timeout is deliberately generous: it shares the
@@ -130,6 +137,10 @@ func newConnectionWithHealthConfig(
 		grpc.WithChainStreamInterceptor(grpcmetrics.StreamClientInterceptor),
 		grpc.WithChainUnaryInterceptor(grpcmetrics.UnaryClientInterceptor),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(constant.MaxGrpcFrameSize)),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff:           grpcbackoff.DefaultConfig,
+			MinConnectTimeout: defaultGrpcConnectTimeout,
+		}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			PermitWithoutStream: defaultGrpcClientPermitWithoutStream,
 			Time:                defaultGrpcClientKeepAliveTime,

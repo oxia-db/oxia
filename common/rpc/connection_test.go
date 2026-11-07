@@ -25,7 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/oxia-db/oxia/common/auth"
 )
@@ -89,6 +91,24 @@ func TestConnectionReturnsClientError(t *testing.T) {
 
 // Closing the connection stops the health loop while a ping is in flight,
 // without counting the cancelled ping as a failure.
+// The address of a deleted pod neither refuses nor answers the connection. The requests to it fail after the connect
+// timeout, with a status that the callers retry after looking up the new leader of the shard, instead of waiting
+// for their whole deadline.
+func TestConnectionFailsRequestsWhenConnectAttemptHangs(t *testing.T) {
+	address := newTestSilentServer(t)
+	conn, err := newConnectionWithHealthConfig(address, nil, nil, nil, func(string) {}, time.Hour, time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err = conn.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Less(t, time.Since(start), 8*time.Second)
+}
+
 func TestConnectionCloseStopsHealthPingInFlight(t *testing.T) {
 	_, target, checks := newTestBlockingHealthServer(t)
 	conn, err := newConnectionWithHealthConfig(target, nil, nil, nil,
@@ -109,4 +129,31 @@ func checkTestConnection(conn *connection) error {
 	defer cancel()
 	_, err := conn.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
 	return err
+}
+
+// newTestSilentServer accepts TCP connections and never answers them, like the address of a deleted pod.
+func newTestSilentServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var accepted []net.Conn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted = append(accepted, c)
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+		for _, c := range accepted {
+			_ = c.Close()
+		}
+	})
+	return listener.Addr().String()
 }
