@@ -506,6 +506,10 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.
 	if err = closer.Close(); err != nil {
 		return proto.Status_SESSION_DOES_NOT_EXIST, err
 	}
+	// The same session is overwriting its own record: the shadow key is already there.
+	if existingEntry != nil && existingEntry.SessionId != nil && *existingEntry.SessionId == *request.SessionId {
+		return proto.Status_OK, nil
+	}
 	// delete existing session shadow
 	if status, err := deleteShadow(batch, notification, request.Key, existingEntry); err != nil {
 		return status, err
