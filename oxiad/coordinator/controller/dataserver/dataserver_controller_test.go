@@ -928,6 +928,31 @@ func TestDataServerControllerSendAssignmentsDispatchWithRetriesReestablishesStre
 	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
 }
 
+// A data server that restarts rejects every client until it has its assignments, so the stream that carries them is
+// opened again as soon as the data server is back, not after the slow retry interval of the health checks.
+func TestDataServerControllerSendAssignmentsDispatchWithRetriesReestablishesStreamWithoutSlowBackoff(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	nc := NewController(context.Background(), dataServer, newTestMetadata(t), sap, nal, rpc, "test-instance", time.Hour, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	node := rpc.GetNode(addr)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+
+	node.ShardAssignmentsStream.EndStream()
+
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+}
+
 // TestDataServerControllerSendAssignmentsDispatchWithRetriesRecoversFromStreamRejection covers the
 // other facet named in the fix's motivation: the stream is rejected at establishment
 // time (e.g. before the data server is initialized). The dispatch loop must keep
