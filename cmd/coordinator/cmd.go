@@ -15,6 +15,8 @@
 package coordinator
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,6 +36,10 @@ import (
 	"github.com/oxia-db/oxia/oxiad/coordinator"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
+
+// errLeadershipLost ends the command of a coordinator that lost the metadata
+// leadership, so that the process exits and its restart rejoins the election.
+var errLeadershipLost = errors.New("the coordinator lost the metadata leadership")
 
 var (
 	sconfFile          string
@@ -104,7 +110,9 @@ func init() {
 
 func exec(cmd *cobra.Command, _ []string) error {
 	version.RegisterMetric(version.Get(cmd.Root().Version))
-	return process.RunProcess(cmd.Context(), "COORDINATOR", func() (io.Closer, error) {
+	ctx, cancel := context.WithCancelCause(cmd.Context())
+	defer cancel(nil)
+	err := process.RunProcess(ctx, "COORDINATOR", func() (io.Closer, error) {
 		optionsWatch := commonwatch.New(coordinatorOptions)
 		// configure the options
 		if cmd.Flags().Changed("sconfig") {
@@ -140,6 +148,22 @@ func exec(cmd *cobra.Command, _ []string) error {
 			banner.Field{Name: "Internal Endpoint", Value: coordinatorOptions.Server.Internal.BindAddress},
 			banner.MetricsField(&coordinatorOptions.Observability.Metric),
 			banner.PprofField())
-		return coordinator.New(cmd.Context(), optionsWatch)
+		c, err := coordinator.New(ctx, optionsWatch)
+		if err != nil {
+			return nil, err
+		}
+		// Shut the process down once the coordinator lost the leadership
+		go func() {
+			select {
+			case <-c.LeadershipLost():
+				cancel(errLeadershipLost)
+			case <-ctx.Done():
+			}
+		}()
+		return c, nil
 	})
+	if errors.Is(context.Cause(ctx), errLeadershipLost) {
+		return errors.Join(err, errLeadershipLost)
+	}
+	return err
 }

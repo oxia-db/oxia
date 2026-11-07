@@ -17,7 +17,6 @@ package coordinator
 import (
 	"context"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -64,6 +63,14 @@ type coordinator struct {
 	metadataFactory  *coordmetadata.Factory
 	metrics          *metric.PrometheusMetrics
 	leaderGauge      commonmetric.Gauge
+
+	// lost is closed once the coordinator lost the metadata leadership and
+	// stopped coordinating, and stopErr is the error of stopping it. Owner: the
+	// leadership watcher, which writes stopErr before closing lost. Borrowers:
+	// LeadershipLost and the leader gauge, which only receive from lost, and
+	// Close, which reads stopErr once lost is closed, after waiting for the watcher.
+	lost    chan struct{}
+	stopErr error
 }
 
 func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) (_ Coordinator, err error) {
@@ -86,13 +93,9 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		metricsServer        *metric.PrometheusMetrics
 	)
 	leader := &atomic.Bool{}
+	lost := make(chan struct{})
 	leaderGauge := commonmetric.NewGauge("oxia_coordinator_is_leader",
-		"Whether the coordinator holds the leadership of the cluster metadata", "", nil, func() int64 {
-			if leader.Load() {
-				return 1
-			}
-			return 0
-		})
+		"Whether the coordinator holds the leadership of the cluster metadata", "", nil, leaderGaugeValue(leader, lost))
 	defer func() {
 		if err == nil {
 			return
@@ -158,6 +161,9 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 	if err != nil {
 		return nil, err
 	}
+	if failLost, ok := failpoint.Eval[<-chan struct{}]("coordinator.leadershipLost"); ok {
+		leadershipLost = failLost
+	}
 	leader.Store(true)
 	runtime, err = coordruntime.New(ctx, metadata, rpc.NewControllerRPCProviderFactory(controllerTLS))
 	if failErr, ok := failpoint.Eval[error]("coordinator.newRuntime"); ok {
@@ -187,6 +193,7 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		metadataFactory:  metadataFactory,
 		metrics:          metricsServer,
 		leaderGauge:      leaderGauge,
+		lost:             lost,
 	}
 	c.wg.Go(func() {
 		process.DoWithLabels(ctx, map[string]string{
@@ -206,6 +213,22 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 	return c, nil
 }
 
+// leaderGaugeValue reports 1 while the coordinator leads: from its win until it
+// stopped coordinating on a loss, and 0 otherwise.
+func leaderGaugeValue(leader *atomic.Bool, lost <-chan struct{}) func() int64 {
+	return func() int64 {
+		if !leader.Load() {
+			return 0
+		}
+		select {
+		case <-lost:
+			return 0
+		default:
+			return 1
+		}
+	}
+}
+
 // startMetricsServer returns a nil server when the metrics are disabled.
 func startMetricsServer(options *commonoption.MetricOptions) (*metric.PrometheusMetrics, error) {
 	if !options.IsEnabled() {
@@ -218,14 +241,36 @@ func startMetricsServer(options *commonoption.MetricOptions) (*metric.Prometheus
 	return metric.Start(options.BindAddress, metricTLS)
 }
 
+func (s *coordinator) LeadershipLost() <-chan struct{} {
+	return s.lost
+}
+
+// bgLeadershipWatcher stops the coordination once the leadership is lost, so
+// that this coordinator can't act alongside the new leader, and then reports
+// the loss. It ends without stopping anything when the coordinator closes.
 func (s *coordinator) bgLeadershipWatcher(leadershipLost <-chan struct{}) {
 	select {
 	case <-leadershipLost:
-		// coverage-ignore: terminates the process
-		s.logger.Error("Coordination leadership lost: terminating to avoid a split brain")
-		os.Exit(1)
 	case <-s.ctx.Done():
+		return
 	}
+	s.logger.Error("Coordination leadership lost: stopping to avoid a split brain")
+	s.ctxCancel()
+	s.healthServer.Shutdown()
+	s.stopErr = s.stopCoordination()
+	close(s.lost)
+}
+
+// stopCoordination stops reconciling and coordinating the cluster, and
+// releases the metadata. The coordinator's context must be canceled first: it
+// ends the retries of the metadata writes, which would otherwise keep the
+// runtime from closing once the leadership is lost.
+func (s *coordinator) stopCoordination() error {
+	return multierr.Combine(
+		s.reconciler.Close(),
+		s.runtime.Close(),
+		s.metadata.Close(),
+	)
 }
 
 func (s *coordinator) bgOptionWatcher() {
@@ -263,11 +308,15 @@ func (s *coordinator) Close() error {
 	err := multierr.Combine(
 		s.grpcServer.Close(),
 		s.managementServer.Close(),
-		s.reconciler.Close(),
-		s.runtime.Close(),
-		s.metadata.Close(),
-		s.metadataFactory.Close(),
 	)
+	select {
+	case <-s.lost:
+		// The leadership watcher stopped the coordination on the loss
+		err = multierr.Append(err, s.stopErr)
+	default:
+		err = multierr.Append(err, s.stopCoordination())
+	}
+	err = multierr.Append(err, s.metadataFactory.Close())
 	s.leaderGauge.Unregister()
 	if s.metrics != nil {
 		err = multierr.Append(err, s.metrics.Close())
