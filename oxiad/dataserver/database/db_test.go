@@ -1611,6 +1611,63 @@ func TestDB_SequenceTailSharedPrefix(t *testing.T) {
 	}
 }
 
+func TestDBSequentialKeysTailNotOfTheSequence(t *testing.T) {
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		for _, test := range []struct {
+			enabled bool
+			keys    []string
+		}{
+			// Without the feature, the puts continue the sequence from the plain
+			// key, like on the versions without it, so that the replicas apply
+			// the same keys. The plain key stays the last one: each put gets the
+			// same key.
+			{false, []string{"seq-00000000000000000006", "seq-00000000000000000006"}},
+			{true, []string{"", ""}},
+		} {
+			t.Run(fmt.Sprintf("%v/enabled=%v", keySorting, test.enabled), func(t *testing.T) {
+				factory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+				require.NoError(t, err)
+				db, err := NewDB(constant.DefaultNamespace, 1, factory, keySorting, 0, time.SystemClock)
+				require.NoError(t, err)
+				if test.enabled {
+					db.EnableFeature(proto.Feature_FEATURE_SEQUENCE_LAST_KEY_SEPARATOR)
+				}
+
+				// A plain key of the sequence's form, whose value is not of 20
+				// digits: it sorts after the keys the sequence generates from it
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+					{Key: "seq-05"},
+				}}, 0, 0, NoOpCallback)
+				require.NoError(t, err)
+
+				var keys []string
+				for i := range 2 {
+					res, err := db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{
+						{Key: "seq", PartitionKey: pb.String("x"), SequenceKeyDelta: []uint64{1}},
+					}}, int64(i+1), 0, NoOpCallback)
+					if err != nil {
+						assert.ErrorIs(t, err, ErrInvalidSequenceKey)
+						keys = append(keys, "")
+					} else {
+						keys = append(keys, res.Puts[0].GetKey())
+					}
+				}
+				assert.Equal(t, test.keys, keys)
+
+				assert.NoError(t, db.Close())
+				assert.NoError(t, factory.Close())
+			})
+		}
+	}
+}
+
+func TestIsSequenceValue(t *testing.T) {
+	assert.True(t, isSequenceValue("00000000000000000005"))
+	assert.False(t, isSequenceValue("05"))
+	assert.False(t, isSequenceValue("0000000000000000000x"))
+	assert.False(t, isSequenceValue("/0000000000000000000"))
+}
+
 func TestDB_SequenceKeyValidation(t *testing.T) {
 	for _, test := range []struct {
 		name        string
