@@ -273,7 +273,8 @@ func TestShardAssignmentDispatcherRegisterForUpdatesFailsWhenCoordinatorStreamEn
 	case err := <-registered:
 		assert.ErrorIs(t, err, constant.ErrNotInitialized)
 	case <-time.After(10 * time.Second):
-		assert.Fail(t, "the stream of the client was not ended")
+		// Stop here: the registration below would block until the dispatcher closes, in the cleanup
+		require.FailNow(t, "the stream of the client was not ended")
 	}
 	assert.ErrorIs(t, dispatcher.RegisterForUpdates(request, rpc.NewMockShardAssignmentClientStream()), constant.ErrNotInitialized)
 
