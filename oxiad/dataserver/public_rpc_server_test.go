@@ -251,9 +251,9 @@ func TestWriteStreamSlowClientDoesNotBlockWriteCallbacks(t *testing.T) {
 
 	finished := make(chan error, 1)
 	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
-	responses := make(chan *proto.WriteResponse, maxWriteStreamPendingWrites)
-	go processWriteStream(ctx, finished, stream, lc, pendingWrites, responses)
-	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, responses)
+	results := make(chan chan *writeStreamResult, maxWriteStreamPendingWrites)
+	go processWriteStream(ctx, finished, stream, lc, pendingWrites, results)
+	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, results)
 
 	for i := 0; i < total; i++ {
 		requests <- &proto.WriteRequest{}
@@ -287,7 +287,7 @@ func TestWriteStreamSlowClientDoesNotBlockWriteCallbacks(t *testing.T) {
 	}
 
 	// Unblock the client: the remaining writes get submitted and every response
-	// is delivered, in completion order
+	// is delivered, in the order of the requests
 	close(sendGate)
 	for i := 0; i < extraWrites; i++ {
 		cb := receiveWithTimeout(t, writes, "leader did not receive the expected write")
@@ -299,6 +299,60 @@ func TestWriteStreamSlowClientDoesNotBlockWriteCallbacks(t *testing.T) {
 	for i := 0; i < total; i++ {
 		sent := receiveWithTimeout(t, sent, "response was not sent to the client")
 		assert.Same(t, completedResponses[i], sent)
+	}
+}
+
+// The client matches the responses to its writes in the order of the requests. A write can fail while a later one
+// succeeds, e.g. the first one timed out waiting for its quorum, which commits both just after: the later response
+// must not be sent, or the client matches it to the failed write.
+func TestWriteStreamSendsNoResponseAfterAFailedWrite(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	requests := make(chan *proto.WriteRequest, 2)
+	sent := make(chan *proto.WriteResponse, 2)
+	stream := &testStream[proto.WriteRequest, proto.WriteResponse]{
+		recv: func() (*proto.WriteRequest, error) {
+			req, ok := <-requests
+			if !ok {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return req, nil
+		},
+		send: func(response *proto.WriteResponse) error {
+			sent <- response
+			return nil
+		},
+	}
+	writes := make(chan concurrent.Callback[*proto.WriteResponse], 2)
+	lc := &testLeaderController{
+		write: func(_ context.Context, _ *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+			writes <- cb
+		},
+	}
+
+	finished := make(chan error, 1)
+	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
+	results := make(chan chan *writeStreamResult, maxWriteStreamPendingWrites)
+	go processWriteStream(ctx, finished, stream, lc, pendingWrites, results)
+	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, results)
+
+	requests <- &proto.WriteRequest{}
+	requests <- &proto.WriteRequest{}
+	close(requests)
+	first := receiveWithTimeout(t, writes, "leader did not receive the first write")
+	second := receiveWithTimeout(t, writes, "leader did not receive the second write")
+
+	writeErr := errors.New("no quorum committed the entry")
+	first.OnCompleteError(writeErr)
+	second.OnComplete(&proto.WriteResponse{})
+
+	assert.ErrorIs(t, receiveWithTimeout(t, finished, "the stream did not end"), writeErr)
+	select {
+	case response := <-sent:
+		t.Fatalf("sent the response of a write after the one that failed: %v", response)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
@@ -618,7 +672,7 @@ func TestProcessWriteStreamStopsWhenStreamContextDone(t *testing.T) {
 	}
 
 	processWriteStream(ctx, finished, stream, &testLeaderController{}, make(chan struct{}, 1),
-		make(chan *proto.WriteResponse, 1))
+		make(chan chan *writeStreamResult, 1))
 	assert.Empty(t, finished)
 }
 
@@ -629,7 +683,7 @@ func TestProcessWriteStreamNilRequest(t *testing.T) {
 	}
 
 	processWriteStream(context.Background(), finished, stream, &testLeaderController{}, make(chan struct{}, 1),
-		make(chan *proto.WriteResponse, 1))
+		make(chan chan *writeStreamResult, 1))
 	assert.ErrorContains(t, <-finished, "stream closed")
 }
 
@@ -646,21 +700,41 @@ func TestProcessWriteStreamContextDoneWhileWaitingForPendingWrite(t *testing.T) 
 
 	// No free pending write slot
 	processWriteStream(ctx, finished, stream, &testLeaderController{}, make(chan struct{}),
-		make(chan *proto.WriteResponse, 1))
+		make(chan chan *writeStreamResult, 1))
 	assert.ErrorIs(t, <-finished, context.Canceled)
 }
 
 func TestSendWriteStreamResponsesSendError(t *testing.T) {
 	sendErr := errors.New("send failure")
 	finished := make(chan error, 1)
-	responses := make(chan *proto.WriteResponse, 1)
-	responses <- &proto.WriteResponse{}
+	result := make(chan *writeStreamResult, 1)
+	result <- &writeStreamResult{T: &proto.WriteResponse{}}
+	results := make(chan chan *writeStreamResult, 1)
+	results <- result
 	stream := &testStream[proto.WriteRequest, proto.WriteResponse]{
 		send: func(*proto.WriteResponse) error { return sendErr },
 	}
 
-	sendWriteStreamResponses(context.Background(), finished, stream, make(chan struct{}, 1), responses)
+	sendWriteStreamResponses(context.Background(), finished, stream, make(chan struct{}, 1), results)
 	assert.ErrorIs(t, <-finished, sendErr)
+}
+
+func TestSendWriteStreamResponsesStreamDoneWhileWaitingForAResult(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	results := make(chan chan *writeStreamResult, 1)
+	// The write is in flight: its result never comes
+	results <- make(chan *writeStreamResult, 1)
+	stream := &testStream[proto.WriteRequest, proto.WriteResponse]{
+		send: func(*proto.WriteResponse) error {
+			require.FailNow(t, "unexpected send of a write that has no result")
+			return nil
+		},
+	}
+
+	time.AfterFunc(50*time.Millisecond, cancel)
+	sendWriteStreamResponses(ctx, finished, stream, make(chan struct{}, 1), results)
+	assert.Empty(t, finished)
 }
 
 func TestPublicRpcServerWriteStreamInvalidMetadata(t *testing.T) {
