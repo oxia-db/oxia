@@ -344,6 +344,7 @@ func TestDataServerControllerVerifyAfterWatchFailureDoesNotFenceAliveNode(t *tes
 
 	// A watch stream reset while the node keeps answering pings (e.g. an
 	// idle stream reset under load) must not fence the node.
+	requireStartupWatch(t, node.HealthClient)
 	node.HealthClient.FailWatches(errors.New("stream reset"))
 
 	time.Sleep(10 * testHealthPolicy.ProbeInterval)
@@ -424,6 +425,7 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesSlowNode(t *testing
 	// the signature of a saturated node, not a dead one, so it must be left
 	// to the ping loop's failure threshold instead of being fenced.
 	requireStartupPing(t, node.HealthClient)
+	requireStartupWatch(t, node.HealthClient)
 	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.DeadlineExceeded, "context deadline exceeded"), 1)
 	node.HealthClient.FailWatches(errors.New("stream reset"))
 	// The verification probe takes the failure, not the ping loop
@@ -463,6 +465,7 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesTransportClosing(t 
 	// the verification probe both fail with "transport is closing". That is a
 	// local teardown artifact, not evidence the node is dead: no fencing.
 	requireStartupPing(t, node.HealthClient)
+	requireStartupWatch(t, node.HealthClient)
 	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.Unavailable, "transport is closing"), 1)
 	node.HealthClient.FailWatches(grpcstatus.Error(codes.Unavailable, "transport is closing"))
 	// The verification probe takes the failure, not the ping loop
@@ -1105,6 +1108,7 @@ func TestDataServerControllerVerifyAfterWatchFailureLeavesHealthClientErrorToPin
 	assert.Eventually(t, func() bool {
 		return nc.GetStatus().IsAvailable() && clients.Load() >= 2
 	}, 10*time.Second, 10*time.Millisecond)
+	requireStartupWatch(t, rpc.GetNode(addr).HealthClient)
 
 	failing.Store(true)
 	rpc.GetNode(addr).HealthClient.FailWatches(errors.New("stream reset"))
@@ -1431,6 +1435,14 @@ func requireStartupPing(t *testing.T, healthClient *rpctest.HealthClient) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		return healthClient.Checks() > 0
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// requireStartupWatch waits for the watch loop to open its stream at startup, which FailWatches would otherwise miss.
+func requireStartupWatch(t *testing.T, healthClient *rpctest.HealthClient) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return healthClient.Watches() > 0
 	}, 10*time.Second, 10*time.Millisecond)
 }
 
