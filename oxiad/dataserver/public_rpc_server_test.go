@@ -356,6 +356,63 @@ func TestWriteStreamSendsNoResponseAfterAFailedWrite(t *testing.T) {
 	}
 }
 
+// A failed write ends the stream at once, while an earlier write still waits for its result, e.g. behind the apply of
+// an entry that keeps failing: the client retries its writes on a new stream.
+func TestWriteStreamEndsAtOnceWhenAWriteFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	requests := make(chan *proto.WriteRequest, 2)
+	sent := make(chan *proto.WriteResponse, 2)
+	stream := &testStream[proto.WriteRequest, proto.WriteResponse]{
+		recv: func() (*proto.WriteRequest, error) {
+			req, ok := <-requests
+			if !ok {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return req, nil
+		},
+		send: func(response *proto.WriteResponse) error {
+			sent <- response
+			return nil
+		},
+	}
+	writes := make(chan concurrent.Callback[*proto.WriteResponse], 2)
+	lc := &testLeaderController{
+		write: func(_ context.Context, _ *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+			writes <- cb
+		},
+	}
+
+	finished := make(chan error, 1)
+	pendingWrites := make(chan struct{}, maxWriteStreamPendingWrites)
+	results := make(chan chan *writeStreamResult, maxWriteStreamPendingWrites)
+	go processWriteStream(ctx, finished, stream, lc, pendingWrites, results)
+	go sendWriteStreamResponses(ctx, finished, stream, pendingWrites, results)
+
+	requests <- &proto.WriteRequest{}
+	requests <- &proto.WriteRequest{}
+	close(requests)
+	first := receiveWithTimeout(t, writes, "leader did not receive the first write")
+	second := receiveWithTimeout(t, writes, "leader did not receive the second write")
+
+	// The first write has no result yet
+	writeErr := errors.New("no quorum committed the entry")
+	second.OnCompleteError(writeErr)
+	assert.ErrorIs(t, receiveWithTimeout(t, finished, "the stream did not end"), writeErr)
+
+	// The response of the first write, which comes before the failed one, is sent
+	response := &proto.WriteResponse{}
+	first.OnComplete(response)
+	assert.Same(t, response, receiveWithTimeout(t, sent, "the response of the first write was not sent"))
+	select {
+	case response := <-sent:
+		t.Fatalf("sent a response after the one of the failed write: %v", response)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestPublicHealthCheck(t *testing.T) {
 	standaloneServer, err := NewStandalone(NewTestConfig(t.TempDir()))
 	require.NoError(t, err)

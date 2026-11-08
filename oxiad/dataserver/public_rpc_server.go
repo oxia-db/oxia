@@ -208,15 +208,18 @@ func processWriteStream(streamCtx context.Context, finished chan<- error, stream
 				// stream.Send here, where a slow client would stall the whole shard.
 				result <- &writeStreamResult{T: t}
 			}, func(err error) {
+				// The error ends the stream at once: the earlier writes can wait long for their results, e.g.
+				// behind the apply of an entry that keeps failing. The sender stops at this result.
 				result <- &writeStreamResult{Err: err}
+				channel.PushNoBlock(finished, err)
 			}))
 	}
 }
 
 // sendWriteStreamResponses sends the results of the writes in the order of their requests, in which the client matches
-// them. The first error ends the stream, before any later response: a later write can succeed after a write failed,
-// e.g. when a quorum commits both just after the first one timed out, and the client would match its response to the
-// failed write.
+// them, and stops at the first error, which ended the stream: a later write can succeed after a write failed, e.g. when
+// a quorum commits both just after the first one timed out, and the client would match its response to the failed
+// write.
 func sendWriteStreamResponses(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
 	pendingWrites <-chan struct{}, results <-chan chan *writeStreamResult) {
 	for {
@@ -232,7 +235,6 @@ func sendWriteStreamResponses(streamCtx context.Context, finished chan<- error, 
 			return
 		}
 		if result.Err != nil {
-			channel.PushNoBlock(finished, result.Err)
 			return
 		}
 		if err := stream.Send(result.T); err != nil {
