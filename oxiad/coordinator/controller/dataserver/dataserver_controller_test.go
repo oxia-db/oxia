@@ -387,6 +387,7 @@ func TestDataServerControllerHealthWatchWithRetriesNotifiesRestartWhenWatchRecov
 			}, 10*time.Second, 10*time.Millisecond)
 
 			requireStartupPing(t, node.HealthClient)
+			requireStartupWatch(t, node.HealthClient)
 			if probeErr != nil {
 				node.HealthClient.FailNextChecks(probeErr, 1)
 			}
@@ -1480,6 +1481,14 @@ func requireStartupPing(t *testing.T, healthClient *rpctest.HealthClient) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		return healthClient.Checks() > 0
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// requireStartupWatch waits for the watch loop to open its stream at startup, which FailWatches would otherwise miss.
+func requireStartupWatch(t *testing.T, healthClient *rpctest.HealthClient) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return healthClient.Watches() > 0
 	}, 10*time.Second, 10*time.Millisecond)
 }
 

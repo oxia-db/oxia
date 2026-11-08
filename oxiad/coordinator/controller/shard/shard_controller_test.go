@@ -566,14 +566,14 @@ func TestControllerMaybeRestartedElectsNewLeaderWhenLeaderDoesNotLead(t *testing
 	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
 	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
 
-	// The leader restarted: it answers, and it has no leader controller any more
+	// The leader restarted: it answers, but with no controller for the shard any more, it fails the status request
 	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
 	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
 	rpc.GetNode(s1).BecomeLeaderResponse(nil)
 	sc.MaybeRestarted(s1)
 	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
-	rpc.GetNode(s1).GetStatusResponse(0, proto.ServingStatus_NOT_MEMBER, 0, 0)
+	rpc.GetNode(s1).EnqueueGetStatusError(constant.ErrNodeIsNotMember)
 
 	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
 	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
