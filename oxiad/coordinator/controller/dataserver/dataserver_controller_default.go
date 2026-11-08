@@ -381,6 +381,9 @@ func (n *controller) healthPingWithRetries() {
 }
 
 func (n *controller) healthWatchWithRetries() {
+	// Set when the watch stream broke, until a new watch answers: the data server may have restarted in between,
+	// whatever the probe right after the break found. Confined to this goroutine.
+	broken := false
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Start new health watch cycle")
 		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
@@ -402,12 +405,17 @@ func (n *controller) healthWatchWithRetries() {
 				err := n.handleHealthCheck(epoch, response, recvErr)
 				switch {
 				case err == nil:
+					if broken {
+						broken = false
+						n.listener.MaybeRestarted(n.dataServer.GetIdentity())
+					}
 				case errors.Is(err, errNotServing):
 					// The data server deliberately reported NOT_SERVING: fail
 					// it right away, and keep watching for it to come back.
 					n.logger.Warn("Data server reported it is not serving")
 					n.becomeUnavailable(epoch)
 				default:
+					broken = true
 					// A broken watch stream is an ambiguous signal: it breaks
 					// right away when the process dies (the fast-detection
 					// path when a pod is deleted or restarted), but it can
@@ -449,7 +457,7 @@ func (n *controller) verifyAfterWatchFailure() {
 	case err == nil:
 		// The node is alive, and the watch stream reset can be transient. It can also be a restart that was faster
 		// than the failure detector: the node answers again, but it lost the leaderships that the coordinator
-		// recorded for it, which nothing else notices
+		// recorded for it. Notify the shards now instead of when the watch answers again, after its backoff
 		n.listener.MaybeRestarted(n.dataServer.GetIdentity())
 	case errors.Is(err, errNotServing):
 		n.logger.Warn("Data server reported it is not serving")

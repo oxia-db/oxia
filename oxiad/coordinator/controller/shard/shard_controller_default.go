@@ -74,10 +74,7 @@ type controller struct {
 	electionOp          chan *action.ElectionAction
 	deleteOp            chan any
 	dataServerFailureOp chan *proto.DataServerIdentity
-	// dataServerRestartedOp carries the data servers that answer again after their health watch broke: they may have
-	// restarted and lost the leaderships that were recorded for them
-	dataServerRestartedOp chan *proto.DataServerIdentity
-	changeEnsembleOp      chan *action.ChangeEnsembleAction
+	changeEnsembleOp    chan *action.ChangeEnsembleAction
 	// electionMailbox receives the mail of the current election, which the
 	// event loop ticks then
 	electionMailbox chan async.Mail
@@ -89,6 +86,13 @@ type controller struct {
 	discoveredDataServersMu sync.Mutex
 	discoveredDataServers   map[string]*proto.DataServerIdentity
 	featuresDiscoveredOp    chan any
+	// The data servers that answer again after their health watch broke, which may have restarted and lost the
+	// leaderships recorded for them, are reported once too, and collected the same way. The event loop owns them and
+	// takes them all when dataServerRestartedOp wakes it up; MaybeRestarted only adds to them. Guarded by
+	// restartedDataServersMu.
+	restartedDataServersMu sync.Mutex
+	restartedDataServers   map[string]*proto.DataServerIdentity
+	dataServerRestartedOp  chan any
 	// termFeaturesCheckPending is set from the discovery of the features of
 	// an ensemble member until checkTermFeatures completes. It is owned by
 	// the event loop.
@@ -118,12 +122,11 @@ func (s *controller) MaybeRestarted(dataServer *proto.DataServerIdentity) {
 	if s.terminating.Load() {
 		return
 	}
-	if !channel.PushNoBlock(s.dataServerRestartedOp, dataServer) {
-		s.logger.Debug(
-			"Discarding data server restart notification because queue is full",
-			slog.Any("data-server", dataServer),
-		)
-	}
+	s.restartedDataServersMu.Lock()
+	s.restartedDataServers[dataServer.GetNameOrDefault()] = dataServer
+	s.restartedDataServersMu.Unlock()
+	// A wake-up that is pending already covers this data server too
+	channel.PushNoBlock(s.dataServerRestartedOp, nil)
 }
 
 func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
@@ -179,10 +182,11 @@ func NewController(
 		electionOp:            make(chan *action.ElectionAction, chanBufferSize),
 		deleteOp:              make(chan any, chanBufferSize),
 		dataServerFailureOp:   make(chan *proto.DataServerIdentity, chanBufferSize),
-		dataServerRestartedOp: make(chan *proto.DataServerIdentity, chanBufferSize),
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
+		restartedDataServers:  make(map[string]*proto.DataServerIdentity),
+		dataServerRestartedOp: make(chan any, 1),
 		electionMailbox:       make(chan async.Mail, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
@@ -325,8 +329,8 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailureWithRetries(n)
-		case n := <-s.dataServerRestartedOp:
-			s.handleDataServerRestartedWithRetries(n)
+		case <-s.dataServerRestartedOp:
+			s.handleDataServerRestartedWithRetries()
 		case <-s.featuresDiscoveredOp:
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
@@ -414,22 +418,28 @@ func (s *controller) handleDataServerFailureWithRetries(failedDataServer *proto.
 
 // handleDataServerRestartedWithRetries starts an election when the leader answers again but does not lead the shard
 // in its term: it restarted before the failure detector noticed, and lost the leadership that was recorded for it.
-func (s *controller) handleDataServerRestartedWithRetries(dataServer *proto.DataServerIdentity) {
+func (s *controller) handleDataServerRestartedWithRetries() {
+	s.restartedDataServersMu.Lock()
+	restarted := s.restartedDataServers
+	s.restartedDataServers = make(map[string]*proto.DataServerIdentity)
+	s.restartedDataServersMu.Unlock()
+
 	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
 	if err != nil {
-		s.logger.Warn(
-			"Failed to handle the restart of the data server, retrying later",
-			slog.Any("data-server", dataServer.GetNameOrDefault()),
-			slog.Any("error", err),
-		)
-		time.AfterFunc(time.Second, func() { s.MaybeRestarted(dataServer) })
+		// The restarts are notified once: send them again to the event loop later
+		s.logger.Warn("Failed to handle the restart of the data servers, retrying later", slog.Any("error", err))
+		time.AfterFunc(time.Second, func() {
+			for _, dataServer := range restarted {
+				s.MaybeRestarted(dataServer)
+			}
+		})
 		return
 	}
 	shardMeta := common.Must(borrowedMeta, exists,
 		"bug: shard metadata missing while handling the restart of a data server: namespace=", s.namespace, " shard=",
 		s.shard).UnsafeBorrow()
-	if shardMeta.Leader == nil || shardMeta.Leader.GetNameOrDefault() != dataServer.GetNameOrDefault() ||
-		shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+	_, leaderRestarted := restarted[shardMeta.Leader.GetNameOrDefault()]
+	if shardMeta.Leader == nil || !leaderRestarted || shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
 		return
 	}
 
@@ -439,7 +449,7 @@ func (s *controller) handleDataServerRestartedWithRetries(dataServer *proto.Data
 	}
 	s.logger.Info(
 		"The leader answers but does not lead the shard in its term: it restarted, starting a new election",
-		slog.Any("leader", dataServer.GetNameOrDefault()),
+		slog.Any("leader", shardMeta.Leader.GetNameOrDefault()),
 		slog.Any("status", status.GetStatus()),
 		slog.Any("error", err),
 	)

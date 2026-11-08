@@ -336,6 +336,17 @@ func (m *PerNodeChannels) ExpectGetStatusRequest(t *testing.T, shard int64) {
 	assert.Equal(t, shard, r.Shard)
 }
 
+func (m *PerNodeChannels) ExpectNoMoreGetStatusRequest(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-m.getStatusRequests:
+		assert.Fail(t, "should not have received any GetStatus request")
+	case <-time.After(defaultNegativeTimeout):
+		// expected
+	}
+}
+
 func (m *PerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
 	m.newTermResponses <- struct {
 		*proto.NewTermResponse
