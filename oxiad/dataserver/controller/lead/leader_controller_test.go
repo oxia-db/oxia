@@ -1542,6 +1542,71 @@ func TestLeaderControllerWriteFailsWhenNoQuorumCommitsIt(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// The registration of a session waits for its quorum past the timeout of the writes of the clients: a registration
+// that the quorum commits after its creation failed would leave a session record that never expires.
+func TestLeaderControllerCreateSessionWaitsForTheQuorumToReturn(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	provider := rpc.NewMockRpcClient()
+	controller, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, provider, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	lc := controller.(*leaderController)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 3,
+		FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+	})
+	require.NoError(t, err)
+
+	// The follower acknowledges nothing: the session is registered when the quorum returns
+	type created struct {
+		response *proto.CreateSessionResponse
+		err      error
+	}
+	result := make(chan created, 1)
+	go func() {
+		response, err := lc.CreateSession(&proto.CreateSessionRequest{
+			Shard:            shard,
+			SessionTimeoutMs: uint32(constant.MinSessionTimeout.Milliseconds()),
+		})
+		result <- created{response, err}
+	}()
+	select {
+	case r := <-result:
+		require.FailNow(t, "the creation of the session returned without its quorum", "response: %v, error: %v",
+			r.response, r.err)
+	case <-time.After(writeCommitTimeout + time.Second):
+	}
+
+	stopAcks := ackAppends(provider)
+	defer stopAcks()
+	var r created
+	select {
+	case r = <-result:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the session was not created when the quorum returned")
+	}
+	require.NoError(t, r.err)
+
+	// The session is registered: it expires, and its record is deleted
+	assert.Eventually(t, func() bool {
+		return getSessionMetadata(t, lc, r.response.SessionId) == nil
+	}, 10*time.Second, 50*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 // While no quorum committed a write that timed out, the leader fails the writes of the clients at once, but not its
 // own: the delete of a session that expires meanwhile is appended, and the quorum commits it when it returns, with the
 // ephemeral records of the session.
@@ -1606,13 +1671,10 @@ func TestLeaderControllerDeletesASessionThatExpiresWhileNoQuorumCommits(t *testi
 	stopHeartbeats()
 	<-heartbeatsDone
 
-	// The session expires while the writes of the clients fail at once
-	sessions := lc.sessionManager.(*sessionManager)
+	// The session expires while the writes of the clients fail at once: its delete is appended after the write that
+	// timed out, and sent to the follower
 	require.Eventually(t, func() bool {
-		sessions.RLock()
-		defer sessions.RUnlock()
-		_, found := sessions.sessions[SessionId(sessionId)]
-		return !found
+		return len(provider.AppendReqs) == 2
 	}, 10*time.Second, 10*time.Millisecond)
 
 	// The quorum returns
