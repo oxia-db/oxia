@@ -34,10 +34,13 @@ func NewBackOff(ctx context.Context) backoff.BackOff {
 	return NewBackOffWithInitialInterval(ctx, DefaultInitialInterval)
 }
 
-// NewBackOffWithMaxInterval is NewBackOff, with a cap on the interval. The default one grows to a minute, so a caller
+// NewBackOffWithMaxInterval is NewBackOff, with a cap on the wait. The default one grows to a minute, so a caller
 // that has to notice a recovery within seconds would find its next attempt scheduled after the recovery.
 func NewBackOffWithMaxInterval(ctx context.Context, maxInterval time.Duration) backoff.BackOff {
-	return newBackOff(ctx, DefaultInitialInterval, maxInterval)
+	// ExponentialBackOff caps the interval before the jitter, which then waits up to RandomizationFactor longer, and
+	// starts from the initial interval whatever the cap
+	interval := time.Duration(float64(maxInterval) / (1 + backoff.DefaultRandomizationFactor))
+	return newBackOff(ctx, min(DefaultInitialInterval, interval), interval)
 }
 
 func NewBackOffWithInitialInterval(ctx context.Context, initialInterval time.Duration) backoff.BackOff {
