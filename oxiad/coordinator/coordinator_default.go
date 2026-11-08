@@ -159,7 +159,7 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		return nil, err
 	}
 	leader.Store(true)
-	runtime, err = coordruntime.New(ctx, metadata, rpc.NewControllerRPCProviderFactory(controllerTLS))
+	runtime, err = coordruntime.New(ctx, metadata, rpc.NewControllerRPCProviderFactory(controllerTLS), controller.HealthCheck.Policy())
 	if failErr, ok := failpoint.Eval[error]("coordinator.newRuntime"); ok {
 		err = failErr
 	}

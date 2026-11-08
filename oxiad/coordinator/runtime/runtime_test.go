@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/oxiad/common/errs"
+	"github.com/oxia-db/oxia/oxiad/common/health"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,7 +100,7 @@ func TestRuntimeNewDiscoversFeaturesWhileStartingShardControllers(t *testing.T) 
 		rpcProvider.GetNode(server).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
 	}
 
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -114,6 +115,53 @@ func TestRuntimeNewDiscoversFeaturesWhileStartingShardControllers(t *testing.T) 
 	}, 10*time.Second, 10*time.Millisecond, "data servers did not become available")
 }
 
+// The data servers are judged by the policy that the runtime is given: with a threshold of 5, a data server
+// survives 4 failed probes, which the default threshold of 3 declares failed, and fails at the next ones.
+func TestRuntimeNewAppliesTheHealthPolicyToTheDataServers(t *testing.T) {
+	server := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "s1:8191"}
+	metadata := newTestMetadata(t, &proto.ClusterConfiguration{
+		Namespaces: []*proto.Namespace{{Name: constant.DefaultNamespace, InitialShardCount: 1, ReplicationFactor: 1}},
+		Servers:    []*proto.DataServerIdentity{server},
+	})
+	_, err := metadata.AllocateShardIDs(1)
+	require.NoError(t, err)
+	require.NoError(t, metadata.CreateNamespaceStatus(constant.DefaultNamespace, &proto.NamespaceStatus{
+		ReplicationFactor: 1,
+		Shards: map[int64]*proto.ShardMetadata{0: {
+			Status:         proto.ShardStatusSteadyState,
+			Term:           1,
+			Leader:         server,
+			Ensemble:       []*proto.DataServerIdentity{server},
+			Int32HashRange: &proto.HashRange{Min: 0, Max: math.MaxUint32},
+		}},
+	}))
+	rpcProvider := rpctest.NewRpcProvider()
+	rpcProvider.GetNode(server).SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider },
+		health.CheckPolicy{ProbeInterval: 20 * time.Millisecond, ProbeTimeout: time.Second, FailureThreshold: 5})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, r.Close()) })
+
+	isAvailable := func() bool {
+		c := r.(*runtime)
+		c.RLock()
+		defer c.RUnlock()
+		return c.dataServerControllers["s1"].GetStatus().IsAvailable()
+	}
+	require.Eventually(t, isAvailable, 10*time.Second, 10*time.Millisecond, "the data server did not become available")
+
+	healthClient := rpcProvider.GetNode(server).HealthClient
+	healthClient.FailNextChecks(errors.New("probe failed"), 4)
+	require.Eventually(t, func() bool { return healthClient.PendingCheckFailures() == 0 },
+		10*time.Second, 10*time.Millisecond, "the failed probes were not made")
+	assert.True(t, isAvailable(), "a data server must survive fewer failed probes than the threshold")
+
+	healthClient.SetError(errors.New("probe failed"))
+	require.Eventually(t, func() bool { return !isAvailable() },
+		10*time.Second, 10*time.Millisecond, "the data server was not declared failed after the threshold")
+}
+
 // The runtime does not start without an instance id.
 func TestRuntimeNewFailsWithoutInstanceID(t *testing.T) {
 	metadata := &fakeMetadata{
@@ -122,7 +170,7 @@ func TestRuntimeNewFailsWithoutInstanceID(t *testing.T) {
 			return "", errors.New("status unavailable")
 		},
 	}
-	_, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	_, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 	require.ErrorContains(t, err, "status unavailable")
 }
 
@@ -153,7 +201,7 @@ func TestRuntimeNewFailsWithoutMetadata(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			metadata := &fakeMetadata{Metadata: newTestMetadata(t, &proto.ClusterConfiguration{})}
 			tc.setup(metadata)
-			_, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+			_, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 			require.ErrorIs(t, err, readErr)
 		})
 	}
@@ -178,7 +226,7 @@ func TestRuntimeNewStartsControllersOfNamespaceMissingFromConfig(t *testing.T) {
 		},
 	}))
 
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -211,7 +259,7 @@ func TestRuntimeNewResumesDrainOfStoredDrainingDataServer(t *testing.T) {
 		return true, nil
 	}))
 
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -245,7 +293,7 @@ func TestRuntimeNewSkipsStoredDrainedDataServer(t *testing.T) {
 		return true, nil
 	}))
 
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -268,7 +316,7 @@ func TestRuntimeNewStartsControllersOfStoredDataServers(t *testing.T) {
 		}))
 	}
 
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -305,7 +353,7 @@ func TestRuntimeNewKeepsAddressesAndMetadataOfDrainingDataServerAddedAgain(t *te
 		return true, nil
 	}))
 
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpctest.NewRpcProvider() }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 
@@ -1289,7 +1337,7 @@ func TestRuntimeSubscribeShardAssignmentsWaitsForFirstComputation(t *testing.T) 
 	}))
 
 	rpcProvider := rpctest.NewRpcProvider()
-	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider })
+	r, err := New(t.Context(), metadata, func(string) rpc.ControllerRPCProvider { return rpcProvider }, health.DefaultCheckPolicy)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, r.Close()) })
 

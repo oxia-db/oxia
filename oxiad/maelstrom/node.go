@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/oxia-db/oxia/oxiad/common/health"
 	metadatacommon "github.com/oxia-db/oxia/oxiad/common/metadata"
 
 	"github.com/pkg/errors"
@@ -309,6 +310,7 @@ func (c *coordinator) start(ctx context.Context, dispatcher *dispatcher, metadat
 		func(instanceID string) rpc.ControllerRPCProvider {
 			return newRpcProvider(dispatcher)
 		},
+		health.DefaultCheckPolicy,
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to create coordinator")
