@@ -1542,6 +1542,72 @@ func TestLeaderControllerWriteFailsWhenNoQuorumCommitsIt(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A write whose entry the quorum committed doesn't time out while it waits for the apply of an earlier entry that keeps
+// failing: its client would send it again, although it's applied.
+func TestLeaderControllerWriteDoesNotTimeOutOnceCommitted(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+	failures := &atomic.Int64{}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, failingReadKVFactory{Factory: kvFactory, key: "b", failures: failures}, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	// The apply of the put of "b" keeps failing, and holds back the one of "c": both are committed
+	failures.Store(math.MaxInt64)
+	results := make(chan error, 2)
+	for _, key := range []string{"b", "c"} {
+		lc.Write(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte(key)}},
+		}, concurrent.NewOnce(func(*proto.WriteResponse) { results <- nil }, func(err error) { results <- err }))
+	}
+	select {
+	case err := <-results:
+		require.FailNow(t, "a committed write returned before its apply", "error: %v", err)
+	case <-time.After(writeCommitTimeout + time.Second):
+	}
+
+	failures.Store(0)
+	for range 2 {
+		select {
+		case err := <-results:
+			assert.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "the committed writes were not applied")
+		}
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// The timers of the writes can fire out of order: the earlier entry that timed out must not hide the later one, which
+// the new writes would wait for too.
+func TestLeaderControllerRecordTimedOutOffsetKeepsTheHighest(t *testing.T) {
+	lc := &leaderController{}
+	lc.timedOutOffset.Store(noTimedOutOffset)
+
+	lc.recordTimedOutOffset(11)
+	lc.recordTimedOutOffset(10)
+	assert.Equal(t, int64(11), lc.timedOutOffset.Load())
+
+	lc.recordTimedOutOffset(12)
+	assert.Equal(t, int64(12), lc.timedOutOffset.Load())
+}
+
 // The registration of a session waits for its quorum past the timeout of the writes of the clients: a registration
 // that the quorum commits after its creation failed would leave a session record that never expires.
 func TestLeaderControllerCreateSessionWaitsForTheQuorumToReturn(t *testing.T) {

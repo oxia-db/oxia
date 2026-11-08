@@ -1418,7 +1418,8 @@ func (lc *leaderController) propose(ctx context.Context, commitTimeout time.Dura
 // appended and the callback will not be invoked.
 //
 // A commitTimeout other than noCommitTimeout bounds the wait for the quorum, for the writes of the clients: past it the
-// callback fails with a retryable error. The entry stays in the wal: the quorum commits it later, or the next term
+// callback fails with a retryable error, unless the quorum committed the entry, which then waits for its apply as any
+// other. The entry stays in the wal: the quorum commits it later, or the next term
 // truncates it, as for a write whose client gave up. Until the quorum commits it, the next proposals with a timeout
 // fail at once: they would wait for the same quorum, while the client can look up the leader that the coordinator
 // elects meanwhile.
@@ -1482,7 +1483,11 @@ func (lc *leaderController) proposeLocked(ctx context.Context, commitTimeout tim
 	if commitTimeout != noCommitTimeout {
 		cb = concurrent.NewOnce(cb.OnComplete, cb.OnCompleteError)
 		stopCommitTimer = time.AfterFunc(commitTimeout, func() {
-			lc.timedOutOffset.Store(newOffset)
+			if tracker.CommitOffset() >= newOffset {
+				// Committed, it waits for the apply of the earlier entries, which can be retrying a failure
+				return
+			}
+			lc.recordTimedOutOffset(newOffset)
 			cb.OnCompleteError(errors.Wrapf(constant.ErrResourceUnavailable,
 				"oxia: no quorum committed the entry %d in %s", newOffset, commitTimeout))
 		}).Stop
@@ -1521,6 +1526,17 @@ func (lc *leaderController) proposeLocked(ctx context.Context, commitTimeout tim
 	}
 	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
 	return nil
+}
+
+// recordTimedOutOffset records offset as the entry of a write that timed out. It keeps the highest one: the timers of
+// the writes can fire out of order, and the new writes would wait for the later entry too.
+func (lc *leaderController) recordTimedOutOffset(offset int64) {
+	for {
+		current := lc.timedOutOffset.Load()
+		if offset <= current || lc.timedOutOffset.CompareAndSwap(current, offset) {
+			return
+		}
+	}
 }
 
 // applyCommitted applies a committed entry to the database while the node leads
