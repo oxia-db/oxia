@@ -142,7 +142,8 @@ type leaderController struct {
 	// timedOutOffset is the offset of the last entry whose write timed out waiting for a quorum in the term, or
 	// noTimedOutOffset. While the commit offset is below it the quorum is still missing, and the new writes fail at
 	// once instead of waiting for it. A single value derived with the commit offset, which has no flag to clear.
-	// Owner: the leader controller. Set by the timeout of a write, reset when a term begins, read by the proposals.
+	// Owner: the leader controller. Set by the timeout of a write, reset when a term begins, read by the writes of the
+	// clients.
 	timedOutOffset atomic.Int64
 	followers      map[string]FollowerCursor
 	observers      map[string]FollowerCursor
@@ -1261,14 +1262,38 @@ func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, onNext
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
+	if err := lc.checkTimedOutEntryCommitted(); err != nil {
+		return nil, err
+	}
 	return lc.writeBlock(ctx, nil, func(_ int64) *proto.WriteRequest { return request })
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
+	if err := lc.checkTimedOutEntryCommitted(); err != nil {
+		cb.OnCompleteError(err)
+		return
+	}
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
 		cb.OnComplete(response.WriteResponse)
 	}, cb.OnCompleteError)
 	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
+}
+
+// checkTimedOutEntryCommitted fails a write of a client at once, with a retryable error, while no quorum committed the
+// entry of the last write that timed out: the write would wait for the same quorum, while the client can look up the
+// leader that the coordinator elects meanwhile. The writes of the leader itself, e.g. the deletes of the sessions that
+// expire, are appended: the quorum commits them when it returns, or the next leader does their work again.
+func (lc *leaderController) checkTimedOutEntryCommitted() error {
+	lc.RLock()
+	defer lc.RUnlock()
+	if err := checkStatusIsLeader(lc.status); err != nil {
+		return err
+	}
+	if offset := lc.timedOutOffset.Load(); offset != noTimedOutOffset && lc.quorumAckTracker.CommitOffset() < offset {
+		return errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: no quorum committed the entry %d, so the new writes would wait for it too", offset)
+	}
+	return nil
 }
 
 // writeBlock proposes the write built by requestSupplier and waits for its
@@ -1418,10 +1443,6 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	timer := lc.writeLatencyHisto.Timer()
 	if err := checkStatusIsLeader(lc.status); err != nil {
 		return err
-	}
-	if offset := lc.timedOutOffset.Load(); offset != noTimedOutOffset && lc.quorumAckTracker.CommitOffset() < offset {
-		return errors.Wrapf(constant.ErrResourceUnavailable,
-			"oxia: no quorum committed the entry %d, so the new writes would wait for it too", offset)
 	}
 	if lc.frozen.Load() {
 		// The shard is frozen for split cutover: reject new writes with a
