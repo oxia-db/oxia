@@ -1067,6 +1067,14 @@ func (m *HealthClient) Checks() int {
 	return m.checks
 }
 
+// Watches returns the number of watch streams opened so far.
+func (m *HealthClient) Watches() int {
+	m.Lock()
+	defer m.Unlock()
+
+	return len(m.watches)
+}
+
 // FailWatches delivers err on all currently active watch streams, without
 // affecting Check. It models a watch stream reset while the node is healthy.
 func (m *HealthClient) FailWatches(err error) {
