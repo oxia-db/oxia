@@ -48,6 +48,8 @@ type batcherImpl struct {
 	addsDone            chan struct{}
 	linger              time.Duration
 	maxRequestsPerBatch int
+	// window keeps the batches in flight; nil completes each batch inline
+	window *window
 }
 
 func (b *batcherImpl) Close() error {
@@ -81,6 +83,20 @@ func (b *batcherImpl) enqueue(call any) bool {
 	}
 }
 
+// failQueued fails the calls left in the queue, once no call can be added to
+// it anymore.
+func (b *batcherImpl) failQueued() {
+	<-b.addsDone
+	for {
+		select {
+		case call := <-b.callC:
+			b.failCall(call, ErrShuttingDown)
+		default:
+			return
+		}
+	}
+}
+
 func (b *batcherImpl) failCall(call any, err error) {
 	if barrier, ok := call.(Barrier); ok {
 		barrier.Done()
@@ -92,6 +108,11 @@ func (b *batcherImpl) failCall(call any, err error) {
 }
 
 func (b *batcherImpl) Run() { //nolint:revive
+	if b.window != nil {
+		b.runWindow()
+		return
+	}
+
 	var batch Batch
 	var timer *time.Timer
 	var timeout <-chan time.Time
@@ -146,16 +167,8 @@ func (b *batcherImpl) Run() { //nolint:revive
 				batch.Fail(ErrShuttingDown)
 				batch = nil
 			}
-			// Drain the queue once no call can be added to it anymore
-			<-b.addsDone
-			for {
-				select {
-				case call := <-b.callC:
-					b.failCall(call, ErrShuttingDown)
-				default:
-					return
-				}
-			}
+			b.failQueued()
+			return
 		}
 	}
 }

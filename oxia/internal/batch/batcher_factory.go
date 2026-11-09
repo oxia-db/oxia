@@ -39,6 +39,9 @@ type BatcherFactory struct {
 	Metrics        *metrics.Metrics
 	WriteRerouter  WriteRerouter
 	ReadRerouter   ReadRerouter
+	// MaxWriteBatchesInFlight bounds the write batches of a shard sent and not
+	// answered yet. Zero sends a write batch once the previous one completed.
+	MaxWriteBatchesInFlight int
 }
 
 func NewBatcherFactory(
@@ -61,13 +64,19 @@ func NewBatcherFactory(
 }
 
 func (b *BatcherFactory) NewWriteBatcher(ctx context.Context, shardId *int64, maxWriteBatchSize int) batch2.Batcher {
-	return b.newBatcher(ctx, shardId, "write", writeBatchFactory{
+	newBatch := writeBatchFactory{
 		execute:        b.Executor.ExecuteWrite,
+		executeAsync:   b.Executor.ExecuteWriteAsync,
 		reroute:        b.WriteRerouter,
 		metrics:        b.Metrics,
 		requestTimeout: b.RequestTimeout,
 		maxByteSize:    maxWriteBatchSize,
-	}.newBatch)
+	}.newBatch
+	factory := b.BatcherFactory
+	factory.MaxBatchesInFlight = b.MaxWriteBatchesInFlight
+	return factory.NewBatcher(ctx, *shardId, "write", func() batch2.Batch {
+		return newBatch(shardId)
+	})
 }
 
 func (b *BatcherFactory) NewReadBatcher(ctx context.Context, shardId *int64) batch2.Batcher {
