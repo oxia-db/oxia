@@ -113,5 +113,6 @@ func (s *coordinator) stepDown(reachable, total int, timeout time.Duration) {
 		exit()
 		return
 	}
-	os.Exit(1) // coverage-ignore: terminates the process
+	// coverage-ignore: terminates the process
+	os.Exit(1)
 }
