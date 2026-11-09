@@ -176,10 +176,7 @@ func TestNewServesMetricsAsStandby(t *testing.T) {
 	_, err = holder.WaitToBecomeLeader()
 	require.NoError(t, err)
 
-	free, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	metricsAddress := free.Addr().String()
-	require.NoError(t, free.Close())
+	metricsAddress := freeAddress(t)
 	options.Observability.Metric = commonoption.MetricOptions{
 		Enabled:     &constant.FlagTrue,
 		BindAddress: metricsAddress,
@@ -193,22 +190,7 @@ func TestNewServesMetricsAsStandby(t *testing.T) {
 		server, err := New(t.Context(), commonwatch.New(options))
 		started <- startResult{server: server, err: err}
 	}()
-	requireLeader := func(expected int) {
-		t.Helper()
-		pattern := regexp.MustCompile(fmt.Sprintf(`(?m)^oxia_coordinator_is_leader(\{[^}]*\})? %d$`, expected))
-		assert.EventuallyWithT(t, func(c *assert.CollectT) {
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+metricsAddress+"/metrics", http.NoBody)
-			require.NoError(c, err)
-			response, err := http.DefaultClient.Do(request)
-			require.NoError(c, err)
-			defer response.Body.Close()
-			body, err := io.ReadAll(response.Body)
-			require.NoError(c, err)
-			assert.Regexp(c, pattern, string(body))
-		}, 10*time.Second, 10*time.Millisecond)
-	}
-
-	requireLeader(0)
+	requireLeaderGauge(t, metricsAddress, 0)
 	select {
 	case result := <-started:
 		require.FailNow(t, "the standby started while the leadership is held", "err: %v", result.err)
@@ -224,7 +206,7 @@ func TestNewServesMetricsAsStandby(t *testing.T) {
 	case <-time.After(time.Minute):
 		require.FailNow(t, "the standby did not become the leader")
 	}
-	requireLeader(1)
+	requireLeaderGauge(t, metricsAddress, 1)
 	require.NoError(t, result.server.Close())
 }
 
@@ -265,12 +247,74 @@ func TestCoordinatorCloseTwice(t *testing.T) {
 	require.NoError(t, server.Close())
 }
 
+// A coordinator that loses the leadership stops coordinating, and then reports
+// the loss: its gauge no longer reports the leadership, and closing it
+// completes.
+func TestCoordinatorLeadershipLostStopsCoordinating(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	leadershipLost := make(chan struct{})
+	failpoint.Enable("coordinator.leadershipLost", (<-chan struct{})(leadershipLost))
+	t.Cleanup(func() { failpoint.Disable("coordinator.leadershipLost") })
+	options := newTestOptions()
+	metricsAddress := freeAddress(t)
+	options.Observability.Metric = commonoption.MetricOptions{
+		Enabled:     &constant.FlagTrue,
+		BindAddress: metricsAddress,
+	}
+	server, err := New(t.Context(), commonwatch.New(options))
+	require.NoError(t, err)
+	requireLeaderGauge(t, metricsAddress, 1)
+	select {
+	case <-server.LeadershipLost():
+		require.FailNow(t, "the coordinator reported a loss while it leads")
+	default:
+	}
+
+	close(leadershipLost)
+	select {
+	case <-server.LeadershipLost():
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the coordinator did not report the loss")
+	}
+	requireLeaderGauge(t, metricsAddress, 0)
+	require.NoError(t, server.Close())
+}
+
 func TestCoordinatorBgLeadershipWatcherEndsOnClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	server := &coordinator{ctx: ctx, logger: slog.Default()}
 
 	server.bgLeadershipWatcher(make(chan struct{}))
+}
+
+// freeAddress returns a local address that no listener holds.
+func freeAddress(t *testing.T) string {
+	t.Helper()
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := free.Addr().String()
+	require.NoError(t, free.Close())
+	return address
+}
+
+// requireLeaderGauge waits until the coordinator serving its metrics on
+// metricsAddress reports expected as whether it holds the leadership.
+func requireLeaderGauge(t *testing.T, metricsAddress string, expected int) {
+	t.Helper()
+	pattern := regexp.MustCompile(fmt.Sprintf(`(?m)^oxia_coordinator_is_leader(\{[^}]*\})? %d$`, expected))
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+metricsAddress+"/metrics", http.NoBody)
+		require.NoError(c, err)
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(c, err)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(c, err)
+		assert.Regexp(c, pattern, string(body))
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 // newTestOptions returns the options of a coordinator on the memory metadata,

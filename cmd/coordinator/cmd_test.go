@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oxia-db/oxia/common/codec"
+	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/oxiad/coordinator/option"
 )
 
@@ -479,6 +481,49 @@ func TestExecReturnsValidationError(t *testing.T) {
 	err := Cmd.ExecuteContext(t.Context())
 
 	assert.ErrorContains(t, err, "must be one of")
+}
+
+// A coordinator that fails to start fails the command.
+func TestExecReturnsCoordinatorStartError(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	resetCmd(t)
+	failpointErr := errors.New("failpoint")
+	failpoint.Enable("coordinator.newRuntime", failpointErr)
+	t.Cleanup(func() { failpoint.Disable("coordinator.newRuntime") })
+	Cmd.SetArgs([]string{"--metadata", "memory", "--public-addr", "localhost:0",
+		"--internal-addr", "localhost:0", "--metrics-addr", "localhost:0"})
+
+	err := Cmd.ExecuteContext(t.Context())
+
+	assert.ErrorIs(t, err, failpointErr)
+}
+
+// A coordinator that loses the leadership ends the command with an error, so
+// that the process exits and its restart rejoins the election.
+func TestExecReturnsErrorOnLeadershipLoss(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	resetCmd(t)
+	leadershipLost := make(chan struct{})
+	close(leadershipLost)
+	failpoint.Enable("coordinator.leadershipLost", (<-chan struct{})(leadershipLost))
+	t.Cleanup(func() { failpoint.Disable("coordinator.leadershipLost") })
+	Cmd.SetArgs([]string{"--metadata", "memory", "--public-addr", "localhost:0",
+		"--internal-addr", "localhost:0", "--metrics-addr", "localhost:0"})
+
+	errs := make(chan error, 1)
+	go func() {
+		errs <- Cmd.ExecuteContext(t.Context())
+	}()
+	select {
+	case err := <-errs:
+		assert.ErrorIs(t, err, errLeadershipLost)
+	case <-time.After(time.Minute):
+		require.FailNow(t, "the command did not end on the leadership loss")
+	}
 }
 
 const validConfig = `
