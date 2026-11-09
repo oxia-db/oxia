@@ -16,6 +16,7 @@ package codec
 
 import (
 	gproto "google.golang.org/protobuf/proto"
+	yamlv3 "gopkg.in/yaml.v3"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
 )
@@ -38,3 +39,13 @@ var (
 	ClusterStatusCodec Codec[*commonproto.ClusterStatus]        = statusCodec{}
 	ClusterConfigCodec Codec[*commonproto.ClusterConfiguration] = configCodec{}
 )
+
+// marshalYAML encodes the message through its yaml tags, which keep the
+// numeric shapes of the 0.16.x metadata. It encodes a clone: yaml.v3 copies
+// the message structs, which reads their protobuf state without
+// synchronization, while the protobuf runtime stores into that state the first
+// time it reflects a message, e.g. when another goroutine logs a sub-message
+// that the value shares with it.
+func marshalYAML(value gproto.Message) ([]byte, error) {
+	return yamlv3.Marshal(gproto.Clone(value))
+}
