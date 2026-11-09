@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/oxia-db/oxia/common/failpoint"
+	"github.com/oxia-db/oxia/common/process"
 )
 
 const (
@@ -59,6 +60,18 @@ func (t *quorumLossTracker) observe(reachable, total int, now time.Time) bool {
 		t.lostSince = now
 	}
 	return now.Sub(t.lostSince) >= t.timeout
+}
+
+// startQuorumWatcher starts the watcher of the data servers, unless the timeout is zero: the step down is disabled.
+func (s *coordinator) startQuorumWatcher(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	s.wg.Go(func() {
+		process.DoWithLabels(s.ctx, map[string]string{
+			"component": "quorum-watcher",
+		}, func() { s.bgQuorumWatcher(timeout) })
+	})
 }
 
 // bgQuorumWatcher gives up the leadership when the leader cannot reach a majority of the data servers: it only
