@@ -1475,6 +1475,286 @@ func TestLeaderController_EntryVisibilityAfterBecomingLeader(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// A leader that lost its quorum fails the writes with a retryable error, instead of keeping them waiting until the
+// quorum returns, so that the clients can look up the new leader that the coordinator elected meanwhile.
+func TestLeaderControllerWriteFailsWhenNoQuorumCommitsIt(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	assert.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	provider := rpc.NewMockRpcClient()
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, provider, walFactory, kvFactory, nil)
+	assert.NoError(t, err)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	assert.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 3,
+		FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+	})
+	assert.NoError(t, err)
+
+	put := func(key string) (*proto.WriteResponse, error) {
+		return lc.WriteBlock(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte("v")}},
+		})
+	}
+
+	// The follower acknowledges nothing: the write fails when its timeout is over
+	start := time.Now()
+	_, err = put("a")
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.GreaterOrEqual(t, time.Since(start), writeCommitTimeout)
+	assert.Less(t, time.Since(start), writeCommitTimeout+3*time.Second)
+
+	// The next writes would wait for the same quorum: they fail at once
+	start = time.Now()
+	_, err = put("b")
+	assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	assert.Less(t, time.Since(start), time.Second)
+	writeErr := make(chan error, 1)
+	lc.Write(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "b", Value: []byte("v")}},
+	}, concurrent.NewOnce(func(*proto.WriteResponse) { writeErr <- nil }, func(err error) { writeErr <- err }))
+	select {
+	case err := <-writeErr:
+		assert.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	default:
+		assert.Fail(t, "the write did not fail at once")
+	}
+
+	// The quorum returns: the follower acknowledges the entries, and the leader accepts the writes again
+	stopAcks := ackAppends(provider)
+	defer stopAcks()
+	assert.Eventually(t, func() bool {
+		_, err := put("c")
+		return err == nil
+	}, 10*time.Second, 50*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// A write whose entry the quorum committed doesn't time out while it waits for the apply of an earlier entry that keeps
+// failing: its client would send it again, although it's applied.
+func TestLeaderControllerWriteDoesNotTimeOutOnceCommitted(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+	failures := &atomic.Int64{}
+
+	lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+		walFactory, failingReadKVFactory{Factory: kvFactory, key: "b", failures: failures}, nil)
+	require.NoError(t, err)
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err)
+
+	// The apply of the put of "b" keeps failing, and holds back the one of "c": both are committed
+	failures.Store(math.MaxInt64)
+	results := make(chan error, 2)
+	for _, key := range []string{"b", "c"} {
+		lc.Write(context.Background(), &proto.WriteRequest{
+			Shard: &shard,
+			Puts:  []*proto.PutRequest{{Key: key, Value: []byte(key)}},
+		}, concurrent.NewOnce(func(*proto.WriteResponse) { results <- nil }, func(err error) { results <- err }))
+	}
+	select {
+	case err := <-results:
+		require.FailNow(t, "a committed write returned before its apply", "error: %v", err)
+	case <-time.After(writeCommitTimeout + time.Second):
+	}
+
+	failures.Store(0)
+	for range 2 {
+		select {
+		case err := <-results:
+			assert.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "the committed writes were not applied")
+		}
+	}
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// The timers of the writes can fire out of order: the earlier entry that timed out must not hide the later one, which
+// the new writes would wait for too.
+func TestLeaderControllerRecordTimedOutOffsetKeepsTheHighest(t *testing.T) {
+	lc := &leaderController{}
+	lc.timedOutOffset.Store(noTimedOutOffset)
+
+	lc.recordTimedOutOffset(11)
+	lc.recordTimedOutOffset(10)
+	assert.Equal(t, int64(11), lc.timedOutOffset.Load())
+
+	lc.recordTimedOutOffset(12)
+	assert.Equal(t, int64(12), lc.timedOutOffset.Load())
+}
+
+// The registration of a session waits for its quorum past the timeout of the writes of the clients: a registration
+// that the quorum commits after its creation failed would leave a session record that never expires.
+func TestLeaderControllerCreateSessionWaitsForTheQuorumToReturn(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	provider := rpc.NewMockRpcClient()
+	controller, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, provider, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	lc := controller.(*leaderController)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 3,
+		FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+	})
+	require.NoError(t, err)
+
+	// The follower acknowledges nothing: the session is registered when the quorum returns
+	type created struct {
+		response *proto.CreateSessionResponse
+		err      error
+	}
+	result := make(chan created, 1)
+	go func() {
+		response, err := lc.CreateSession(&proto.CreateSessionRequest{
+			Shard:            shard,
+			SessionTimeoutMs: uint32(constant.MinSessionTimeout.Milliseconds()),
+		})
+		result <- created{response, err}
+	}()
+	select {
+	case r := <-result:
+		require.FailNow(t, "the creation of the session returned without its quorum", "response: %v, error: %v",
+			r.response, r.err)
+	case <-time.After(writeCommitTimeout + time.Second):
+	}
+
+	stopAcks := ackAppends(provider)
+	defer stopAcks()
+	var r created
+	select {
+	case r = <-result:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the session was not created when the quorum returned")
+	}
+	require.NoError(t, r.err)
+
+	// The session is registered: it expires, and its record is deleted
+	assert.Eventually(t, func() bool {
+		return getSessionMetadata(t, lc, r.response.SessionId) == nil
+	}, 10*time.Second, 50*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
+// While no quorum committed a write that timed out, the leader fails the writes of the clients at once, but not its
+// own: the delete of a session that expires meanwhile is appended, and the quorum commits it when it returns, with the
+// ephemeral records of the session.
+func TestLeaderControllerDeletesASessionThatExpiresWhileNoQuorumCommits(t *testing.T) {
+	var shard int64 = 1
+
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	walFactory := newTestWalFactory(t)
+
+	provider := rpc.NewMockRpcClient()
+	controller, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, provider, walFactory,
+		kvFactory, nil)
+	require.NoError(t, err)
+	lc := controller.(*leaderController)
+
+	_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+	require.NoError(t, err)
+	_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+		Shard:             shard,
+		Term:              1,
+		ReplicationFactor: 3,
+		FollowerMaps:      map[string]*proto.EntryId{"f1": constant2.InvalidEntryId},
+	})
+	require.NoError(t, err)
+
+	stopAcks := ackAppends(provider)
+	session, err := lc.CreateSession(&proto.CreateSessionRequest{
+		Shard:            shard,
+		SessionTimeoutMs: uint32(constant.MinSessionTimeout.Milliseconds()),
+	})
+	require.NoError(t, err)
+	sessionId := session.SessionId
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "ephemeral", Value: []byte("v"), SessionId: &sessionId}},
+	})
+	require.NoError(t, err)
+
+	// The quorum is lost. The session is kept alive until a write timed out
+	stopAcks()
+	heartbeatsCtx, stopHeartbeats := context.WithCancel(context.Background())
+	heartbeatsDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatsDone)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				assert.NoError(t, lc.KeepAlive(sessionId))
+			case <-heartbeatsCtx.Done():
+				return
+			}
+		}
+	}()
+	_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{
+		Shard: &shard,
+		Puts:  []*proto.PutRequest{{Key: "a", Value: []byte("v")}},
+	})
+	require.ErrorIs(t, err, constant.ErrResourceUnavailable)
+	stopHeartbeats()
+	<-heartbeatsDone
+
+	// The session expires while the writes of the clients fail at once: its delete is appended after the write that
+	// timed out, and sent to the follower
+	require.Eventually(t, func() bool {
+		return len(provider.AppendReqs) == 2
+	}, 10*time.Second, 10*time.Millisecond)
+
+	// The quorum returns
+	stopAcks = ackAppends(provider)
+	defer stopAcks()
+	assert.Eventually(t, func() bool {
+		return getSessionMetadata(t, lc, sessionId) == nil && !keyExists(t, lc, "ephemeral")
+	}, 10*time.Second, 50*time.Millisecond)
+
+	assert.NoError(t, lc.Close())
+	assert.NoError(t, kvFactory.Close())
+	assert.NoError(t, walFactory.Close())
+}
+
 // A write request that can't be applied has no effect: the leader answers the
 // client with the error, and applies the entry. A replica that applies the
 // entry when it becomes leader must move past it too.
@@ -5258,4 +5538,26 @@ func (cb *hookStreamCallback) OnNext(batch *proto.EncodedNotificationBatch) erro
 
 func (cb *hookStreamCallback) OnComplete(err error) {
 	cb.completed <- err
+}
+
+// ackAppends acknowledges the entries that the leader sends to the follower of provider, until the function it returns
+// is called.
+func ackAppends(provider *rpc.MockRpcClient) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case req := <-provider.AppendReqs:
+				provider.AckResps <- &proto.Ack{Offset: req.Entry.Offset}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
