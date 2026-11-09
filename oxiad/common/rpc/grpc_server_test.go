@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/oxia-db/oxia/oxiad/common/rpc/auth"
 )
@@ -102,4 +103,14 @@ func TestGrpcServerServeLogsFailure(t *testing.T) {
 
 	assert.Contains(t, logs.String(), "Failed to serve")
 	assert.NoError(t, c.Close())
+}
+
+// The internal server pings the connections that go quiet, to notice a peer that went away behind a partition. The
+// public one keeps the default, as it has many clients.
+func TestKeepaliveParams(t *testing.T) {
+	internal := keepaliveParams(internalServerName)
+	assert.Equal(t, internalKeepAliveTime, internal.Time)
+	assert.Equal(t, internalKeepAliveTimeout, internal.Timeout)
+
+	assert.Equal(t, keepalive.ServerParameters{}, keepaliveParams("public"))
 }

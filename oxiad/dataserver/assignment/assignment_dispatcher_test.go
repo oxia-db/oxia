@@ -17,6 +17,7 @@ package assignment
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -233,6 +234,99 @@ func TestShardAssignmentDispatcher_AddClient(t *testing.T) {
 	wg.Wait()
 
 	assert.NoError(t, dispatcher.Close())
+}
+
+// A data server that lost the stream of the coordinator doesn't hear about the changes of the leaders, so it must not
+// give its assignments to the clients: it ends the streams of the ones it has, and refuses the new ones, until the
+// coordinator pushes the assignments again. The clients then ask another data server.
+func TestShardAssignmentDispatcherRegisterForUpdatesFailsWhenCoordinatorStreamEnds(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, dispatcher.Close()) })
+
+	assignments := singleShardAssignments("server1")
+	push := func() *endableCoordinatorStream {
+		stream := newEndableCoordinatorStream()
+		go func() { _ = dispatcher.PushShardAssignments(stream) }()
+		stream.AddRequest(assignments)
+		return stream
+	}
+	request := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
+
+	coordinator := push()
+	require.Eventually(t, dispatcher.Initialized, 10*time.Second, 10*time.Millisecond)
+
+	client := rpc.NewMockShardAssignmentClientStream()
+	registered := make(chan error, 1)
+	go func() { registered <- dispatcher.RegisterForUpdates(request, client) }()
+	assert.True(t, pb.Equal(assignments, client.GetResponse()))
+
+	// The coordinator is lost: the stream of the client ends with a status that it retries elsewhere
+	coordinator.end()
+	select {
+	case err := <-registered:
+		assert.ErrorIs(t, err, constant.ErrNotInitialized)
+	case <-time.After(10 * time.Second):
+		// Stop here: the registration below would block until the dispatcher closes, in the cleanup
+		require.FailNow(t, "the stream of the client was not ended")
+	}
+	assert.ErrorIs(t, dispatcher.RegisterForUpdates(request, rpc.NewMockShardAssignmentClientStream()), constant.ErrNotInitialized)
+
+	// The coordinator pushes again: the data server serves the clients
+	push()
+	require.Eventually(t, func() bool {
+		d := dispatcher.(*shardAssignmentDispatcher)
+		d.RLock()
+		defer d.RUnlock()
+		return !d.coordinatorLost
+	}, 10*time.Second, 10*time.Millisecond)
+	client = rpc.NewMockShardAssignmentClientStream()
+	go func() { _ = dispatcher.RegisterForUpdates(request, client) }()
+	assert.True(t, pb.Equal(assignments, client.GetResponse()))
+	client.Cancel()
+}
+
+// A new coordinator, e.g. the next leader, can open its stream before the stream of the old one ends: the data server
+// keeps serving the clients until the last stream ends.
+func TestShardAssignmentDispatcherRegisterForUpdatesServesUntilTheLastCoordinatorStreamEnds(t *testing.T) {
+	dispatcher := NewShardAssignmentDispatcher(oxiadcommonrpc.NewClosableHealthServer(t.Context()))
+	t.Cleanup(func() { assert.NoError(t, dispatcher.Close()) })
+	request := &proto.ShardAssignmentsRequest{Namespace: constant.DefaultNamespace}
+
+	oldCoordinator := newEndableCoordinatorStream()
+	oldCoordinatorEnded := make(chan error, 1)
+	go func() { oldCoordinatorEnded <- dispatcher.PushShardAssignments(oldCoordinator) }()
+	oldCoordinator.AddRequest(singleShardAssignments("server1"))
+	require.Eventually(t, dispatcher.Initialized, 10*time.Second, 10*time.Millisecond)
+
+	client := rpc.NewMockShardAssignmentClientStream()
+	registered := make(chan error, 1)
+	go func() { registered <- dispatcher.RegisterForUpdates(request, client) }()
+	assert.True(t, pb.Equal(singleShardAssignments("server1"), client.GetResponse()))
+
+	// The client receiving the assignments of the new coordinator means that its stream is open
+	newCoordinator := newEndableCoordinatorStream()
+	go func() { _ = dispatcher.PushShardAssignments(newCoordinator) }()
+	newCoordinator.AddRequest(singleShardAssignments("server2"))
+	assert.True(t, pb.Equal(singleShardAssignments("server2"), client.GetResponse()))
+
+	oldCoordinator.end()
+	select {
+	case <-oldCoordinatorEnded:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the stream of the old coordinator did not end")
+	}
+	// A registration whose client is gone returns nil once it is accepted, and doesn't wait for the updates
+	gone := rpc.NewMockShardAssignmentClientStream()
+	gone.Cancel()
+	assert.NoError(t, dispatcher.RegisterForUpdates(request, gone))
+
+	newCoordinator.end()
+	select {
+	case err := <-registered:
+		assert.ErrorIs(t, err, constant.ErrNotInitialized)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the stream of the client was not ended")
+	}
 }
 
 func TestShardAssignmentDispatcher_MultipleNamespaces(t *testing.T) {
@@ -682,4 +776,36 @@ func (c *fakeClient) Send(assignments *proto.ShardAssignments) error {
 
 func (c *fakeClient) Context() context.Context {
 	return c.ctx
+}
+
+// endableCoordinatorStream is a stream of the coordinator that ends when the test says so, like a lost connection.
+type endableCoordinatorStream struct {
+	*rpc.MockShardAssignmentControllerStream
+	requests chan *proto.ShardAssignments
+	ended    chan struct{}
+}
+
+func newEndableCoordinatorStream() *endableCoordinatorStream {
+	return &endableCoordinatorStream{
+		MockShardAssignmentControllerStream: rpc.NewMockShardAssignmentControllerStream(),
+		requests:                            make(chan *proto.ShardAssignments, 10),
+		ended:                               make(chan struct{}),
+	}
+}
+
+func (s *endableCoordinatorStream) AddRequest(assignments *proto.ShardAssignments) {
+	s.requests <- assignments
+}
+
+func (s *endableCoordinatorStream) Recv() (*proto.ShardAssignments, error) {
+	select {
+	case assignments := <-s.requests:
+		return assignments, nil
+	case <-s.ended:
+		return nil, io.EOF
+	}
+}
+
+func (s *endableCoordinatorStream) end() {
+	close(s.ended)
 }

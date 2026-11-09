@@ -60,8 +60,15 @@ type shardAssignmentDispatcher struct {
 
 	clients      map[int64]chan *proto.ShardAssignments
 	nextClientId int64
-	standalone   bool
-	healthServer oxiadcommonrpc.HealthServer
+	// pushStreams is the number of streams that the coordinator has open to push the assignments, and coordinatorLost
+	// is set when the last one ended, until the next assignments arrive. A data server that lost the coordinator, e.g.
+	// to a partition, doesn't hear about the changes of the leaders, so it must not give its assignments to the
+	// clients: they would route to a leader that was replaced. Owner: the dispatcher, under its lock. Changed by
+	// PushShardAssignments and the updates, read by the registrations.
+	pushStreams     int
+	coordinatorLost bool
+	standalone      bool
+	healthServer    oxiadcommonrpc.HealthServer
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -74,7 +81,7 @@ type shardAssignmentDispatcher struct {
 func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmentsRequest, clientStream Client) error {
 	s.Lock()
 
-	if s.assignments == nil {
+	if s.assignments == nil || s.coordinatorLost {
 		s.Unlock()
 		return constant.ErrNotInitialized
 	}
@@ -117,7 +124,11 @@ func (s *shardAssignmentDispatcher) RegisterForUpdates(req *proto.ShardAssignmen
 
 	for {
 		select {
-		case assignments := <-clientCh:
+		case assignments, ok := <-clientCh:
+			if !ok {
+				// The coordinator is out of reach: the client asks another data server
+				return constant.ErrNotInitialized
+			}
 			assignments = filterByNamespace(assignments, namespace)
 			err := clientStream.Send(assignmentsInterceptorFunc(assignments))
 			if err != nil {
@@ -212,6 +223,11 @@ func (s *shardAssignmentDispatcher) Initialized() bool {
 }
 
 func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordination_PushShardAssignmentsServer) error {
+	s.Lock()
+	s.pushStreams++
+	s.Unlock()
+	defer s.pushStreamEnded()
+
 	streamReader := ReadStream(
 		s.ctx,
 		stream,
@@ -227,6 +243,22 @@ func (s *shardAssignmentDispatcher) PushShardAssignments(stream proto.OxiaCoordi
 		),
 	)
 	return streamReader.Run()
+}
+
+// pushStreamEnded closes the streams of the clients when the last stream of the coordinator ended: from then on the
+// assignments may be stale.
+func (s *shardAssignmentDispatcher) pushStreamEnded() {
+	s.Lock()
+	defer s.Unlock()
+	s.pushStreams--
+	if s.pushStreams > 0 {
+		return
+	}
+	s.coordinatorLost = true
+	for clientId, clientCh := range s.clients {
+		close(clientCh)
+		delete(s.clients, clientId)
+	}
 }
 
 func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.ShardAssignments) {
@@ -246,6 +278,7 @@ func (s *shardAssignmentDispatcher) updateShardAssignment(assignments *proto.Sha
 	}
 
 	s.assignments = assignments
+	s.coordinatorLost = false
 
 	shardIndex := redblacktree.New[int64, *proto.ShardAssignment]()
 	allowedAuthorities := hashset.New[string](assignments.GetAllowedAuthorities()...)
