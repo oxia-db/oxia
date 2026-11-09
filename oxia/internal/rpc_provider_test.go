@@ -255,6 +255,44 @@ func shardRequests(shardId *int64) []shardRequest {
 	}
 }
 
+// The address of a deleted pod neither refuses nor answers the connection. A request to it fails after the connect
+// timeout with a status that the callers retry, instead of waiting for its whole deadline.
+func TestRpcProviderRequestToHangingAddressFailsAfterConnectTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var accepted []net.Conn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted = append(accepted, c) // accepts the connection and never answers it
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+		for _, c := range accepted {
+			_ = c.Close()
+		}
+	})
+
+	provider := newRpcProvider(t.Context(), constant.DefaultNamespace, nil, nil, listener.Addr().String(),
+		func() ShardManager { return nil }, nil)
+	t.Cleanup(func() { _ = provider.Close() })
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	_, err = provider.CreateSession(ctx, listener.Addr().String(), &proto.CreateSessionRequest{})
+
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Less(t, time.Since(start), 8*time.Second)
+}
+
 // When the leader of a shard goes away, the client keeps sending the requests
 // for that shard to the old leader until it receives the updated shard
 // assignments. These attempts fail with a transport-level Unavailable error,
