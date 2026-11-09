@@ -32,7 +32,9 @@ and terms is required.
 CONSTANTS Coordinators,         \* The set of all coordinators (should only be one but the protocol should handle multiple)
           Nodes,             \* The set of all nodes
           Values,            \* The set of all values that can be sent by clients
-          RepFactor          \* The desired initial replication factor
+          RepFactor,         \* The desired initial replication factor
+          Feature,           \* The set of features a node binary may support
+          ModelFeatureRaces  \* Whether the feature enable and downgrade actions are enabled
 
 \* State space
 CONSTANTS MaxTerms,         \* The max number of terms for the model checker to explore
@@ -98,14 +100,14 @@ symmetry == Permutations(Values) \union Permutations(Coordinators)
 Term == 0..MaxTerms
 NodesOrNil == Nodes \union {NIL}
 EntryId == [offset: Nat, term: Term]
-LogEntry == [entry_id: EntryId, value: Values]
+LogEntry == [entry_id: EntryId, value: Values \union {NIL}, features: SUBSET Feature]
 CursorStatus == { NIL, ATTACHED, PENDING_TRUNCATE }
 Cursor == [status: CursorStatus, last_pushed: EntryId, last_confirmed: EntryId]
 NodeStatus == { LEADER, FOLLOWER, FENCED, NOT_MEMBER }
 
 \* equivalent of null for various record types
 NoEntryId == [offset |-> 0, term |-> 0]
-NoLogEntry == [entry_id |-> NoEntryId, value |-> NIL]
+NoLogEntry == [entry_id |-> NoEntryId, value |-> NIL, features |-> {}]
 NoCursor == [status |-> NIL, last_pushed |-> NoEntryId, last_confirmed |-> NoEntryId]
 
 \* ------------------------------
@@ -117,7 +119,8 @@ NewTermRequest ==
     [type:     {NEW_TERM_REQUEST},
      node:     Nodes,
      coordinator: Coordinators,
-     term:    Term]
+     term:    Term,
+     features: SUBSET Feature]
 
 \* Node -> Coordinator
 NewTermResponse ==
@@ -125,7 +128,8 @@ NewTermResponse ==
      node:       Nodes,
      coordinator:   Coordinators,
      head_entry_id: EntryId,
-     term:      Term]
+     term:      Term,
+     features:    SUBSET Feature]
 
 \* Coordinator -> Node
 BecomeLeaderRequest ==
@@ -203,7 +207,9 @@ Metadata == [shard_status: ShardStatus,
              ensemble:     SUBSET Nodes,
              rep_factor:   Nat,
              leader:       NodesOrNil,
-             change:       EnsembleChange \union {NIL}]
+             change:       EnsembleChange \union {NIL},
+             pinned:       SUBSET Feature,
+             enabled:      SUBSET Feature]
 
 \* Node and Coordinator state
 NodeState == [id:              Nodes,
@@ -214,7 +220,8 @@ NodeState == [id:              Nodes,
               log:             SUBSET LogEntry,
               commit_entry_id:    EntryId,
               head_entry_id:      EntryId,
-              follow_cursor:   [Nodes -> Cursor]]
+              follow_cursor:   [Nodes -> Cursor],
+              supported:        SUBSET Feature]
 
 CoordinatorStatuses == {NOT_RUNNING, RUNNING}
 ElectionPhases == { NIL, FENCING, NOTIFY_LEADER, LEADER_ELECTED }
@@ -256,7 +263,9 @@ Init ==
                        ensemble     |-> ensemble,
                        rep_factor   |-> RepFactor,
                        leader       |-> NIL,
-                       change       |-> NIL]
+                       change       |-> NIL,
+                       pinned       |-> {},
+                       enabled      |-> {}]
         /\ node_state = [n \in Nodes |->
                             [id              |-> n,
                              status          |-> NOT_MEMBER,
@@ -266,7 +275,8 @@ Init ==
                              log             |-> {},
                              commit_entry_id    |-> NoEntryId,
                              head_entry_id      |-> NoEntryId,
-                             follow_cursor   |-> [n1 \in Nodes |-> NoCursor]]]
+                             follow_cursor   |-> [n1 \in Nodes |-> NoCursor],
+                             supported       |-> Feature]]
         /\ coordinator_state = [o \in Coordinators |->
                             [id                        |-> o,
                              status                    |-> NOT_RUNNING,
@@ -295,6 +305,13 @@ OldEnsemble(md) ==
     IF md.change = NIL
     THEN md.ensemble
     ELSE (md.ensemble \ {md.change.to}) \union {md.change.from}
+
+\* The features that every member of the ensemble supports. A member that
+\* does not support a feature keeps it from being pinned.
+Negotiated(ensemble) ==
+    IF ensemble = {}
+    THEN {}
+    ELSE { f \in Feature : \A n \in ensemble : f \in node_state[n].supported }
 
 \* Does this set of fenced nodes reach the quorum of the fence? As Raft's joint
 \* consensus, it overlaps every majority of the ensemble before the change,
@@ -429,11 +446,12 @@ CoordinatorStops ==
     ensemble after it.
 ----------------------------------------------------------*)
 
-GetNewTermRequests(o, new_term, ensemble) ==
+GetNewTermRequests(o, new_term, ensemble, features) ==
     { [type     |-> NEW_TERM_REQUEST,
        node     |-> n,
        coordinator |-> o,
-       term    |-> new_term] : n \in ensemble }
+       term    |-> new_term,
+       features    |-> features] : n \in ensemble }
 
 \* No change, or a change of the ensemble when none is pending
 ElectionChanges(md) ==
@@ -459,9 +477,11 @@ CoordinatorStartsElection ==
             /\ \E change \in ElectionChanges(metadata) :
                 \* state changes
                 /\ LET new_term      == metadata.term + 1
+                       features      == Negotiated(metadata.ensemble) \cup metadata.enabled
                        new_metadata   == [metadata EXCEPT !.term        = new_term,
                                                           !.shard_status = ELECTION,
-                                                          !.leader       = NIL]
+                                                          !.leader       = NIL,
+                                                          !.pinned       = features]
                        election_md    == ApplyChange(new_metadata, change)
                        new_md_version == metadata_version + 1
                    IN
@@ -475,7 +495,8 @@ CoordinatorStartsElection ==
                                                                    ![o].election_leader_head      = NoEntryId,
                                                                    ![o].election_fence_responses  = {}]
                        /\ SendMessages(GetNewTermRequests(o, new_term,
-                                                          election_md.ensemble \union OldEnsemble(election_md)))
+                                                          election_md.ensemble \union OldEnsemble(election_md),
+                                                          features))
     /\ UNCHANGED << node_state, confirmed, coordinator_stop_ctr >>
 
 
@@ -497,7 +518,8 @@ GetNewTermResponse(nstate, new_term, o) ==
      node           |-> nstate.id,
      coordinator       |-> o,
      head_entry_id     |-> nstate.head_entry_id,
-     term          |-> new_term]
+     term          |-> new_term,
+     features         |-> nstate.supported]
 
 NodeHandlesFencingRequest ==
     \* enabling conditions
@@ -505,6 +527,7 @@ NodeHandlesFencingRequest ==
         /\ ReceivableMessageOfType(messages, msg, NEW_TERM_REQUEST)
         /\ LET nstate == node_state[msg.node]
            IN /\ nstate.term < msg.term
+              /\ msg.features \subseteq nstate.supported
               \* state changes
               /\ node_state' = [node_state EXCEPT ![msg.node] =
                                     [@ EXCEPT !.term           = msg.term,
@@ -514,6 +537,49 @@ NodeHandlesFencingRequest ==
               /\ ProcessedOneAndSendAnother(msg, GetNewTermResponse(nstate, msg.term, msg.coordinator))
               /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, coordinator_stop_ctr >>
 
+(*---------------------------------------------------------
+  A node restarts with an older binary
+
+  A downgrade is modeled as the node losing the ability to
+  support one of its features at any time. This is the race
+  the feature negotiation must close: the node may have been
+  fenced into a term whose pinned features it no longer
+  supports.
+----------------------------------------------------------*)
+Downgrade ==
+    \E n \in Nodes, f \in Feature :
+        LET nstate        == node_state[n]
+            new_supported == nstate.supported \ {f}
+        IN
+        /\ f \in nstate.supported
+        /\ node_state' = [node_state EXCEPT ![n] =
+              IF /\ nstate.status \in {LEADER, FOLLOWER, FENCED}
+                 /\ nstate.term = metadata.term
+                 /\ ~(metadata.pinned \subseteq new_supported)
+              THEN [nstate EXCEPT !.supported     = new_supported,
+                                  !.status        = NOT_MEMBER,
+                                  !.term          = 0,
+                                  !.follow_cursor = [n1 \in Nodes |-> NoCursor]]
+              ELSE [nstate EXCEPT !.supported = new_supported]]
+        /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  The leader enables the features pinned by the term
+
+  Once the leader starts, it appends the FeatureEnable control
+  entry that turns the pinned features on for the shard.
+  Enabling is monotonic: features are only ever added. The
+  action does not re-check the support of the members, so a
+  node that downgraded after the fence is caught by the safety
+  invariants instead.
+----------------------------------------------------------*)
+FeatureEnable ==
+    /\ metadata.leader # NIL
+    /\ node_state[metadata.leader].status = LEADER
+    /\ node_state[metadata.leader].term = metadata.term
+    /\ \E f \in metadata.pinned : f \notin metadata.enabled
+    /\ metadata' = [metadata EXCEPT !.enabled = @ \cup metadata.pinned]
+    /\ UNCHANGED << metadata_version, node_state, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   Coordinator handles a fence response during the fencing
@@ -732,6 +798,7 @@ NodeHandlesBecomeLeaderRequest ==
     \E msg \in DOMAIN messages :
         /\ ReceivableMessageOfType(messages, msg, BECOME_LEADER_REQUEST)
         /\ node_state[msg.node].term = msg.term
+        /\ metadata.pinned \subseteq node_state[msg.node].supported
         /\ LET truncate_requests == GetTruncateRequests(node_state[msg.node], msg.follower_map)
                leader_response   == GetBecomeLeaderResponse(msg.node, msg.term, msg.coordinator)
                updated_cursors   == GetCursors(node_state[msg.node], msg.follower_map)
@@ -870,6 +937,7 @@ LeaderHandlesAddFollowerRequest ==
         /\ ReceivableMessageOfType(messages, msg, ADD_FOLLOWER_REQUEST)
         /\ node_state[msg.node].term = msg.term
         /\ node_state[msg.node].status = LEADER
+        /\ metadata.pinned \subseteq node_state[msg.follower].supported
         /\ node_state[msg.node].follow_cursor[msg.follower].status = NIL
         \* state changes
         /\ node_state' = [node_state EXCEPT ![msg.node].follow_cursor[msg.follower] =
@@ -917,6 +985,7 @@ NodeHandlesTruncateRequest ==
            IN
                 /\ nstate.status = FENCED
                 /\ nstate.term = msg.term
+                /\ metadata.pinned \subseteq nstate.supported
                 \* state changes
                 /\ node_state' = [node_state EXCEPT ![msg.dest_node] =
                                         [@ EXCEPT !.status        = FOLLOWER,
@@ -970,13 +1039,42 @@ Write ==
             /\ LET entry_id  == [offset |-> nstate.head_entry_id.offset + 1,
                                  term  |-> nstate.term]
                    log_entry == [entry_id |-> entry_id,
-                                 value    |-> v]
+                                 value    |-> v,
+                                 features |-> {}]
                IN
                     /\ node_state' = [node_state EXCEPT ![n] =
                                         [@ EXCEPT !.log        = @ \union { log_entry },
                                                   !.head_entry_id = entry_id]]
                     /\ confirmed' = confirmed @@ (v :> FALSE)
             /\ UNCHANGED << metadata, metadata_version, coordinator_state, metadata, messages, coordinator_stop_ctr >>
+
+(*---------------------------------------------------------
+  The leader appends the FeatureEnable control entry
+
+  Once the leader starts, it appends the control entry that
+  enables the pinned features that are not enabled yet. As a
+  control entry, it has no client value, and its features are
+  carried by the entry so a follower can validate them when it
+  applies the entry.
+----------------------------------------------------------*)
+FeatureEnablePropose ==
+    \E n \in Nodes :
+        LET nstate  == node_state[n]
+            features == metadata.pinned \ metadata.enabled
+        IN
+            /\ features # {}
+            /\ nstate.status = LEADER
+            /\ nstate.term = metadata.term
+            /\ LET entry_id == [offset |-> nstate.head_entry_id.offset + 1,
+                                term   |-> nstate.term]
+                   entry    == [entry_id |-> entry_id,
+                                value    |-> NIL,
+                                features |-> features]
+               IN
+                   /\ node_state' = [node_state EXCEPT ![n] =
+                                       [@ EXCEPT !.log          = @ \union { entry },
+                                                 !.head_entry_id = entry_id]]
+                   /\ UNCHANGED << metadata, metadata_version, coordinator_state, confirmed, messages, coordinator_stop_ctr >>
 
 
 (*---------------------------------------------------------
@@ -1081,6 +1179,7 @@ FollowerConfirmsEntry ==
            IN
                 /\ fstate.status \in {FOLLOWER, FENCED}
                 /\ fstate.term <= msg.term \* reconfig could mean leader has higher term than follower
+                /\ metadata.pinned \subseteq fstate.supported
                 \* state changes
                 /\ node_state' = [node_state EXCEPT ![f].status       = FOLLOWER,
                                                     ![f].term        = msg.term,
@@ -1191,11 +1290,15 @@ LeaderHandlesEntryConfirm ==
                                                                   ![leader].commit_entry_id  = IF IsHigherId(msg.entry_id, @)
                                                                                             THEN msg.entry_id
                                                                                             ELSE @]
-                              /\ confirmed' = [confirmed EXCEPT ![entry.value] = TRUE]
+                              /\ IF entry.features = {}
+                                 THEN /\ confirmed' = [confirmed EXCEPT ![entry.value] = TRUE]
+                                      /\ UNCHANGED metadata
+                                 ELSE /\ metadata' = [metadata EXCEPT !.enabled = @ \cup entry.features]
+                                      /\ UNCHANGED confirmed
                          ELSE /\ node_state' = [node_state EXCEPT ![leader].follow_cursor = updated_cursor]
-                              /\ UNCHANGED confirmed
+                              /\ UNCHANGED << confirmed, metadata >>
                       /\ MessageProcessed(msg)
-            /\ UNCHANGED << metadata, metadata_version, coordinator_state, metadata, coordinator_stop_ctr >>
+            /\ UNCHANGED << metadata_version, coordinator_state, coordinator_stop_ctr >>
 
 (*---------------------------------------------------------
   A leader node handles an add entry rejection response
@@ -1228,6 +1331,8 @@ Next ==
     \/ CoordinatorStops                              \* a running coordinator stops, losing all local state
     \/ CoordinatorStartsElection                     \* election starts, fencing requests sent
     \/ NodeHandlesFencingRequest                  \* node fences itself, responds with head entry_id
+    \/ ModelFeatureRaces /\ Downgrade             \* a node restarts with an older binary, losing a feature
+    \/ ModelFeatureRaces /\ FeatureEnable         \* the leader enables the features pinned by the term
     \/ CoordinatorHandlesFencingResponse             \* coordinator handles fence response, during the fencing
     \/ CoordinatorElectsLeader                       \* fence reached quorum, coordinator chooses and persists the leader
     \/ NodeHandlesBecomeLeaderRequest             \* new leader receives notification of leadership
@@ -1253,6 +1358,7 @@ AreEqual(entry1, entry2) ==
     /\ entry1.entry_id.term = entry2.entry_id.term
     /\ entry1.entry_id.offset = entry2.entry_id.offset
     /\ entry1.value = entry2.value
+    /\ entry1.features = entry2.features
 
 
 \* The log on all nodes matches at and below the commit entry_id
@@ -1313,6 +1419,24 @@ LegalEnsembleChange ==
        THEN /\ metadata.change.to \in metadata.ensemble
             /\ metadata.change.from \notin metadata.ensemble
        ELSE TRUE
+
+\* A node bound to the current term supports the features that the term pins
+\* and the features enabled on the shard. A downgrade unbinds the node when it
+\* would fall below that set, so the invariant holds at every state.
+FeatureSafety ==
+    \A n \in Nodes :
+        /\ node_state[n].status \in {LEADER, FOLLOWER, FENCED}
+        /\ node_state[n].term = metadata.term
+        => (metadata.pinned \cup metadata.enabled) \subseteq node_state[n].supported
+
+\* A node only applies committed entries whose features it supports. A
+\* follower that does not support the features of a FeatureEnable entry does
+\* not confirm it, so the leader never commits it through that follower.
+FeatureApplySafety ==
+    \A n \in Nodes :
+        \A entry \in node_state[n].log :
+            IsLowerOrEqualId(entry.entry_id, node_state[n].commit_entry_id)
+            => entry.features \subseteq node_state[n].supported
 
 (*-------------------------------------------------    
   LIVENESS
