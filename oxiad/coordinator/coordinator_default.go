@@ -203,6 +203,14 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		})
 	})
 
+	if timeout := controller.StepDownTimeout.ToDuration(); timeout > 0 {
+		c.wg.Go(func() {
+			process.DoWithLabels(ctx, map[string]string{
+				"component": "quorum-watcher",
+			}, func() { c.bgQuorumWatcher(timeout) })
+		})
+	}
+
 	return c, nil
 }
 

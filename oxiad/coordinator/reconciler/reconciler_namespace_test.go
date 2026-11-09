@@ -859,6 +859,8 @@ func (m *mockNamespaceRuntime) ListLiveDataServer() map[string]commonobject.Borr
 	return dataServers
 }
 
+func (*mockNamespaceRuntime) DataServerReachability() (reachable, total int) { return 0, 0 }
+
 func (*mockNamespaceRuntime) ListLiveDataServerStatus() map[string]*proto.DataServerStatus {
 	return nil
 }
