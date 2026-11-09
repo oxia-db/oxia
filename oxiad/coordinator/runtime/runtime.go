@@ -48,6 +48,9 @@ type Runtime interface {
 	// The stored status is that of Metadata().ListDataServerStatus.
 	ListLiveDataServerStatus() map[string]*proto.DataServerStatus
 	GetLiveDataServerStatus(name string) (*proto.DataServerStatus, bool)
+	// DataServerReachability returns how many of the running data servers pass their health checks, and how many are
+	// running. A data server that is draining or drained is not counted.
+	DataServerReachability() (reachable, total int)
 
 	// CreateNamespace creates the status if absent and starts any missing shard
 	// controllers from the existing status when the namespace is already saved.

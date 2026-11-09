@@ -150,6 +150,23 @@ func (c *runtime) ListLiveDataServerStatus() map[string]*proto.DataServerStatus 
 	return statuses
 }
 
+func (c *runtime) DataServerReachability() (reachable, total int) {
+	c.RLock()
+	defer c.RUnlock()
+
+	for _, dataServerController := range c.dataServerControllers {
+		status := dataServerController.GetStatus()
+		if status.GetState() != proto.DataServerState_DATA_SERVER_STATE_RUNNING {
+			continue
+		}
+		total++
+		if status.IsAvailable() {
+			reachable++
+		}
+	}
+	return reachable, total
+}
+
 func (c *runtime) GetLiveDataServerStatus(name string) (*proto.DataServerStatus, bool) {
 	c.RLock()
 	defer c.RUnlock()

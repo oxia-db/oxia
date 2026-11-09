@@ -111,6 +111,8 @@ func (*testRuntime) ListLiveDataServer() map[string]commonobject.Borrowed[*proto
 	return nil
 }
 
+func (*testRuntime) DataServerReachability() (reachable, total int) { return 0, 0 }
+
 func (r *testRuntime) ListLiveDataServerStatus() map[string]*proto.DataServerStatus {
 	return r.statuses
 }
