@@ -17,6 +17,8 @@ package rpc
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"io"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -208,4 +210,63 @@ func getInfo(ctx context.Context, client proto.OxiaCoordinationClient) (*proto.H
 		Status:            proto.HandshakeStatus_HANDSHAKE_STATUS_ALREADY_BOUND,
 		FeaturesSupported: info.FeaturesSupported,
 	}, nil
+}
+
+var _ BackupProvider = (*defaultControllerRPCProvider)(nil)
+
+func (r *defaultControllerRPCProvider) BackupShard(ctx context.Context, node *proto.DataServerIdentity, req *proto.BackupShardRequest) (*proto.BackupShardResponse, error) {
+	return backupCall(ctx, r, node, r.timeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.BackupShardResponse, error) {
+		return client.BackupShard(ctx, req)
+	})
+}
+
+func (r *defaultControllerRPCProvider) ExpireBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	return backupCall(ctx, r, node, r.timeout, func(ctx context.Context, client proto.OxiaBackupClient) (*proto.ExpireBackupsResponse, error) {
+		return client.ExpireBackups(ctx, req)
+	})
+}
+
+// ListBackupsTimeout bounds the ListBackups calls.
+const ListBackupsTimeout = 5 * time.Minute
+
+func (r *defaultControllerRPCProvider) ListBackups(ctx context.Context, node *proto.DataServerIdentity, req *proto.ListBackupsRequest,
+	visit func(*proto.ListBackupsResponse) error) error {
+	_, err := backupCall(ctx, r, node, ListBackupsTimeout, func(ctx context.Context, client proto.OxiaBackupClient) (struct{}, error) {
+		stream, err := client.ListBackups(ctx, req)
+		if err != nil {
+			return struct{}{}, err
+		}
+		for {
+			res, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return struct{}{}, nil
+			}
+			if err != nil {
+				return struct{}{}, err
+			}
+			if err := visit(res); err != nil {
+				return struct{}{}, err
+			}
+		}
+	})
+	return err
+}
+
+// backupCall calls the OxiaBackup service of a data server, within the
+// timeout, and returns its error as an oxia error.
+func backupCall[T any](ctx context.Context, r *defaultControllerRPCProvider, node *proto.DataServerIdentity, timeout time.Duration,
+	call func(ctx context.Context, client proto.OxiaBackupClient) (T, error)) (T, error) {
+	var zero T
+	client, err := r.pool.GetBackupRpc(node.Internal)
+	if err != nil {
+		oxiaErr, _ := constant.FromGrpcError(err)
+		return zero, oxiaErr
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	response, err := call(ctx, client)
+	oxiaErr, _ := constant.FromGrpcError(err)
+	return response, oxiaErr
 }

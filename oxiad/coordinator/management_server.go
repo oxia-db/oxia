@@ -554,6 +554,43 @@ func (management *ManagementServer) SplitShard(_ context.Context, req *proto.Spl
 	}, nil
 }
 
+func (management *ManagementServer) RequestBackup(_ context.Context, req *proto.RequestBackupRequest) (*proto.RequestBackupResponse, error) {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("Received RequestBackup request", slog.String("namespace", req.GetNamespace()),
+		slog.Any("shard", req.Shard))
+	count, err := runtime.RequestBackup(req.GetNamespace(), req.Shard)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return &proto.RequestBackupResponse{Shards: uint32(count)}, nil
+}
+
+func (management *ManagementServer) ListBackups(req *proto.ListBackupsRequest, stream proto.OxiaAdmin_ListBackupsServer) error {
+	runtime, err := management.getRuntime()
+	if err != nil {
+		return err
+	}
+	if err := runtime.ListBackups(stream.Context(), req, stream.Send); err != nil {
+		return backupError(err)
+	}
+	return nil
+}
+
+// backupError maps the errors of the backup operations to gRPC statuses.
+func backupError(err error) error {
+	switch {
+	case errors.Is(err, errs.ErrNotImplemented):
+		return grpcstatus.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, errs.ErrFailedPrecondition):
+		return grpcstatus.Error(codes.FailedPrecondition, err.Error())
+	default:
+		return constant.IntoGrpcStatusError(err)
+	}
+}
+
 // NewManagementServer returns a management server that reads the cluster from
 // metadata.
 func NewManagementServer(metadata coordmetadata.Metadata) *ManagementServer {
