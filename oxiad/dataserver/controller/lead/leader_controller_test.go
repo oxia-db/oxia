@@ -3550,6 +3550,73 @@ func TestLeaderController_BecomeLeaderWithFollowerSeededFromSnapshot(t *testing.
 	}
 }
 
+// A leader seeded from a snapshot has an empty wal and no term to compare with the one of a follower
+// that holds entries in its wal, e.g. the member of a split child that observed the entries of the
+// parent through another path than the leader. It sends the follower a snapshot, rather than failing
+// with an invalid term at every election. A follower that is ahead of the database of the leader
+// still fails: the leader misses entries.
+func TestLeaderControllerBecomeLeaderWithEmptyWalAndFollowerWithEntries(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// The head of the follower is of term 0. The leader's database holds the entries 0 to 9.
+		followerOffset int64
+		failsWith      error
+	}{
+		{name: "follower at the commit offset", followerOffset: 9},
+		{name: "follower behind the commit offset", followerOffset: 5},
+		{name: "follower ahead of the database", followerOffset: 12, failsWith: constant.ErrInvalidTerm},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var shard int64 = 1
+
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			// The database holds the entries and the wal is empty, as after the installation of a snapshot
+			db, err := database.NewDB(constant.DefaultNamespace, shard, kvFactory, proto.KeySortingType_HIERARCHICAL,
+				1*time.Hour, time2.SystemClock)
+			require.NoError(t, err)
+			for i := int64(0); i < 10; i++ {
+				_, err = db.ProcessWrite(&proto.WriteRequest{Puts: []*proto.PutRequest{{Key: "my-key", Value: []byte("")}}},
+					i, 0, database.NoOpCallback)
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.UpdateTerm(0, database.TermOptions{}))
+			require.NoError(t, db.Close())
+
+			rpcClient := rpc.NewMockRpcClient()
+			lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpcClient,
+				walFactory, kvFactory, nil)
+			require.NoError(t, err)
+			_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 2})
+			require.NoError(t, err)
+			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              2,
+				ReplicationFactor: 3,
+				FollowerMaps: map[string]*proto.EntryId{
+					"f1": {Term: 0, Offset: test.followerOffset},
+				},
+			})
+			if test.failsWith != nil {
+				assert.ErrorIs(t, err, test.failsWith)
+			} else {
+				require.NoError(t, err)
+				assert.Empty(t, rpcClient.TruncateReqs, "the follower got truncated")
+				assert.Eventually(t, func() bool { return len(rpcClient.SendSnapshotStream.Requests) > 0 },
+					10*time.Second, 10*time.Millisecond, "the follower got no snapshot")
+				// Complete a snapshot in progress: the leader waits for it to close
+				rpcClient.SendSnapshotStream.Response <- &proto.SnapshotResponse{AckOffset: 9}
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
 // A follower of an earlier term than every entry in the wal of the leader has no
 // entry in common with that wal. Its entries up to the commit offset it reported
 // when it got fenced, and up to its head, are committed: the leader truncates it
