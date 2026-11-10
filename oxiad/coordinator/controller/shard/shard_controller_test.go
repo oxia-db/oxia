@@ -540,6 +540,177 @@ func TestControllerBecameUnavailableElectsNewLeader(t *testing.T) {
 	assert.NoError(t, sc.Close())
 }
 
+// A leader that restarts faster than the failure detector answers again, but it lost its leadership: it no longer
+// leads the shard in its term, so the controller elects a new leader instead of leaving the shard without one.
+func TestControllerMaybeRestartedElectsNewLeaderWhenLeaderDoesNotLead(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	// The controller verifies the leader that the metadata records
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	// The leader restarted: it answers, but with no controller for the shard any more, it fails the status request
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	sc.MaybeRestarted(s1)
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).EnqueueGetStatusError(constant.ErrNodeIsNotMember)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+
+	assert.Eventually(t, func() bool {
+		return shardTerm(metadata, constant.DefaultNamespace, shard) == 2
+	}, 10*time.Second, 100*time.Millisecond)
+	assertShardLeader(t, metadata, constant.DefaultNamespace, shard, s1)
+	assert.NoError(t, sc.Close())
+}
+
+// A watch stream that resets under load, while the leader keeps leading in its term, doesn't start an election.
+func TestControllerMaybeRestartedKeepsLeaderThatStillLeads(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	sc.MaybeRestarted(s1)
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+
+	rpc.GetNode(s1).ExpectNoMoreNewTermRequest(t)
+	rpc.GetNode(s2).ExpectNoMoreNewTermRequest(t)
+	rpc.GetNode(s3).ExpectNoMoreNewTermRequest(t)
+	assert.EqualValues(t, 1, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NoError(t, sc.Close())
+}
+
+// A data server that doesn't lead the shard lost no leadership of it when it restarted: the leader isn't verified.
+func TestControllerMaybeRestartedIgnoresDataServerThatDoesNotLead(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	sc.MaybeRestarted(s2)
+
+	rpc.GetNode(s1).ExpectNoMoreGetStatusRequest(t)
+	rpc.GetNode(s2).ExpectNoMoreGetStatusRequest(t)
+	assert.EqualValues(t, 1, shardTerm(metadata, constant.DefaultNamespace, shard))
+	assert.NoError(t, sc.Close())
+}
+
+// The restart of a data server is notified once, so it must not be dropped while the event loop is busy: the
+// notifications of many other data servers don't crowd out the one of the leader.
+func TestControllerMaybeRestartedWhileBusyIsNotDropped(t *testing.T) {
+	var shard int64 = 5
+	rpc := rpctest.NewRpcProvider()
+
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	s2 := &proto.DataServerIdentity{Public: "s2:9091", Internal: "s2:8191"}
+	s3 := &proto.DataServerIdentity{Public: "s3:9091", Internal: "s3:8191"}
+	metadata := newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""), &proto.ClusterConfiguration{})
+	sc := newTestController(t, metadata, constant.DefaultNamespace, shard, namespaceConfig, &proto.ShardMetadata{
+		Status:           proto.ShardStatusSteadyState,
+		EnsembleCaughtUp: true,
+		Term:             1,
+		Leader:           s1,
+		Ensemble:         []*proto.DataServerIdentity{s1, s2, s3},
+	}, feature.NoOpSupplier, rpc, DefaultPeriodicTasksInterval)
+
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+	rpc.GetNode(s2).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s2).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+	rpc.GetNode(s3).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s3).GetStatusResponse(1, proto.ServingStatus_FOLLOWER, 0, 0)
+
+	// The watch of the leader reset: the event loop waits for the status of the leader
+	sc.MaybeRestarted(s1)
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+
+	// Meanwhile, many other data servers answer again after their watch broke, and then the leader restarts
+	for i := range chanBufferSize {
+		sc.MaybeRestarted(&proto.DataServerIdentity{
+			Public:   fmt.Sprintf("other-%d:9091", i),
+			Internal: fmt.Sprintf("other-%d:8191", i),
+		})
+	}
+	sc.MaybeRestarted(s1)
+	rpc.GetNode(s1).GetStatusResponse(1, proto.ServingStatus_LEADER, 0, 0)
+
+	rpc.GetNode(s1).NewTermResponse(1, 0, nil)
+	rpc.GetNode(s2).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s3).NewTermResponse(1, -1, nil)
+	rpc.GetNode(s1).BecomeLeaderResponse(nil)
+	rpc.GetNode(s1).ExpectGetStatusRequest(t, shard)
+	rpc.GetNode(s1).GetStatusResponse(0, proto.ServingStatus_NOT_MEMBER, 0, 0)
+
+	rpc.GetNode(s1).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s2).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s3).ExpectNewTermRequest(t, shard, 2, true)
+	rpc.GetNode(s1).ExpectBecomeLeaderRequest(t, shard, 2, 3)
+
+	assert.Eventually(t, func() bool {
+		return shardTerm(metadata, constant.DefaultNamespace, shard) == 2
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.NoError(t, sc.Close())
+}
+
 // shardStatusFailingMetadata fails the shard status loads while failures is
 // positive, each failed load decrementing it.
 type shardStatusFailingMetadata struct {
@@ -3487,6 +3658,14 @@ func (r *dataServerEventsRelay) BecameUnavailable(dataServer *proto.DataServerId
 	}
 }
 
+func (r *dataServerEventsRelay) MaybeRestarted(dataServer *proto.DataServerIdentity) {
+	r.RLock()
+	defer r.RUnlock()
+	if r.listener != nil {
+		r.listener.MaybeRestarted(dataServer)
+	}
+}
+
 func (r *dataServerEventsRelay) FeaturesDiscovered(dataServer *proto.DataServerIdentity) {
 	r.RLock()
 	defer r.RUnlock()
@@ -3862,12 +4041,15 @@ func TestControllerNotificationsAfterCloseAreDropped(t *testing.T) {
 		dataServerFailureOp:   make(chan *proto.DataServerIdentity, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
+		restartedDataServers:  make(map[string]*proto.DataServerIdentity),
+		dataServerRestartedOp: make(chan any, 1),
 		logger:                slog.Default(),
 	}
 	s.terminating.Store(true)
 
 	s.BecameUnavailable(s1)
 	s.FeaturesDiscovered(s1)
+	s.MaybeRestarted(s1)
 	electionAction := action.NewElectionAction(5)
 	s.Dispatch(electionAction)
 
@@ -3877,6 +4059,8 @@ func TestControllerNotificationsAfterCloseAreDropped(t *testing.T) {
 	assert.Empty(t, s.dataServerFailureOp)
 	assert.Empty(t, s.featuresDiscoveredOp)
 	assert.Empty(t, s.discoveredDataServers)
+	assert.Empty(t, s.dataServerRestartedOp)
+	assert.Empty(t, s.restartedDataServers)
 }
 
 func TestControllerBecameUnavailableDiscardsWhenQueueIsFull(t *testing.T) {
@@ -4008,6 +4192,34 @@ func TestControllerWaitForSplitCompleteRetriesShardStatusLoad(t *testing.T) {
 
 // The features of a data server are notified once: if the shard status
 // can't be loaded to check them, they are sent to the event loop again.
+func TestControllerHandleDataServerRestartedRetriesShardStatusLoadError(t *testing.T) {
+	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
+	metadata := &shardStatusFailingMetadata{
+		Metadata: newTestMetadata(t, memory.NewProvider(metadatacodec.ClusterStatusCodec, metadatacommon.WatchDisabled, ""),
+			&proto.ClusterConfiguration{}),
+	}
+	metadata.failures.Store(1)
+	s := &controller{
+		namespace:             constant.DefaultNamespace,
+		shard:                 5,
+		metadataStore:         metadata,
+		restartedDataServers:  map[string]*proto.DataServerIdentity{s1.GetNameOrDefault(): s1},
+		dataServerRestartedOp: make(chan any, 1),
+		logger:                slog.Default(),
+	}
+
+	s.handleDataServerRestartedWithRetries()
+
+	select {
+	case <-s.dataServerRestartedOp:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the restarts were not sent again")
+	}
+	s.restartedDataServersMu.Lock()
+	defer s.restartedDataServersMu.Unlock()
+	assert.Contains(t, s.restartedDataServers, s1.GetNameOrDefault())
+}
+
 func TestControllerHandleFeaturesDiscoveredRetriesShardStatusLoadError(t *testing.T) {
 	s1 := &proto.DataServerIdentity{Public: "s1:9091", Internal: "s1:8191"}
 	metadata := &shardStatusFailingMetadata{

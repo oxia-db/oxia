@@ -86,6 +86,13 @@ type controller struct {
 	discoveredDataServersMu sync.Mutex
 	discoveredDataServers   map[string]*proto.DataServerIdentity
 	featuresDiscoveredOp    chan any
+	// The data servers that answer again after their health watch broke, which may have restarted and lost the
+	// leaderships recorded for them, are reported once too, and collected the same way. The event loop owns them and
+	// takes them all when dataServerRestartedOp wakes it up; MaybeRestarted only adds to them. Guarded by
+	// restartedDataServersMu.
+	restartedDataServersMu sync.Mutex
+	restartedDataServers   map[string]*proto.DataServerIdentity
+	dataServerRestartedOp  chan any
 	// termFeaturesCheckPending is set from the discovery of the features of
 	// an ensemble member until checkTermFeatures completes. It is owned by
 	// the event loop.
@@ -107,6 +114,19 @@ type controller struct {
 	becomeLeaderLatencyHistogram   metric.LatencyHistogram
 	failedLeaderElectionsCounter   metric.Counter
 	termGauge                      metric.Gauge
+}
+
+func (s *controller) MaybeRestarted(dataServer *proto.DataServerIdentity) {
+	s.terminationMu.RLock()
+	defer s.terminationMu.RUnlock()
+	if s.terminating.Load() {
+		return
+	}
+	s.restartedDataServersMu.Lock()
+	s.restartedDataServers[dataServer.GetNameOrDefault()] = dataServer
+	s.restartedDataServersMu.Unlock()
+	// A wake-up that is pending already covers this data server too
+	channel.PushNoBlock(s.dataServerRestartedOp, nil)
 }
 
 func (s *controller) BecameUnavailable(dataServer *proto.DataServerIdentity) {
@@ -165,6 +185,8 @@ func NewController(
 		changeEnsembleOp:      make(chan *action.ChangeEnsembleAction, chanBufferSize),
 		discoveredDataServers: make(map[string]*proto.DataServerIdentity),
 		featuresDiscoveredOp:  make(chan any, 1),
+		restartedDataServers:  make(map[string]*proto.DataServerIdentity),
+		dataServerRestartedOp: make(chan any, 1),
 		electionMailbox:       make(chan async.Mail, 1),
 
 		periodicTasksInterval: oxiatime.Jitter(periodTasksInterval, periodTasksInterval/4),
@@ -307,6 +329,8 @@ func (s *controller) run(bo backoff.BackOff) error {
 			s.deleteShardWithRetries()
 		case n := <-s.dataServerFailureOp:
 			s.handleDataServerFailureWithRetries(n)
+		case <-s.dataServerRestartedOp:
+			s.handleDataServerRestartedWithRetries()
 		case <-s.featuresDiscoveredOp:
 			s.handleFeaturesDiscoveredWithRetries()
 		case op := <-s.changeEnsembleOp:
@@ -390,6 +414,46 @@ func (s *controller) handleDataServerFailureWithRetries(failedDataServer *proto.
 		)
 		_, _ = s.electLeader(shardMeta, nil, "")
 	}
+}
+
+// handleDataServerRestartedWithRetries starts an election when the leader answers again but does not lead the shard
+// in its term: it restarted before the failure detector noticed, and lost the leadership that was recorded for it.
+func (s *controller) handleDataServerRestartedWithRetries() {
+	s.restartedDataServersMu.Lock()
+	restarted := s.restartedDataServers
+	s.restartedDataServers = make(map[string]*proto.DataServerIdentity)
+	s.restartedDataServersMu.Unlock()
+
+	borrowedMeta, exists, err := s.metadataStore.GetShardStatus(s.namespace, s.shard)
+	if err != nil {
+		// The restarts are notified once: send them again to the event loop later
+		s.logger.Warn("Failed to handle the restart of the data servers, retrying later", slog.Any("error", err))
+		time.AfterFunc(time.Second, func() {
+			for _, dataServer := range restarted {
+				s.MaybeRestarted(dataServer)
+			}
+		})
+		return
+	}
+	shardMeta := common.Must(borrowedMeta, exists,
+		"bug: shard metadata missing while handling the restart of a data server: namespace=", s.namespace, " shard=",
+		s.shard).UnsafeBorrow()
+	_, leaderRestarted := restarted[shardMeta.Leader.GetNameOrDefault()]
+	if shardMeta.Leader == nil || !leaderRestarted || shardMeta.GetStatusOrDefault() != proto.ShardStatusSteadyState {
+		return
+	}
+
+	status, err := s.getStatus(shardMeta.Leader)
+	if err == nil && status.GetStatus() == proto.ServingStatus_LEADER && status.GetTerm() == shardMeta.GetTerm() {
+		return
+	}
+	s.logger.Info(
+		"The leader answers but does not lead the shard in its term: it restarted, starting a new election",
+		slog.Any("leader", shardMeta.Leader.GetNameOrDefault()),
+		slog.Any("status", status.GetStatus()),
+		slog.Any("error", err),
+	)
+	_, _ = s.electLeader(shardMeta, nil, "")
 }
 
 // handleFeaturesDiscoveredWithRetries checks the features pinned by the current term

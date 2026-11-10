@@ -67,6 +67,7 @@ func (sap *ShardAssignmentsProvider) SubscribeShardAssignments() *commonwatch.Re
 type NodeAvailabilityListener struct {
 	Events                   chan *proto.DataServerIdentity
 	FeaturesDiscoveredEvents chan *proto.DataServerIdentity
+	MaybeRestartedEvents     chan *proto.DataServerIdentity
 	DrainedEvents            chan *proto.DataServerIdentity
 }
 
@@ -74,6 +75,7 @@ func NewNodeAvailabilityListener() *NodeAvailabilityListener {
 	return &NodeAvailabilityListener{
 		Events:                   make(chan *proto.DataServerIdentity, 100),
 		FeaturesDiscoveredEvents: make(chan *proto.DataServerIdentity, 100),
+		MaybeRestartedEvents:     make(chan *proto.DataServerIdentity, 100),
 		DrainedEvents:            make(chan *proto.DataServerIdentity, 100),
 	}
 }
@@ -84,6 +86,10 @@ func (nal *NodeAvailabilityListener) BecameDrained(node *proto.DataServerIdentit
 
 func (nal *NodeAvailabilityListener) BecameUnavailable(node *proto.DataServerIdentity) {
 	nal.Events <- node
+}
+
+func (nal *NodeAvailabilityListener) MaybeRestarted(node *proto.DataServerIdentity) {
+	nal.MaybeRestartedEvents <- node
 }
 
 func (nal *NodeAvailabilityListener) FeaturesDiscovered(node *proto.DataServerIdentity) {
@@ -328,6 +334,17 @@ func (m *PerNodeChannels) ExpectGetStatusRequest(t *testing.T, shard int64) {
 	}
 
 	assert.Equal(t, shard, r.Shard)
+}
+
+func (m *PerNodeChannels) ExpectNoMoreGetStatusRequest(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-m.getStatusRequests:
+		assert.Fail(t, "should not have received any GetStatus request")
+	case <-time.After(defaultNegativeTimeout):
+		// expected
+	}
 }
 
 func (m *PerNodeChannels) NewTermResponse(term int64, offset int64, err error) {
