@@ -26,6 +26,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"google.golang.org/grpc"
+	grpcbackoff "google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -37,6 +38,12 @@ import (
 	"github.com/oxia-db/oxia/common/rpc"
 	commontime "github.com/oxia-db/oxia/common/time"
 )
+
+// connectTimeout is how long a connection attempt to a data server may take. The address of a pod that was deleted
+// neither refuses nor answers the connection, so an attempt hangs for the whole timeout, 20 s by default, and the
+// requests that wait for it cannot move to the new leader of the shard in the meantime: they run into their own
+// deadline. With a shorter timeout they fail with Unavailable, and the retry looks up the leader again.
+const connectTimeout = 3 * time.Second
 
 // errShardHasNoLeader replaces connecting to the empty leader address of a shard that has no leader, e.g.
 // while one is being elected. As an Unavailable status, it is retried by the shard requests only.
@@ -77,6 +84,11 @@ func newRpcProvider(ctx context.Context, namespace string, tlsConf *tls.Config, 
 	serviceAddress string, shardManagerSupplier func() ShardManager, failpoints *failpoint.Failpoints,
 	dialOptions ...grpc.DialOption,
 ) *rpcProvider {
+	// The options of the caller come last, so that they can override the connect timeout
+	dialOptions = append([]grpc.DialOption{grpc.WithConnectParams(grpc.ConnectParams{
+		Backoff:           grpcbackoff.DefaultConfig,
+		MinConnectTimeout: connectTimeout,
+	})}, dialOptions...)
 	return &rpcProvider{
 		ctx:                  ctx,
 		failpoints:           failpoints,

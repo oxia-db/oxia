@@ -344,6 +344,7 @@ func TestDataServerControllerVerifyAfterWatchFailureDoesNotFenceAliveNode(t *tes
 
 	// A watch stream reset while the node keeps answering pings (e.g. an
 	// idle stream reset under load) must not fence the node.
+	requireStartupWatch(t, node.HealthClient)
 	node.HealthClient.FailWatches(errors.New("stream reset"))
 
 	time.Sleep(10 * testHealthPolicy.ProbeInterval)
@@ -474,6 +475,7 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesSlowNode(t *testing
 	// the signature of a saturated node, not a dead one, so it must be left
 	// to the ping loop's failure threshold instead of being fenced.
 	requireStartupPing(t, node.HealthClient)
+	requireStartupWatch(t, node.HealthClient)
 	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.DeadlineExceeded, "context deadline exceeded"), 1)
 	node.HealthClient.FailWatches(errors.New("stream reset"))
 	// The verification probe takes the failure, not the ping loop
@@ -513,6 +515,7 @@ func TestDataServerControllerVerifyAfterWatchFailureToleratesTransportClosing(t 
 	// the verification probe both fail with "transport is closing". That is a
 	// local teardown artifact, not evidence the node is dead: no fencing.
 	requireStartupPing(t, node.HealthClient)
+	requireStartupWatch(t, node.HealthClient)
 	node.HealthClient.FailNextChecks(grpcstatus.Error(codes.Unavailable, "transport is closing"), 1)
 	node.HealthClient.FailWatches(grpcstatus.Error(codes.Unavailable, "transport is closing"))
 	// The verification probe takes the failure, not the ping loop
@@ -638,6 +641,47 @@ func TestDataServerControllerDrainHandshakesWhenAvailableAgain(t *testing.T) {
 	assert.EqualValues(t, 1, node.HandshakeCount.Load())
 
 	assert.NoError(t, nc.Close())
+}
+
+// A failure that the watch observed before the ping loop fenced the data
+// server and recovered it is stale: it must not fence the data server again.
+func TestDataServerControllerBecomeUnavailableIgnoresStaleEpoch(t *testing.T) {
+	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := &fakeRpcProvider{RpcProvider: rpctest.NewRpcProvider()}
+	node := rpc.GetNode(addr)
+	watch := feedHealthWatch(rpc, node.HealthClient)
+	nc := NewController(context.Background(), dataServer, newTestMetadata(t), rpctest.NewShardAssignmentsProvider(),
+		nal, rpc, "test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	// The watch takes the status epoch of its first observation, then the ping
+	// loop makes the data server available, fences it and recovers it
+	watch.requireReceiving(t)
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().IsAvailable()
+	}, 10*time.Second, 10*time.Millisecond)
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the ping loop did not fence the data server")
+	}
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_SERVING)
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().IsAvailable()
+	}, 10*time.Second, 10*time.Millisecond)
+
+	watch.send(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	// The watch waits for its next observation once it handled this one
+	watch.requireReceiving(t)
+	assert.Len(t, nal.Events, 0, "a stale failure must not fence the data server")
+	assert.True(t, nc.GetStatus().IsAvailable())
 }
 
 func TestDataServerControllerBecomeAvailableHandshakesOnlyOnTransition(t *testing.T) {
@@ -842,6 +886,44 @@ func TestDataServerControllerBecomeAvailableReportsChangedFeatures(t *testing.T)
 	assert.Len(t, nal.FeaturesDiscoveredEvents, 0, "a handshake must not report the features it already knew")
 }
 
+// A SERVING answer that the watch observed before the ping loop fenced the
+// data server is stale: it must not handshake the data server, nor make it
+// available again.
+func TestDataServerControllerBecomeAvailableIgnoresStaleEpoch(t *testing.T) {
+	addr := &proto.DataServerIdentity{Public: "my-server:9190", Internal: "my-server:8190"}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := &fakeRpcProvider{RpcProvider: rpctest.NewRpcProvider()}
+	node := rpc.GetNode(addr)
+	watch := feedHealthWatch(rpc, node.HealthClient)
+	nc := NewController(context.Background(), dataServer, newTestMetadata(t), rpctest.NewShardAssignmentsProvider(),
+		nal, rpc, "test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	// The watch takes the status epoch of its first observation, then the ping
+	// loop makes the data server available and fences it
+	watch.requireReceiving(t)
+	assert.Eventually(t, func() bool {
+		return nc.GetStatus().IsAvailable()
+	}, 10*time.Second, 10*time.Millisecond)
+	node.HealthClient.SetStatus(grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	select {
+	case unavailableNode := <-nal.Events:
+		assert.Equal(t, addr, unavailableNode)
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the ping loop did not fence the data server")
+	}
+
+	watch.send(t, grpc_health_v1.HealthCheckResponse_SERVING)
+	// The watch waits for its next observation once it handled this one
+	watch.requireReceiving(t)
+	assert.False(t, nc.GetStatus().IsAvailable(), "a stale SERVING answer must not make the data server available")
+	assert.EqualValues(t, 1, node.HandshakeCount.Load())
+}
+
 func TestDataServerControllerSendAssignmentsDispatchWithRetriesSendsUpdates(t *testing.T) {
 	addr := &proto.DataServerIdentity{
 		Public:   "my-server:9190",
@@ -976,6 +1058,31 @@ func TestDataServerControllerSendAssignmentsDispatchWithRetriesReestablishesStre
 
 	// The controller must reconnect and re-send the same (unchanged) snapshot.
 	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, resp)
+}
+
+// A data server that restarts rejects every client until it has its assignments, so the stream that carries them is
+// opened again as soon as the data server is back, not after the slow retry interval of the health checks.
+func TestDataServerControllerSendAssignmentsDispatchWithRetriesReestablishesStreamWithoutSlowBackoff(t *testing.T) {
+	addr := &proto.DataServerIdentity{
+		Public:   "my-server:9190",
+		Internal: "my-server:8190",
+	}
+	dataServer := &proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{}}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	nc := NewController(context.Background(), dataServer, newTestMetadata(t), sap, nal, rpc, "test-instance", time.Hour, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+
+	node := rpc.GetNode(addr)
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+
+	node.ShardAssignmentsStream.EndStream()
+
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
 }
 
 // TestDataServerControllerSendAssignmentsDispatchWithRetriesRecoversFromStreamRejection covers the
@@ -1155,6 +1262,7 @@ func TestDataServerControllerVerifyAfterWatchFailureLeavesHealthClientErrorToPin
 	assert.Eventually(t, func() bool {
 		return nc.GetStatus().IsAvailable() && clients.Load() >= 2
 	}, 10*time.Second, 10*time.Millisecond)
+	requireStartupWatch(t, rpc.GetNode(addr).HealthClient)
 
 	failing.Store(true)
 	rpc.GetNode(addr).HealthClient.FailWatches(errors.New("stream reset"))
@@ -1475,6 +1583,17 @@ func (c *fakeHealthClient) Watch(ctx context.Context, req *grpc_health_v1.Health
 	return c.HealthClient.Watch(ctx, req, opts...)
 }
 
+// fakeHealthWatchClient calls its recv hook on Recv. Its other methods are not
+// implemented.
+type fakeHealthWatchClient struct {
+	grpc.ClientStream
+	recv func() (*grpc_health_v1.HealthCheckResponse, error)
+}
+
+func (w *fakeHealthWatchClient) Recv() (*grpc_health_v1.HealthCheckResponse, error) {
+	return w.recv()
+}
+
 // requireStartupPing waits for the ping loop's check at startup, which would
 // otherwise take a failure that the test queues for another check.
 func requireStartupPing(t *testing.T, healthClient *rpctest.HealthClient) {
@@ -1490,6 +1609,70 @@ func requireStartupWatch(t *testing.T, healthClient *rpctest.HealthClient) {
 	require.Eventually(t, func() bool {
 		return healthClient.Watches() > 0
 	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// healthWatchFeed delivers the responses of the health watch of a data server
+// one at a time, when the test sends them. The watch loop takes the status
+// epoch of an observation before it waits for the response: receiving gets a
+// value on each wait, once that epoch is taken.
+type healthWatchFeed struct {
+	responses chan *grpc_health_v1.HealthCheckResponse
+	receiving chan struct{}
+}
+
+// feedHealthWatch makes the health clients of rpc watch the data server
+// through the returned feed, and check it through healthClient.
+func feedHealthWatch(rpc *fakeRpcProvider, healthClient *rpctest.HealthClient) *healthWatchFeed {
+	feed := &healthWatchFeed{
+		responses: make(chan *grpc_health_v1.HealthCheckResponse),
+		receiving: make(chan struct{}),
+	}
+	rpc.getHealthClient = func(*proto.DataServerIdentity) (grpc_health_v1.HealthClient, error) {
+		return &fakeHealthClient{
+			HealthClient: healthClient,
+			watch: func(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (
+				grpc_health_v1.Health_WatchClient, error) {
+				return &fakeHealthWatchClient{recv: func() (*grpc_health_v1.HealthCheckResponse, error) {
+					return feed.recv(ctx)
+				}}, nil
+			},
+		}, nil
+	}
+	return feed
+}
+
+func (f *healthWatchFeed) recv(ctx context.Context) (*grpc_health_v1.HealthCheckResponse, error) {
+	select {
+	case f.receiving <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case response := <-f.responses:
+		return response, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// requireReceiving waits for the watch loop to wait for its next response.
+func (f *healthWatchFeed) requireReceiving(t *testing.T) {
+	t.Helper()
+	select {
+	case <-f.receiving:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the health watch did not wait for a response")
+	}
+}
+
+// send delivers a response with status to the watch loop.
+func (f *healthWatchFeed) send(t *testing.T, status grpc_health_v1.HealthCheckResponse_ServingStatus) {
+	t.Helper()
+	select {
+	case f.responses <- &grpc_health_v1.HealthCheckResponse{Status: status}:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the health watch did not take the response")
+	}
 }
 
 // newTestMetadata returns an in-memory metadata that this coordinator leads.

@@ -64,7 +64,6 @@ type controller struct {
 	assignmentsProvider controllerapi.ShardAssignmentsProvider
 	listener            controllerapi.DataServerEventListener
 	healthPolicy        health.CheckPolicy
-	initialRetryBackoff time.Duration
 	healthCheckBackoff  *commontime.ConcurrentBackOff
 
 	runningGauge              metric.Gauge
@@ -148,7 +147,10 @@ func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAs
 
 func (n *controller) sendAssignmentsDispatchWithRetries() {
 	receiver := n.assignmentsProvider.SubscribeShardAssignments()
-	bo := commontime.NewBackOffWithInitialInterval(n.ctx, n.initialRetryBackoff)
+	// Not the slow initial interval of the health checks: openAssignmentsStream waits until the data server is
+	// available again, so the retry doesn't have to wait for it. After a restart, the data server rejects every client
+	// until it has its assignments, so each second counts.
+	bo := commontime.NewBackOff(n.ctx)
 
 	_ = backoff.RetryNotify(func() error {
 		stream, err := n.openAssignmentsStream()
@@ -614,7 +616,6 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 		supportedFeatures:   make([]proto.Feature, 0),
 		logger:              logger,
 		healthPolicy:        healthPolicy,
-		initialRetryBackoff: initialRetryBackoff,
 		healthCheckBackoff:  commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
 		failedHealthChecksCounter: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
 			"The number of failed health checks to a dataServer", "count", labels),
