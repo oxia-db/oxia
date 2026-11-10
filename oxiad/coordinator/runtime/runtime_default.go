@@ -42,6 +42,7 @@ import (
 	dataservercontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/dataserver"
 	shardcontroller "github.com/oxia-db/oxia/oxiad/coordinator/controller/shard"
 	"github.com/oxia-db/oxia/oxiad/coordinator/rpc"
+	backupscheduler "github.com/oxia-db/oxia/oxiad/coordinator/runtime/backup"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/model/stats"
 	"github.com/oxia-db/oxia/oxiad/coordinator/scheduler/planner"
@@ -81,6 +82,8 @@ type runtime struct {
 	dataServerControllers map[string]dataservercontroller.Controller
 
 	scheduler scheduler.Scheduler
+	// backupScheduler is nil when the RPC provider has no OxiaBackup service
+	backupScheduler *backupscheduler.Scheduler
 	// planner places the new shards and the children of the splits.
 	planner planner.Planner
 
@@ -388,6 +391,9 @@ func (c *runtime) Close() error {
 
 	// The scheduler stops sending actions before the action worker exits
 	err := c.scheduler.Close()
+	if c.backupScheduler != nil {
+		c.backupScheduler.Close()
+	}
 
 	// Snapshot the controller maps under the lock: shard-controller callbacks
 	// (e.g. ShardDeleted, running on a detached goroutine) mutate them
@@ -711,6 +717,7 @@ func New(
 		}
 		return status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
 	}, c.rpc)
+	c.startBackupScheduler()
 	c.wg.Go(func() {
 		process.DoWithLabels(c.ctx, map[string]string{
 			"component": "coordinator-action-worker",
