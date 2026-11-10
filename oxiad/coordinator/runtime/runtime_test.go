@@ -1399,6 +1399,7 @@ type fakeMetadata struct {
 	getConfig             func() (commonobject.Borrowed[*proto.ClusterConfiguration], error)
 	listNamespace         func() (map[string]commonobject.Borrowed[*proto.Namespace], error)
 	getNamespace          func(name string) (commonobject.Borrowed[*proto.Namespace], bool, error)
+	createNamespace       func(namespace *proto.Namespace) error
 	listDataServer        func() (map[string]commonobject.Borrowed[*proto.DataServer], error)
 	getDataServer         func(name string) (commonobject.Borrowed[*proto.DataServer], bool, error)
 
@@ -1438,6 +1439,13 @@ func (m *fakeMetadata) GetNamespace(name string) (commonobject.Borrowed[*proto.N
 		return m.getNamespace(name)
 	}
 	return m.Metadata.GetNamespace(name)
+}
+
+func (m *fakeMetadata) CreateNamespace(namespace *proto.Namespace) error {
+	if m.createNamespace != nil {
+		return m.createNamespace(namespace)
+	}
+	return m.Metadata.CreateNamespace(namespace)
 }
 
 func (m *fakeMetadata) ListDataServer() (map[string]commonobject.Borrowed[*proto.DataServer], error) {
