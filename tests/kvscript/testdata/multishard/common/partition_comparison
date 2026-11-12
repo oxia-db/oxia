@@ -1,0 +1,78 @@
+# a/c/e are co-located by tenant; d is on a different shard.
+# The exact external match d must be ignored by partition-scoped comparisons.
+
+put key=e value=five partition=tenant
+----
+ok key="e" modifications=0
+
+put key=a value=one partition=tenant
+----
+ok key="a" modifications=0
+
+put key=c value=three partition=tenant
+----
+ok key="c" modifications=0
+
+put key=d value=four
+----
+ok key="d" modifications=0
+
+placement keys=(a,c,e) partition=tenant require-override
+----
+ok
+
+placement keys=(c,d) min-shards=2
+----
+ok
+
+get key=d comparison=equal partition=tenant
+----
+error: key not found
+
+get key=d comparison=floor partition=tenant
+----
+key="c" value="three" modifications=0
+
+get key=d comparison=ceiling partition=tenant
+----
+key="e" value="five" modifications=0
+
+get key=c comparison=lower partition=tenant
+----
+key="a" value="one" modifications=0
+
+get key=c comparison=higher partition=tenant
+----
+key="e" value="five" modifications=0
+
+get key=d comparison=floor
+----
+key="d" value="four" modifications=0
+
+get key=d comparison=ceiling
+----
+key="d" value="four" modifications=0
+
+get key=a comparison=lower partition=tenant
+----
+error: key not found
+
+get key=e comparison=higher partition=tenant
+----
+error: key not found
+
+delete key=c partition=tenant
+----
+ok
+
+assert-record key=c partition=tenant missing
+----
+ok
+
+get key=d comparison=floor partition=tenant
+----
+key="a" value="one" modifications=0
+
+get key=d comparison=ceiling partition=tenant
+----
+key="e" value="five" modifications=0

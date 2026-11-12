@@ -1,0 +1,85 @@
+# Put acknowledgement is the only write barrier before stopping the leader.
+# save-record captures the successful Put response without a subsequent Get or
+# wait-replicated. Stops are graceful; this does not simulate a hard crash.
+
+put key=a value=acknowledged create-only save=created save-record=created
+----
+ok key="a" modifications=0
+
+stop-server role=leader key=a save=first-leader
+----
+ok
+
+assert-record key=a unchanged=@created
+----
+ok
+
+put key=a value=updated expected-version=@created save=updated save-record=updated
+----
+ok key="a" modifications=1
+
+put key=a value=stale expected-version=@created
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@updated
+----
+ok
+
+restart-server saved=@first-leader
+----
+ok
+
+# The successful Delete is immediately followed by a leader stop, with no
+# replica-application barrier or intervening read.
+delete key=a expected-version=@updated
+----
+ok
+
+stop-server role=leader key=a save=second-leader
+----
+ok
+
+assert-record key=a missing
+----
+ok
+
+put key=a value=stale-recreate expected-version=@updated
+----
+error: unexpected version id
+
+assert-record key=a missing
+----
+ok
+
+put key=a value=reborn create-only save=reborn save-record=reborn
+----
+ok key="a" modifications=0
+
+put key=a value=stale-overwrite expected-version=@created
+----
+error: unexpected version id
+
+delete key=a expected-version=@updated
+----
+error: unexpected version id
+
+assert-record key=a unchanged=@reborn
+----
+ok
+
+restart-server saved=@second-leader
+----
+ok
+
+assert-record key=a unchanged=@reborn
+----
+ok
+
+put key=a value=reborn-updated expected-version=@reborn
+----
+ok key="a" modifications=1
+
+get key=a
+----
+key="a" value="reborn-updated" modifications=1

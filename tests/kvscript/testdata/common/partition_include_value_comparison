@@ -1,0 +1,135 @@
+# Omitting values retains the selected key and every Version field.
+# Exercise exact keys, missing query keys, and absent comparison candidates.
+
+put key=a value="first" save-record=a partition=route
+----
+ok key="a" modifications=0
+
+put key=c value="\x00\xffmiddle" save-record=c partition=route
+----
+ok key="c" modifications=0
+
+put key=e value="last" save-record=e partition=route
+----
+ok key="e" modifications=0
+
+get key=c comparison=equal include-value=false persistent save=metadata-version save-record=equal partition=route
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@equal persistent partition=route
+----
+ok
+
+assert-record key=c unchanged=@c persistent partition=route
+----
+ok
+
+get key=c comparison=floor include-value=false persistent save-record=floor partition=route
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@floor partition=route
+----
+ok
+
+get key=c comparison=ceiling include-value=false persistent save-record=ceiling partition=route
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@ceiling partition=route
+----
+ok
+
+get key=c comparison=lower include-value=false persistent save-record=lower partition=route
+----
+key="a" value="" modifications=0
+
+assert-record key=a metadata=@lower partition=route
+----
+ok
+
+get key=c comparison=higher include-value=false persistent save-record=higher partition=route
+----
+key="e" value="" modifications=0
+
+assert-record key=e metadata=@higher partition=route
+----
+ok
+
+get key=d comparison=equal include-value=false persistent partition=route
+----
+error: key not found
+
+get key=d comparison=floor include-value=false persistent save-record=missing-floor partition=route
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@missing-floor partition=route
+----
+ok
+
+get key=d comparison=ceiling include-value=false persistent save-record=missing-ceiling partition=route
+----
+key="e" value="" modifications=0
+
+assert-record key=e metadata=@missing-ceiling partition=route
+----
+ok
+
+get key=d comparison=lower include-value=false persistent save-record=missing-lower partition=route
+----
+key="c" value="" modifications=0
+
+assert-record key=c metadata=@missing-lower partition=route
+----
+ok
+
+get key=d comparison=higher include-value=false persistent save-record=missing-higher partition=route
+----
+key="e" value="" modifications=0
+
+assert-record key=e metadata=@missing-higher partition=route
+----
+ok
+
+get key=0 comparison=floor include-value=false persistent partition=route
+----
+error: key not found
+
+get key=a comparison=lower include-value=false persistent partition=route
+----
+error: key not found
+
+get key=z comparison=ceiling include-value=false persistent partition=route
+----
+error: key not found
+
+get key=e comparison=higher include-value=false persistent partition=route
+----
+error: key not found
+
+# The full value remains available, and the omitted-value version is valid for CAS.
+get key=c include-value=true persistent partition=route
+----
+key="c" value="\x00\xffmiddle" modifications=0
+
+put key=c value="updated" expected-version=@metadata-version save-record=updated partition=route
+----
+ok key="c" modifications=1
+
+assert-record key=c updated=@c persistent partition=route
+----
+ok
+
+assert-record key=c unchanged=@updated persistent partition=route
+----
+ok
+
+get key=c comparison=equal include-value=false persistent save-record=updated-metadata partition=route
+----
+key="c" value="" modifications=1
+
+assert-record key=c metadata=@updated-metadata persistent partition=route
+----
+ok
