@@ -299,20 +299,40 @@ func TestSessionUpdateOperationCallback_OnPut(t *testing.T) {
 	assert.ErrorIs(t, err, expectedErr)
 }
 
-func TestSessionUpdateOperationCallbackOnPutKeepsShadowOfSameSession(t *testing.T) {
+func TestSessionUpdateOperationCallbackOnPutShadowOfSameSession(t *testing.T) {
 	sessionId := int64(12345)
 	shadowKey := ShadowKey(SessionId(sessionId), "a/b/c")
-	// Any write to the shadow key fails: the callback must leave it alone.
-	writeBatch := mockWriteBatch{
-		SessionKey(SessionId(sessionId)): []byte{},
-		shadowKey:                        errors.New("the shadow key must not be touched"),
-	}
-	existing := &proto.StorageEntry{Value: []byte("value"), SessionId: &sessionId}
-	request := &proto.PutRequest{Key: "a/b/c", Value: []byte("b"), SessionId: &sessionId}
+	shadowWriteErr := errors.New("the shadow key was written")
 
-	status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, request, existing, testFeatureChecker{})
-	assert.NoError(t, err)
-	assert.Equal(t, proto.Status_OK, status)
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		wantErr error
+	}{
+		// With the feature the callback leaves the shadow key alone.
+		{name: "FeatureEnabled", enabled: true},
+		// Without it the batch stays as before: the shadow key is deleted and written again.
+		{name: "FeatureDisabled", enabled: false, wantErr: shadowWriteErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Any write to the shadow key fails, so a rewrite shows up as an error.
+			writeBatch := mockWriteBatch{
+				SessionKey(SessionId(sessionId)): []byte{},
+				shadowKey:                        shadowWriteErr,
+			}
+			existing := &proto.StorageEntry{Value: []byte("value"), SessionId: &sessionId}
+			request := &proto.PutRequest{Key: "a/b/c", Value: []byte("b"), SessionId: &sessionId}
+			features := testFeatureChecker{sessionShadowSkipSameSession: tc.enabled}
+
+			status, err := sessionManagerUpdateOperationCallback.OnPut(writeBatch, nil, request, existing, features)
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, proto.Status_OK, status)
+		})
+	}
 }
 
 func TestSessionUpdateOperationCallback_OnDeleteWithEntry(t *testing.T) {
@@ -1995,3 +2015,48 @@ func (*sessionManagerKeysIterator) SeekGE(string) bool { panic("not supported") 
 func (*sessionManagerKeysIterator) SeekLT(string) bool { panic("not supported") }
 
 func (*sessionManagerKeysIterator) Error() error { return nil }
+
+// Skipping the shadow key rewrite changes the write batch and so the DB
+// checksum: without the feature, a same-session overwrite must give the same
+// checksums as before, so that replicas that don't have the feature yet stay in
+// sync with the ones that do.
+func TestSessionShadowSkipSameSessionChecksum(t *testing.T) {
+	checksums := func(t *testing.T, enabled bool) []crc.Checksum {
+		t.Helper()
+		kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+		require.NoError(t, err)
+		defer func() { assert.NoError(t, kvFactory.Close()) }()
+		db, err := database.NewDB(constant.DefaultNamespace, 1, kvFactory, proto.KeySortingType_HIERARCHICAL,
+			time.Hour, time2.SystemClock)
+		require.NoError(t, err)
+		defer func() { assert.NoError(t, db.Close()) }()
+
+		db.EnableFeature(proto.Feature_FEATURE_DB_CHECKSUM)
+		if enabled {
+			db.EnableFeature(proto.Feature_FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION)
+		}
+
+		sessionId := int64(1)
+		writes := []*proto.WriteRequest{
+			{Puts: []*proto.PutRequest{{Key: SessionKey(SessionId(sessionId)), Value: []byte{}}}},
+			{Puts: []*proto.PutRequest{{Key: "/a", Value: []byte("1"), SessionId: &sessionId}}},
+			{Puts: []*proto.PutRequest{{Key: "/a", Value: []byte("2"), SessionId: &sessionId}}},
+		}
+		var result []crc.Checksum
+		for i, write := range writes {
+			_, err := db.ProcessWrite(write, int64(i), 0, WrapperUpdateOperationCallback)
+			require.NoError(t, err)
+			result = append(result, db.ReadChecksum())
+		}
+		return result
+	}
+
+	// The checksums that the same writes give on a replica without the feature.
+	before := []crc.Checksum{1532143954, 4043218309, 2541429540}
+	assert.Equal(t, before, checksums(t, false))
+
+	// The first two writes don't overwrite a record of the same session.
+	enabled := checksums(t, true)
+	assert.Equal(t, before[:2], enabled[:2])
+	assert.NotEqual(t, before[2], enabled[2])
+}

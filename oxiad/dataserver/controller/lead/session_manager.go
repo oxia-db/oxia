@@ -495,7 +495,7 @@ func (*sessionManagerUpdateOperationCallbackS) ValidatePut(*proto.PutRequest, fe
 	return proto.Status_OK
 }
 
-func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry) (proto.Status, error) {
+func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry, features feature.Checker) (proto.Status, error) {
 	var _, closer, err = batch.Get(SessionKey(SessionId(*request.SessionId)))
 	if err != nil {
 		if errors.Is(err, errs.ErrDBKeyNotFound) {
@@ -506,8 +506,11 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.
 	if err = closer.Close(); err != nil {
 		return proto.Status_SESSION_DOES_NOT_EXIST, err
 	}
-	// The same session is overwriting its own record: the shadow key is already there.
-	if existingEntry != nil && existingEntry.SessionId != nil && *existingEntry.SessionId == *request.SessionId {
+	// The same session is overwriting its own record: the shadow key is already
+	// there. Skipping its rewrite changes the batch and so the DB checksum, so
+	// it has to be negotiated with the other replicas first.
+	if features.IsFeatureEnabled(proto.Feature_FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION) &&
+		existingEntry != nil && existingEntry.SessionId != nil && *existingEntry.SessionId == *request.SessionId {
 		return proto.Status_OK, nil
 	}
 	// delete existing session shadow
@@ -523,10 +526,10 @@ func (*sessionManagerUpdateOperationCallbackS) OnPutWithinSession(batch kvstore.
 	return proto.Status_OK, nil
 }
 
-func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry, _ feature.Checker) (proto.Status, error) {
+func (s *sessionManagerUpdateOperationCallbackS) OnPut(batch kvstore.WriteBatch, notification *database.Notifications, request *proto.PutRequest, existingEntry *proto.StorageEntry, features feature.Checker) (proto.Status, error) {
 	if request.SessionId != nil {
 		// override by session operation
-		return s.OnPutWithinSession(batch, notification, request, existingEntry)
+		return s.OnPutWithinSession(batch, notification, request, existingEntry, features)
 	}
 
 	// override by normal operation
