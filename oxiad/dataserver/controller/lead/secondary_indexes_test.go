@@ -101,6 +101,7 @@ type testFeatureChecker struct {
 	ephemeralCleanupNaturalSorting bool
 	secondaryIndexSkipUnchanged    bool
 	ephemeralSecondaryIndexCleanup bool
+	sessionShadowSkipSameSession   bool
 }
 
 func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
@@ -113,6 +114,8 @@ func (f testFeatureChecker) IsFeatureEnabled(candidate proto.Feature) bool {
 		return f.ephemeralCleanupNaturalSorting
 	case proto.Feature_FEATURE_SECONDARY_INDEX_SKIP_UNCHANGED:
 		return f.secondaryIndexSkipUnchanged
+	case proto.Feature_FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION:
+		return f.sessionShadowSkipSameSession
 	default:
 		return false
 	}

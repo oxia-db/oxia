@@ -102,6 +102,10 @@ enum Feature {
   // The leader includes the end of the range of a List or a RangeScan request
   // with end_inclusive, and says so in its responses
   FEATURE_RANGE_END_INCLUSIVE = 12;
+  // A put within a session that overwrites a record of the same session
+  // leaves the session shadow key alone, instead of deleting and writing it
+  // again
+  FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION = 13;
 }
 
 message GetInfoRequest {
