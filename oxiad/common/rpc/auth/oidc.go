@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -104,6 +105,8 @@ type OIDCProvider struct {
 	providers map[string]*ProviderWithVerifier
 
 	verifiedTokens tokenCache
+
+	failpoints *failpoint.Failpoints
 }
 
 func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, error) {
@@ -123,8 +126,8 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	if err != nil {
 		return "", err
 	}
-	// The claims are trusted only once the verifier checks the signature of this
-	// payload
+	// Only the issuer is read from this payload, to pick the verifier, which
+	// checks it again: the other claims are read from the verified token
 	rawClaims := map[string]json.RawMessage{}
 	if err = json.Unmarshal(payload, &rawClaims); err != nil {
 		return "", err
@@ -150,12 +153,8 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 		userNameClaim = p.userNameClaim
 	}
 
-	rawMessage, ok := rawClaims[userNameClaim]
-	if !ok {
-		return "", errors.Wrap(errs.ErrUnauthenticated, "username not found")
-	}
-	var userName string
-	if err = json.Unmarshal(rawMessage, &userName); err != nil {
+	userName, err := p.verifiedUserName(idToken, userNameClaim)
+	if err != nil {
 		return "", err
 	}
 
@@ -177,6 +176,27 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 		return "", errors.Wrap(errs.ErrUnauthenticated, "forbidden audience")
 	}
 	p.verifiedTokens.put(token, userName, idToken.Expiry, now)
+	return userName, nil
+}
+
+// verifiedUserName reads the user name from the claims of the verified token.
+// The second segment of the token is not always the payload that the verifier
+// checked: the verifier also takes a token in the JWS JSON serialization, which
+// can hold dots in a field that it ignores.
+func (p *OIDCProvider) verifiedUserName(idToken *oidc.IDToken, userNameClaim string) (string, error) {
+	claims := map[string]json.RawMessage{}
+	// The verifier decoded the same claims, so this never fails
+	if err := p.failpoints.Fail("verifiedUserName.claims", idToken.Claims(&claims)); err != nil {
+		return "", err
+	}
+	rawMessage, ok := claims[userNameClaim]
+	if !ok {
+		return "", errors.Wrap(errs.ErrUnauthenticated, "username not found")
+	}
+	var userName string
+	if err := json.Unmarshal(rawMessage, &userName); err != nil {
+		return "", err
+	}
 	return userName, nil
 }
 
