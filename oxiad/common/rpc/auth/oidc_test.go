@@ -26,15 +26,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -562,6 +565,63 @@ func TestOIDCProviderAuthenticateRejectsNonStringUserName(t *testing.T) {
 
 	var typeErr *json.UnmarshalTypeError
 	assert.ErrorAs(t, err, &typeErr)
+}
+
+// A token in the JWS JSON serialization can hold dots in a field that the
+// verifier ignores, which gives it a second segment that the verifier never
+// checked.
+func TestOIDCProviderAuthenticateReadsUserNameOfVerifiedToken(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	issuer := "https://issuer.example.com"
+	provider := newStaticKeyOIDCProvider(issuer, &privateKey.PublicKey, DefaultUserNameCalm)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": issuer,
+		"aud": "audience",
+		"sub": "user",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString(privateKey)
+	require.NoError(t, err)
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+	otherPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"` + issuer + `","sub":"admin"}`))
+	jsonToken, err := json.Marshal(map[string]string{
+		"protected": parts[0],
+		"payload":   parts[1],
+		"signature": parts[2],
+		"ignored":   "." + otherPayload + ".",
+	})
+	require.NoError(t, err)
+
+	userName, err := provider.Authenticate(context.Background(), string(jsonToken))
+
+	require.NoError(t, err)
+	assert.Equal(t, "user", userName)
+}
+
+func TestOIDCProviderAuthenticateReturnsVerifiedClaimsError(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	issuer := "https://issuer.example.com"
+	provider := newStaticKeyOIDCProvider(issuer, &privateKey.PublicKey, DefaultUserNameCalm)
+	injected := errors.New("injected")
+	provider.failpoints = failpoint.New(map[string]func() error{
+		"verifiedUserName.claims": func() error { return injected },
+	})
+	token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": issuer,
+		"aud": "audience",
+		"sub": "user",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString(privateKey)
+	require.NoError(t, err)
+
+	_, err = provider.Authenticate(context.Background(), token)
+
+	assert.ErrorIs(t, err, injected)
 }
 
 // countingKeySet counts the signature checks of the key set it wraps.
