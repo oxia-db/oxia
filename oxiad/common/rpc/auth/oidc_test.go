@@ -609,7 +609,7 @@ func TestOIDCProviderAuthenticateReturnsVerifiedClaimsError(t *testing.T) {
 	provider := newStaticKeyOIDCProvider(issuer, &privateKey.PublicKey, DefaultUserNameCalm)
 	injected := errors.New("injected")
 	provider.failpoints = failpoint.New(map[string]func() error{
-		"verifiedUserName.claims": func() error { return injected },
+		"auth.claims": func() error { return injected },
 	})
 	token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": issuer,

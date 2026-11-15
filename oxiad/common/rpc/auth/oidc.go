@@ -15,6 +15,7 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/x509"
@@ -148,13 +149,18 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	}
 
 	// Use per-issuer userNameClaim if available, otherwise fall back to global
-	userNameClaim := oidcProvider.userNameClaim
-	if userNameClaim == "" {
-		userNameClaim = p.userNameClaim
+	userNameClaim := cmp.Or(oidcProvider.userNameClaim, p.userNameClaim)
+	claims := map[string]json.RawMessage{}
+	// The verifier decoded the same claims, so this never fails
+	if err := p.failpoints.Fail("auth.claims", idToken.Claims(&claims)); err != nil {
+		return "", err
 	}
-
-	userName, err := p.verifiedUserName(idToken, userNameClaim)
-	if err != nil {
+	rawMessage, ok := claims[userNameClaim]
+	if !ok {
+		return "", errors.Wrap(errs.ErrUnauthenticated, "username not found")
+	}
+	var userName string
+	if err := json.Unmarshal(rawMessage, &userName); err != nil {
 		return "", err
 	}
 
@@ -176,27 +182,6 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 		return "", errors.Wrap(errs.ErrUnauthenticated, "forbidden audience")
 	}
 	p.verifiedTokens.put(token, userName, idToken.Expiry, now)
-	return userName, nil
-}
-
-// verifiedUserName reads the user name from the claims of the verified token.
-// The second segment of the token is not always the payload that the verifier
-// checked: the verifier also takes a token in the JWS JSON serialization, which
-// can hold dots in a field that it ignores.
-func (p *OIDCProvider) verifiedUserName(idToken *oidc.IDToken, userNameClaim string) (string, error) {
-	claims := map[string]json.RawMessage{}
-	// The verifier decoded the same claims, so this never fails
-	if err := p.failpoints.Fail("verifiedUserName.claims", idToken.Claims(&claims)); err != nil {
-		return "", err
-	}
-	rawMessage, ok := claims[userNameClaim]
-	if !ok {
-		return "", errors.Wrap(errs.ErrUnauthenticated, "username not found")
-	}
-	var userName string
-	if err := json.Unmarshal(rawMessage, &userName); err != nil {
-		return "", err
-	}
 	return userName, nil
 }
 
