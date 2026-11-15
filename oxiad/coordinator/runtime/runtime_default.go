@@ -87,6 +87,9 @@ type runtime struct {
 	assignmentsWatch *commonwatch.Watch[*proto.ShardAssignments]
 
 	rpc rpc.ControllerRPCProvider
+	// healthPolicy is fixed at construction: every data server controller
+	// that the runtime creates is given it.
+	healthPolicy health.CheckPolicy
 }
 
 func (c *runtime) LeaderElected(int64, *proto.DataServerIdentity, []*proto.DataServerIdentity) {
@@ -185,7 +188,7 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 		c.rpc,
 		c.insID,
 		oxiatime.SlowInitialInterval,
-		health.DefaultCheckPolicy,
+		c.healthPolicy,
 	)
 	return true
 }
@@ -599,11 +602,13 @@ func mergedAuthorities(status map[string]commonobject.Borrowed[*proto.NamespaceS
 }
 
 // New starts a runtime whose controllers stop when ctx is cancelled or the
-// runtime is closed.
+// runtime is closed. The data server controllers judge the health of their
+// data servers by healthPolicy.
 func New(
 	ctx context.Context,
 	metadata coordmetadata.Metadata,
 	rpcProvider rpc.ControllerRPCProviderFactory,
+	healthPolicy health.CheckPolicy,
 ) (Runtime, error) {
 	clusterStatus, err := metadata.ListNamespaceStatus()
 	if err != nil {
@@ -636,6 +641,7 @@ func New(
 		dataServerControllers: make(map[string]dataservercontroller.Controller),
 		metadata:              metadata,
 		insID:                 insID,
+		healthPolicy:          healthPolicy,
 		assignmentsWatch:      commonwatch.New[*proto.ShardAssignments](nil),
 		planner:               planner.New(filter.Defaults(), tier.Defaults()),
 	}
@@ -669,7 +675,7 @@ func New(
 			c.rpc,
 			c.insID,
 			oxiatime.SlowInitialInterval,
-			health.DefaultCheckPolicy,
+			c.healthPolicy,
 		)
 		// Resume the drain before the lock is released, so that a draining
 		// data server is never seen RUNNING
