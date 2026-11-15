@@ -116,11 +116,11 @@ func (s *streamReader[T, U]) close(err error) {
 		)
 	}
 
-	if s.closeCh != nil {
-		s.closeCh <- err
-		close(s.closeCh)
-		s.closeCh = nil
-	}
+	// Run may have returned on its context already, leaving nobody to receive
+	// the report: the channel keeps a slot for it, so that the report never
+	// parks the reader
+	s.closeCh <- err
+	close(s.closeCh)
 }
 
 func ReadStream[T any](
@@ -149,7 +149,7 @@ func ProcessStream[T any, U any](
 	labels map[string]string,
 	log *slog.Logger) StreamReader {
 	reader := &streamReader[T, U]{
-		closeCh:       make(chan error),
+		closeCh:       make(chan error, 1),
 		stream:        stream,
 		sender:        sender,
 		handleMessage: handleMessage,

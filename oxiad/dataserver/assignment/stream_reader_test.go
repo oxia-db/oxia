@@ -15,10 +15,12 @@
 package assignment
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
@@ -68,6 +70,30 @@ func TestStreamReaderRunReturnsHandlerError(t *testing.T) {
 	assert.ErrorIs(t, reader.Run(), handleErr)
 	// The reader stops at the first failure
 	assert.Equal(t, []string{"a"}, handled)
+}
+
+// Run returns once its context is done, and the reader fails its Recv after
+// it: the report of that failure, with nobody left to receive it, must not
+// park the reader goroutine for the life of the process.
+func TestStreamReaderRunLeavesNoReaderBehindOnContextDone(t *testing.T) {
+	runReturned := make(chan struct{})
+	recvErr := status.Error(codes.Canceled, "server closing")
+	ctx, cancel := context.WithCancel(t.Context())
+	reader := ReadStream[string](ctx, newFakeStream(func() (*string, error) {
+		<-runReturned
+		return nil, recvErr
+	}), func(*string) error { return nil }, nil, slog.Default())
+
+	cancel()
+	assert.NoError(t, reader.Run())
+	close(runReturned)
+
+	closeCh := reader.(*streamReader[string, any]).closeCh
+	assert.Eventually(t, func() bool { return len(closeCh) == 1 }, 10*time.Second, time.Millisecond,
+		"the reader did not report the failure of its Recv")
+	assert.ErrorIs(t, <-closeCh, recvErr)
+	_, open := <-closeCh
+	assert.False(t, open, "the reader reports once, and closes the channel")
 }
 
 func TestProcessStreamSendsResponses(t *testing.T) {
