@@ -18,7 +18,28 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	commonproto "github.com/oxia-db/oxia/common/proto"
 )
+
+func TestConfigCodecMarshalYAMLWhileSharedSubMessageIsFormatted(t *testing.T) {
+	server := &commonproto.DataServerIdentity{Public: "localhost:6648", Internal: "localhost:6649"}
+	config := &commonproto.ClusterConfiguration{
+		Servers: []*commonproto.DataServerIdentity{server},
+	}
+
+	// Formatting a message stores its reflection state the first time.
+	formatted := make(chan struct{})
+	go func() {
+		defer close(formatted)
+		_ = server.String()
+	}()
+	data, err := ClusterConfigCodec.MarshalYAML(config)
+	<-formatted
+
+	require.NoError(t, err)
+	require.Contains(t, string(data), "public: localhost:6648")
+}
 
 func TestConfigCodecUnmarshalYAMLRejectsInvalidYAML(t *testing.T) {
 	config, err := ClusterConfigCodec.UnmarshalYAML([]byte("servers: [unterminated"))

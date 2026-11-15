@@ -17,7 +17,6 @@ package codec
 import (
 	"google.golang.org/protobuf/encoding/protojson"
 	gproto "google.golang.org/protobuf/proto"
-	yamlv3 "gopkg.in/yaml.v3"
 	"sigs.k8s.io/yaml"
 
 	commonproto "github.com/oxia-db/oxia/common/proto"
@@ -41,7 +40,7 @@ func (statusCodec) NewZero() *commonproto.ClusterStatus {
 }
 
 func (statusCodec) MarshalYAML(value *commonproto.ClusterStatus) ([]byte, error) {
-	return yamlv3.Marshal(value)
+	return marshalYAML(value)
 }
 
 func (statusCodec) UnmarshalJSON(data []byte) (*commonproto.ClusterStatus, error) {
