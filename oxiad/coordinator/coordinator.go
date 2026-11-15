@@ -24,11 +24,18 @@ import (
 // reconciles the cluster configuration, assigns the shards to the data
 // servers, elects their leaders, and balances and splits them.
 //
-// A coordinator that loses the metadata leadership exits the process, so that
-// it can't act alongside the new leader: a restart rejoins the election. Only
-// the raft and configmap metadata providers can lose it.
+// A coordinator that loses the metadata leadership stops coordinating at once,
+// so that it can't act alongside the new leader, and reports the loss on
+// LeadershipLost. Only the raft and configmap metadata providers can lose it.
 type Coordinator interface {
 	// Close stops the coordination and the servers, and releases the metadata.
 	// It releases them once: a later call, or a concurrent one, returns nil.
 	io.Closer
+
+	// LeadershipLost is closed once the coordinator lost the metadata
+	// leadership. It has stopped coordinating by then, and its health checks
+	// report NOT_SERVING: close it, and create a new one to rejoin the
+	// election. It is never closed with a provider that can't lose the
+	// leadership, nor by Close.
+	LeadershipLost() <-chan struct{}
 }

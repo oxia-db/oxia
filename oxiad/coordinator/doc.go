@@ -103,18 +103,34 @@
 // waiting.
 //
 // Only the raft and configmap providers can lose the leadership. A coordinator
-// that loses it terminates the process, so that it can't coordinate alongside
-// the new leader: a restart rejoins the election.
+// that loses it stops coordinating at once, so that it can't act alongside the
+// new leader, and then closes [Coordinator.LeadershipLost]. Close it, and call
+// [New] again to rejoin the election:
+//
+//	for ctx.Err() == nil {
+//		coord, err := coordinator.New(ctx, optionsWatch)
+//		if err != nil {
+//			return err
+//		}
+//		select {
+//		case <-coord.LeadershipLost():
+//		case <-ctx.Done():
+//		}
+//		if err := coord.Close(); err != nil {
+//			return err
+//		}
+//	}
+//
+// The `oxia coordinator` command exits instead, and its restart rejoins.
 //
 // # Limitations
 //
-// Embedded servers share process-global state, and some failures still
-// terminate the host process:
+// Embedded servers share process-global state, and a fatal error still
+// terminates the host process:
 //
 //   - The metrics package installs the global OpenTelemetry MeterProvider when
 //     it is loaded, and every metrics endpoint serves the default Prometheus
 //     registry: the servers of one process share one metrics pipeline.
 //   - The log level is package-global, shared by all the servers.
-//   - A failure to serve gRPC or metrics, a fatal Pebble error, and the loss of
-//     the coordinator's metadata leadership exit the process.
+//   - A fatal Pebble error panics.
 package coordinator
