@@ -953,6 +953,17 @@ func (lc *leaderController) truncateFollowerIfNeeded(follower string, shardId in
 		return constant2.InvalidEntryId, nil
 	}
 
+	if lc.leaderElectionHeadEntryId.Term == wal.InvalidTerm &&
+		followerHeadEntryId.Offset <= lc.quorumAckTracker.CommitOffset() {
+		// The wal of the leader is empty and its database holds the entries up to the follower's head,
+		// e.g. it was seeded from a snapshot, like the child of a split, whose members observed the
+		// entries of the parent through different paths. The leader has no term to compare with the
+		// one of the follower, and can't tell whether its entries are the committed ones, so it sends a
+		// snapshot, like it does to a follower that its wal doesn't reach. A follower that is ahead of
+		// the database of the leader still fails below: the leader misses entries.
+		return constant2.InvalidEntryId, nil
+	}
+
 	if followerHeadEntryId.Term == lc.leaderElectionHeadEntryId.Term &&
 		followerHeadEntryId.Offset <= lc.leaderElectionHeadEntryId.Offset {
 		// No need for truncation
