@@ -83,6 +83,10 @@ const (
 	// The leader includes the end of the range of a List or a RangeScan request
 	// with end_inclusive, and says so in its responses
 	Feature_FEATURE_RANGE_END_INCLUSIVE Feature = 12
+	// A put within a session that overwrites a record of the same session
+	// leaves the session shadow key alone, instead of deleting and writing it
+	// again
+	Feature_FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION Feature = 13
 )
 
 // Enum value maps for Feature.
@@ -101,6 +105,7 @@ var (
 		10: "FEATURE_SPLIT_DEFERRED_FILTER",
 		11: "FEATURE_COMMIT_ADVERTISEMENT",
 		12: "FEATURE_RANGE_END_INCLUSIVE",
+		13: "FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION",
 	}
 	Feature_value = map[string]int32{
 		"FEATURE_UNKNOWN":                           0,
@@ -116,6 +121,7 @@ var (
 		"FEATURE_SPLIT_DEFERRED_FILTER":             10,
 		"FEATURE_COMMIT_ADVERTISEMENT":              11,
 		"FEATURE_RANGE_END_INCLUSIVE":               12,
+		"FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION":  13,
 	}
 )
 
@@ -2255,7 +2261,7 @@ const file_replication_proto_rawDesc = "" +
 	"\rdb_size_bytes\x18\x01 \x01(\x04R\vdbSizeBytes\x12$\n" +
 	"\x0eread_ops_total\x18\x02 \x01(\x04R\freadOpsTotal\x12&\n" +
 	"\x0fwrite_ops_total\x18\x03 \x01(\x04R\rwriteOpsTotal\x120\n" +
-	"\x14split_filter_pending\x18\x04 \x01(\bR\x12splitFilterPending*\xed\x03\n" +
+	"\x14split_filter_pending\x18\x04 \x01(\bR\x12splitFilterPending*\x9b\x04\n" +
 	"\aFeature\x12\x13\n" +
 	"\x0fFEATURE_UNKNOWN\x10\x00\x12\x17\n" +
 	"\x13FEATURE_DB_CHECKSUM\x10\x01\x12+\n" +
@@ -2270,7 +2276,8 @@ const file_replication_proto_rawDesc = "" +
 	"\x1dFEATURE_SPLIT_DEFERRED_FILTER\x10\n" +
 	"\x12 \n" +
 	"\x1cFEATURE_COMMIT_ADVERTISEMENT\x10\v\x12\x1f\n" +
-	"\x1bFEATURE_RANGE_END_INCLUSIVE\x10\f*\x8e\x01\n" +
+	"\x1bFEATURE_RANGE_END_INCLUSIVE\x10\f\x12,\n" +
+	"(FEATURE_SESSION_SHADOW_SKIP_SAME_SESSION\x10\r*\x8e\x01\n" +
 	"\x0fHandshakeStatus\x12\x1c\n" +
 	"\x18HANDSHAKE_STATUS_UNKNOWN\x10\x00\x12\x1a\n" +
 	"\x16HANDSHAKE_STATUS_BOUND\x10\x01\x12\"\n" +
