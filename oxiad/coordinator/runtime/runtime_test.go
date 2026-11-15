@@ -873,6 +873,31 @@ func TestRuntimeCloseAbortsSplits(t *testing.T) {
 	assert.Nil(t, parent.UnsafeBorrow().GetSplit())
 }
 
+// The reachability counts the running data servers that pass their health checks: a data server that is draining
+// or drained is not part of it.
+func TestRuntimeDataServerReachabilityCountsTheRunningDataServers(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	reachable, total := c.DataServerReachability()
+	assert.Zero(t, reachable)
+	assert.Zero(t, total)
+
+	up := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	up.status.SetAvailable(true)
+	down := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	down.status.SetAvailable(false)
+	draining := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINING)
+	draining.status.SetAvailable(true)
+	drained := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_DRAINED)
+	c.dataServerControllers["up"] = up
+	c.dataServerControllers["down"] = down
+	c.dataServerControllers["draining"] = draining
+	c.dataServerControllers["drained"] = drained
+
+	reachable, total = c.DataServerReachability()
+	assert.Equal(t, 1, reachable)
+	assert.Equal(t, 2, total)
+}
+
 // A draining data server that becomes unavailable keeps its controller, which
 // stores it DRAINED, and the shard controllers are told.
 func TestRuntimeBecameUnavailableKeepsDrainingNode(t *testing.T) {

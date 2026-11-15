@@ -203,6 +203,8 @@ func New(ctx context.Context, optionsWatch *commonwatch.Watch[*option.Options]) 
 		})
 	})
 
+	c.startQuorumWatcher(controller.StepDownTimeout.ToDuration())
+
 	return c, nil
 }
 
