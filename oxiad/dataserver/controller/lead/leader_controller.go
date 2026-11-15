@@ -117,6 +117,18 @@ type LeaderController interface {
 	ProposeRecordChecksum(ctx context.Context)
 }
 
+// writeCommitTimeout is how long a write of a client waits for a quorum to commit its entry. Past it the write fails
+// with a retryable error: a leader that lost its quorum, e.g. to a partition, would keep the write waiting until the
+// partition ends, although the coordinator elected a new leader meanwhile, and the client could write to it.
+const writeCommitTimeout = 3 * time.Second
+
+// noCommitTimeout makes a proposal wait for its quorum until the term ends. The proposals of the leader itself use it:
+// their results must be applied, e.g. a session whose registration commits must be scheduled to expire.
+const noCommitTimeout time.Duration = 0
+
+// noTimedOutOffset is the value of timedOutOffset when no write timed out in the term.
+const noTimedOutOffset int64 = -1
+
 type leaderController struct {
 	sync.RWMutex
 
@@ -131,8 +143,14 @@ type leaderController struct {
 	term              *atomic.Int64
 	replicationFactor uint32
 	quorumAckTracker  QuorumAckTracker
-	followers         map[string]FollowerCursor
-	observers         map[string]FollowerCursor
+	// timedOutOffset is the offset of the last entry whose write of a client timed out waiting for a quorum in the
+	// term, or noTimedOutOffset. While the commit offset is below it the quorum is still missing, and the new writes of
+	// the clients fail at once instead of waiting for it. A single value derived with the commit offset, which has no
+	// flag to clear. Owner: the leader controller. Set by the timeout of a write of a client, reset when a term begins,
+	// read by the writes of the clients.
+	timedOutOffset atomic.Int64
+	followers      map[string]FollowerCursor
+	observers      map[string]FollowerCursor
 
 	// frozen, when set, makes the leader reject new write proposals without
 	// fencing it: existing follower/observer cursors keep streaming. Used
@@ -215,6 +233,7 @@ func newLeaderController(storageOptions *option.StorageOptions, namespace string
 			"Latency for write operations in the leader", labels),
 		followerAckOffsetGauges: map[string]metric.Gauge{},
 	}
+	lc.timedOutOffset.Store(noTimedOutOffset)
 
 	lc.checksumGauge = metric.NewSyncGauge("oxia_dataserver_db_checksum",
 		"The current DB checksum value", "count", labels)
@@ -468,6 +487,7 @@ func (lc *leaderController) becomeLeader(ctx context.Context, req *proto.BecomeL
 	// followers seeded from the same snapshot drop them as duplicates.
 	headOffset := max(lc.leaderElectionHeadEntryId.Offset, leaderCommitOffset)
 	lc.quorumAckTracker = NewQuorumAckTracker(req.GetReplicationFactor(), headOffset, leaderCommitOffset)
+	lc.timedOutOffset.Store(noTimedOutOffset)
 	lc.registerOffsetGauges(lc.quorumAckTracker)
 	lc.termCtx, lc.termCancel = context.WithCancel(lc.ctx)
 	lc.sessionManager = NewSessionManager(lc.ctx, lc.namespace, lc.shardId, lc)
@@ -1246,14 +1266,16 @@ func rangeScanIterate(ctx context.Context, it database.RangeScanIterator, onNext
 }
 
 func (lc *leaderController) WriteBlock(ctx context.Context, request *proto.WriteRequest) (*proto.WriteResponse, error) {
-	return lc.writeBlock(ctx, nil, func(_ int64) *proto.WriteRequest { return request })
+	return lc.writeBlock(ctx, nil, writeCommitTimeout, func(_ int64) *proto.WriteRequest { return request })
 }
 
 func (lc *leaderController) Write(ctx context.Context, request *proto.WriteRequest, cb concurrent.Callback[*proto.WriteResponse]) {
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
 		cb.OnComplete(response.WriteResponse)
 	}, cb.OnCompleteError)
-	lc.propose(ctx, func(offset int64) statemachine.Proposal { return statemachine.NewWriteProposal(offset, request) }, deferPropose)
+	lc.propose(ctx, writeCommitTimeout, func(offset int64) statemachine.Proposal {
+		return statemachine.NewWriteProposal(offset, request)
+	}, deferPropose)
 }
 
 // writeBlock proposes the write built by requestSupplier and waits for its
@@ -1261,9 +1283,9 @@ func (lc *leaderController) Write(ctx context.Context, request *proto.WriteReque
 // rejected without being appended; a nil closed is never done. The session
 // manager passes its own done channel: it is stopped while holding the leader
 // write lock, so none of its writes can be appended once it is stopped.
-func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{},
+func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct{}, commitTimeout time.Duration,
 	requestSupplier func(offset int64) *proto.WriteRequest) (*proto.WriteResponse, error) {
-	response, err := lc.proposeBlock(ctx, closed, func(offset int64) statemachine.Proposal {
+	response, err := lc.proposeBlock(ctx, closed, commitTimeout, func(offset int64) statemachine.Proposal {
 		return statemachine.NewWriteProposal(offset, requestSupplier(offset))
 	})
 	return response.WriteResponse, err
@@ -1271,7 +1293,7 @@ func (lc *leaderController) writeBlock(ctx context.Context, closed <-chan struct
 
 // proposeBlock proposes the proposal built by proposalSupplier and waits for
 // its result, like writeBlock.
-func (lc *leaderController) proposeBlock(ctx context.Context, closed <-chan struct{},
+func (lc *leaderController) proposeBlock(ctx context.Context, closed <-chan struct{}, commitTimeout time.Duration,
 	proposalSupplier func(offset int64) statemachine.Proposal) (statemachine.ApplyResponse, error) {
 	res := make(chan *entity.TWithError[statemachine.ApplyResponse], 1)
 	deferPropose := concurrent.NewOnce(func(response statemachine.ApplyResponse) {
@@ -1286,7 +1308,7 @@ func (lc *leaderController) proposeBlock(ctx context.Context, closed <-chan stru
 	case <-closed:
 		err = constant.ErrNodeIsNotLeader
 	default:
-		err = lc.proposeLocked(ctx, proposalSupplier, deferPropose)
+		err = lc.proposeLocked(ctx, commitTimeout, proposalSupplier, deferPropose)
 	}
 	lc.RUnlock()
 	if err != nil {
@@ -1312,7 +1334,7 @@ func (lc *leaderController) proposeFeaturesEnableLocked(ctx context.Context, fea
 	}, func(err error) {
 		lc.log.Error("Failed to propose feature enable", slog.Int64("term", term), slog.Any("features", features), slog.Any("error", err))
 	})
-	return lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+	return lc.proposeLocked(ctx, noCommitTimeout, func(offset int64) statemachine.Proposal {
 		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
 			Value: &proto.ControlRequest_FeatureEnable{
 				FeatureEnable: &proto.FeatureEnableRequest{
@@ -1355,7 +1377,7 @@ func (lc *leaderController) proposeOrphanedEphemeralsDeleteLocked(ctx context.Co
 			Shard:   &lc.shardId,
 			Deletes: deletes[start:min(start+orphanedEphemeralsBatchSize, len(deletes))],
 		}
-		if err := lc.proposeLocked(ctx, func(offset int64) statemachine.Proposal {
+		if err := lc.proposeLocked(ctx, noCommitTimeout, func(offset int64) statemachine.Proposal {
 			return statemachine.NewWriteProposal(offset, request)
 		}, concurrent.NewOnce(func(statemachine.ApplyResponse) {}, onError)); err != nil {
 			onError(err)
@@ -1371,7 +1393,7 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 	}, func(err error) {
 		lc.log.Warn("Failed to record checksum", slog.Int64("term", term), slog.Any("error", err))
 	})
-	lc.propose(ctx, func(offset int64) statemachine.Proposal {
+	lc.propose(ctx, noCommitTimeout, func(offset int64) statemachine.Proposal {
 		return statemachine.NewControlProposal(offset, &proto.ControlRequest{
 			Value: &proto.ControlRequest_RecordChecksum{
 				RecordChecksum: &proto.RecordChecksumRequest{},
@@ -1380,9 +1402,10 @@ func (lc *leaderController) ProposeRecordChecksum(ctx context.Context) {
 	}, deferPropose)
 }
 
-func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
+func (lc *leaderController) propose(ctx context.Context, commitTimeout time.Duration,
+	proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) {
 	lc.RLock()
-	err := lc.proposeLocked(ctx, proposalSupplier, cb)
+	err := lc.proposeLocked(ctx, commitTimeout, proposalSupplier, cb)
 	lc.RUnlock()
 	if err != nil {
 		cb.OnCompleteError(err)
@@ -1393,7 +1416,15 @@ func (lc *leaderController) propose(ctx context.Context, proposalSupplier func(o
 // leader lock, the read or the write one: the leader state can't change until
 // the proposal is appended. A non-nil return means the proposal was not
 // appended and the callback will not be invoked.
-func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
+//
+// A commitTimeout other than noCommitTimeout bounds the wait for the quorum, for the writes of the clients: past it the
+// callback fails with a retryable error, unless the quorum committed the entry, which then waits for its apply as any
+// other. The entry stays in the wal: the quorum commits it later, or the next term
+// truncates it, as for a write whose client gave up. Until the quorum commits it, the next proposals with a timeout
+// fail at once: they would wait for the same quorum, while the client can look up the leader that the coordinator
+// elects meanwhile.
+func (lc *leaderController) proposeLocked(ctx context.Context, commitTimeout time.Duration,
+	proposalSupplier func(offset int64) statemachine.Proposal, cb concurrent.Callback[statemachine.ApplyResponse]) error {
 	// One proposal at a time: the entries must be appended in the order of
 	// their offsets, and their syncs requested in the same order, since the
 	// sync callbacks queue the entries for the database apply.
@@ -1403,6 +1434,11 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	timer := lc.writeLatencyHisto.Timer()
 	if err := checkStatusIsLeader(lc.status); err != nil {
 		return err
+	}
+	if offset := lc.timedOutOffset.Load(); commitTimeout != noCommitTimeout && offset != noTimedOutOffset &&
+		lc.quorumAckTracker.CommitOffset() < offset {
+		return errors.Wrapf(constant.ErrResourceUnavailable,
+			"oxia: no quorum committed the entry %d, so the new writes would wait for it too", offset)
 	}
 	if lc.frozen.Load() {
 		// The shard is frozen for split cutover: reject new writes with a
@@ -1443,8 +1479,22 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	lc.marshalBuf = marshalBuf
 
 	lc.waitGroup.Add(1) // inflight proposal
+	stopCommitTimer := func() bool { return false }
+	if commitTimeout != noCommitTimeout {
+		cb = concurrent.NewOnce(cb.OnComplete, cb.OnCompleteError)
+		stopCommitTimer = time.AfterFunc(commitTimeout, func() {
+			if tracker.CommitOffset() >= newOffset {
+				// Committed, it waits for the apply of the earlier entries, which can be retrying a failure
+				return
+			}
+			lc.recordTimedOutOffset(newOffset)
+			cb.OnCompleteError(errors.Wrapf(constant.ErrResourceUnavailable,
+				"oxia: no quorum committed the entry %d in %s", newOffset, commitTimeout))
+		}).Stop
+	}
 	deferDbWrite := func(entryCrc uint32, err error) {
 		if err != nil {
+			stopCommitTimer()
 			timer.DoneCtx(ctx)
 			lc.waitGroup.Done()
 			cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
@@ -1453,6 +1503,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 		tracker.AdvanceHeadOffset(newOffset)
 		tracker.WaitForCommitOffsetAsync(ctx, newOffset, concurrent.NewOnce[any](
 			func(_ any) {
+				stopCommitTimer()
 				defer timer.DoneCtx(ctx)
 				response, err := lc.applyCommitted(termCtx, walLog, proposal)
 				if err != nil {
@@ -1467,6 +1518,7 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 				lc.waitGroup.Done()
 				cb.OnComplete(response)
 			}, func(err error) {
+				stopCommitTimer()
 				timer.DoneCtx(ctx)
 				lc.waitGroup.Done()
 				cb.OnCompleteError(errors.Wrap(err, "oxia: failed to append to wal"))
@@ -1474,6 +1526,17 @@ func (lc *leaderController) proposeLocked(ctx context.Context, proposalSupplier 
 	}
 	walLog.AppendAndSync(&proto.LogEntry{Term: term, Offset: newOffset, Value: value, Timestamp: proposal.GetTimestamp()}, deferDbWrite)
 	return nil
+}
+
+// recordTimedOutOffset records offset as the entry of a write that timed out. It keeps the highest one: the timers of
+// the writes can fire out of order, and the new writes would wait for the later entry too.
+func (lc *leaderController) recordTimedOutOffset(offset int64) {
+	for {
+		current := lc.timedOutOffset.Load()
+		if offset <= current || lc.timedOutOffset.CompareAndSwap(current, offset) {
+			return
+		}
+	}
 }
 
 // applyCommitted applies a committed entry to the database while the node leads

@@ -212,7 +212,7 @@ func (sm *sessionManager) createSession(request *proto.CreateSessionRequest, min
 		return nil, errors.Wrap(err, "could not marshal session metadata")
 	}
 	var sessionId SessionId
-	resp, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(offset int64) *proto.WriteRequest {
+	resp, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), noCommitTimeout, func(offset int64) *proto.WriteRequest {
 		sessionId = SessionId(offset)
 		return &proto.WriteRequest{
 			Shard: &request.Shard,
@@ -265,7 +265,7 @@ func (sm *sessionManager) deleteSessions(ids []SessionId) error {
 	for i, id := range ids {
 		deletes[i] = &proto.DeleteRequest{Key: SessionKey(id)}
 	}
-	_, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), func(int64) *proto.WriteRequest {
+	_, err := sm.leaderController.writeBlock(sm.ctx, sm.ctx.Done(), noCommitTimeout, func(int64) *proto.WriteRequest {
 		return &proto.WriteRequest{
 			Shard:   &sm.shardId,
 			Deletes: deletes,
