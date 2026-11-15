@@ -15,6 +15,7 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/x509"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/oxiad/common/errs"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -104,6 +106,8 @@ type OIDCProvider struct {
 	providers map[string]*ProviderWithVerifier
 
 	verifiedTokens tokenCache
+
+	failpoints *failpoint.Failpoints
 }
 
 func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, error) {
@@ -123,8 +127,8 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	if err != nil {
 		return "", err
 	}
-	// The claims are trusted only once the verifier checks the signature of this
-	// payload
+	// Only the issuer is read from this payload, to pick the verifier, which
+	// checks it again: the other claims are read from the verified token
 	rawClaims := map[string]json.RawMessage{}
 	if err = json.Unmarshal(payload, &rawClaims); err != nil {
 		return "", err
@@ -145,17 +149,18 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, param any) (string, err
 	}
 
 	// Use per-issuer userNameClaim if available, otherwise fall back to global
-	userNameClaim := oidcProvider.userNameClaim
-	if userNameClaim == "" {
-		userNameClaim = p.userNameClaim
+	userNameClaim := cmp.Or(oidcProvider.userNameClaim, p.userNameClaim)
+	claims := map[string]json.RawMessage{}
+	// The verifier decoded the same claims, so this never fails
+	if err := p.failpoints.Fail("auth.claims", idToken.Claims(&claims)); err != nil {
+		return "", err
 	}
-
-	rawMessage, ok := rawClaims[userNameClaim]
+	rawMessage, ok := claims[userNameClaim]
 	if !ok {
 		return "", errors.Wrap(errs.ErrUnauthenticated, "username not found")
 	}
 	var userName string
-	if err = json.Unmarshal(rawMessage, &userName); err != nil {
+	if err := json.Unmarshal(rawMessage, &userName); err != nil {
 		return "", err
 	}
 
