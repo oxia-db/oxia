@@ -729,6 +729,8 @@ func (*mockNamespaceRuntime) SubscribeShardAssignments() *commonwatch.Receiver[*
 
 func (*mockNamespaceRuntime) BecameUnavailable(*proto.DataServerIdentity) {}
 
+func (*mockNamespaceRuntime) MaybeRestarted(*proto.DataServerIdentity) {}
+
 func (*mockNamespaceRuntime) FeaturesDiscovered(*proto.DataServerIdentity) {}
 
 func (*mockNamespaceRuntime) BecameDrained(*proto.DataServerIdentity) {}

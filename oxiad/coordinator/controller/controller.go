@@ -42,6 +42,11 @@ type ShardAssignmentsProvider interface {
 type DataServerEventListener interface {
 	BecameUnavailable(dataServer *commonproto.DataServerIdentity)
 
+	// MaybeRestarted is called when the health watch of the data server broke and the data server answered right
+	// after: it may have restarted faster than the failure detector noticed, and lost the leaderships that the
+	// coordinator recorded for it.
+	MaybeRestarted(dataServer *commonproto.DataServerIdentity)
+
 	// FeaturesDiscovered is called when a handshake with the data server
 	// makes known the features it supports, if they differ from the ones
 	// known before: at the first handshake, and when the data server restarts

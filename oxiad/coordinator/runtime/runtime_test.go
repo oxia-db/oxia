@@ -1587,6 +1587,7 @@ type fakeShardController struct {
 	closes      atomic.Int64
 	deletes     atomic.Int64
 	unavailable []*proto.DataServerIdentity
+	restarted   []*proto.DataServerIdentity
 }
 
 func (c *fakeShardController) Close() error {
@@ -1600,6 +1601,10 @@ func (c *fakeShardController) Delete() {
 
 func (c *fakeShardController) BecameUnavailable(dataServer *proto.DataServerIdentity) {
 	c.unavailable = append(c.unavailable, dataServer)
+}
+
+func (c *fakeShardController) MaybeRestarted(dataServer *proto.DataServerIdentity) {
+	c.restarted = append(c.restarted, dataServer)
 }
 
 // fakeDataServerController reports a fixed status and the features that its

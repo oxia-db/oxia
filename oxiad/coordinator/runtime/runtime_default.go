@@ -433,6 +433,16 @@ func (c *runtime) BecameUnavailable(node *proto.DataServerIdentity) {
 	}
 }
 
+func (c *runtime) MaybeRestarted(node *proto.DataServerIdentity) {
+	c.RLock()
+	ctrls := maps.Clone(c.shardControllers)
+	c.RUnlock()
+
+	for _, sc := range ctrls {
+		sc.MaybeRestarted(node)
+	}
+}
+
 func (c *runtime) BecameDrained(node *proto.DataServerIdentity) {
 	c.Lock()
 	defer c.Unlock()
