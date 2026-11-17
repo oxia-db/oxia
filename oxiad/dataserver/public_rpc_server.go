@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"unicode/utf8"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -149,6 +150,10 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 		)
 	}
 
+	if err := validateWriteKeys(write); err != nil {
+		return nil, err
+	}
+
 	lc, err := s.resolveLeader(ctx, write.Shard)
 	if err != nil {
 		return nil, err
@@ -161,6 +166,36 @@ func (s *publicRpcServer) Write(ctx context.Context, write *proto.WriteRequest) 
 	}
 
 	return wr, err
+}
+
+// validateWriteKeys rejects a write whose keys or delete-range bounds are not
+// valid UTF-8. proto3 requires string fields to be valid UTF-8, but the gRPC
+// codec does not enforce it on decode, and the key encoders fold a byte that is
+// not valid UTF-8 onto an unrelated key: with the natural sorting the client
+// key "\xff\xffoxia/term" is stored exactly on the internal key "__oxia/term",
+// and with the hierarchical sorting "/\xff" and "\xff/" encode identically. The
+// SyncClient and AsyncClient validate the same thing, so this only guards the
+// server against a client that bypasses them and would otherwise overwrite an
+// unrelated key, forge an internal key, or make a delete range reach the
+// internal keys.
+func validateWriteKeys(write *proto.WriteRequest) error {
+	for _, p := range write.Puts {
+		if !utf8.ValidString(p.Key) {
+			return status.Errorf(codes.InvalidArgument, "oxia: put key is not valid UTF-8: %q", p.Key)
+		}
+	}
+	for _, d := range write.Deletes {
+		if !utf8.ValidString(d.Key) {
+			return status.Errorf(codes.InvalidArgument, "oxia: delete key is not valid UTF-8: %q", d.Key)
+		}
+	}
+	for _, dr := range write.DeleteRanges {
+		if !utf8.ValidString(dr.StartInclusive) || !utf8.ValidString(dr.EndExclusive) {
+			return status.Errorf(codes.InvalidArgument,
+				"oxia: delete range bound is not valid UTF-8: [%q, %q)", dr.StartInclusive, dr.EndExclusive)
+		}
+	}
+	return nil
 }
 
 func processWriteStream(streamCtx context.Context, finished chan<- error, stream proto.OxiaClient_WriteStreamServer,
@@ -181,6 +216,11 @@ func processWriteStream(streamCtx context.Context, finished chan<- error, stream
 		}
 		if req == nil {
 			channel.PushNoBlock(finished, errors.New("stream closed"))
+			return
+		}
+
+		if err := validateWriteKeys(req); err != nil {
+			channel.PushNoBlock(finished, err)
 			return
 		}
 
