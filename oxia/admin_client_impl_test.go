@@ -17,6 +17,7 @@ package oxia
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,13 @@ type mockAdminRpcClient struct {
 	splitShardReq           *proto.SplitShardRequest
 	splitShardResp          *proto.SplitShardResponse
 	splitShardErr           error
+	requestBackupReq        *proto.RequestBackupRequest
+	requestBackupResp       *proto.RequestBackupResponse
+	requestBackupErr        error
+	listBackupsReq          *proto.ListBackupsRequest
+	listBackupsResp         *proto.ListBackupsResponse
+	listBackupsErr          error
+	listBackupsRecvErr      error
 }
 
 func (m *mockAdminRpcClient) ListDataServers(ctx context.Context, _ *proto.ListDataServersRequest, _ ...grpc.CallOption) (*proto.ListDataServersResponse, error) {
@@ -150,6 +158,10 @@ func (m *mockAdminClientPool) GetCoordinationRpc(string) (proto.OxiaCoordination
 
 func (m *mockAdminClientPool) GetReplicationRpc(string) (proto.OxiaLogReplicationClient, error) {
 	return nil, errors.New("unexpected GetReplicationRpc call")
+}
+
+func (*mockAdminClientPool) GetBackupRpc(string) (proto.OxiaBackupClient, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (m *mockAdminClientPool) GetAminRpc(target string) (proto.OxiaAdminClient, error) {
@@ -728,4 +740,75 @@ func TestWrapAdminErrorPreservesCause(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnknown)
 	assert.True(t, errors.Is(err, cause))
+}
+
+func (m *mockAdminRpcClient) RequestBackup(_ context.Context, req *proto.RequestBackupRequest, _ ...grpc.CallOption) (*proto.RequestBackupResponse, error) {
+	m.requestBackupReq = req
+	return m.requestBackupResp, m.requestBackupErr
+}
+
+func (m *mockAdminRpcClient) ListBackups(_ context.Context, req *proto.ListBackupsRequest, _ ...grpc.CallOption) (proto.OxiaAdmin_ListBackupsClient, error) {
+	m.listBackupsReq = req
+	if m.listBackupsErr != nil {
+		return nil, m.listBackupsErr
+	}
+	return &listBackupsClientStream{responses: []*proto.ListBackupsResponse{m.listBackupsResp}, err: m.listBackupsRecvErr}, nil
+}
+
+// listBackupsClientStream replays the responses, then ends with err, or
+// cleanly.
+type listBackupsClientStream struct {
+	grpc.ClientStream
+	responses []*proto.ListBackupsResponse
+	err       error
+}
+
+func (s *listBackupsClientStream) Recv() (*proto.ListBackupsResponse, error) {
+	if len(s.responses) == 0 {
+		if s.err != nil {
+			return nil, s.err
+		}
+		return nil, io.EOF
+	}
+	res := s.responses[0]
+	s.responses = s.responses[1:]
+	return res, nil
+}
+
+func TestAdminClientRequestBackupAndListBackups(t *testing.T) {
+	shard := int64(7)
+	adminClient := &mockAdminRpcClient{
+		requestBackupResp: &proto.RequestBackupResponse{Shards: 3},
+		listBackupsResp:   &proto.ListBackupsResponse{Backups: []*proto.BackupInfo{{Shard: 7, BackupId: "id"}}},
+	}
+	admin := &adminClientImpl{adminAddr: "admin-addr", clientPool: &mockAdminClientPool{adminClient: adminClient}}
+
+	shards, err := admin.RequestBackup(context.Background(), "ns", &shard)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, shards)
+	assert.Equal(t, "ns", adminClient.requestBackupReq.GetNamespace())
+	assert.EqualValues(t, 7, adminClient.requestBackupReq.GetShard())
+
+	backups, err := admin.ListBackups(context.Background(), "ns", nil, "s3://bucket/prefix")
+	require.NoError(t, err)
+	require.Len(t, backups, 1)
+	assert.Equal(t, "id", backups[0].GetBackupId())
+	assert.Equal(t, "s3://bucket/prefix", adminClient.listBackupsReq.GetDestination())
+	assert.Nil(t, adminClient.listBackupsReq.Shard)
+
+	failing := &adminClientImpl{adminAddr: "admin-addr", clientPool: &mockAdminClientPool{adminClient: &mockAdminRpcClient{
+		requestBackupErr: grpcstatus.Error(codes.Unimplemented, "no backups"),
+		listBackupsErr:   grpcstatus.Error(codes.PermissionDenied, "forbidden"),
+	}}}
+	_, err = failing.RequestBackup(context.Background(), "ns", nil)
+	assert.Error(t, err)
+	_, err = failing.ListBackups(context.Background(), "ns", nil, "")
+	assert.ErrorIs(t, err, ErrUnauthorized)
+	// A stream that fails after a message
+	midway := &adminClientImpl{adminAddr: "admin-addr", clientPool: &mockAdminClientPool{adminClient: &mockAdminRpcClient{
+		listBackupsResp:    &proto.ListBackupsResponse{Backups: []*proto.BackupInfo{{Shard: 7}}},
+		listBackupsRecvErr: grpcstatus.Error(codes.Unavailable, "bucket unavailable"),
+	}}}
+	_, err = midway.ListBackups(context.Background(), "ns", nil, "")
+	assert.ErrorContains(t, err, "bucket unavailable")
 }
