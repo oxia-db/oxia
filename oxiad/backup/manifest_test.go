@@ -194,13 +194,22 @@ func TestReadManifestRejectsAManifestStoredUnderAnotherKey(t *testing.T) {
 	assert.Equal(t, m.ID, own.ID)
 }
 
-func TestSummaryNewerFollowsTheOrderOfIDs(t *testing.T) {
+func TestSummaryCompareOrdersByStartTimeThenID(t *testing.T) {
 	at := time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC)
 	older := newManifest("orders", 12, "abcd", at).Summary()
 	newer := newManifest("orders", 12, "abcd", at.Add(time.Second)).Summary()
-	assert.True(t, newer.Newer(older))
-	assert.False(t, older.Newer(newer))
-	assert.False(t, older.Newer(older))
+	assert.Positive(t, newer.Compare(older))
+	assert.Negative(t, older.Compare(newer))
+	same := older
+	assert.Zero(t, older.Compare(same))
+	// Two lineages started within the same second: the start time orders
+	// them, whatever their IDs
+	earlier := Summary{ID: NewID(at, "zzzz"), CreatedAt: at.Add(100 * time.Millisecond)}
+	later := Summary{ID: NewID(at, "aaaa"), CreatedAt: at.Add(900 * time.Millisecond)}
+	assert.Negative(t, earlier.Compare(later))
+	assert.Positive(t, later.Compare(earlier))
+	// The same start time: the ID breaks the tie
+	assert.Negative(t, Summary{ID: NewID(at, "aaaa")}.Compare(Summary{ID: NewID(at, "bbbb")}))
 }
 
 func TestWriteManifestReportsAnInvalidNamespaceConfigurationAndAFailedWrite(t *testing.T) {

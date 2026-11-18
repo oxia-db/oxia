@@ -258,6 +258,15 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 			MaxShardsPerNamespace: 128,
 			CollectionInterval:    "15s",
 		},
+		Backup: &commonproto.BackupConfig{
+			Enabled:                true,
+			Destination:            "s3://bucket/prefix",
+			Interval:               "1h",
+			Retention:              "7d",
+			MaxConcurrentPerServer: 2,
+			ScheduleInterval:       "30s",
+			CleanupInterval:        "24h",
+		},
 	}
 
 	data, err := ClusterConfigCodec.MarshalYAML(config)
@@ -273,6 +282,10 @@ func TestEncodeYAMLRoundTrip(t *testing.T) {
 	require.Contains(t, string(data), "coordinators:")
 	require.Contains(t, string(data), "publicAddress: localhost:6650")
 	require.Contains(t, string(data), "autoSplit:")
+	require.Contains(t, string(data), "backup:")
+	require.Contains(t, string(data), "destination: s3://bucket/prefix")
+	require.Contains(t, string(data), "retention: 7d")
+	require.Contains(t, string(data), "maxConcurrentPerServer: 2")
 	require.Contains(t, string(data), "maxShardSizeMb: 512")
 	require.Contains(t, string(data), "collectionInterval: 15s")
 	require.NotContains(t, string(data), "name: null")

@@ -65,6 +65,15 @@ func TestControllerRPCProviderCallsReachDataServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), freeze.HeadOffset)
 
+	backupProvider, ok := provider.(BackupProvider)
+	require.True(t, ok, "the provider serves the backup calls")
+	backupRes, err := backupProvider.BackupShard(ctx, node, &proto.BackupShardRequest{Shard: 1})
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, backupRes.State)
+	expireRes, err := backupProvider.ExpireBackups(ctx, node, &proto.ExpireBackupsRequest{Namespace: "ns"})
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, expireRes.State)
+
 	handshake, err := provider.Handshake(ctx, node, &proto.HandshakeRequest{InstanceId: "instance-0"})
 	require.NoError(t, err)
 	assert.Equal(t, proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND, handshake.Status)
@@ -99,6 +108,10 @@ func TestControllerRPCProviderCallsFailOnInvalidTarget(t *testing.T) {
 	_, err = provider.RemoveObserver(ctx, node, &proto.RemoveObserverRequest{})
 	assert.Error(t, err)
 	_, err = provider.FreezeShard(ctx, node, &proto.FreezeShardRequest{})
+	assert.Error(t, err)
+	_, err = provider.(BackupProvider).BackupShard(ctx, node, &proto.BackupShardRequest{})
+	assert.Error(t, err)
+	_, err = provider.(BackupProvider).ExpireBackups(ctx, node, &proto.ExpireBackupsRequest{})
 	assert.Error(t, err)
 }
 
@@ -195,9 +208,23 @@ func startFakeCoordinationServer(t *testing.T, server proto.OxiaCoordinationServ
 	require.NoError(t, err)
 	grpcServer := grpc.NewServer()
 	proto.RegisterOxiaCoordinationServer(grpcServer, server)
+	proto.RegisterOxiaBackupServer(grpcServer, &fakeBackupServer{})
 	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
 
 	return &proto.DataServerIdentity{Internal: listener.Addr().String()}
+}
+
+// fakeBackupServer answers the backup calls of the data server.
+type fakeBackupServer struct {
+	proto.UnimplementedOxiaBackupServer
+}
+
+func (*fakeBackupServer) BackupShard(context.Context, *proto.BackupShardRequest) (*proto.BackupShardResponse, error) {
+	return &proto.BackupShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_STARTED}, nil
+}
+
+func (*fakeBackupServer) ExpireBackups(context.Context, *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	return &proto.ExpireBackupsResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_DONE}, nil
 }

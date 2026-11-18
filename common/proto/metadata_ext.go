@@ -300,6 +300,10 @@ func (cc *ClusterConfiguration) validateDurations() error {
 		}
 	}
 
+	if err := cc.GetBackup().Validate(); err != nil {
+		return err
+	}
+
 	if autoSplit := cc.GetAutoSplit(); autoSplit != nil {
 		if _, err := autoSplit.GetStabilizationPeriodDuration(); err != nil {
 			return fmt.Errorf("cluster configuration: invalid autoSplit.stabilizationPeriod: %w", err)
