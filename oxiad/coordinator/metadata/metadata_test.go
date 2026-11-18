@@ -845,6 +845,42 @@ func TestMetadataPatchDataServerUpdatesAddresses(t *testing.T) {
 	require.Len(t, loaded(t, configProvider).Value.GetServers(), 1)
 }
 
+// A data server without a name is known by its internal address: a new
+// internal address doesn't rename it.
+func TestMetadataPatchDataServerKeepsNameOfUnnamedDataServer(t *testing.T) {
+	configProvider := newConfigProvider()
+	_, err := configProvider.Store(provider.Versioned[*commonproto.ClusterConfiguration]{
+		Value: &commonproto.ClusterConfiguration{
+			Namespaces: []*commonproto.Namespace{{Name: "default", ReplicationFactor: 1, InitialShardCount: 1}},
+			Servers: []*commonproto.DataServerIdentity{
+				{Public: "s1:6648", Internal: "s1:6649"},
+				{Name: gproto.String("s2"), Public: "s2:6648", Internal: "s2:6649"},
+			},
+			ServerMetadata: map[string]*commonproto.DataServerMetadata{"s1:6649": {Labels: map[string]string{"zone": "a"}}},
+		},
+		Version: metadataconstant.NotExists,
+	})
+	require.NoError(t, err)
+	metadata := newTestMetadata(t, newStatusProvider(), configProvider, "")
+
+	updated, err := metadata.PatchDataServer(&commonproto.DataServer{
+		Identity: &commonproto.DataServerIdentity{Name: gproto.String("s1:6649"), Internal: "s2"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "s1:6649", updated.GetNameOrDefault())
+	require.Equal(t, "s2", updated.GetIdentity().GetInternal())
+	require.Equal(t, map[string]string{"zone": "a"}, updated.GetMetadata().GetLabels())
+
+	config := loaded(t, configProvider).Value
+	server, found := config.GetDataServer("s1:6649")
+	require.True(t, found)
+	require.Equal(t, "s2", server.GetIdentity().GetInternal())
+	require.Equal(t, map[string]string{"zone": "a"}, server.GetMetadata().GetLabels())
+	server, found = config.GetDataServer("s2")
+	require.True(t, found)
+	require.Equal(t, "s2:6649", server.GetIdentity().GetInternal())
+}
+
 // A data server without a stored status gets one, and nothing is stored when
 // the update returns false or an error.
 func TestMetadataPatchDataServerStatusCreatesMissingStatus(t *testing.T) {
