@@ -74,8 +74,28 @@ func (r *namespaceReconciler) Reconcile(_ context.Context, snapshot *proto.Clust
 		if exists {
 			continue
 		}
+		if restoring(status[name].UnsafeBorrow()) {
+			// The status of a restore comes before its configuration, see
+			// runtime.RestoreNamespace: it is not a deletion
+			slog.Info("Keeping the namespace being restored", slog.String("namespace", name))
+			continue
+		}
 		r.runtime.DeleteNamespace(name)
 	}
 
 	return errs
+}
+
+// restoring reports whether the status is of a namespace being restored:
+// every shard waits for its backup.
+func restoring(status *proto.NamespaceStatus) bool {
+	if len(status.GetShards()) == 0 {
+		return false
+	}
+	for _, shard := range status.GetShards() {
+		if shard.GetRestore() == nil {
+			return false
+		}
+	}
+	return true
 }

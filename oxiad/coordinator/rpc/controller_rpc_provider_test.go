@@ -16,8 +16,10 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +67,33 @@ func TestControllerRPCProviderCallsReachDataServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), freeze.HeadOffset)
 
+	backupProvider, ok := provider.(BackupProvider)
+	require.True(t, ok, "the provider serves the backup calls")
+	backupRes, err := backupProvider.BackupShard(ctx, node, &proto.BackupShardRequest{Shard: 1})
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_STARTED, backupRes.State)
+	expireRes, err := backupProvider.ExpireBackups(ctx, node, &proto.ExpireBackupsRequest{Namespace: "ns"})
+	require.NoError(t, err)
+	assert.Equal(t, proto.BackupJobState_BACKUP_JOB_STATE_DONE, expireRes.State)
+	var listed []*proto.BackupInfo
+	require.NoError(t, backupProvider.ListBackups(ctx, node, &proto.ListBackupsRequest{Namespace: "ns"},
+		func(res *proto.ListBackupsResponse) error {
+			listed = append(listed, res.GetBackups()...)
+			return nil
+		}))
+	assert.Len(t, listed, 1)
+	// A receiver that fails stops the listing; so does the server
+	errStop := errors.New("stop")
+	err = backupProvider.ListBackups(ctx, node, &proto.ListBackupsRequest{Namespace: "ns"},
+		func(*proto.ListBackupsResponse) error { return errStop })
+	assert.ErrorIs(t, err, errStop)
+	err = backupProvider.ListBackups(ctx, node, &proto.ListBackupsRequest{Namespace: "failing"},
+		func(*proto.ListBackupsResponse) error { return nil })
+	assert.ErrorContains(t, err, "bucket unavailable")
+	restoreRes, err := backupProvider.RestoreShard(ctx, node, &proto.RestoreShardRequest{Shard: 1})
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), restoreRes.CommitOffset)
+
 	handshake, err := provider.Handshake(ctx, node, &proto.HandshakeRequest{InstanceId: "instance-0"})
 	require.NoError(t, err)
 	assert.Equal(t, proto.HandshakeStatus_HANDSHAKE_STATUS_BOUND, handshake.Status)
@@ -99,6 +128,19 @@ func TestControllerRPCProviderCallsFailOnInvalidTarget(t *testing.T) {
 	_, err = provider.RemoveObserver(ctx, node, &proto.RemoveObserverRequest{})
 	assert.Error(t, err)
 	_, err = provider.FreezeShard(ctx, node, &proto.FreezeShardRequest{})
+	assert.Error(t, err)
+	_, err = provider.(BackupProvider).BackupShard(ctx, node, &proto.BackupShardRequest{})
+	assert.Error(t, err)
+	_, err = provider.(BackupProvider).ExpireBackups(ctx, node, &proto.ExpireBackupsRequest{})
+	assert.Error(t, err)
+	err = provider.(BackupProvider).ListBackups(ctx, node, &proto.ListBackupsRequest{}, func(*proto.ListBackupsResponse) error { return nil })
+	assert.Error(t, err)
+
+	// A listing fails to open its stream when nothing listens
+	unreachable := &proto.DataServerIdentity{Internal: "127.0.0.1:1"}
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	err = provider.(BackupProvider).ListBackups(timeoutCtx, unreachable, &proto.ListBackupsRequest{}, func(*proto.ListBackupsResponse) error { return nil })
 	assert.Error(t, err)
 }
 
@@ -195,9 +237,38 @@ func startFakeCoordinationServer(t *testing.T, server proto.OxiaCoordinationServ
 	require.NoError(t, err)
 	grpcServer := grpc.NewServer()
 	proto.RegisterOxiaCoordinationServer(grpcServer, server)
+	proto.RegisterOxiaBackupServer(grpcServer, &fakeBackupServer{})
 	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
 
 	return &proto.DataServerIdentity{Internal: listener.Addr().String()}
+}
+
+// fakeBackupServer answers the backup calls of the data server.
+type fakeBackupServer struct {
+	proto.UnimplementedOxiaBackupServer
+}
+
+func (*fakeBackupServer) BackupShard(context.Context, *proto.BackupShardRequest) (*proto.BackupShardResponse, error) {
+	return &proto.BackupShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_STARTED}, nil
+}
+
+func (*fakeBackupServer) ExpireBackups(context.Context, *proto.ExpireBackupsRequest) (*proto.ExpireBackupsResponse, error) {
+	return &proto.ExpireBackupsResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_DONE}, nil
+}
+
+// ListBackups sends one shard, then fails for the namespace "failing".
+func (*fakeBackupServer) ListBackups(req *proto.ListBackupsRequest, stream proto.OxiaBackup_ListBackupsServer) error {
+	if err := stream.Send(&proto.ListBackupsResponse{Backups: []*proto.BackupInfo{{Shard: 1, BackupId: "2026-10-03T14-00-00Z-abcd"}}}); err != nil {
+		return err
+	}
+	if req.GetNamespace() == "failing" {
+		return grpcstatus.Error(codes.Unavailable, "bucket unavailable")
+	}
+	return nil
+}
+
+func (*fakeBackupServer) RestoreShard(context.Context, *proto.RestoreShardRequest) (*proto.RestoreShardResponse, error) {
+	return &proto.RestoreShardResponse{State: proto.BackupJobState_BACKUP_JOB_STATE_DONE, CommitOffset: 9, Term: 2}, nil
 }

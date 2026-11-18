@@ -18,6 +18,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 
@@ -182,6 +184,59 @@ func (admin *adminClientImpl) SplitShard(ctx context.Context, namespace string, 
 	}
 }
 
+func (admin *adminClientImpl) RequestBackup(ctx context.Context, namespace string, shardId *int64) (uint32, error) {
+	response, err := executeAdminRPCWithRedirect(ctx, admin, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.RequestBackupResponse, error) {
+		return client.RequestBackup(ctx, &proto.RequestBackupRequest{Namespace: namespace, Shard: shardId})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return response.GetShards(), nil
+}
+
+// ListBackups gathers the shards the coordinator streams. The listing reads
+// every manifest of the namespace: the caller's context bounds it, not the
+// usual timeout.
+func (admin *adminClientImpl) ListBackups(ctx context.Context, namespace string, shardId *int64,
+	destination string) ([]*proto.BackupInfo, error) {
+	return executeAdminRPCWithRedirectTimeout(ctx, admin, 0, func(ctx context.Context, client proto.OxiaAdminClient) ([]*proto.BackupInfo, error) {
+		stream, err := client.ListBackups(ctx, &proto.ListBackupsRequest{Destination: destination, Namespace: namespace, Shard: shardId})
+		if err != nil {
+			return nil, err
+		}
+		var backups []*proto.BackupInfo
+		for {
+			res, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return backups, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			backups = append(backups, res.GetBackups()...)
+		}
+	})
+}
+
+// RestoreNamespace plans the restore from the manifests of the source,
+// which the coordinator reads before answering: the caller's context bounds
+// the call, not the usual timeout.
+func (admin *adminClientImpl) RestoreNamespace(ctx context.Context, sourceNamespace string, asOf time.Time,
+	targetNamespace string, destination string) ([]*proto.RestoredShard, error) {
+	response, err := executeAdminRPCWithRedirectTimeout(ctx, admin, 0, func(ctx context.Context, client proto.OxiaAdminClient) (*proto.RestoreNamespaceResponse, error) {
+		return client.RestoreNamespace(ctx, &proto.RestoreNamespaceRequest{
+			SourceNamespace: sourceNamespace,
+			TargetNamespace: targetNamespace,
+			AsOfMillis:      asOf.UnixMilli(),
+			Destination:     destination,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response.GetShards(), nil
+}
+
 func NewAdminClient(adminAddr string, tlsConf *tls.Config, authentication auth.Authentication) (AdminClient, error) {
 	c := rpc.NewClientPool(tlsConf, authentication)
 	return &adminClientImpl{
@@ -191,11 +246,22 @@ func NewAdminClient(adminAddr string, tlsConf *tls.Config, authentication auth.A
 }
 
 func executeAdminRPCWithRedirect[T any](ctx context.Context, admin *adminClientImpl, operation func(context.Context, proto.OxiaAdminClient) (T, error)) (T, error) {
+	return executeAdminRPCWithRedirectTimeout(ctx, admin, rpc.DefaultRpcTimeout, operation)
+}
+
+// executeAdminRPCWithRedirectTimeout runs the operation against the admin
+// server, following a redirect to the coordinator leader, within timeout
+// when it is positive.
+func executeAdminRPCWithRedirectTimeout[T any](ctx context.Context, admin *adminClientImpl, timeout time.Duration,
+	operation func(context.Context, proto.OxiaAdminClient) (T, error)) (T, error) {
 	var result T
 	target := admin.adminAddr
 
-	ctx, cancel := context.WithTimeout(ctx, rpc.DefaultRpcTimeout)
-	defer cancel()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	err := backoff.Retry(func() error {
 		client, err := admin.clientPool.GetAminRpc(target)
 		if err != nil {

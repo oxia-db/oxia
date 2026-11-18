@@ -162,6 +162,35 @@ func TestNamespaceReconcilerReconcileNamespaceAddedPersistsAggregateStatus(t *te
 	assert.Empty(t, runtime.deleted)
 }
 
+func TestNamespaceReconcilerReconcileKeepsANamespaceBeingRestored(t *testing.T) {
+	servers := []*proto.DataServerIdentity{s1, s2, s3}
+	restoringShard := shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1}, 0, math.MaxUint32)
+	restoringShard.Restore = &proto.RestoreMetadata{Destination: "s3://b", SourceNamespace: "orders", SourceShardId: 1,
+		BackupId: "2026-10-03T14-00-00Z-abcd"}
+	metadata := &mockNamespaceMetadata{
+		status: &proto.ClusterStatus{
+			Namespaces: map[string]*proto.NamespaceStatus{
+				// A restore writes the status before the configuration
+				"orders-restored": {ReplicationFactor: 1, Shards: map[int64]*proto.ShardMetadata{5: restoringShard}},
+				"gone": {ReplicationFactor: 1, Shards: map[int64]*proto.ShardMetadata{
+					6: shardMetadata(proto.ShardStatusUnknown, []*proto.DataServerIdentity{s1}, 0, math.MaxUint32),
+				}},
+			},
+			ShardIdGenerator: 7,
+		},
+		configNS: map[string]*proto.Namespace{},
+	}
+	runtime := &mockNamespaceRuntime{metadata: metadata}
+
+	err := (&namespaceReconciler{runtime: runtime}).Reconcile(context.Background(), &proto.ClusterConfiguration{Servers: servers})
+	assert.NoError(t, err)
+	assert.Equal(t, []int64{6}, runtime.deleted, "the namespace without a configuration is deleted")
+	assert.False(t, restoring(&proto.NamespaceStatus{}), "a status without shards is no restore")
+	kept := metadata.status.GetNamespaces()["orders-restored"].GetShards()[5]
+	assert.Equal(t, proto.ShardStatusUnknown, kept.GetStatusOrDefault(), "the one being restored waits for its configuration")
+	assert.NotNil(t, kept.GetRestore())
+}
+
 func TestNamespaceReconcilerReconcileNamespaceRemovedMarksDeletingAndDeletesRuntimeShards(t *testing.T) {
 	servers := []*proto.DataServerIdentity{s1, s2, s3, s4}
 	metadata := &mockNamespaceMetadata{
@@ -923,4 +952,16 @@ func TestNamespaceReconcilerReconcileReturnsStatusLoadError(t *testing.T) {
 	})
 	require.ErrorIs(t, err, listErr)
 	assert.Empty(t, base.deleted)
+}
+
+func (*mockNamespaceRuntime) RequestBackup(string, *int64) (int, error) {
+	return 0, coordruntime.ErrBackupsUnsupported
+}
+
+func (*mockNamespaceRuntime) ListBackups(context.Context, *proto.ListBackupsRequest, func(*proto.ListBackupsResponse) error) error {
+	return coordruntime.ErrBackupsUnsupported
+}
+
+func (*mockNamespaceRuntime) RestoreNamespace(context.Context, *proto.RestoreNamespaceRequest) (*proto.RestoreNamespaceResponse, error) {
+	return nil, coordruntime.ErrBackupsUnsupported
 }
