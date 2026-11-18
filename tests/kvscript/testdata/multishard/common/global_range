@@ -1,0 +1,85 @@
+# The populated range really spans four shards. Global scans compare complete
+# results without adding a global ordering promise to the public API.
+
+put key=f value=six
+----
+ok key="f" modifications=0
+
+put key=a value=one
+----
+ok key="a" modifications=0
+
+put key=e value=five
+----
+ok key="e" modifications=0
+
+put key=c value=three
+----
+ok key="c" modifications=0
+
+put key=b value=two
+----
+ok key="b" modifications=0
+
+put key=d value=four
+----
+ok key="d" modifications=0
+
+placement keys=(a,b,c,d,e,f) min-shards=4
+----
+ok
+
+range start=b end=f unordered
+----
+key="b" value="two" modifications=0
+key="c" value="three" modifications=0
+key="d" value="four" modifications=0
+key="e" value="five" modifications=0
+
+list start=b end=f unordered
+----
+key="b"
+key="c"
+key="d"
+key="e"
+
+# Bounds do not need to name stored records.
+range start=bb end=ec unordered
+----
+key="c" value="three" modifications=0
+key="d" value="four" modifications=0
+key="e" value="five" modifications=0
+
+list start=bb end=ec unordered
+----
+key="c"
+key="d"
+key="e"
+
+range start=b end=b unordered
+----
+(empty)
+
+list start=b end=b unordered
+----
+(empty)
+
+range start=d end="" unordered
+----
+key="d" value="four" modifications=0
+key="e" value="five" modifications=0
+key="f" value="six" modifications=0
+
+list start=d end="" unordered
+----
+key="d"
+key="e"
+key="f"
+
+range start=g end=z unordered
+----
+(empty)
+
+list start=g end=z unordered
+----
+(empty)

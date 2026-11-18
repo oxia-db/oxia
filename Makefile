@@ -89,7 +89,7 @@ check-coverage:
 
 .PHONY: test-kv
 test-kv:
-	go test -race -timeout 2m ./tests/kvscript/...
+	go test -race -timeout 10m ./tests/kvscript/...
 
 lint:
 	#brew install golangci-lint

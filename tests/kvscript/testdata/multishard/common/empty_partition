@@ -1,0 +1,74 @@
+# An explicitly present empty partition is hashed; it is not an omitted option.
+# Every primary key below has a different default route from the empty string.
+
+put key=b value=two partition=""
+----
+ok key="b" modifications=0
+
+put key=d value=four partition=""
+----
+ok key="d" modifications=0
+
+put key=f value=six partition=""
+----
+ok key="f" modifications=0
+
+placement keys=(b,d,f) partition="" require-override
+----
+ok
+
+get key=b
+----
+error: key not found
+
+get key=b partition=""
+----
+key="b" value="two" modifications=0
+
+range start=b end=g partition=""
+----
+key="b" value="two" modifications=0
+key="d" value="four" modifications=0
+key="f" value="six" modifications=0
+
+list start=b end=g partition=""
+----
+key="b"
+key="d"
+key="f"
+
+get key=e comparison=floor partition=""
+----
+key="d" value="four" modifications=0
+
+get key=e comparison=ceiling partition=""
+----
+key="f" value="six" modifications=0
+
+delete key=b partition=""
+----
+ok
+
+get key=b partition=""
+----
+error: key not found
+
+assert-record key=b partition="" missing
+----
+ok
+
+delete-range start=d end=g partition=""
+----
+ok
+
+assert-record key=d partition="" missing
+----
+ok
+
+assert-record key=f partition="" missing
+----
+ok
+
+range start=b end=g partition=""
+----
+(empty)

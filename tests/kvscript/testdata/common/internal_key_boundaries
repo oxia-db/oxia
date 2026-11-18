@@ -1,0 +1,103 @@
+# Internal keys sort after valid user keys with both storage encoders.
+# A caller-written marker proves default scans hide this region without relying
+# on the names or values of system-created keys.
+
+put key=a value=one create-only save=a
+----
+ok key="a" modifications=0
+
+put key=b value=two create-only save=b
+----
+ok key="b" modifications=0
+
+put key=z value=last create-only save=z
+----
+ok key="z" modifications=0
+
+put key=__oxia/kvscript-private value=hidden create-only
+----
+ok key="__oxia/kvscript-private" modifications=0
+
+get key=a save-record=a
+----
+key="a" value="one" modifications=0
+
+get key=b save-record=b
+----
+key="b" value="two" modifications=0
+
+get key=z save-record=z
+----
+key="z" value="last" modifications=0
+
+list start="" end="" unordered
+----
+key="a"
+key="b"
+key="z"
+
+range start="" end="" unordered
+----
+key="a" value="one" modifications=0
+key="b" value="two" modifications=0
+key="z" value="last" modifications=0
+
+# Even an explicitly internal upper bound does not expose internal records to
+# ordinary read scans.
+list start=a end=__oxia/zzz unordered
+----
+key="a"
+key="b"
+key="z"
+
+range start=a end=__oxia/zzz unordered
+----
+key="a" value="one" modifications=0
+key="b" value="two" modifications=0
+key="z" value="last" modifications=0
+
+# A range that overlaps both user and internal keys is rejected before deleting
+# any user record. Full metadata and each old CAS token must survive.
+delete-range start=a end=__oxia/zzz
+----
+error: invalid options
+
+assert-record key=a unchanged=@a
+----
+ok
+
+assert-record key=b unchanged=@b
+----
+ok
+
+assert-record key=z unchanged=@z
+----
+ok
+
+range start="" end="" unordered
+----
+key="a" value="one" modifications=0
+key="b" value="two" modifications=0
+key="z" value="last" modifications=0
+
+put key=a value=one-updated expected-version=@a
+----
+ok key="a" modifications=1
+
+delete key=b expected-version=@b
+----
+ok
+
+put key=z value=last-updated expected-version=@z
+----
+ok key="z" modifications=1
+
+list start="" end="" unordered
+----
+key="a"
+key="z"
+
+range start="" end="" unordered
+----
+key="a" value="one-updated" modifications=1
+key="z" value="last-updated" modifications=1

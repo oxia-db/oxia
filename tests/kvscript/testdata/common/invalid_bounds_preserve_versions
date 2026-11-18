@@ -1,0 +1,74 @@
+# Invalid UTF-8 write keys and range bounds must reject the entire operation.
+# Full snapshots and subsequent CAS check that even hidden metadata is unchanged.
+
+put key=a value=one save=a
+----
+ok key="a" modifications=0
+
+put key=b value=two save=b
+----
+ok key="b" modifications=0
+
+put key=d value=four save=d
+----
+ok key="d" modifications=0
+
+get key=a save-record=a
+----
+key="a" value="one" modifications=0
+
+get key=b save-record=b
+----
+key="b" value="two" modifications=0
+
+get key=d save-record=d
+----
+key="d" value="four" modifications=0
+
+delete key="\xff"
+----
+error: invalid options
+
+delete-range start="\xff" end=z
+----
+error: invalid options
+
+delete-range start=a end="\xff"
+----
+error: invalid options
+
+assert-record key=a unchanged=@a
+----
+ok
+
+assert-record key=b unchanged=@b
+----
+ok
+
+assert-record key=d unchanged=@d
+----
+ok
+
+range start=a end=z unordered
+----
+key="a" value="one" modifications=0
+key="b" value="two" modifications=0
+key="d" value="four" modifications=0
+
+list start=a end=z unordered
+----
+key="a"
+key="b"
+key="d"
+
+put key=a value=one-updated expected-version=@a
+----
+ok key="a" modifications=1
+
+put key=b value=two-updated expected-version=@b
+----
+ok key="b" modifications=1
+
+put key=d value=four-updated expected-version=@d
+----
+ok key="d" modifications=1

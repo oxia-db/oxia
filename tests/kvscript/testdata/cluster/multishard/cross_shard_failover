@@ -1,0 +1,190 @@
+# Default routes span every shard, while tenant and q select distinct shards.
+# Stopping a server may affect several shard leaders; complete reads must recover.
+
+put key=a value=one
+----
+ok key="a" modifications=0
+
+put key=b value=two
+----
+ok key="b" modifications=0
+
+put key=d value=four
+----
+ok key="d" modifications=0
+
+put key=f value=six
+----
+ok key="f" modifications=0
+
+placement keys=(a,b,d,f) min-shards=4
+----
+ok
+
+put key=qa value=target-first partition=tenant
+----
+ok key="qa" modifications=0
+
+put key=qb value=target-second partition=tenant
+----
+ok key="qb" modifications=0
+
+put key=qd value=target-end partition=tenant save=end
+----
+ok key="qd" modifications=0
+
+put key=qc value=other-shard partition=q save=other
+----
+ok key="qc" modifications=0
+
+placement keys=(qa,qb,qd) partition=tenant require-override
+----
+ok
+
+placement keys=(qc) partition=q
+----
+ok
+
+get key=a save-record=one
+----
+key="a" value="one" modifications=0
+
+get key=b save-record=two
+----
+key="b" value="two" modifications=0
+
+get key=d save-record=four
+----
+key="d" value="four" modifications=0
+
+get key=f save-record=six
+----
+key="f" value="six" modifications=0
+
+get key=qd partition=tenant save-record=end
+----
+key="qd" value="target-end" modifications=0
+
+get key=qc partition=q save-record=other
+----
+key="qc" value="other-shard" modifications=0
+
+wait-replicated
+----
+ok
+
+stop-server role=leader key=a save=original-leader
+----
+ok
+
+range start=a end=z unordered
+----
+key="a" value="one" modifications=0
+key="b" value="two" modifications=0
+key="d" value="four" modifications=0
+key="f" value="six" modifications=0
+key="qa" value="target-first" modifications=0
+key="qb" value="target-second" modifications=0
+key="qc" value="other-shard" modifications=0
+key="qd" value="target-end" modifications=0
+
+range start=qa end=qe partition=tenant
+----
+key="qa" value="target-first" modifications=0
+key="qb" value="target-second" modifications=0
+key="qd" value="target-end" modifications=0
+
+# This interval includes qc lexically, but its other-shard record must survive.
+delete-range start=qa end=qd partition=tenant
+----
+ok
+
+assert-record key=qa partition=tenant missing
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+assert-record key=qd partition=tenant unchanged=@end
+----
+ok
+
+assert-record key=qc partition=q unchanged=@other
+----
+ok
+
+assert-record key=a unchanged=@one
+----
+ok
+
+assert-record key=b unchanged=@two
+----
+ok
+
+assert-record key=d unchanged=@four
+----
+ok
+
+assert-record key=f unchanged=@six
+----
+ok
+
+restart-server saved=@original-leader
+----
+ok
+
+wait-replicated
+----
+ok
+
+assert-record key=qa partition=tenant missing
+----
+ok
+
+assert-record key=qb partition=tenant missing
+----
+ok
+
+assert-record key=qd partition=tenant unchanged=@end
+----
+ok
+
+assert-record key=qc partition=q unchanged=@other
+----
+ok
+
+range start=a end=z unordered
+----
+key="a" value="one" modifications=0
+key="b" value="two" modifications=0
+key="d" value="four" modifications=0
+key="f" value="six" modifications=0
+key="qc" value="other-shard" modifications=0
+key="qd" value="target-end" modifications=0
+
+list start=a end=z unordered
+----
+key="a"
+key="b"
+key="d"
+key="f"
+key="qc"
+key="qd"
+
+placement keys=(a,b,d,f) min-shards=4
+----
+ok
+
+put key=qd value=end-updated partition=tenant expected-version=@end
+----
+ok key="qd" modifications=1
+
+put key=qc value=other-updated partition=q expected-version=@other
+----
+ok key="qc" modifications=1
+
+wait-replicated
+----
+ok
