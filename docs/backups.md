@@ -94,9 +94,11 @@ result is reported once, then the next request starts the next job.
   are only unique within one database, so two replicas, or one replica before
   and after a snapshot install, can each have a `000123.sst` with different
   contents. A replica generates a random lineage whenever it creates or
-  replaces a shard's database, and keeps it in `oxia-backup.json` next to the
-  database, outside the replicated keyspace. A snapshot install replaces the
-  database directory, so it replaces the lineage too.
+  replaces a shard's database, or takes a backup that can't share the SSTs
+  of its last one, and keeps it in `oxia-backup.json` next to the database,
+  outside the replicated keyspace, with the destination the last backup went
+  to. A snapshot install replaces the database directory, so it replaces the
+  lineage too. An SST key is written once: no backup uploads over a key.
 - The **manifest** records the shard ID and hash range, the namespace
   configuration needed to recreate it, the term, the commit offset and the
   time, the lineage, and the list of SSTs and other files with their sizes
@@ -118,11 +120,16 @@ result is reported once, then the next request starts the next job.
    if that backup is younger than `retention` minus a safety margin (the
    cleanup grace period, at most a quarter of the retention), because cleanup
    never expires a backup younger than `retention`: the reused SSTs are still
-   in the bucket. Otherwise it uploads every SST.
+   in the bucket. Otherwise, or when the record is of another destination, it
+   uploads every SST under a new lineage.
 3. It uploads the other checkpoint files under `backups/<backup-id>/`, then
    writes `backups/<backup-id>.json`.
 4. It updates its local record of the last backup (ID, time, commit offset,
-   term, SST list), deletes the checkpoint, and reports the result.
+   term, SST list, destination), deletes the checkpoint, and reports the
+   result. The record is read and written under the controller's read lock,
+   and only while the database is the one the checkpoint was taken from: a
+   snapshot install during the upload replaces the database and wipes the
+   record, the backup stays valid, and the next one starts a new lineage.
 
 A request is skipped when the record is younger than `interval`, and when
 the commit offset hasn't moved since the record and the record is younger
