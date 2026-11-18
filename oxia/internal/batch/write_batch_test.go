@@ -23,10 +23,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/oxia-db/oxia/common/constant"
 	"github.com/oxia-db/oxia/common/proto"
+	batch2 "github.com/oxia-db/oxia/oxia/batch"
 	"github.com/oxia-db/oxia/oxia/internal/metrics"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
@@ -540,4 +542,111 @@ func TestWriteBatchFailureTellsIfTheRequestWasSent(t *testing.T) {
 			assert.Equal(t, !tt.sent, model.IsNotSent(putErr))
 		})
 	}
+}
+
+// A batch sent without waiting for its response drops the calls whose caller
+// gave up right before its request is handed to gRPC, like one that waits.
+func TestWriteBatchSendDropsTheCallsWhoseCallerGaveUp(t *testing.T) {
+	gaveUpCtx, gaveUp := context.WithCancel(t.Context())
+	gaveUp()
+	gaveUpCall := model.NewCallContext(gaveUpCtx)
+
+	var request *proto.WriteRequest
+	factory := &writeBatchFactory{
+		executeAsync: func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error) {
+			var err error
+			if request, err = prepare(); err != nil {
+				return func() (*proto.WriteResponse, error) { return nil, err }
+			}
+			return func() (*proto.WriteResponse, error) {
+				return &proto.WriteResponse{Puts: []*proto.PutResponse{{Status: proto.Status_OK}}}, nil
+			}
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+	b := factory.newBatch(&shardId)
+
+	results := map[string]error{}
+	putCallback := func(key string) func(*proto.PutResponse, error) {
+		return func(_ *proto.PutResponse, err error) { results[key] = err }
+	}
+	b.Add(model.PutCall{Key: "a", Callback: putCallback("a")})
+	b.Add(model.PutCall{Key: "b", CallContext: gaveUpCall, Callback: putCallback("b")})
+	b.(batch2.AsyncBatch).Send()()
+
+	require.NotNil(t, request)
+	assert.Len(t, request.Puts, 1)
+	assert.Equal(t, "a", request.Puts[0].Key)
+	assert.Len(t, results, 2)
+	assert.NoError(t, results["a"])
+	assert.ErrorIs(t, results["b"], context.Canceled)
+	assert.True(t, model.IsNotSent(results["b"]))
+}
+
+// The failure of a batch sent without waiting for its response tells if its
+// request was handed to gRPC, like one that waits.
+func TestWriteBatchSendFailureTellsIfTheRequestWasSent(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		sent bool
+	}{{"sent", true}, {"not sent", false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			failure := errors.New("failed")
+			factory := &writeBatchFactory{
+				executeAsync: func(_ context.Context, _ int64, prepare func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error) {
+					if tt.sent {
+						if _, err := prepare(); err != nil {
+							return func() (*proto.WriteResponse, error) { return nil, err }
+						}
+					}
+					return func() (*proto.WriteResponse, error) { return nil, failure }
+				},
+				metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+				requestTimeout: 5 * time.Second,
+				maxByteSize:    1024,
+			}
+			b := factory.newBatch(&shardId)
+
+			var putErr error
+			b.Add(model.PutCall{Key: "a", Callback: func(_ *proto.PutResponse, err error) { putErr = err }})
+			b.(batch2.AsyncBatch).Send()()
+
+			assert.ErrorIs(t, putErr, failure)
+			assert.Equal(t, !tt.sent, model.IsNotSent(putErr))
+		})
+	}
+}
+
+// An empty batch sends nothing. The batcher completes one when the first call
+// of a batch does not fit in it.
+func TestWriteBatchCompleteEmptyBatchSendsNothing(t *testing.T) {
+	factory := &writeBatchFactory{
+		execute: func(context.Context, int64, func() (*proto.WriteRequest, error)) (*proto.WriteResponse, error) {
+			err := errors.New("the empty batch was sent")
+			require.FailNow(t, err.Error())
+			return nil, err
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+
+	factory.newBatch(&shardId).Complete()
+}
+
+// An empty batch sends nothing, like one that waits for its response.
+func TestWriteBatchSendEmptyBatchSendsNothing(t *testing.T) {
+	factory := &writeBatchFactory{
+		executeAsync: func(context.Context, int64, func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error) {
+			require.FailNow(t, "the empty batch was sent")
+			return nil
+		},
+		metrics:        metrics.NewMetrics(noop.NewMeterProvider()),
+		requestTimeout: 5 * time.Second,
+		maxByteSize:    1024,
+	}
+
+	factory.newBatch(&shardId).(batch2.AsyncBatch).Send()()
 }

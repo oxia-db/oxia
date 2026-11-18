@@ -270,7 +270,7 @@ func TestSyncClient_QueuedWriteIsNotSentAfterItsContextEnds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			leader := startLeaderServer(t)
 			leader.elect()
-			client, err := NewSyncClient(leader.address)
+			client, err := NewSyncClient(leader.address, WithMaxWriteBatchesInFlight(0))
 			require.NoError(t, err)
 			defer func() {
 				assert.NoError(t, client.Close())
@@ -292,6 +292,41 @@ func TestSyncClient_QueuedWriteIsNotSentAfterItsContextEnds(t *testing.T) {
 			_, _, err = client.Put(context.Background(), "next", []byte("value"))
 			assert.NoError(t, err)
 			assert.Equal(t, "next", leader.nextReceived(t))
+		})
+	}
+}
+
+// With several write batches of a shard in flight, a write queued behind one
+// that the leader does not answer is sent right away, behind it. Once its
+// caller gave up, the failure cannot tell that it was not sent: the leader may
+// apply it.
+func TestSyncClient_WriteBehindAStuckOneIsSentWithinTheWindow(t *testing.T) {
+	for _, tt := range syncWrites {
+		t.Run(tt.name, func(t *testing.T) {
+			leader := startLeaderServer(t)
+			leader.elect()
+			client, err := NewSyncClient(leader.address, WithMaxWriteBatchesInFlight(DefaultMaxWriteBatchesInFlight))
+			require.NoError(t, err)
+			defer func() {
+				assert.NoError(t, client.Close())
+			}()
+
+			stuck := make(chan error, 1)
+			go func() {
+				_, _, err := client.Put(context.Background(), "stuck", []byte("value"))
+				stuck <- err
+			}()
+			assert.Equal(t, "stuck", leader.nextReceived(t))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			err = tt.write(ctx, client)
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.False(t, model.IsNotSent(err), "the write was sent behind the stuck one: %v", err)
+
+			// The write that got no response before its deadline ends the
+			// stream, with the stuck write in flight on it
+			assert.Error(t, <-stuck)
 		})
 	}
 }

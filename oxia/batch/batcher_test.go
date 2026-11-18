@@ -193,6 +193,21 @@ func TestBatcherCloseFailsOpenBatch(t *testing.T) {
 	assert.Equal(t, 1, batches)
 }
 
+// A call that does not fit the batch being formed completes that batch
+// without waiting for its linger, and starts the next one.
+func TestBatcherRunCompletesTheBatchACallDoesNotFit(t *testing.T) {
+	server := &windowServer{autoRelease: true, maxCalls: 1}
+	factory := &BatcherFactory{Linger: time.Minute, MaxRequestsPerBatch: 10}
+	batcher := factory.NewBatcher(context.Background(), 1, "test-write", server.newBatch)
+	t.Cleanup(func() { assert.NoError(t, batcher.Close()) })
+
+	batcher.Add(1)
+	batcher.Add(2)
+
+	require.Eventually(t, func() bool { return len(server.completedBatches()) == 1 }, 10*time.Second, time.Millisecond)
+	assert.Equal(t, [][]any{{1}}, server.completedBatches(), "the call that did not fit lingers in the next batch")
+}
+
 func TestBatcher(t *testing.T) {
 	for _, item := range []struct {
 		name             string

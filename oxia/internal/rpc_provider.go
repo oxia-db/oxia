@@ -67,6 +67,10 @@ type rpcProvider struct {
 	shardManagerSupplier func() ShardManager
 	writeStreamsMutex    sync.RWMutex
 	writeStreams         map[int64]*streamWrapper
+	// asyncWriteStreams holds the stream of each shard for the writes sent
+	// without waiting for their responses. writeStreamsMutex guards it, like
+	// writeStreams.
+	asyncWriteStreams map[int64]*asyncWriteStream
 
 	ctx        context.Context
 	namespace  string
@@ -97,10 +101,18 @@ func newRpcProvider(ctx context.Context, namespace string, tlsConf *tls.Config, 
 		serviceAddress:       serviceAddress,
 		shardManagerSupplier: shardManagerSupplier,
 		writeStreams:         make(map[int64]*streamWrapper),
+		asyncWriteStreams:    make(map[int64]*asyncWriteStream),
 	}
 }
 
 func (p *rpcProvider) Close() error {
+	p.writeStreamsMutex.Lock()
+	streams := p.asyncWriteStreams
+	p.asyncWriteStreams = make(map[int64]*asyncWriteStream)
+	p.writeStreamsMutex.Unlock()
+	for _, stream := range streams {
+		stream.abort(errClientClosed)
+	}
 	return p.clientPool.Close()
 }
 
@@ -158,6 +170,53 @@ func (p *rpcProvider) ExecuteWrite(ctx context.Context, shardId int64,
 		}
 		return sw.Send(ctx, prepare)
 	}, isRetryableShardRequest)
+}
+
+func (p *rpcProvider) ExecuteWriteAsync(ctx context.Context, shardId int64,
+	prepare func() (*proto.WriteRequest, error)) func() (*proto.WriteResponse, error) {
+	stream := p.getAsyncWriteStream(shardId)
+	var write *asyncWrite
+	// Only a request that was not sent is retried: it cannot have been
+	// applied. The wait for the next attempt ends on a change of the shard
+	// map, as for ExecuteWrite.
+	timer := &ShardMapTimer{}
+	_, err := executeWithRetryTimer(ctx, timer, func(hint constant.ErrorMetadata) (struct{}, error) {
+		timer.Changed = p.shardMapChanged()
+		var err error
+		write, err = stream.send(ctx, hint, prepare)
+		return struct{}{}, err
+	}, isRetryableShardRequest)
+	if err != nil {
+		return func() (*proto.WriteResponse, error) { return nil, err }
+	}
+	return func() (*proto.WriteResponse, error) {
+		res, err := write.response.Wait(ctx)
+		if err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			// The writes in flight behind this one would wait for it
+			stream.abortWith(write, fmt.Errorf("an earlier write got no response before its deadline: %w", err))
+		}
+		if err != nil {
+			err, _ = constant.FromGrpcError(err)
+		}
+		return res, err
+	}
+}
+
+func (p *rpcProvider) getAsyncWriteStream(shardId int64) *asyncWriteStream {
+	p.writeStreamsMutex.Lock()
+	defer p.writeStreamsMutex.Unlock()
+	stream, ok := p.asyncWriteStreams[shardId]
+	if !ok {
+		stream = newAsyncWriteStream(p.ctx, shardId,
+			func(hint constant.ErrorMetadata) (string, error) {
+				return p.getTargetByShard(&shardId, hint)
+			},
+			func(streamCtx context.Context, target string) (proto.OxiaClient_WriteStreamClient, error) {
+				return p.newWriteStream(streamCtx, shardId, target)
+			})
+		p.asyncWriteStreams[shardId] = stream
+	}
+	return stream
 }
 
 func (p *rpcProvider) ExecuteRead(ctx context.Context, request *proto.ReadRequest) (*proto.ReadResponse, error) {
@@ -288,18 +347,11 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, shardId int64, target 
 		return sw, nil
 	}
 
-	client, err := p.getClientByTarget(target)
-	if err != nil {
-		return nil, err
-	}
-
 	// The stream outlives the request, but its setup must not: connecting to an
 	// unreachable target can take up to the gRPC connect timeout
 	streamCtx, cancel := context.WithCancel(p.ctx)
-	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataNamespace, p.namespace)
-	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", shardId))
 	stop := context.AfterFunc(ctx, cancel)
-	stream, err := client.WriteStream(streamCtx)
+	stream, err := p.newWriteStream(streamCtx, shardId, target)
 	if !stop() {
 		// The request ended during the setup, and cancelled the stream
 		cancel()
@@ -329,6 +381,18 @@ func (p *rpcProvider) getWriteStream(ctx context.Context, shardId int64, target 
 	}
 	p.writeStreams[shardId] = sw
 	return sw, nil
+}
+
+// newWriteStream opens a write stream of the shard to its leader at target,
+// with streamCtx as the context of the stream.
+func (p *rpcProvider) newWriteStream(streamCtx context.Context, shardId int64, target string) (proto.OxiaClient_WriteStreamClient, error) {
+	client, err := p.getClientByTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataNamespace, p.namespace)
+	streamCtx = metadata.AppendToOutgoingContext(streamCtx, constant.MetadataShardId, fmt.Sprintf("%d", shardId))
+	return client.WriteStream(streamCtx)
 }
 
 func (p *rpcProvider) GetSequenceUpdates(ctx context.Context, target string, request *proto.GetSequenceUpdatesRequest) (proto.OxiaClient_GetSequenceUpdatesClient, error) {
