@@ -73,35 +73,33 @@ type sessions struct {
 	clientOpts      clientOptions
 }
 
+// errSessionMoved is returned by executeWithId when the session was moved to
+// the shards that replaced its split shard while the operation waited for it.
+var errSessionMoved = errors.New("the session was moved to the shards that replaced its shard")
+
 // executeWithSessionId invokes the callback with the shard that shardForKey
 // returns and the id of the session on that shard, once the session has been
-// established. The shard is looked up under the lock: a shard looked up before
-// could be one whose session followSplits has moved since. It is looked up
-// again when the shard is split before the session is established on it.
+// established. The shard and its session are looked up under the lock: a shard
+// looked up before could be one whose session followSplits has moved since.
+// The wait for the session and the callback run outside the lock, so that a
+// shard whose session cannot be established, or whose batcher is backed up,
+// does not hold up the operations on the other shards. The shard is looked up
+// again when the shard is split before the session is established on it, or
+// when its session is moved while the operation waits for it.
 func (s *sessions) executeWithSessionId(shardForKey func() int64,
 	callback func(shardId int64, sessionId int64, err error)) {
-	s.Lock()
-	defer s.Unlock()
 	for {
-		shardId := shardForKey()
-		session, found := s.sessionsByShard[shardId]
-		if !found {
-			// The shard may have replaced a shard that was split, and inherited
-			// its session
-			s.followSplits()
-			session, found = s.sessionsByShard[shardId]
-		}
-		if !found {
-			session = s.startSession(shardId)
-			s.sessionsByShard[shardId] = session
-		}
+		shardId, session := s.sessionForShard(shardForKey)
 		err := session.executeWithId(func(sessionId int64, err error) { callback(shardId, sessionId, err) })
 		if err == nil {
 			return
 		}
+		if errors.Is(err, errSessionMoved) {
+			continue
+		}
 		// The session failed to start: forget it, so that the next operation
 		// attempts a fresh one
-		delete(s.sessionsByShard, shardId)
+		s.forgetSession(shardId, session)
 		if !errors.Is(err, constant.ErrShardNotFound) {
 			callback(shardId, -1, err)
 			return
@@ -109,6 +107,36 @@ func (s *sessions) executeWithSessionId(shardForKey func() int64,
 		// The shard was split before the session was established: the key is
 		// now on one of the shards that replaced it
 		session.log.Info("The shard was split before the session was established on it")
+	}
+}
+
+// sessionForShard returns the shard that shardForKey returns and its session,
+// which it starts when the shard has none.
+func (s *sessions) sessionForShard(shardForKey func() int64) (int64, *clientSession) {
+	s.Lock()
+	defer s.Unlock()
+	shardId := shardForKey()
+	session, found := s.sessionsByShard[shardId]
+	if !found {
+		// The shard may have replaced a shard that was split, and inherited
+		// its session
+		s.followSplits()
+		session, found = s.sessionsByShard[shardId]
+	}
+	if !found {
+		session = s.startSession(shardId)
+		s.sessionsByShard[shardId] = session
+	}
+	return shardId, session
+}
+
+// forgetSession removes the session of a shard, unless the shard has another
+// session already: another operation may have replaced the failed one.
+func (s *sessions) forgetSession(shardId int64, session *clientSession) {
+	s.Lock()
+	defer s.Unlock()
+	if s.sessionsByShard[shardId] == session {
+		delete(s.sessionsByShard, shardId)
 	}
 }
 
@@ -192,9 +220,7 @@ func (s *sessions) newClientSession(shardId int64) *clientSession {
 	cs := &clientSession{
 		shardId:  shardId,
 		sessions: s,
-		// Buffered: the failure notification must not block the creator
-		// goroutine until an operation happens to come by
-		started: make(chan error, 1),
+		started:  make(chan struct{}),
 		log: slog.With(
 			slog.String("component", "session"),
 			slog.Int64("shard", shardId),
@@ -221,8 +247,8 @@ func (s *sessions) startSession(shardId int64) *clientSession {
 }
 
 func (s *sessions) Close() error {
-	// Stop the sessions first: an operation that waits for one to be
-	// established holds the lock
+	// Stop the sessions first, so that the operations waiting for one to be
+	// established stop waiting
 	s.cancelSessions()
 
 	s.Lock()
@@ -237,7 +263,10 @@ func (s *sessions) Close() error {
 
 type clientSession struct {
 	sync.Mutex
-	started     chan error
+	// started is closed once the creation of the session has ended: with
+	// startErr set when it failed
+	started     chan struct{}
+	startErr    error
 	shardId     int64
 	sessionId   int64
 	established bool
@@ -249,21 +278,26 @@ type clientSession struct {
 
 // executeWithId invokes the callback with the session id, once the session
 // has been established. When the session failed to start, it returns the error
-// without invoking the callback: the caller — which already holds the sessions
-// lock — discards the session, so that re-acquiring that lock here (a
-// self-deadlock) is never needed.
+// without invoking the callback, and the caller discards the session. When the
+// session was moved to the shards that replaced its shard, it returns
+// errSessionMoved, and the caller looks the session up again. Several
+// operations can wait for the same session.
 func (cs *clientSession) executeWithId(callback func(int64, error)) error {
 	select {
-	case err := <-cs.started:
-		if err != nil {
-			return err
-		}
+	case <-cs.started:
 		cs.Lock()
+		defer cs.Unlock()
+		if cs.startErr != nil {
+			return cs.startErr
+		}
 		callback(cs.sessionId, nil)
-		cs.Unlock()
 	case <-cs.ctx.Done():
-		if cs.ctx.Err() != nil && !errors.Is(cs.ctx.Err(), context.Canceled) {
+		if !errors.Is(cs.ctx.Err(), context.Canceled) {
 			callback(-1, cs.ctx.Err())
+		} else if cs.sessions.sessionsCtx.Err() == nil {
+			// Cancelled while the client is open: followSplits moved the
+			// session
+			return errSessionMoved
 		}
 	}
 	return nil
@@ -288,7 +322,7 @@ func (cs *clientSession) createSessionWithRetries() {
 	}, timer)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		cs.Lock()
-		cs.started <- err
+		cs.startErr = err
 		close(cs.started)
 		cs.Unlock()
 	}
