@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -68,11 +69,16 @@ type shardManagerImpl struct {
 	sync.RWMutex
 	updatedWg concurrent.WaitGroup
 
-	shardStrategy    ShardStrategy
-	rpcProvider      RpcProvider
-	serviceAddress   string
-	namespace        string
-	shards           map[int64]Shard
+	shardStrategy  ShardStrategy
+	rpcProvider    RpcProvider
+	serviceAddress string
+	namespace      string
+	shards         map[int64]Shard
+	// byRange holds the shards of the shard map sorted by hash range, so that
+	// Get finds the shard of a key with a binary search. update owns it and
+	// rebuilds it with the shard map, under the write lock; Get reads it
+	// under the read lock.
+	byRange          []Shard
 	successors       map[int64][]Shard
 	keySorting       proto.KeySorting
 	changed          chan struct{}
@@ -139,12 +145,14 @@ func (s *shardManagerImpl) Get(key string) int64 {
 	s.RLock()
 	defer s.RUnlock()
 
-	predicate := s.shardStrategy.Get(key)
-
-	for _, shard := range s.shards {
-		if predicate(shard) {
-			return shard.Id
-		}
+	code := s.shardStrategy.HashCode(key)
+	// The hash ranges do not overlap, so sorted by their start they are sorted
+	// by their end too.
+	i := sort.Search(len(s.byRange), func(i int) bool {
+		return s.byRange[i].HashRange.MaxInclusive >= code
+	})
+	if i < len(s.byRange) && s.byRange[i].HashRange.MinInclusive <= code {
+		return s.byRange[i].Id
 	}
 	panic("shard not found")
 }
@@ -325,6 +333,7 @@ func (s *shardManagerImpl) update(updates []Shard) {
 		}
 		s.shards[update.Id] = update
 	}
+	s.byRange = sortedByRange(s.shards)
 
 	if len(removed) > 0 {
 		s.recordSuccessors(removed)
@@ -333,6 +342,18 @@ func (s *shardManagerImpl) update(updates []Shard) {
 	s.changed = make(chan struct{})
 	s.initialized = true
 	s.updatedWg.Done()
+}
+
+// sortedByRange returns the shards sorted by the start of their hash range.
+func sortedByRange(shards map[int64]Shard) []Shard {
+	byRange := make([]Shard, 0, len(shards))
+	for _, shard := range shards {
+		byRange = append(byRange, shard)
+	}
+	sort.Slice(byRange, func(i, j int) bool {
+		return byRange[i].HashRange.MinInclusive < byRange[j].HashRange.MinInclusive
+	})
+	return byRange
 }
 
 // recordSuccessors records the shards that replaced each removed shard: the

@@ -28,6 +28,10 @@ func NewShardStrategy() ShardStrategy {
 	}
 }
 
+func (s *shardStrategyImpl) HashCode(key string) uint32 {
+	return s.hashFunc(key)
+}
+
 func (s *shardStrategyImpl) Get(key string) func(Shard) bool {
 	code := s.hashFunc(key)
 	return func(shard Shard) bool {
