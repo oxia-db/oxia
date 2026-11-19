@@ -614,13 +614,17 @@ func (m *defaultMetadata) PatchDataServer(desireDataServer *commonproto.DataServ
 	var updated *commonproto.DataServer
 	if err := m.computeConfig(func(config *commonproto.ClusterConfiguration, _ metadatacommon.Version) (*commonproto.ClusterConfiguration, error) {
 		for _, existID := range config.GetServers() {
-			if existID.GetNameOrDefault() != desireDataServer.GetNameOrDefault() {
+			name := existID.GetNameOrDefault()
+			if name != desireDataServer.GetNameOrDefault() {
 				continue
 			}
 			if public := desireDataServer.GetIdentity().GetPublic(); public != "" {
 				existID.Public = public
 			}
 			if internal := desireDataServer.GetIdentity().GetInternal(); internal != "" {
+				// A data server without a name is known by its internal
+				// address: keep that name, so the new address doesn't rename it
+				existID.Name = &name
 				existID.Internal = internal
 			}
 			if config.ServerMetadata == nil {
@@ -628,14 +632,14 @@ func (m *defaultMetadata) PatchDataServer(desireDataServer *commonproto.DataServ
 			}
 			var dsMeta *commonproto.DataServerMetadata
 			var ok bool
-			if dsMeta, ok = config.ServerMetadata[existID.GetNameOrDefault()]; !ok {
+			if dsMeta, ok = config.ServerMetadata[name]; !ok {
 				dsMeta = &commonproto.DataServerMetadata{}
 			}
 			if desireDataServer.Metadata != nil {
 				if desireDataServer.Metadata.Labels != nil {
 					dsMeta.Labels = desireDataServer.Metadata.Labels
 				}
-				config.ServerMetadata[existID.GetNameOrDefault()] = dsMeta
+				config.ServerMetadata[name] = dsMeta
 			}
 			updated = &commonproto.DataServer{
 				Identity: existID,
