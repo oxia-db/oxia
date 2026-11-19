@@ -17,6 +17,7 @@ package internal
 import (
 	"context"
 	"log/slog"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -52,13 +53,31 @@ func TestOverlap(t *testing.T) {
 // numericKeyStrategy hashes a key, a number, to itself.
 type numericKeyStrategy struct{}
 
-func (numericKeyStrategy) Get(key string) func(Shard) bool {
+func (numericKeyStrategy) HashCode(key string) uint32 {
 	code, err := strconv.ParseUint(key, 10, 32)
 	if err != nil {
 		panic(err)
 	}
+	return uint32(code)
+}
+
+func (n numericKeyStrategy) Get(key string) func(Shard) bool {
+	code := n.HashCode(key)
 	return func(shard Shard) bool {
-		return shard.HashRange.MinInclusive <= uint32(code) && uint32(code) <= shard.HashRange.MaxInclusive
+		return shard.HashRange.MinInclusive <= code && code <= shard.HashRange.MaxInclusive
+	}
+}
+
+// newTestShardManager returns a shardManagerImpl that routes numeric keys,
+// with no connection to a service.
+func newTestShardManager() *shardManagerImpl {
+	return &shardManagerImpl{
+		shardStrategy: numericKeyStrategy{},
+		shards:        make(map[int64]Shard),
+		successors:    make(map[int64][]Shard),
+		changed:       make(chan struct{}),
+		updatedWg:     concurrent.NewWaitGroup(1),
+		logger:        slog.Default(),
 	}
 }
 
@@ -149,12 +168,58 @@ func TestShardManagerChanged(t *testing.T) {
 }
 
 func TestShardManagerGetPanicsWithoutShardForKey(t *testing.T) {
-	s := &shardManagerImpl{
-		shardStrategy: numericKeyStrategy{},
-		shards:        map[int64]Shard{0: {Id: 0, HashRange: hashRange(0, 99)}},
-	}
+	s := newTestShardManager()
+	s.update([]Shard{{Id: 0, HashRange: hashRange(0, 99)}, {Id: 1, HashRange: hashRange(200, 299)}})
 	assert.EqualValues(t, 0, s.Get("10"))
 	assert.PanicsWithValue(t, "shard not found", func() { s.Get("150") })
+	assert.PanicsWithValue(t, "shard not found", func() { s.Get("300") })
+}
+
+func TestShardManagerGetFindsTheShardOfEveryKey(t *testing.T) {
+	s := newTestShardManager()
+	// The updates come in any order, and a split replaces a shard by two.
+	s.update([]Shard{
+		{Id: 2, HashRange: hashRange(200, 299)},
+		{Id: 0, HashRange: hashRange(0, 99)},
+		{Id: 1, HashRange: hashRange(100, 199)},
+	})
+	s.update([]Shard{
+		{Id: 0, HashRange: hashRange(0, 99)},
+		{Id: 2, HashRange: hashRange(200, 299)},
+		{Id: 3, HashRange: hashRange(100, 149)},
+		{Id: 4, HashRange: hashRange(150, 199)},
+	})
+	for key, expected := range map[string]int64{
+		"0": 0, "99": 0,
+		"100": 3, "149": 3,
+		"150": 4, "199": 4,
+		"200": 2, "299": 2,
+	} {
+		assert.Equal(t, expected, s.Get(key), "key %s", key)
+	}
+}
+
+func BenchmarkShardManagerGet(b *testing.B) {
+	const shards = 64
+	s := newTestShardManager()
+	updates := make([]Shard, shards)
+	step := uint32(math.MaxUint32 / shards)
+	for i := range updates {
+		maxInclusive := uint32(i+1)*step - 1
+		if i == shards-1 {
+			maxInclusive = math.MaxUint32
+		}
+		updates[i] = Shard{Id: int64(i), HashRange: hashRange(uint32(i)*step, maxInclusive)}
+	}
+	s.update(updates)
+	keys := make([]string, 1024)
+	for i := range keys {
+		keys[i] = strconv.FormatUint(uint64(i)*uint64(step/1024)*uint64(shards), 10)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Get(keys[i%len(keys)])
+	}
 }
 
 // The requests for a shard missing from the shard map go to the service address.

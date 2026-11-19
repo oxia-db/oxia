@@ -15,7 +15,11 @@
 package internal
 
 type ShardStrategy interface {
+	// Get returns a predicate that tells whether a shard holds the key.
 	Get(key string) func(Shard) bool
+	// HashCode returns the code the key hashes to: the shard whose hash range
+	// contains it holds the key.
+	HashCode(key string) uint32
 }
 
 type Shard struct {
