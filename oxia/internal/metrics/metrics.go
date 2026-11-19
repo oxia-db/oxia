@@ -19,13 +19,20 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	ometric "github.com/oxia-db/oxia/common/metric"
 	"github.com/oxia-db/oxia/common/proto"
 	"github.com/oxia-db/oxia/oxia/internal/model"
 )
 
+// Metrics records the client metrics of the operations and of the batches.
+//
+// It runs on the path of every operation, so it builds the attributes of each
+// request type once, and it decorates nothing when the provider is the no-op
+// one, which is the default of the client.
 type Metrics struct {
+	enabled   bool
 	timeFunc  func() time.Time
 	sinceFunc func(time.Time) time.Duration
 
@@ -36,6 +43,13 @@ type Metrics struct {
 	batchExecTime  Timer
 	batchValue     metric.Int64Histogram
 	batchRequests  metric.Int64Histogram
+
+	putAttrs         requestAttrs
+	deleteAttrs      requestAttrs
+	deleteRangeAttrs requestAttrs
+	getAttrs         requestAttrs
+	writeAttrs       requestAttrs
+	readAttrs        requestAttrs
 }
 
 func NewMetrics(provider metric.MeterProvider) *Metrics {
@@ -43,8 +57,13 @@ func NewMetrics(provider metric.MeterProvider) *Metrics {
 }
 
 func newMetrics(provider metric.MeterProvider, timeFunc func() time.Time, sinceFunc func(time.Time) time.Duration) *Metrics {
+	if _, isNoop := provider.(noop.MeterProvider); isNoop {
+		return &Metrics{}
+	}
+
 	meter := provider.Meter("oxia_client")
 	return &Metrics{
+		enabled:   true,
 		timeFunc:  timeFunc,
 		sinceFunc: sinceFunc,
 
@@ -55,86 +74,125 @@ func newMetrics(provider metric.MeterProvider, timeFunc func() time.Time, sinceF
 		batchExecTime:  newTimer(meter, "oxia_client_batch_exec"),
 		batchValue:     newHistogram(meter, "oxia_client_batch_value", ometric.Bytes),
 		batchRequests:  newHistogram(meter, "oxia_client_batch_request", ""),
+
+		putAttrs:         newRequestAttrs("put"),
+		deleteAttrs:      newRequestAttrs("delete"),
+		deleteRangeAttrs: newRequestAttrs("delete_range"),
+		getAttrs:         newRequestAttrs("get"),
+		writeAttrs:       newRequestAttrs("write"),
+		readAttrs:        newRequestAttrs("read"),
 	}
 }
 
 func (m *Metrics) DecoratePut(put model.PutCall) model.PutCall {
+	if !m.enabled {
+		return put
+	}
 	callback := put.Callback
-	metricContext := m.metricContextFunc("put")
+	start := m.timeFunc()
+	// Capture the size, not put: a closure that captures put moves it to the
+	// heap on every call, even when metrics are off.
+	valueSize := int64(len(put.Value))
 	put.Callback = func(response *proto.PutResponse, err error) {
 		callback(response, err)
-		ctx, start, _attrs := metricContext(err)
-		m.opTime.Record(ctx, m.sinceFunc(start), _attrs)
-		m.opValue.Record(ctx, int64(len(put.Value)), _attrs)
+		attrs := m.putAttrs.of(err)
+		m.opTime.Record(context.TODO(), m.sinceFunc(start), attrs)
+		m.opValue.Record(context.TODO(), valueSize, attrs)
 	}
 	return put
 }
 
 func (m *Metrics) DecorateDelete(deleteCall model.DeleteCall) model.DeleteCall {
+	if !m.enabled {
+		return deleteCall
+	}
 	callback := deleteCall.Callback
-	metricContext := m.metricContextFunc("delete")
+	start := m.timeFunc()
 	deleteCall.Callback = func(response *proto.DeleteResponse, err error) {
 		callback(response, err)
-		ctx, start, _attrs := metricContext(err)
-		m.opTime.Record(ctx, m.sinceFunc(start), _attrs)
+		m.opTime.Record(context.TODO(), m.sinceFunc(start), m.deleteAttrs.of(err))
 	}
 	return deleteCall
 }
 
 func (m *Metrics) DecorateDeleteRange(deleteRange model.DeleteRangeCall) model.DeleteRangeCall {
+	if !m.enabled {
+		return deleteRange
+	}
 	callback := deleteRange.Callback
-	metricContext := m.metricContextFunc("delete_range")
+	start := m.timeFunc()
 	deleteRange.Callback = func(response *proto.DeleteRangeResponse, err error) {
 		callback(response, err)
-		ctx, start, _attrs := metricContext(err)
-		m.opTime.Record(ctx, m.sinceFunc(start), _attrs)
+		m.opTime.Record(context.TODO(), m.sinceFunc(start), m.deleteRangeAttrs.of(err))
 	}
 	return deleteRange
 }
 
 func (m *Metrics) DecorateGet(get model.GetCall) model.GetCall {
+	if !m.enabled {
+		return get
+	}
 	callback := get.Callback
-	metricContext := m.metricContextFunc("get")
+	start := m.timeFunc()
 	get.Callback = func(response *proto.GetResponse, err error) {
 		callback(response, err)
-		ctx, start, _attrs := metricContext(err)
-		m.opTime.Record(ctx, m.sinceFunc(start), _attrs)
+		attrs := m.getAttrs.of(err)
+		m.opTime.Record(context.TODO(), m.sinceFunc(start), attrs)
 		var size int64
 		if response != nil {
 			size = int64(len(response.Value))
 		}
-		m.opValue.Record(ctx, size, _attrs)
+		m.opValue.Record(context.TODO(), size, attrs)
 	}
 	return get
 }
 
 func (m *Metrics) WriteCallback() func(time.Time, *proto.WriteRequest, *proto.WriteResponse, error) {
-	metricContext := m.metricContextFunc("write")
+	if !m.enabled {
+		return func(time.Time, *proto.WriteRequest, *proto.WriteResponse, error) {}
+	}
+	batchStart := m.timeFunc()
 	return func(executionStart time.Time, request *proto.WriteRequest, _ *proto.WriteResponse, err error) {
-		ctx, batchStart, _attrs := metricContext(err)
-		m.batchTotalTime.Record(ctx, m.sinceFunc(batchStart), _attrs)
-		m.batchExecTime.Record(ctx, m.sinceFunc(executionStart), _attrs)
+		attrs := m.writeAttrs.of(err)
+		m.batchTotalTime.Record(context.TODO(), m.sinceFunc(batchStart), attrs)
+		m.batchExecTime.Record(context.TODO(), m.sinceFunc(executionStart), attrs)
 		valueSize, requestCount := writeMetrics(request)
-		m.batchValue.Record(ctx, valueSize, _attrs)
-		m.batchRequests.Record(ctx, requestCount, _attrs)
+		m.batchValue.Record(context.TODO(), valueSize, attrs)
+		m.batchRequests.Record(context.TODO(), requestCount, attrs)
 	}
 }
 
 func (m *Metrics) ReadCallback() func(time.Time, *proto.ReadRequest, *proto.ReadResponse, error) {
-	metricContext := m.metricContextFunc("read")
+	if !m.enabled {
+		return func(time.Time, *proto.ReadRequest, *proto.ReadResponse, error) {}
+	}
+	batchStart := m.timeFunc()
 	return func(executionStart time.Time, _ *proto.ReadRequest, response *proto.ReadResponse, err error) {
-		ctx, batchStart, attrs := metricContext(err)
-		m.batchTotalTime.Record(ctx, m.sinceFunc(batchStart), attrs)
-		m.batchExecTime.Record(ctx, m.sinceFunc(executionStart), attrs)
+		attrs := m.readAttrs.of(err)
+		m.batchTotalTime.Record(context.TODO(), m.sinceFunc(batchStart), attrs)
+		m.batchExecTime.Record(context.TODO(), m.sinceFunc(executionStart), attrs)
 		valueSize, requestCount := readMetrics(response)
-		m.batchValue.Record(ctx, valueSize, attrs)
-		m.batchRequests.Record(ctx, requestCount, attrs)
+		m.batchValue.Record(context.TODO(), valueSize, attrs)
+		m.batchRequests.Record(context.TODO(), requestCount, attrs)
 	}
 }
 
-func (m *Metrics) metricContextFunc(requestType string) func(error) (context.Context, time.Time, metric.MeasurementOption) {
-	start := m.timeFunc()
-	return func(err error) (context.Context, time.Time, metric.MeasurementOption) {
-		return context.TODO(), start, attrs(requestType, err)
+// requestAttrs holds the attributes of a request type for each result.
+type requestAttrs struct {
+	success metric.MeasurementOption
+	failure metric.MeasurementOption
+}
+
+func newRequestAttrs(requestType string) requestAttrs {
+	return requestAttrs{
+		success: attrs(requestType, resultSuccess),
+		failure: attrs(requestType, resultFailure),
 	}
+}
+
+func (a requestAttrs) of(err error) metric.MeasurementOption {
+	if err == nil {
+		return a.success
+	}
+	return a.failure
 }

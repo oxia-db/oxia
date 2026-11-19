@@ -50,18 +50,16 @@ func panicOnErr(err error, name string) {
 	}
 }
 
-func attrs(requestType string, err error) metric.MeasurementOption {
+const (
+	resultSuccess = "success"
+	resultFailure = "failure"
+)
+
+func attrs(requestType string, result string) metric.MeasurementOption {
 	return metric.WithAttributes(
 		attribute.Key("type").String(requestType),
-		attribute.Key("result").String(result(err)),
+		attribute.Key("result").String(result),
 	)
-}
-
-func result(err error) string {
-	if err == nil {
-		return "success"
-	}
-	return "failure"
 }
 
 func writeMetrics(request *proto.WriteRequest) (valueSize int64, requestCount int64) {

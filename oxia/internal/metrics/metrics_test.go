@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
@@ -135,6 +136,44 @@ func TestMetricsCallback(t *testing.T) {
 				assertWithHistogram(t, rm, "oxia_client_batch_request", 1, item.expectedType, condition.expectedResult)
 			})
 		}
+	}
+}
+
+// With the no-op provider, the default of the client, the calls are left as
+// they are: nothing is measured, so nothing is worth a closure per call.
+func TestMetricsWithNoopProviderDecorateNothing(t *testing.T) {
+	metrics := NewMetrics(noop.NewMeterProvider())
+
+	var calls int
+	put := model.PutCall{Callback: func(*proto.PutResponse, error) { calls++ }, Value: []byte{0, 1}}
+	metrics.DecoratePut(put).Callback(&proto.PutResponse{}, nil)
+	metrics.DecorateDelete(model.DeleteCall{Callback: func(*proto.DeleteResponse, error) { calls++ }}).
+		Callback(&proto.DeleteResponse{}, nil)
+	metrics.DecorateDeleteRange(model.DeleteRangeCall{Callback: func(*proto.DeleteRangeResponse, error) { calls++ }}).
+		Callback(&proto.DeleteRangeResponse{}, nil)
+	metrics.DecorateGet(model.GetCall{Callback: func(*proto.GetResponse, error) { calls++ }}).
+		Callback(&proto.GetResponse{}, io.EOF)
+	assert.Equal(t, 4, calls)
+
+	metrics.WriteCallback()(time.Now(), &proto.WriteRequest{}, &proto.WriteResponse{}, nil)
+	metrics.ReadCallback()(time.Now(), &proto.ReadRequest{}, nil, io.EOF)
+
+	plain := model.PutCall{Callback: func(*proto.PutResponse, error) {}, Value: []byte{0, 1}}
+	response := &proto.PutResponse{}
+	allocs := testing.AllocsPerRun(100, func() {
+		metrics.DecoratePut(plain).Callback(response, nil)
+	})
+	assert.Zero(t, allocs)
+}
+
+func BenchmarkMetricsDecoratePut(b *testing.B) {
+	metrics, _ := setup(time.Since)
+	put := model.PutCall{Callback: func(*proto.PutResponse, error) {}, Value: []byte{0, 1, 2, 3, 4}}
+	response := &proto.PutResponse{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		metrics.DecoratePut(put).Callback(response, nil)
 	}
 }
 
