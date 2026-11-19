@@ -51,11 +51,12 @@ func TestSessions_FailedSessionStartDoesNotDeadlock(t *testing.T) {
 	cs := &clientSession{
 		shardId:  1,
 		sessions: s,
-		started:  make(chan error, 1),
+		started:  make(chan struct{}),
+		startErr: errors.New("session start failed"),
 		log:      slog.Default(),
 	}
 	cs.ctx, cs.cancel = context.WithCancel(context.Background())
-	cs.started <- errors.New("session start failed")
+	close(cs.started)
 	s.sessionsByShard[1] = cs
 
 	done := make(chan struct{})
@@ -313,11 +314,11 @@ type sessionResult struct {
 	err       error
 }
 
-// The first ephemeral operation on a shard creates the session there, and holds
-// the sessions lock until the session is established. When the shard is split
-// meanwhile, the session can no longer be created on it: the operation must get
-// one on the shard that took over its key, and release the lock, without
-// waiting for the next attempt of the creation.
+// The first ephemeral operation on a shard creates the session there, and waits
+// until the session is established. When the shard is split meanwhile, the
+// session can no longer be created on it: the operation must get one on the
+// shard that took over its key, without waiting for the next attempt of the
+// creation.
 func TestSessions_ShardSplitDuringCreation(t *testing.T) {
 	server := &frozenShardServer{
 		sessionRequestsServer: &sessionRequestsServer{heartbeats: make(chan shardSession, 100)},
@@ -382,7 +383,9 @@ func TestSessions_ShardSplitDuringCreation(t *testing.T) {
 	require.NoError(t, s.Close())
 	server.Lock()
 	defer server.Unlock()
-	assert.Equal(t, []int64{1, 2}, server.created)
+	// The two operations no longer wait for each other, so the sessions can
+	// be created in either order
+	assert.ElementsMatch(t, []int64{1, 2}, server.created)
 	assert.ElementsMatch(t, []shardSession{{1, 11}, {2, 12}}, server.closed)
 }
 
@@ -480,6 +483,122 @@ func TestClientSessionClose(t *testing.T) {
 
 // sessionsTestRpcProvider fails the creation of the sessions with createErr,
 // and their closing with closeErr. It records the requests to close them.
+// blockingCreateRpcProvider holds the creation of a session on shard 0 until
+// the request is cancelled, like a shard without a leader, and creates the
+// sessions of the other shards at once.
+type blockingCreateRpcProvider struct {
+	sessionsTestRpcProvider
+}
+
+func (p *blockingCreateRpcProvider) CreateSession(ctx context.Context, target string,
+	request *proto.CreateSessionRequest) (*proto.CreateSessionResponse, error) {
+	if request.Shard == 0 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return p.sessionsTestRpcProvider.CreateSession(ctx, target, request)
+}
+
+// An operation waiting for the session of one shard does not hold up the
+// ephemeral operations on the other shards.
+func TestSessionsWaitForOneShardDoesNotBlockTheOthers(t *testing.T) {
+	s := newSessions(t.Context(), &staticShardManager{shards: []int64{0, 1}}, &blockingCreateRpcProvider{},
+		clientOptions{requestTimeout: time.Minute})
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	blocked := make(chan struct{})
+	go func() {
+		defer close(blocked)
+		s.executeWithSessionId(func() int64 { return 0 }, func(int64, int64, error) {})
+	}()
+
+	done := make(chan sessionResult, 1)
+	go s.executeWithSessionId(func() int64 { return 1 }, func(shardId int64, sessionId int64, err error) {
+		done <- sessionResult{shardId, sessionId, err}
+	})
+	select {
+	case result := <-done:
+		assert.Equal(t, sessionResult{shard: 1, sessionId: 1}, result)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the operation on shard 1 waited for the session of shard 0")
+	}
+
+	select {
+	case <-blocked:
+		require.FailNow(t, "the operation on shard 0 did not wait for its session")
+	default:
+	}
+}
+
+// Every operation waiting for a session that fails to start gets the error,
+// not only the first one.
+func TestSessionsFailedStartFailsEveryWaitingOperation(t *testing.T) {
+	s := newSessions(t.Context(), &staticShardManager{shards: []int64{1, 2}}, &sessionsTestRpcProvider{},
+		clientOptions{requestTimeout: time.Second})
+	defer s.cancelSessions()
+	cs := s.newClientSession(1)
+	s.sessionsByShard[1] = cs
+
+	const waiting = 3
+	results := make(chan sessionResult, waiting)
+	for range waiting {
+		go s.executeWithSessionId(func() int64 { return 1 }, func(shardId int64, sessionId int64, err error) {
+			results <- sessionResult{shardId, sessionId, err}
+		})
+	}
+	// Let the operations reach the wait for the session
+	time.Sleep(100 * time.Millisecond)
+
+	cs.Lock()
+	cs.startErr = errors.New("session start failed")
+	close(cs.started)
+	cs.Unlock()
+
+	for range waiting {
+		select {
+		case result := <-results:
+			assert.EqualValues(t, -1, result.sessionId)
+			assert.EqualError(t, result.err, "session start failed")
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "an operation is still waiting for the failed session")
+		}
+	}
+}
+
+// An operation whose session is moved to the shards that replaced its shard,
+// while it waits for it, looks its session up again instead of being dropped.
+func TestSessionsOperationFollowsSessionMovedWhileWaiting(t *testing.T) {
+	s := newSessions(t.Context(), &staticShardManager{shards: []int64{1, 2}}, &sessionsTestRpcProvider{},
+		clientOptions{requestTimeout: time.Second})
+	defer s.cancelSessions()
+	moved := s.newClientSession(1)
+	s.sessionsByShard[1] = moved
+
+	shard := atomic.Int64{}
+	shard.Store(1)
+	results := make(chan sessionResult, 1)
+	go s.executeWithSessionId(shard.Load, func(shardId int64, sessionId int64, err error) {
+		results <- sessionResult{shardId, sessionId, err}
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	// The shard is split and the key moves to shard 2, which inherited the
+	// session, as followSplits does it
+	s.Lock()
+	shard.Store(2)
+	s.sessionsByShard[2] = s.inheritSession(2, 7)
+	delete(s.sessionsByShard, 1)
+	moved.cancel()
+	s.Unlock()
+
+	select {
+	case result := <-results:
+		assert.Equal(t, sessionResult{shard: 2, sessionId: 7}, result)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the operation was dropped when its session was moved")
+	}
+}
+
 type sessionsTestRpcProvider struct {
 	internal.RpcProvider
 	createErr     error
