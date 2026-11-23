@@ -57,14 +57,13 @@ type controller struct {
 	logger              *slog.Logger
 	ctx                 context.Context
 	ctxCancel           context.CancelFunc
-	dataServer          *proto.DataServer
 	metadata            coordmetadata.Metadata
 	rpc                 rpc.ControllerRPCProvider
 	insID               string
 	assignmentsProvider controllerapi.ShardAssignmentsProvider
 	listener            controllerapi.DataServerEventListener
 	healthPolicy        health.CheckPolicy
-	healthCheckBackoff  *commontime.ConcurrentBackOff
+	initialRetryBackoff time.Duration
 
 	runningGauge              metric.Gauge
 	failedHealthChecksCounter metric.Counter
@@ -78,10 +77,77 @@ type controller struct {
 	// observing SERVING while the node is unavailable, and at most one of them
 	// handshakes it at a time.
 	handshaking bool
+	// dataServer is the data server as configured: UpdateDataServer replaces
+	// it, under the same name.
+	dataServer *proto.DataServer
+	// endpoint is the internal address that the health checks and the
+	// assignments stream go to. UpdateDataServer replaces it when the address
+	// changes, and cancels the RPCs to the old one.
+	endpoint *endpoint
+}
+
+// endpoint is a data server at one internal address. The RPCs to it run
+// under ctx, cancelled when the data server moves to another address, and
+// its health checks share one backoff, which its handshake resets.
+type endpoint struct {
+	identity           *proto.DataServerIdentity
+	ctx                context.Context
+	cancel             context.CancelFunc
+	healthCheckBackoff *commontime.ConcurrentBackOff
 }
 
 func (n *controller) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
 	return commonobject.Borrow(n.dataServer)
+}
+
+// identity returns the identity of the data server, as configured.
+func (n *controller) identity() *proto.DataServerIdentity {
+	return n.GetDataServer().UnsafeBorrow().GetIdentity()
+}
+
+// currentEndpoint returns the endpoint of the RPCs, until the data server
+// moves.
+func (n *controller) currentEndpoint() *endpoint {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.endpoint
+}
+
+// newEndpoint returns an endpoint whose RPCs stop with ctx, the controller's.
+func (n *controller) newEndpoint(ctx context.Context, identity *proto.DataServerIdentity) *endpoint {
+	ctx, cancel := context.WithCancel(ctx)
+	return &endpoint{
+		identity: identity,
+		ctx:      ctx,
+		cancel:   cancel,
+		healthCheckBackoff: commontime.NewConcurrentBackOff(
+			commontime.NewBackOffWithInitialInterval(ctx, n.initialRetryBackoff)),
+	}
+}
+
+func (n *controller) UpdateDataServer(dataServer *proto.DataServer) {
+	n.mu.Lock()
+	n.dataServer = dataServer
+	replaced := n.endpoint
+	if replaced.identity.GetInternal() == dataServer.GetIdentity().GetInternal() {
+		n.mu.Unlock()
+		return
+	}
+	n.endpoint = n.newEndpoint(n.ctx, dataServer.GetIdentity())
+	// The handshake bound the data server at its old address: it is
+	// unavailable until it handshakes at the new one, and the observations
+	// of the old one still in flight are stale
+	status := n.status.Load()
+	status.SetAvailable(false)
+	n.status.Publish(status)
+	n.mu.Unlock()
+
+	replaced.cancel()
+	n.logger.Info("Data server moved to another internal address",
+		slog.String("from", replaced.identity.GetInternal()),
+		slog.String("to", dataServer.GetIdentity().GetInternal()))
 }
 
 func (n *controller) GetStatus() Status {
@@ -128,13 +194,15 @@ func (n *controller) Close() error {
 // RUNNING or DRAINING, and available. The data server rejects the stream
 // until the handshake binds it to this coordinator, and a rejected stream is
 // only retried after the full backoff: waiting for the handshake instead
-// delivers the first assignments right after it.
+// delivers the first assignments right after it. A data server that moved is
+// unavailable until it handshakes at its new address, where the stream then
+// opens.
 func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	receiver := n.status.Subscribe()
 	for {
-		if status := receiver.Load(); status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED {
+		if ep, available := n.availableEndpoint(receiver); available {
 			n.logger.Debug("Ready to send assignments")
-			return n.rpc.PushShardAssignments(n.ctx, n.dataServer.GetIdentity())
+			return n.rpc.PushShardAssignments(ep.ctx, ep.identity)
 		}
 
 		select {
@@ -143,6 +211,16 @@ func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAs
 		case <-receiver.Changed():
 		}
 	}
+}
+
+// availableEndpoint loads the status from receiver, and returns the endpoint
+// that it is the status of, and whether the data server handshook there and
+// isn't DRAINED. Both are read under mu, under which a move changes them.
+func (n *controller) availableEndpoint(receiver *commonwatch.Receiver[Status]) (*endpoint, bool) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	status := receiver.Load()
+	return n.endpoint, status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
 }
 
 func (n *controller) sendAssignmentsDispatchWithRetries() {
@@ -194,6 +272,8 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 				assignments = latest
 			}
 
+			// A move of the data server ends the stream too: the next one
+			// waits for its handshake at the new address
 			select {
 			case <-n.ctx.Done():
 				return nil
@@ -247,7 +327,7 @@ func (n *controller) monitorDraining() {
 			n.status.Publish(status)
 			n.mu.Unlock()
 			n.logger.Info("Data server is drained")
-			n.listener.BecameDrained(n.dataServer.GetIdentity())
+			n.listener.BecameDrained(n.identity())
 			return
 		}
 
@@ -264,7 +344,7 @@ func (n *controller) monitorDraining() {
 // DRAINED once it is drained. DRAINED is final, as a data server that left
 // can't be added again until the configuration confirms its drain.
 func (n *controller) drain() (bool, error) {
-	name := n.dataServer.GetIdentity().GetNameOrDefault()
+	name := n.identity().GetNameOrDefault()
 	stored, _, err := n.metadata.GetDataServerStatus(name)
 	if err != nil {
 		return false, err
@@ -301,14 +381,24 @@ func (n *controller) drain() (bool, error) {
 	return written && next == proto.DataServerState_DATA_SERVER_STATE_DRAINED, nil
 }
 
-func (n *controller) doHealthPing(observedEpoch int64, healthClient grpc_health_v1.HealthClient) error {
-	pingCtx, pingCancel := context.WithTimeout(n.ctx, n.healthPolicy.ProbeTimeout)
+func (n *controller) doHealthPing(ep *endpoint, observedEpoch int64, healthClient grpc_health_v1.HealthClient) error {
+	pingCtx, pingCancel := context.WithTimeout(ep.ctx, n.healthPolicy.ProbeTimeout)
 	response, err := healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 	pingCancel()
 	return n.handleHealthCheck(observedEpoch, response, err)
 }
 
+// healthPingWithRetries probes the data server at its current address, and
+// again at the next one when it moves.
 func (n *controller) healthPingWithRetries() {
+	for n.ctx.Err() == nil {
+		n.pingEndpointWithRetries(n.currentEndpoint())
+	}
+}
+
+// pingEndpointWithRetries probes ep until the controller closes or the data
+// server moves.
+func (n *controller) pingEndpointWithRetries(ep *endpoint) {
 	// Consecutive probe failures, preserved across the retry cycles so that a
 	// data server that keeps failing is re-declared unavailable on every
 	// backoff round instead of getting a fresh threshold each time.
@@ -320,7 +410,7 @@ func (n *controller) healthPingWithRetries() {
 	var failureEpoch int64
 
 	_ = backoff.RetryNotify(func() error {
-		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+		healthClient, err := n.rpc.GetHealthClient(ep.identity)
 		if err != nil {
 			failureEpoch = n.currentStatusEpoch()
 			return err
@@ -342,7 +432,7 @@ func (n *controller) healthPingWithRetries() {
 			}
 
 			// Immediate check on startup instead of waiting for first tick
-			switch err := n.doHealthPing(epoch, healthClient); {
+			switch err := n.doHealthPing(ep, epoch, healthClient); {
 			case err == nil:
 				consecutiveFailures = 0
 			case errors.Is(err, errNotServing):
@@ -367,12 +457,12 @@ func (n *controller) healthPingWithRetries() {
 			}
 
 			select {
-			case <-n.ctx.Done():
+			case <-ep.ctx.Done():
 				return nil
 			case <-ticker.C:
 			}
 		}
-	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
+	}, ep.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.logger.Warn(
 			"Failed to check storage data server health by ping-pong",
 			slog.Duration("retry-after", duration),
@@ -382,21 +472,31 @@ func (n *controller) healthPingWithRetries() {
 	})
 }
 
+// healthWatchWithRetries watches the health of the data server at its current
+// address, and again at the next one when it moves.
 func (n *controller) healthWatchWithRetries() {
+	for n.ctx.Err() == nil {
+		n.watchEndpointWithRetries(n.currentEndpoint())
+	}
+}
+
+// watchEndpointWithRetries watches ep until the controller closes or the data
+// server moves.
+func (n *controller) watchEndpointWithRetries(ep *endpoint) {
 	_ = backoff.RetryNotify(func() error {
 		n.logger.Debug("Start new health watch cycle")
-		healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+		healthClient, err := n.rpc.GetHealthClient(ep.identity)
 		if err != nil {
 			return err
 		}
 
-		watchStream, err := healthClient.Watch(n.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+		watchStream, err := healthClient.Watch(ep.ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 		if err != nil {
 			return err
 		}
 		for {
 			select {
-			case <-n.ctx.Done():
+			case <-ep.ctx.Done():
 				return nil
 			default:
 				epoch := n.currentStatusEpoch()
@@ -421,7 +521,7 @@ func (n *controller) healthWatchWithRetries() {
 				}
 			}
 		}
-	}, n.healthCheckBackoff, func(err error, duration time.Duration) {
+	}, ep.healthCheckBackoff, func(err error, duration time.Duration) {
 		n.logger.Warn("Failed to check storage data server health by watch",
 			slog.Any("error", err),
 			slog.Duration("retry-after", duration),
@@ -439,15 +539,17 @@ func (n *controller) healthWatchWithRetries() {
 func (n *controller) verifyAfterWatchFailure() {
 	// Fetch the client anew: the watch usually breaks together with the
 	// underlying pooled connection, and a replacement connection fails fast
-	// while the peer is unreachable.
-	healthClient, err := n.rpc.GetHealthClient(n.dataServer.GetIdentity())
+	// while the peer is unreachable. The watch also breaks when the data
+	// server moves: the probe then goes to its new address.
+	ep := n.currentEndpoint()
+	healthClient, err := n.rpc.GetHealthClient(ep.identity)
 	if err != nil {
 		// Leave it to the ping loop, which fences on this same error
 		return
 	}
 
 	epoch := n.currentStatusEpoch()
-	switch err := n.doHealthPing(epoch, healthClient); {
+	switch err := n.doHealthPing(ep, epoch, healthClient); {
 	case err == nil:
 		// The node is alive: the watch stream reset was transient
 	case errors.Is(err, errNotServing):
@@ -496,7 +598,7 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 	n.mu.Unlock()
 
 	n.failedHealthChecksCounter.Inc()
-	n.listener.BecameUnavailable(n.dataServer.GetIdentity())
+	n.listener.BecameUnavailable(n.identity())
 }
 
 func (n *controller) becomeAvailable(observedEpoch int64) {
@@ -515,13 +617,14 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		return
 	}
 	n.handshaking = true
+	ep := n.endpoint
 	n.mu.Unlock()
 
-	n.healthCheckBackoff.Reset()
+	ep.healthCheckBackoff.Reset()
 
 	// Bind the node before it can receive other internal traffic.
-	handshakeCtx, handshakeCancel := context.WithTimeout(n.ctx, n.healthPolicy.ProbeTimeout)
-	handshake, err := n.rpc.Handshake(handshakeCtx, n.dataServer.GetIdentity(), &proto.HandshakeRequest{
+	handshakeCtx, handshakeCancel := context.WithTimeout(ep.ctx, n.healthPolicy.ProbeTimeout)
+	handshake, err := n.rpc.Handshake(handshakeCtx, ep.identity, &proto.HandshakeRequest{
 		InstanceId: n.insID,
 	})
 	handshakeCancel()
@@ -557,7 +660,7 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	if featuresChanged {
 		// The features the node supports were not known before this handshake:
 		// it is the first one, or the node restarted with another binary
-		n.listener.FeaturesDiscovered(n.dataServer.GetIdentity())
+		n.listener.FeaturesDiscovered(n.identity())
 	}
 }
 
@@ -605,10 +708,11 @@ func NewController(ctx context.Context, dataServer *proto.DataServer,
 		supportedFeatures:   make([]proto.Feature, 0),
 		logger:              logger,
 		healthPolicy:        healthPolicy,
-		healthCheckBackoff:  commontime.NewConcurrentBackOff(commontime.NewBackOffWithInitialInterval(dataServerCtx, initialRetryBackoff)),
+		initialRetryBackoff: initialRetryBackoff,
 		failedHealthChecksCounter: metric.NewCounter("oxia_coordinator_node_health_checks_failed",
 			"The number of failed health checks to a dataServer", "count", labels),
 	}
+	nc.endpoint = nc.newEndpoint(dataServerCtx, dataServer.GetIdentity())
 	nc.runningGauge = metric.NewGauge("oxia_coordinator_node_running",
 		"Whether the dataServer is considered to be running by the coordinator", "count", labels, func() int64 {
 			if status := nc.GetStatus(); status.IsAvailable() && status.GetState() == proto.DataServerState_DATA_SERVER_STATE_RUNNING {

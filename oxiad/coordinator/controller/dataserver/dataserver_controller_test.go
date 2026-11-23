@@ -593,6 +593,151 @@ func TestDataServerControllerDrainHandshakesWhenAvailableAgain(t *testing.T) {
 	assert.NoError(t, nc.Close())
 }
 
+// A data server whose internal address changes keeps its controller: the
+// RPCs to the old address end, and the data server handshakes at the new one
+// before it receives the assignments there. The shard controllers learn the
+// new address from the configuration, so the listener isn't told.
+func TestDataServerControllerUpdateDataServerMovesToNewInternalAddress(t *testing.T) {
+	old := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "old-server:8190"}
+	moved := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "new-server:8190"}
+	labels := &proto.DataServerMetadata{Labels: map[string]string{"zone": "a"}}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	oldNode, newNode := rpc.GetNode(old), rpc.GetNode(moved)
+	newNode.BlockHandshakes()
+	nc := NewController(context.Background(), &proto.DataServer{Identity: old, Metadata: labels}, newTestMetadata(t),
+		sap, nal, rpc, "test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+	expectShardAssignmentsUpdate(t, oldNode.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	oldStream := oldNode.ShardAssignmentsStream.Context()
+
+	nc.UpdateDataServer(&proto.DataServer{Identity: moved, Metadata: labels})
+
+	assert.True(t, pb.Equal(moved, nc.GetDataServer().UnsafeBorrow().GetIdentity()))
+	select {
+	case <-oldStream.Done():
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the assignments stream to the old address was not cancelled")
+	}
+	// Unavailable until it handshakes at the new address, which the stream
+	// waits for
+	assert.Eventually(t, func() bool {
+		return newNode.HandshakeCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.False(t, nc.GetStatus().IsAvailable())
+	time.Sleep(10 * testHealthPolicy.ProbeInterval)
+	assert.Zero(t, newNode.PushShardAssignmentsCount.Load())
+
+	newNode.ReleaseHandshakes()
+	expectShardAssignmentsUpdate(t, newNode.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.True(t, nc.GetStatus().IsAvailable())
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_RUNNING, nc.GetStatus().GetState())
+
+	// The old address isn't checked anymore: retiring it doesn't fence the
+	// data server, and the assignments only go to the new one
+	oldNode.HealthClient.SetError(errors.New("retired"))
+	assignments := &proto.ShardAssignments{Namespaces: map[string]*proto.NamespaceShardsAssignment{
+		constant.DefaultNamespace: {Assignments: []*proto.ShardAssignment{{Shard: 0, Leader: "leader-0"}}},
+	}}
+	sap.Set(assignments)
+	expectShardAssignmentsUpdate(t, newNode.ShardAssignmentsStream.Updates, assignments)
+	time.Sleep(10 * testHealthPolicy.ProbeInterval)
+	assert.Empty(t, oldNode.ShardAssignmentsStream.Updates)
+	assert.Empty(t, nal.Events)
+	assert.True(t, nc.GetStatus().IsAvailable())
+}
+
+// A data server that moves while its health checks back off from its old
+// address, retired here, handshakes at the new one right away.
+func TestDataServerControllerUpdateDataServerMovesDuringHealthCheckBackoff(t *testing.T) {
+	old := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "old-server:8190"}
+	moved := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "new-server:8190"}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	oldNode := rpc.GetNode(old)
+	nc := NewController(context.Background(), &proto.DataServer{Identity: old}, newTestMetadata(t), sap, nal, rpc,
+		"test-instance", time.Hour, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+	expectShardAssignmentsUpdate(t, oldNode.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+
+	// The health checks give up on the old address, and wait out their
+	// backoff interval, an hour here
+	oldNode.HealthClient.SetError(grpcstatus.Error(codes.Unavailable, "connection refused"))
+	assert.Equal(t, old, <-nal.Events)
+	assert.False(t, nc.GetStatus().IsAvailable())
+
+	nc.UpdateDataServer(&proto.DataServer{Identity: moved})
+
+	newNode := rpc.GetNode(moved)
+	expectShardAssignmentsUpdate(t, newNode.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.True(t, nc.GetStatus().IsAvailable())
+	assert.EqualValues(t, 1, newNode.HandshakeCount.Load())
+}
+
+// A draining data server that moves keeps draining, and receives the
+// assignments at its new address.
+func TestDataServerControllerUpdateDataServerKeepsDrainingDataServerDraining(t *testing.T) {
+	old := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "old-server:8190"}
+	moved := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "new-server:8190"}
+	metadata := newTestMetadata(t)
+	storeShard(t, metadata, &proto.ShardMetadata{Ensemble: []*proto.DataServerIdentity{old}})
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	nc := NewController(context.Background(), &proto.DataServer{Identity: old}, metadata, sap, nal, rpc,
+		"test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+	expectShardAssignmentsUpdate(t, rpc.GetNode(old).ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	nc.Drain()
+
+	nc.UpdateDataServer(&proto.DataServer{Identity: moved})
+
+	expectShardAssignmentsUpdate(t, rpc.GetNode(moved).ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.Equal(t, proto.DataServerState_DATA_SERVER_STATE_DRAINING, nc.GetStatus().GetState())
+	assert.True(t, nc.GetStatus().IsAvailable())
+}
+
+// A change of the public address or of the metadata of a data server doesn't
+// disturb its health checks and its assignments stream.
+func TestDataServerControllerUpdateDataServerKeepsEndpointOfSameInternalAddress(t *testing.T) {
+	addr := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "my-server:8190"}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	node := rpc.GetNode(addr)
+	nc := NewController(context.Background(),
+		&proto.DataServer{Identity: addr, Metadata: &proto.DataServerMetadata{Labels: map[string]string{"zone": "a"}}},
+		newTestMetadata(t), sap, nal, rpc, "test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+	expectShardAssignmentsUpdate(t, node.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+
+	updated := &proto.DataServer{
+		Identity: &proto.DataServerIdentity{Name: pb.String("s1"), Public: "other-server:9190", Internal: "my-server:8190"},
+		Metadata: &proto.DataServerMetadata{Labels: map[string]string{"zone": "b"}},
+	}
+	nc.UpdateDataServer(updated)
+
+	assert.True(t, pb.Equal(updated, nc.GetDataServer().UnsafeBorrow()))
+	time.Sleep(10 * testHealthPolicy.ProbeInterval)
+	assert.True(t, nc.GetStatus().IsAvailable())
+	assert.EqualValues(t, 1, node.HandshakeCount.Load())
+	assert.EqualValues(t, 1, node.PushShardAssignmentsCount.Load())
+}
+
 // A failure that the watch observed before the ping loop fenced the data
 // server and recovered it is stale: it must not fence the data server again.
 func TestDataServerControllerBecomeUnavailableIgnoresStaleEpoch(t *testing.T) {

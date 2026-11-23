@@ -380,6 +380,52 @@ func TestRuntimeCreateDataServerKeepsExistingController(t *testing.T) {
 	assert.False(t, c.CreateDataServer("s1", &proto.DataServer{Identity: server}))
 	assert.Same(t, draining, c.dataServerControllers["s1"])
 	assert.Zero(t, draining.closes.Load())
+	assert.Empty(t, draining.updates)
+}
+
+// The controller of a running data server follows its configuration, e.g. the
+// addresses that a patch changes.
+func TestRuntimeCreateDataServerUpdatesExistingController(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	running := newFakeDataServerController(proto.DataServerState_DATA_SERVER_STATE_RUNNING)
+	running.dataServer = &proto.DataServer{
+		Identity: &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "old:8191"},
+	}
+	c.dataServerControllers["s1"] = running
+	moved := &proto.DataServer{
+		Identity: &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "new:8191"},
+	}
+
+	assert.False(t, c.CreateDataServer("s1", moved))
+	assert.Same(t, running, c.dataServerControllers["s1"])
+	assert.Equal(t, []*proto.DataServer{moved}, running.updates)
+
+	// Unchanged since: nothing to update
+	assert.False(t, c.CreateDataServer("s1", moved.CloneVT()))
+	assert.Len(t, running.updates, 1)
+}
+
+// A data server moved to another internal address receives the assignments
+// there, from the same controller.
+func TestRuntimeCreateDataServerMovesDataServerToNewAddress(t *testing.T) {
+	c := newNamespaceTestRuntime(t, newTestMetadata(t, &proto.ClusterConfiguration{}))
+	rpcProvider, ok := c.rpc.(*rpctest.RpcProvider)
+	require.True(t, ok)
+	old := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "old:8191"}
+	moved := &proto.DataServerIdentity{Name: new("s1"), Public: "s1:9091", Internal: "new:8191"}
+
+	require.True(t, c.CreateDataServer("s1", &proto.DataServer{Identity: old}))
+	requireAssignments(t, rpcProvider.GetNode(old))
+	c.RLock()
+	controller := c.dataServerControllers["s1"]
+	c.RUnlock()
+
+	assert.False(t, c.CreateDataServer("s1", &proto.DataServer{Identity: moved}))
+	requireAssignments(t, rpcProvider.GetNode(moved))
+	c.RLock()
+	defer c.RUnlock()
+	assert.Same(t, controller, c.dataServerControllers["s1"])
+	assert.True(t, moved.EqualVT(controller.GetDataServer().UnsafeBorrow().GetIdentity()))
 }
 
 func TestRuntimeDeleteDataServerIgnoresUnknownDataServer(t *testing.T) {
@@ -1602,13 +1648,28 @@ func (c *fakeShardController) BecameUnavailable(dataServer *proto.DataServerIden
 	c.unavailable = append(c.unavailable, dataServer)
 }
 
+// requireAssignments waits for the first assignments that node receives.
+func requireAssignments(t *testing.T, node *rpctest.PerNodeChannels) {
+	t.Helper()
+	select {
+	case <-node.ShardAssignmentsStream.Updates:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the data server did not receive the assignments")
+	}
+}
+
 // fakeDataServerController reports a fixed status and the features that its
 // data server supports. The methods that it doesn't implement panic.
 type fakeDataServerController struct {
 	dataservercontroller.Controller
-	status   dataservercontroller.Status
-	features []proto.Feature
-	closeErr error
+	// dataServer is what GetDataServer returns, an empty one when nil, and
+	// updates are the data servers passed to UpdateDataServer, the last of
+	// which it becomes.
+	dataServer *proto.DataServer
+	updates    []*proto.DataServer
+	status     dataservercontroller.Status
+	features   []proto.Feature
+	closeErr   error
 	// closeHook, when set, runs in Close, e.g. to block it
 	closeHook func()
 	closes    atomic.Int64
@@ -1619,8 +1680,16 @@ func newFakeDataServerController(state proto.DataServerState) *fakeDataServerCon
 	return &fakeDataServerController{status: dataservercontroller.NewStatus(state)}
 }
 
-func (*fakeDataServerController) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
-	return commonobject.Borrow(&proto.DataServer{})
+func (c *fakeDataServerController) GetDataServer() commonobject.Borrowed[*proto.DataServer] {
+	if c.dataServer == nil {
+		return commonobject.Borrow(&proto.DataServer{})
+	}
+	return commonobject.Borrow(c.dataServer)
+}
+
+func (c *fakeDataServerController) UpdateDataServer(dataServer *proto.DataServer) {
+	c.dataServer = dataServer
+	c.updates = append(c.updates, dataServer)
 }
 
 func (c *fakeDataServerController) GetStatus() dataservercontroller.Status {

@@ -46,9 +46,10 @@ import (
 // unavailable when its health check fails. It starts RUNNING and unavailable.
 //
 // The runtime creates a controller for each data server of the configuration,
-// or still referenced by a shard or stored DRAINING. It calls Drain when the
-// data server is removed from the configuration, and closes the controller
-// once it is DRAINED. A data server that left can't be added again under the
+// or still referenced by a shard or stored DRAINING. It calls UpdateDataServer
+// when the configuration of the data server changes, Drain when the data
+// server is removed from the configuration, and closes the controller once it
+// is DRAINED. A data server that left can't be added again under the
 // same name, until the configuration confirms its drain: the reconciler
 // rejects it, and it keeps draining.
 type Controller interface {
@@ -72,4 +73,13 @@ type Controller interface {
 	// controller tells the listener. It does nothing to a data server already
 	// DRAINING or DRAINED.
 	Drain()
+
+	// UpdateDataServer replaces the data server with dataServer, its
+	// configuration under the same name. When its internal address changes,
+	// the controller stops the health checks and the assignments stream at
+	// the old one, and handshakes the data server at the new one before it
+	// sends it the assignments again; its stage of the lifecycle doesn't
+	// change. The listener isn't told: the shard controllers refresh the
+	// addresses of their ensembles from the configuration.
+	UpdateDataServer(dataServer *proto.DataServer)
 }
