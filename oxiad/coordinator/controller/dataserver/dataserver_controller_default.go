@@ -29,6 +29,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/oxia-db/oxia/common/failpoint"
 	commondataserver "github.com/oxia-db/oxia/oxiad/common/dataserver"
 	"github.com/oxia-db/oxia/oxiad/common/feature"
 	"github.com/oxia-db/oxia/oxiad/common/health"
@@ -190,48 +191,76 @@ func (n *controller) Close() error {
 	return nil
 }
 
-// openAssignmentsStream opens the assignments stream once the data server is
-// RUNNING or DRAINING, and available. The data server rejects the stream
-// until the handshake binds it to this coordinator, and a rejected stream is
-// only retried after the full backoff: waiting for the handshake instead
-// delivers the first assignments right after it. A data server that moved is
-// unavailable until it handshakes at its new address, where the stream then
-// opens.
-func (n *controller) openAssignmentsStream() (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
+// openAssignmentsStream opens the assignments stream to ep once the data
+// server is RUNNING or DRAINING, and available there. The data server rejects
+// the stream until the handshake binds it to this coordinator, and a rejected
+// stream is only retried after the full backoff: waiting for the handshake
+// instead delivers the first assignments right after it. A data server that
+// moved is unavailable until it handshakes at its new address, where its next
+// endpoint opens the stream.
+func (n *controller) openAssignmentsStream(ep *endpoint) (proto.OxiaCoordination_PushShardAssignmentsClient, error) {
 	receiver := n.status.Subscribe()
 	for {
-		if ep, available := n.availableEndpoint(receiver); available {
+		if n.isEndpointAvailable(ep, receiver) {
 			n.logger.Debug("Ready to send assignments")
 			return n.rpc.PushShardAssignments(ep.ctx, ep.identity)
 		}
 
 		select {
-		case <-n.ctx.Done():
-			return nil, n.ctx.Err()
+		case <-ep.ctx.Done():
+			return nil, ep.ctx.Err()
 		case <-receiver.Changed():
 		}
 	}
 }
 
-// availableEndpoint loads the status from receiver, and returns the endpoint
-// that it is the status of, and whether the data server handshook there and
-// isn't DRAINED. Both are read under mu, under which a move changes them.
-func (n *controller) availableEndpoint(receiver *commonwatch.Receiver[Status]) (*endpoint, bool) {
+// isEndpointAvailable loads the status from receiver and reports whether it is
+// the status of ep, where the data server handshook, and it isn't DRAINED.
+// Read under mu, under which a move replaces the endpoint.
+func (n *controller) isEndpointAvailable(ep *endpoint, receiver *commonwatch.Receiver[Status]) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	status := receiver.Load()
-	return n.endpoint, status.IsAvailable() && status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
+	return n.endpoint == ep && status.IsAvailable() &&
+		status.GetState() != proto.DataServerState_DATA_SERVER_STATE_DRAINED
 }
 
+// sendAssignmentsDispatchWithRetries pushes the assignments to the data server
+// at its current address, and again at the next one when it moves.
 func (n *controller) sendAssignmentsDispatchWithRetries() {
+	for n.ctx.Err() == nil {
+		n.dispatchAssignmentsToEndpointWithRetries(n.currentEndpoint())
+	}
+}
+
+// assignmentsRetryBackOff returns the backoff of the retries of the
+// assignments stream to ep. Not the slow initial interval of the health
+// checks: openAssignmentsStream waits until the data server is available
+// again, so the retry doesn't have to wait for it. After a restart, the data
+// server rejects every client until it has its assignments, so each second
+// counts.
+func assignmentsRetryBackOff(ep *endpoint) backoff.BackOff {
+	initialInterval := commontime.DefaultInitialInterval
+	if interval, ok := failpoint.Eval[time.Duration]("dataServerController.assignmentsRetryInterval"); ok {
+		// A retry interval that a test reaches otherwise only after a long
+		// series of rejected streams
+		initialInterval = interval
+	}
+	return commontime.NewBackOffWithInitialInterval(ep.ctx, initialInterval)
+}
+
+// dispatchAssignmentsToEndpointWithRetries pushes the assignments to ep until
+// the controller closes or the data server moves. Its retries run on the
+// backoff of the endpoint, so a move interrupts a retry that is waiting one
+// out, e.g. because the data server kept rejecting the stream at the address
+// it left, instead of leaving the new address without its assignments until
+// that interval has elapsed.
+func (n *controller) dispatchAssignmentsToEndpointWithRetries(ep *endpoint) {
 	receiver := n.assignmentsProvider.SubscribeShardAssignments()
-	// Not the slow initial interval of the health checks: openAssignmentsStream waits until the data server is
-	// available again, so the retry doesn't have to wait for it. After a restart, the data server rejects every client
-	// until it has its assignments, so each second counts.
-	bo := commontime.NewBackOff(n.ctx)
+	bo := assignmentsRetryBackOff(ep)
 
 	_ = backoff.RetryNotify(func() error {
-		stream, err := n.openAssignmentsStream()
+		stream, err := n.openAssignmentsStream(ep)
 		if err != nil {
 			n.logger.Debug("Failed to create shard assignments stream", slog.Any("error", err))
 			return err
@@ -272,10 +301,11 @@ func (n *controller) sendAssignmentsDispatchWithRetries() {
 				assignments = latest
 			}
 
-			// A move of the data server ends the stream too: the next one
-			// waits for its handshake at the new address
+			// A move of the data server cancels ep, which ends the stream
+			// too: the next endpoint waits for its handshake at the new
+			// address
 			select {
-			case <-n.ctx.Done():
+			case <-ep.ctx.Done():
 				return nil
 			case <-streamCtx.Done():
 				return streamCtx.Err()
@@ -385,7 +415,7 @@ func (n *controller) doHealthPing(ep *endpoint, observedEpoch int64, healthClien
 	pingCtx, pingCancel := context.WithTimeout(ep.ctx, n.healthPolicy.ProbeTimeout)
 	response, err := healthClient.Check(pingCtx, &grpc_health_v1.HealthCheckRequest{Service: ""})
 	pingCancel()
-	return n.handleHealthCheck(observedEpoch, response, err)
+	return n.handleHealthCheck(ep, observedEpoch, response, err)
 }
 
 // healthPingWithRetries probes the data server at its current address, and
@@ -468,7 +498,7 @@ func (n *controller) pingEndpointWithRetries(ep *endpoint) {
 			slog.Duration("retry-after", duration),
 			slog.Any("error", err),
 		)
-		n.becomeUnavailable(failureEpoch)
+		n.becomeUnavailable(ep, failureEpoch)
 	})
 }
 
@@ -501,14 +531,14 @@ func (n *controller) watchEndpointWithRetries(ep *endpoint) {
 			default:
 				epoch := n.currentStatusEpoch()
 				response, recvErr := watchStream.Recv()
-				err := n.handleHealthCheck(epoch, response, recvErr)
+				err := n.handleHealthCheck(ep, epoch, response, recvErr)
 				switch {
 				case err == nil:
 				case errors.Is(err, errNotServing):
 					// The data server deliberately reported NOT_SERVING: fail
 					// it right away, and keep watching for it to come back.
 					n.logger.Warn("Data server reported it is not serving")
-					n.becomeUnavailable(epoch)
+					n.becomeUnavailable(ep, epoch)
 				default:
 					// A broken watch stream is an ambiguous signal: it breaks
 					// right away when the process dies (the fast-detection
@@ -554,7 +584,7 @@ func (n *controller) verifyAfterWatchFailure() {
 		// The node is alive: the watch stream reset was transient
 	case errors.Is(err, errNotServing):
 		n.logger.Warn("Data server reported it is not serving")
-		n.becomeUnavailable(epoch)
+		n.becomeUnavailable(ep, epoch)
 	case errors.Is(err, context.Canceled) || grpcstatus.Code(err) == codes.Canceled || isTransportClosing(err):
 		// The controller is shutting down, or the probe rode a connection
 		// that was itself being torn down: neither proves anything about the
@@ -566,7 +596,7 @@ func (n *controller) verifyAfterWatchFailure() {
 	default:
 		n.logger.Warn("Data server is gone after its health watch failed",
 			slog.Any("error", err))
-		n.becomeUnavailable(epoch)
+		n.becomeUnavailable(ep, epoch)
 	}
 }
 
@@ -578,14 +608,22 @@ func isTransportClosing(err error) bool {
 	return err != nil && strings.Contains(grpcstatus.Convert(err).Message(), "transport is closing")
 }
 
-func (n *controller) becomeUnavailable(observedEpoch int64) {
+// isStaleObservation reports whether the result of a health check made at ep,
+// when the status was at observedEpoch, no longer applies: the data server
+// moved away from ep, and what it answers at an address it left says nothing
+// about its new one, or its status changed since the check, e.g. another
+// health path fenced it or recovered it in the meantime. It must be called
+// with mu held, under which both change.
+func (n *controller) isStaleObservation(ep *endpoint, observedEpoch int64) bool {
+	return n.endpoint != ep || n.status.Load().epoch != observedEpoch
+}
+
+// becomeUnavailable fences the data server after a health check failed at ep,
+// unless the check is stale: the next one evaluates the fresh state.
+func (n *controller) becomeUnavailable(ep *endpoint, observedEpoch int64) {
 	n.mu.Lock()
 	status := n.status.Load()
-	if status.epoch != observedEpoch {
-		// The status changed since the failing observation was made (e.g.
-		// the node already recovered through the watch path): the failure is
-		// stale and must not fence the node again. The next probe evaluates
-		// the fresh state.
+	if n.isStaleObservation(ep, observedEpoch) {
 		n.mu.Unlock()
 		return
 	}
@@ -598,15 +636,18 @@ func (n *controller) becomeUnavailable(observedEpoch int64) {
 	n.mu.Unlock()
 
 	n.failedHealthChecksCounter.Inc()
-	n.listener.BecameUnavailable(n.identity())
+	n.listener.BecameUnavailable(ep.identity)
 }
 
-func (n *controller) becomeAvailable(observedEpoch int64) {
+// becomeAvailable handshakes the data server at ep, where a health check
+// found it SERVING, and makes it available. A stale check doesn't handshake
+// it, and the result of a handshake of an address the data server left is
+// dropped: the features it reports there aren't the ones it supports at its
+// new address.
+func (n *controller) becomeAvailable(ep *endpoint, observedEpoch int64) {
 	n.mu.Lock()
 	status := n.status.Load()
-	if status.epoch != observedEpoch {
-		// The node was fenced while the probe was in flight: the SERVING
-		// answer is stale. The next probe will re-evaluate.
+	if n.isStaleObservation(ep, observedEpoch) {
 		n.mu.Unlock()
 		return
 	}
@@ -617,7 +658,6 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		return
 	}
 	n.handshaking = true
-	ep := n.endpoint
 	n.mu.Unlock()
 
 	ep.healthCheckBackoff.Reset()
@@ -638,12 +678,25 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 		}
 	}
 
+	if resume, ok := failpoint.Eval[chan struct{}]("dataServerController.handshakeCompleted"); ok {
+		// The result of the handshake is only committed under the lock, which
+		// a move can take first: pause here to run that race
+		<-resume
+	}
+
 	n.mu.Lock()
 	n.handshaking = false
 	if err != nil {
 		// The node stays unavailable: the next SERVING observation retries
 		n.mu.Unlock()
 		n.logger.Warn("Failed to handshake with data server", slog.Any("error", err))
+		return
+	}
+	if n.endpoint != ep {
+		// The data server moved while the handshake was in flight: it bound
+		// the address it left, and the features it answered with are that
+		// one's. Its new address handshakes on its own.
+		n.mu.Unlock()
 		return
 	}
 	features := handshake.FeaturesSupported
@@ -660,11 +713,12 @@ func (n *controller) becomeAvailable(observedEpoch int64) {
 	if featuresChanged {
 		// The features the node supports were not known before this handshake:
 		// it is the first one, or the node restarted with another binary
-		n.listener.FeaturesDiscovered(n.identity())
+		n.listener.FeaturesDiscovered(ep.identity)
 	}
 }
 
-func (n *controller) handleHealthCheck(observedEpoch int64, response *grpc_health_v1.HealthCheckResponse, err error) error {
+func (n *controller) handleHealthCheck(ep *endpoint, observedEpoch int64,
+	response *grpc_health_v1.HealthCheckResponse, err error) error {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && grpcstatus.Code(err) != codes.Canceled && !isTransportClosing(err) {
 			n.logger.Warn("Data server health check failed", slog.Any("error", err))
@@ -674,7 +728,7 @@ func (n *controller) handleHealthCheck(observedEpoch int64, response *grpc_healt
 	if response.Status != grpc_health_v1.HealthCheckResponse_SERVING {
 		return errNotServing
 	}
-	n.becomeAvailable(observedEpoch)
+	n.becomeAvailable(ep, observedEpoch)
 	return nil
 }
 

@@ -32,6 +32,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/oxia-db/oxia/common/constant"
+	"github.com/oxia-db/oxia/common/failpoint"
 	"github.com/oxia-db/oxia/common/metric"
 	commonobject "github.com/oxia-db/oxia/common/object"
 	"github.com/oxia-db/oxia/common/proto"
@@ -736,6 +737,102 @@ func TestDataServerControllerUpdateDataServerKeepsEndpointOfSameInternalAddress(
 	assert.True(t, nc.GetStatus().IsAvailable())
 	assert.EqualValues(t, 1, node.HandshakeCount.Load())
 	assert.EqualValues(t, 1, node.PushShardAssignmentsCount.Load())
+}
+
+// A handshake that succeeded at the address a data server left commits its
+// result after a move: it bound that address, and the features it answered
+// with are the ones the data server supports there, so neither they nor the
+// availability they would grant may be taken for its new address.
+func TestDataServerControllerUpdateDataServerRejectsHandshakeOfOldAddress(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	resume := make(chan struct{})
+	failpoint.Enable("dataServerController.handshakeCompleted", resume)
+	t.Cleanup(func() { failpoint.Disable("dataServerController.handshakeCompleted") })
+	old := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "old-server:8190"}
+	moved := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "new-server:8190"}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	oldNode, newNode := rpc.GetNode(old), rpc.GetNode(moved)
+	// The data server runs an older binary at the address it is about to
+	// leave, and the handshake at its new address is held in flight
+	oldNode.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM, proto.Feature_FEATURE_ORDERED_WRITES})
+	newNode.SetNodeFeatures([]proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM})
+	newNode.BlockHandshakes()
+	nc := NewController(context.Background(), &proto.DataServer{Identity: old}, newTestMetadata(t), sap, nal, rpc,
+		"test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+	assert.Eventually(t, func() bool {
+		return oldNode.HandshakeCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	nc.UpdateDataServer(&proto.DataServer{Identity: moved})
+	close(resume)
+
+	// The new address handshakes once the handshake of the old one is done
+	// with: at most one of them is in flight
+	assert.Eventually(t, func() bool {
+		return newNode.HandshakeCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+	assert.Empty(t, nc.GetFeatures(), "the features of the old address must not be taken for the new one")
+	assert.Len(t, nal.FeaturesDiscoveredEvents, 0, "the handshake of the old address must not report its features")
+	assert.False(t, nc.GetStatus().IsAvailable())
+	assert.Zero(t, newNode.PushShardAssignmentsCount.Load())
+
+	newNode.ReleaseHandshakes()
+
+	expectShardAssignmentsUpdate(t, newNode.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.Equal(t, []proto.Feature{proto.Feature_FEATURE_DB_CHECKSUM}, nc.GetFeatures())
+	select {
+	case discovered := <-nal.FeaturesDiscoveredEvents:
+		assert.Equal(t, moved, discovered)
+	case <-time.After(10 * time.Second):
+		assert.Fail(t, "the features of the data server at its new address were not reported")
+	}
+}
+
+// A data server that moves while the assignments stream retries at its old
+// address, which rejects it here, doesn't wait out that retry interval: the
+// stream opens at the new address as soon as the data server handshakes there.
+func TestDataServerControllerUpdateDataServerMovesDuringAssignmentsBackoff(t *testing.T) {
+	if !failpoint.Enabled {
+		t.Skip("needs failpoints: disabled by the disable_trap tag")
+	}
+	failpoint.Enable("dataServerController.assignmentsRetryInterval", time.Hour)
+	t.Cleanup(func() { failpoint.Disable("dataServerController.assignmentsRetryInterval") })
+	old := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "old-server:8190"}
+	moved := &proto.DataServerIdentity{Name: pb.String("s1"), Public: "my-server:9190", Internal: "new-server:8190"}
+
+	sap := rpctest.NewShardAssignmentsProvider()
+	nal := rpctest.NewNodeAvailabilityListener()
+	rpc := rpctest.NewRpcProvider()
+	oldNode := rpc.GetNode(old)
+	// The old address keeps rejecting the assignments stream while it still
+	// answers its health checks, e.g. its proxy stops forwarding the stream:
+	// the dispatcher waits out its retry interval, an hour here
+	rpc.FailNode(old, constant.ErrNotInitialized)
+	nc := NewController(context.Background(), &proto.DataServer{Identity: old}, newTestMetadata(t), sap, nal, rpc,
+		"test-instance", time.Second, testHealthPolicy)
+	defer func() {
+		assert.NoError(t, nc.Close())
+	}()
+	assert.Eventually(t, func() bool {
+		return oldNode.PushShardAssignmentsCount.Load() >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+	rejected := oldNode.PushShardAssignmentsCount.Load()
+
+	nc.UpdateDataServer(&proto.DataServer{Identity: moved})
+
+	newNode := rpc.GetNode(moved)
+	expectShardAssignmentsUpdate(t, newNode.ShardAssignmentsStream.Updates, &proto.ShardAssignments{})
+	assert.True(t, nc.GetStatus().IsAvailable())
+	assert.Equal(t, rejected, oldNode.PushShardAssignmentsCount.Load(),
+		"the stream must not be retried at the address the data server left")
 }
 
 // A failure that the watch observed before the ping loop fenced the data
