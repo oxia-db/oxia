@@ -926,6 +926,51 @@ func TestSecondaryIndexGetSkipsEntriesOfLongerSecondaryKeys(t *testing.T) {
 	}
 }
 
+// A secondary key that extends the requested one with the separator can hold
+// any number of records, since secondary keys are not unique. A get skips the
+// whole run of their entries with one seek, rather than a step per entry, which
+// would turn the lookup into a scan of the records of the longer key.
+func TestSecondaryIndexGetSeeksPastTheEntriesOfLongerSecondaryKeys(t *testing.T) {
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	db, err := database.NewDB(constant.DefaultNamespace, 1, kvFactory, proto.KeySortingType_HIERARCHICAL,
+		time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
+
+	write := &proto.WriteRequest{}
+	add := func(key, secondaryKey string) {
+		write.Puts = append(write.Puts, &proto.PutRequest{Key: key, Value: []byte(key),
+			SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: secondaryKey}}})
+	}
+	add("/a", "a")
+	for i := range 100 {
+		// Two runs of entries before the one of "a", of the keys that extend it
+		// with the separator, and with two of them
+		add(fmt.Sprintf("/b%03d", i), "a"+secondaryIdxSeparator)
+		add(fmt.Sprintf("/c%03d", i), "a"+secondaryIdxSeparator+secondaryIdxSeparator)
+	}
+	_, err = db.ProcessWrite(write, 0, 0, WrapperUpdateOperationCallback)
+	require.NoError(t, err)
+
+	for _, comparison := range []proto.KeyComparisonType{
+		proto.KeyComparisonType_EQUAL,
+		proto.KeyComparisonType_FLOOR,
+		proto.KeyComparisonType_CEILING,
+	} {
+		hooked := &hookedPrefixDB{DB: db}
+		res, err := secondaryIndexGet(&proto.GetRequest{
+			Key: "a", ComparisonType: comparison, SecondaryIndexName: pb.String("idx"),
+		}, hooked)
+		require.NoError(t, err, comparison)
+		assert.Equal(t, proto.Status_OK, res.Status, comparison)
+		assert.Equal(t, "/a", res.GetKey(), comparison)
+		// One seek per run of a longer key, and no step through their entries
+		assert.Equal(t, 0, hooked.nextCalls, comparison)
+	}
+}
+
 func TestSecondaryIndices_ListFollowsKeySorting(t *testing.T) {
 	var shard int64 = 1
 
