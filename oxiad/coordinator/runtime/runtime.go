@@ -30,6 +30,10 @@ type Runtime interface {
 	controller.ShardAssignmentsProvider
 	controller.DataServerEventListener
 
+	// CreateDataServer starts the controller of a data server of the
+	// configuration, and reports whether it did. A data server that has a
+	// controller keeps it, updated to its configuration, e.g. its new
+	// addresses after a patch, unless it is draining.
 	CreateDataServer(name string, dataServer *proto.DataServer) bool
 	DeleteDataServer(name string)
 	// DrainedDataServer deletes the stored status of a data server that

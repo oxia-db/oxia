@@ -172,7 +172,12 @@ func (c *runtime) CreateDataServer(name string, dataServer *proto.DataServer) bo
 
 	c.Lock()
 	defer c.Unlock()
-	if _, ok := c.dataServerControllers[name]; ok {
+	if nc, ok := c.dataServerControllers[name]; ok {
+		// A draining data server keeps the addresses that it drains from, and
+		// its stored metadata, as at a restart of the coordinator
+		if !dataserver.IsRemoved(nc.GetStatus().GetState()) && !nc.GetDataServer().UnsafeBorrow().EqualVT(dataServer) {
+			nc.UpdateDataServer(dataServer)
+		}
 		return false
 	}
 	c.logger.Info("Detected new node", slog.Any("server", identity))
