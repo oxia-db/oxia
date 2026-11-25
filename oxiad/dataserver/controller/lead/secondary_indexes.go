@@ -489,6 +489,9 @@ func doSecondaryGet(db database.DB, it kvstore.KeyIterator, indexPrefix string, 
 	} else {
 		// For all the other cases, we set the iterator on >=
 		it.SeekGE(searchKey)
+		if req.ComparisonType != proto.KeyComparisonType_HIGHER {
+			seekEntriesOfKey(it, searchKey)
+		}
 
 		// A failed read is left to the check after the walk: seeking again
 		// would clear the error
@@ -557,6 +560,38 @@ func doSecondaryGet(db database.DB, it kvstore.KeyIterator, indexPrefix string, 
 
 	// The walk ran out of entries of the requested index without finding a match
 	return "", "", nil
+}
+
+// seekEntriesOfKey moves it, set on the search key of a get, to the first entry
+// of the secondary key of the get, if it has any. The entries of a secondary
+// key that extends it with the separator, like "a\x01" for "a", start with the
+// search key too, and sort before or among its entries, since an escaped
+// primary key starts with a byte after the separator: an EQUAL, FLOOR or
+// CEILING get would stop at them instead. Secondary keys are not unique, so
+// such a key can hold any number of records: its entries are skipped with one
+// seek to the key followed by the byte after the separator, rather than a step
+// per entry. The seek stays in the level of the entries, since the escaped
+// primary key it drops holds no '/', and it keeps the entries of the requested
+// key, which sort after the whole run of the longer key. Without an entry of
+// the key, it is set on the search key again. A failed read is left to the
+// walk.
+func seekEntriesOfKey(it kvstore.KeyIterator, searchKey string) {
+	for it.Valid() {
+		key := it.Key()
+		rest, found := strings.CutPrefix(key, searchKey)
+		if !found {
+			break
+		}
+		if !strings.Contains(rest, secondaryIdxSeparator) {
+			return
+		}
+		// The separator of the entry is the last one, before the escaped
+		// primary key (see database.ParseSecondaryIndexKey)
+		it.SeekGE(key[:strings.LastIndex(key, secondaryIdxSeparator)] + "\x02")
+	}
+	if it.Error() == nil {
+		it.SeekGE(searchKey)
+	}
 }
 
 // secondaryGetSkipEnd returns the entry of the index at indexPrefix up to which

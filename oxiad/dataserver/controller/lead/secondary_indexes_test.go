@@ -847,6 +847,130 @@ func TestSecondaryIndexGetReturnsRecordAsOfEntry(t *testing.T) {
 	assert.NoError(t, walFactory.Close())
 }
 
+// The entries of a secondary key that extends another one with the separator
+// sort before or among the entries of the shorter key. A get of the shorter key
+// must still find its own entries, and not the ones of the longer key.
+func TestSecondaryIndexGetSkipsEntriesOfLongerSecondaryKeys(t *testing.T) {
+	var shard int64 = 1
+
+	for _, keySorting := range []proto.KeySortingType{proto.KeySortingType_NATURAL, proto.KeySortingType_HIERARCHICAL} {
+		t.Run(keySorting.String(), func(t *testing.T) {
+			kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+			require.NoError(t, err)
+			walFactory := newTestWalFactory(t)
+
+			lc, err := NewLeaderController(&option.StorageOptions{}, constant.DefaultNamespace, shard, rpc.NewMockRpcClient(),
+				walFactory, kvFactory, &proto.NewTermOptions{KeySorting: keySorting})
+			require.NoError(t, err)
+			_, err = lc.NewTerm(&proto.NewTermRequest{Shard: shard, Term: 1})
+			require.NoError(t, err)
+			_, err = lc.BecomeLeader(context.Background(), &proto.BecomeLeaderRequest{
+				Shard:             shard,
+				Term:              1,
+				ReplicationFactor: 1,
+			})
+			require.NoError(t, err)
+
+			// The entries of "a\x01" sort before the one of "a", and the ones of
+			// "a\x01x" after it
+			var puts []*proto.PutRequest
+			for primaryKey, secondaryKey := range map[string]string{
+				"/a": "a",
+				"/b": "a" + secondaryIdxSeparator,
+				"/c": "a" + secondaryIdxSeparator + "x",
+				"/d": "b" + secondaryIdxSeparator,
+			} {
+				puts = append(puts, &proto.PutRequest{Key: primaryKey, Value: []byte(primaryKey),
+					SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "my-idx", SecondaryKey: secondaryKey}}})
+			}
+			_, err = lc.WriteBlock(context.Background(), &proto.WriteRequest{Shard: &shard, Puts: puts})
+			require.NoError(t, err)
+
+			for _, tc := range []struct {
+				comparison  proto.KeyComparisonType
+				key         string
+				expectedKey string
+			}{
+				{proto.KeyComparisonType_EQUAL, "a", "/a"},
+				{proto.KeyComparisonType_FLOOR, "a", "/a"},
+				{proto.KeyComparisonType_CEILING, "a", "/a"},
+				{proto.KeyComparisonType_EQUAL, "a" + secondaryIdxSeparator, "/b"},
+				{proto.KeyComparisonType_EQUAL, "a" + secondaryIdxSeparator + "x", "/c"},
+				// Without entries of the key, the get goes on from the search key
+				{proto.KeyComparisonType_CEILING, "b", "/d"},
+				{proto.KeyComparisonType_EQUAL, "b", ""},
+				{proto.KeyComparisonType_EQUAL, "0", ""},
+			} {
+				resps, err := readAll(context.Background(), lc, &proto.ReadRequest{
+					Shard: &shard,
+					Gets: []*proto.GetRequest{{
+						Key:                tc.key,
+						ComparisonType:     tc.comparison,
+						SecondaryIndexName: pb.String("my-idx"),
+					}},
+				})
+				require.NoError(t, err)
+				require.Len(t, resps, 1)
+				if tc.expectedKey == "" {
+					assert.Equal(t, proto.Status_KEY_NOT_FOUND, resps[0].Status, "%v %q", tc.comparison, tc.key)
+					continue
+				}
+				assert.Equal(t, proto.Status_OK, resps[0].Status, "%v %q", tc.comparison, tc.key)
+				assert.Equal(t, tc.expectedKey, resps[0].GetKey(), "%v %q", tc.comparison, tc.key)
+			}
+
+			assert.NoError(t, lc.Close())
+			assert.NoError(t, kvFactory.Close())
+			assert.NoError(t, walFactory.Close())
+		})
+	}
+}
+
+// A secondary key that extends the requested one with the separator can hold
+// any number of records, since secondary keys are not unique. A get skips the
+// whole run of their entries with one seek, rather than a step per entry, which
+// would turn the lookup into a scan of the records of the longer key.
+func TestSecondaryIndexGetSeeksPastTheEntriesOfLongerSecondaryKeys(t *testing.T) {
+	kvFactory, err := kvstore.NewPebbleKVFactory(kvstore.NewFactoryOptionsForTest(t))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, kvFactory.Close()) }()
+	db, err := database.NewDB(constant.DefaultNamespace, 1, kvFactory, proto.KeySortingType_HIERARCHICAL,
+		time.Hour, time2.SystemClock)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, db.Close()) }()
+
+	write := &proto.WriteRequest{}
+	add := func(key, secondaryKey string) {
+		write.Puts = append(write.Puts, &proto.PutRequest{Key: key, Value: []byte(key),
+			SecondaryIndexes: []*proto.SecondaryIndex{{IndexName: "idx", SecondaryKey: secondaryKey}}})
+	}
+	add("/a", "a")
+	for i := range 100 {
+		// Two runs of entries before the one of "a", of the keys that extend it
+		// with the separator, and with two of them
+		add(fmt.Sprintf("/b%03d", i), "a"+secondaryIdxSeparator)
+		add(fmt.Sprintf("/c%03d", i), "a"+secondaryIdxSeparator+secondaryIdxSeparator)
+	}
+	_, err = db.ProcessWrite(write, 0, 0, WrapperUpdateOperationCallback)
+	require.NoError(t, err)
+
+	for _, comparison := range []proto.KeyComparisonType{
+		proto.KeyComparisonType_EQUAL,
+		proto.KeyComparisonType_FLOOR,
+		proto.KeyComparisonType_CEILING,
+	} {
+		hooked := &hookedPrefixDB{DB: db}
+		res, err := secondaryIndexGet(&proto.GetRequest{
+			Key: "a", ComparisonType: comparison, SecondaryIndexName: pb.String("idx"),
+		}, hooked)
+		require.NoError(t, err, comparison)
+		assert.Equal(t, proto.Status_OK, res.Status, comparison)
+		assert.Equal(t, "/a", res.GetKey(), comparison)
+		// One seek per run of a longer key, and no step through their entries
+		assert.Equal(t, 0, hooked.nextCalls, comparison)
+	}
+}
+
 func TestSecondaryIndices_ListFollowsKeySorting(t *testing.T) {
 	var shard int64 = 1
 
